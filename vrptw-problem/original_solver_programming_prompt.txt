@@ -1,0 +1,313 @@
+You are an expert Python developer. Build a self-contained 
+metaheuristic optimization solver for a Vehicle Routing Problem 
+with Time Windows (VRPTW). Use the mealpy library. The system 
+must support four algorithms: Genetic Algorithm (GA), Particle 
+Swarm Optimization (PSO), Simulated Annealing (SA), and Ant 
+Colony Optimization (ACO). Below is the complete problem 
+specification.
+
+---
+
+## PROBLEM: QuickBite Fleet Scheduling
+
+### CITY GEOGRAPHY
+
+Five delivery zones plus one depot. Zone indices:
+0 = Depot (Central)
+1 = Zone A (Riverside)
+2 = Zone B (Harbor)
+3 = Zone C (Uptown)
+4 = Zone D (Westgate)
+5 = Zone E (Northgate)
+
+Base travel time matrix (minutes, symmetric):
+
+         Depot   A     B     C     D     E
+Depot  [  0,    12,   18,   25,   30,   22  ]
+A      [ 12,     0,    8,   15,   20,   14  ]
+B      [ 18,     8,    0,   10,   18,   12  ]
+C      [ 25,    15,   10,    0,    9,   11  ]
+D      [ 30,    20,   18,    9,    0,    7  ]
+E      [ 22,    14,   12,   11,    7,    0  ]
+
+### TRAFFIC SIMULATION
+
+Traffic multipliers by time period (applied to base matrix):
+
+Period 1: 07:00-09:30  multiplier = 1.4  (morning peak)
+Period 2: 09:30-11:30  multiplier = 1.0  (normal)
+Period 3: 11:30-13:00  multiplier = 1.3  (lunch surge)
+Period 4: 13:00-16:00  multiplier = 1.0  (normal)
+Period 5: 16:00-18:00  multiplier = 1.5  (evening peak)
+
+Additionally, Zone D (Westgate) has a roadworks penalty: 
+add 5 minutes to any trip involving Zone D between 
+08:00-12:00 regardless of traffic period.
+
+Stochastic noise: multiply final travel time by a random 
+factor drawn from Uniform(0.9, 1.1). Use a seeded 
+numpy RandomState so runs are reproducible. Accept 
+random_seed as a parameter (default=42).
+
+Implement this as:
+def get_travel_time(from_zone, to_zone, current_time_minutes, 
+                    rng):
+    # current_time_minutes: minutes since midnight
+    # returns travel time in minutes (float)
+
+### VEHICLES
+
+5 vehicles, all starting at Depot (Zone 0) unless noted.
+
+ID | Name   | Capacity | Start Zone | Shift Start | Max Hours
+V0 | Alice  | 15 units | Depot      | 08:00       | 8h
+V1 | Bob    | 12 units | Depot      | 08:00       | 8h
+V2 | Carol  | 10 units | Depot      | 09:00       | 8h
+V3 | Dave   | 15 units | Depot      | 08:00       | 8h
+V4 | Eve    | 10 units | Zone E     | 09:30       | 8h
+
+Shift start means the vehicle cannot depart before that time.
+Eve starts in Zone E (index 5), not the depot.
+
+Driver preferences (soft constraints, penalized not forbidden):
+- Alice prefers not to be assigned Zone D (Westgate) — 
+  add 8 min penalty per Zone D stop assigned to Alice
+- Dave has been logging excess hours recently — 
+  add a 15 min penalty if Dave's total shift exceeds 6.5h 
+  (separate from the hard 8h limit)
+- Carol starts late and prefers orders with late time windows 
+  — add 5 min penalty per express order assigned to Carol
+
+### ORDERS
+
+Generate 30 orders deterministically using numpy seed 0.
+Each order has:
+- order_id: O00 to O29
+- zone: randomly assigned from zones 1-5
+- size: randomly drawn from [1, 2, 3, 4, 5] units
+- priority: "express" with probability 0.25, else "standard"
+- time_window_open: random time between 08:00 and 14:00 
+  (in 30-min increments)
+- time_window_close: open + random duration from 
+  [60, 90, 120, 150] minutes
+- service_time: 10 minutes for standard, 15 for express
+
+Generate and print the full order table at startup so it 
+is visible and reproducible.
+
+### OBJECTIVE FUNCTION
+
+The objective function receives a solution (vehicle route 
+assignments) and returns a scalar cost to minimize.
+
+Cost = 
+    w1 * total_travel_time
+  + w2 * fuel_cost
+  + w3 * tw_violation_penalty
+  + w4 * capacity_violation_penalty
+  + w5 * workload_imbalance
+  + w6 * driver_preference_penalty
+  + w7 * express_lateness_penalty
+
+Default weights (configurable via a weights dict):
+  w1 = 1.0    # total travel time (minutes)
+  w2 = 0.15   # fuel proxy: cost per minute of travel
+  w3 = 50.0   # per minute of time window violation (soft)
+  w4 = 1000.0 # per unit of capacity overflow (hard-ish)
+  w5 = 10.0   # variance of driver shift durations
+  w6 = 1.0    # driver preference penalties (minutes)
+  w7 = 100.0  # per express order delivered after window close
+
+Hard constraints enforced via large penalty:
+  - Capacity overflow: penalize heavily (w4)
+  - Shift > 8h hard limit: add 5000 per violating vehicle
+
+Soft constraints penalized:
+  - Time window violations: penalize per minute late (w3)
+  - Express orders delivered outside window (w7)
+  - Driver preferences (w6)
+  - Dave overtime beyond 6.5h (w5/preference overlap, 
+    use w6 weight)
+
+Route evaluation logic:
+  For each vehicle:
+    1. Start at vehicle's start zone at shift start time
+    2. Travel to each order's zone in sequence
+    3. Arrive, wait if before window_open, serve
+    4. Record arrival time, check window violation
+    5. Accumulate travel time, service time, load
+    6. Return to depot at end (mandatory)
+  
+  Use get_travel_time() with the vehicle's current time 
+  at each leg.
+
+### SOLUTION ENCODING
+
+Use a permutation encoding with vehicle separators.
+
+Solution vector length = 30 orders + 4 separators = 34 
+integer positions.
+
+Encode as a real-valued vector in [0, 34]. 
+Sort indices to decode into a permutation.
+The 4 lowest values after sorting correspond to separator 
+positions dividing the permutation into 5 vehicle routes.
+
+Implement:
+  def decode_solution(position_vector, n_orders=30, 
+                      n_vehicles=5):
+    # returns list of 5 lists, each containing order indices
+  
+  def encode_random_solution(rng):
+    # returns a valid random position vector
+
+### LOCKED ASSIGNMENTS
+
+Support a locked_assignments dict:
+  { order_index: vehicle_index }
+
+During decode, locked orders are forcibly assigned to 
+their vehicle regardless of the position vector. 
+Implement this cleanly so the solver still operates on 
+the full vector but locked orders are overridden post-decode.
+
+### MEALPY INTEGRATION
+
+Implement a wrapper class QuickBiteOptimizer with:
+
+  __init__(self, weights=None, locked=None, seed=42)
+  
+  solve(self, algorithm, params=None, epochs=500, 
+        pop_size=100):
+    # algorithm: one of "GA", "PSO", "SA", "ACO"
+    # params: dict of algorithm-specific hyperparameters
+    # returns: SolveResult dataclass with fields:
+    #   - best_cost: float
+    #   - routes: list of 5 lists of order indices
+    #   - metrics: dict with individual cost components
+    #   - convergence: list of best cost per epoch
+    #   - runtime: float (seconds)
+
+Algorithm configurations:
+
+GA: use mealpy.evolutionary_based.GA.BaseGA
+  default params: pc=0.9, pm=0.05
+
+PSO: use mealpy.swarm_based.PSO.OriginalPSO
+  default params: c1=2.05, c2=2.05, w=0.4
+
+SA: use mealpy.physics_based.SA.OriginalSA
+  default params: temp_init=100, cooling_rate=0.99
+
+ACO: use mealpy.swarm_based.ACOR.OriginalACOR
+  default params: sample_count=25, intent_factor=0.5, 
+                  zeta=1.0
+
+For all algorithms, define the problem bounds as:
+  lb = [0.0] * 34
+  ub = [34.0] * 34
+
+Wrap the objective in a mealpy-compatible Problem class.
+
+### RESULTS AND REPORTING
+
+After solving, print a formatted report:
+
+  === QuickBite Optimization Result ===
+  Algorithm : GA
+  Runtime   : 12.3s
+  Best Cost : 847.2
+
+  --- Cost Breakdown ---
+  Travel Time       : 312.4 min
+  Fuel Cost         : 46.9
+  TW Violations     : 2 orders, 38.0 min total
+  Capacity Overflow : 0 units
+  Workload Variance : 18.4
+  Driver Penalties  : 23.0 min
+  Express Lateness  : 0 orders
+
+  --- Route Summary ---
+  V0 Alice  : O03 O11 O22 O07  |  Load: 12/15  
+               Shift: 8.0h  |  Zones: B B A C
+  V1 Bob    : O01 O14 O28     |  Load: 8/12   
+               Shift: 5.2h  |  Zones: A E E
+  ...
+
+  --- Workload Balance ---
+  Alice: 8.0h  Bob: 5.2h  Carol: 6.1h  
+  Dave: 7.3h   Eve: 4.8h
+  Variance: 1.47
+
+Also implement:
+  def get_gantt_data(result):
+    # returns a list of dicts suitable for Gantt rendering:
+    # { vehicle_id, vehicle_name, order_id, zone,
+    #   arrival_time, departure_time, 
+    #   window_open, window_close,
+    #   is_express, is_violation }
+
+### CONFIGURATION INTERFACE
+
+Expose a SolverConfig dataclass:
+  - weights: dict (default weights above)
+  - locked_assignments: dict (default empty)
+  - algorithm: str (default "GA")
+  - algorithm_params: dict (default None = use defaults)
+  - random_seed: int (default 42)
+  - epochs: int (default 500)
+  - pop_size: int (default 100)
+
+This config is what the LLM wrapper will generate and 
+pass to the solver. Keep it cleanly separated from 
+internal solver logic.
+
+### FILE STRUCTURE
+
+Produce the following files:
+
+vrptw-problem/
+  __init__.py
+  problem.py       # order generation, zone matrix, 
+                   # traffic function
+  encoder.py       # solution encoding/decoding, 
+                   # locked assignments
+  evaluator.py     # objective function, route simulator
+  optimizer.py     # MEALpy wrapper, SolverConfig, 
+                   # QuickBiteOptimizer
+  reporter.py      # formatted printing, get_gantt_data
+  main.py          # demo: run all 4 algorithms, 
+                   # compare results
+
+### REQUIREMENTS
+
+- Python 3.10+
+- mealpy >= 3.0.1
+- numpy >= 1.24
+- dataclasses (stdlib)
+However, since we already have a venv in this repo, the version just needs to be reasonably new.
+
+### VALIDATION
+
+In main.py, after running all 4 algorithms:
+1. Assert all routes cover all 30 orders exactly once
+2. Assert no vehicle exceeds hard capacity
+3. Assert no vehicle exceeds 8h hard shift limit
+4. Print a comparison table:
+
+   Algorithm | Cost  | Runtime | TW Violations | 
+   Workload Var
+   GA        | 847.2 | 12.3s   | 2             | 1.47
+   PSO       | 891.4 | 8.1s    | 4             | 2.31
+   SA        | 923.1 | 15.2s   | 5             | 3.12
+   ACO       | 878.3 | 11.4s   | 3             | 1.89
+
+### NOTES
+
+- All times internally in minutes since midnight 
+  (480 = 08:00)
+- Keep get_travel_time pure and stateless except for rng
+- SolverConfig must be JSON-serializable 
+  (no numpy types, no callables)
+- Do not hardcode order data — always generate from seed
+- Add docstrings to all public functions and classes

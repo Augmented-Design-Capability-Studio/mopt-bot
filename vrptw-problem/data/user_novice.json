@@ -1,0 +1,12 @@
+{
+  "description": "Novice user: minimal specification, only cares about travel time and time windows",
+  "algorithm": "GA",
+  "weights": {
+    "w1": 1.0,
+    "w3": 50.0
+  },
+  "only_active_terms": true,
+  "driver_preferences": [],
+  "shift_hard_penalty": 5000,
+  "locked_assignments": {}
+}

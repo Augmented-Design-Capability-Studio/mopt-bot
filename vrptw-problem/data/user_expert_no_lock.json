@@ -1,0 +1,22 @@
+{
+  "description": "Expert user (no lock): full 7-term specification, all driver preferences, no locked assignments — best official-cost potential",
+  "algorithm": "GA",
+  "algorithm_params": {"pc": 0.9, "pm": 0.05},
+  "weights": {
+    "w1": 1.0,
+    "w2": 0.15,
+    "w3": 50.0,
+    "w4": 1000.0,
+    "w5": 10.0,
+    "w6": 1.0,
+    "w7": 100.0
+  },
+  "only_active_terms": false,
+  "driver_preferences": [
+    {"vehicle_idx": 0, "condition": "zone_d", "penalty": 8},
+    {"vehicle_idx": 2, "condition": "express_order", "penalty": 5},
+    {"vehicle_idx": 3, "condition": "shift_over_hours", "hours": 6.5, "penalty": 15}
+  ],
+  "shift_hard_penalty": 5000,
+  "locked_assignments": {}
+}

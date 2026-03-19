@@ -1,0 +1,7 @@
+# QuickBite VRPTW Solver
+# Python 3.10+
+numpy>=2.0
+mealpy>=3.0.1
+# mealpy optional deps (install if missing):
+# scipy, opfunu, pandas
+matplotlib>=3.7
