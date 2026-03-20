@@ -111,9 +111,10 @@ select:focus-visible {
   background: #fff;
 }
 
+/* Participant main layout: chat 3/10, problem config 2/10, results 5/10 */
 .grid-3 {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 3fr 2fr 5fr;
   gap: 0.5rem;
   flex: 1;
   padding: 0.5rem;

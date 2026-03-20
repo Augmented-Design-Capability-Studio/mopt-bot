@@ -4,7 +4,10 @@ import { apiFetch, type Message, type RunResult, type Session } from "@shared/ap
 const TOKEN_KEY = "mopt_researcher_token";
 
 export function ResearcherApp() {
-  const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
+  /** Value in the input; not sent to the API until "Save token". */
+  const [tokenInput, setTokenInput] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
+  /** Bearer token used for all requests (updated only on Save). */
+  const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<Session | null>(null);
@@ -12,37 +15,37 @@ export function ResearcherApp() {
   const [runs, setRuns] = useState<RunResult[]>([]);
   const [steerText, setSteerText] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
-  const [geminiModel, setGeminiModel] = useState("gemini-2.0-flash");
+  const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshList = useCallback(async () => {
-    if (!token.trim()) return;
+    if (!savedToken.trim()) return;
     try {
-      const list = await apiFetch<Session[]>("/sessions", token.trim());
+      const list = await apiFetch<Session[]>("/sessions", savedToken.trim());
       setSessions(list);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "List failed");
     }
-  }, [token]);
+  }, [savedToken]);
 
   const loadDetail = useCallback(async () => {
-    if (!token.trim() || !selected) return;
+    if (!savedToken.trim() || !selected) return;
     try {
-      const s = await apiFetch<Session>(`/sessions/${selected}/researcher`, token.trim());
+      const s = await apiFetch<Session>(`/sessions/${selected}/researcher`, savedToken.trim());
       setDetail(s);
       const msgs = await apiFetch<Message[]>(
         `/sessions/${selected}/messages/researcher?after_id=0`,
-        token.trim(),
+        savedToken.trim(),
       );
       setMessages(msgs);
-      const r = await apiFetch<RunResult[]>(`/sessions/${selected}/runs`, token.trim());
+      const r = await apiFetch<RunResult[]>(`/sessions/${selected}/runs`, savedToken.trim());
       setRuns(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     }
-  }, [token, selected]);
+  }, [savedToken, selected]);
 
   useEffect(() => {
     void refreshList();
@@ -54,17 +57,20 @@ export function ResearcherApp() {
     return () => window.clearInterval(t);
   }, [loadDetail]);
 
-  async function saveToken() {
-    sessionStorage.setItem(TOKEN_KEY, token.trim());
-    setToken(token.trim());
-    await refreshList();
+  function saveToken() {
+    const t = tokenInput.trim();
+    sessionStorage.setItem(TOKEN_KEY, t);
+    setSavedToken(t);
+    setTokenInput(t);
+    setError(null);
+    // List refresh runs via useEffect when savedToken updates
   }
 
   async function patchSession(patch: Record<string, unknown>) {
-    if (!token.trim() || !selected) return;
+    if (!savedToken.trim() || !selected) return;
     setBusy(true);
     try {
-      const s = await apiFetch<Session>(`/sessions/${selected}`, token.trim(), {
+      const s = await apiFetch<Session>(`/sessions/${selected}`, savedToken.trim(), {
         method: "PATCH",
         body: JSON.stringify(patch),
       });
@@ -78,10 +84,10 @@ export function ResearcherApp() {
   }
 
   async function sendSteer() {
-    if (!steerText.trim() || !token.trim() || !selected) return;
+    if (!steerText.trim() || !savedToken.trim() || !selected) return;
     setBusy(true);
     try {
-      await apiFetch(`/sessions/${selected}/steer`, token.trim(), {
+      await apiFetch(`/sessions/${selected}/steer`, savedToken.trim(), {
         method: "POST",
         body: JSON.stringify({ content: steerText.trim() }),
       });
@@ -95,10 +101,10 @@ export function ResearcherApp() {
   }
 
   async function terminate() {
-    if (!selected || !token.trim()) return;
+    if (!selected || !savedToken.trim()) return;
     setBusy(true);
     try {
-      await apiFetch(`/sessions/${selected}/terminate`, token.trim(), { method: "POST" });
+      await apiFetch(`/sessions/${selected}/terminate`, savedToken.trim(), { method: "POST" });
       await refreshList();
       await loadDetail();
     } catch (e) {
@@ -109,11 +115,11 @@ export function ResearcherApp() {
   }
 
   async function removeSession() {
-    if (!selected || !token.trim()) return;
+    if (!selected || !savedToken.trim()) return;
     if (!window.confirm("Delete this session and all logs?")) return;
     setBusy(true);
     try {
-      await apiFetch(`/sessions/${selected}`, token.trim(), { method: "DELETE" });
+      await apiFetch(`/sessions/${selected}`, savedToken.trim(), { method: "DELETE" });
       setSelected(null);
       setDetail(null);
       setMessages([]);
@@ -127,9 +133,9 @@ export function ResearcherApp() {
   }
 
   async function exportJson() {
-    if (!selected || !token.trim()) return;
+    if (!selected || !savedToken.trim()) return;
     try {
-      const data = await apiFetch<unknown>(`/sessions/${selected}/export`, token.trim());
+      const data = await apiFetch<unknown>(`/sessions/${selected}/export`, savedToken.trim());
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -142,6 +148,8 @@ export function ResearcherApp() {
     }
   }
 
+  const tokenDirty = tokenInput.trim() !== savedToken.trim();
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -149,17 +157,23 @@ export function ResearcherApp() {
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
           <input
             type="password"
-            placeholder="Researcher token"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
+            placeholder="Researcher token (paste, then Save)"
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
             style={{ minWidth: "12rem" }}
+            autoComplete="off"
           />
-          <button type="button" onClick={() => void saveToken()}>
+          <button type="button" onClick={saveToken}>
             Save token
           </button>
-          <button type="button" onClick={() => void refreshList()}>
+          <button type="button" disabled={!savedToken.trim()} onClick={() => void refreshList()}>
             Refresh list
           </button>
+          {tokenDirty && (
+            <span className="muted" style={{ fontSize: "0.8rem" }}>
+              Unsaved — click Save to use this token
+            </span>
+          )}
         </div>
       </header>
       {error && <div className="banner-warn">{error}</div>}
@@ -186,7 +200,10 @@ export function ResearcherApp() {
           ))}
         </aside>
         <main className="detail">
-          {!selected && <p className="muted">Select a session.</p>}
+          {!savedToken.trim() && (
+            <p className="muted">Paste <code>MOPT_RESEARCHER_SECRET</code> from your server <code>.env</code>, then click Save token.</p>
+          )}
+          {savedToken.trim() && !selected && <p className="muted">Select a session.</p>}
           {selected && detail && (
             <>
               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>

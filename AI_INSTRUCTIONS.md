@@ -9,6 +9,7 @@ Use this document as the source of truth for implementers and for pasting into C
 - **`vrptw-problem/` is read-only reference.** Do not edit, move, or refactor files inside it. All new application code lives outside that directory (e.g. `backend/`, `frontend/`).
 - **Integration** is by **importing** or **calling** the existing Python API from `backend/` (e.g. a thin adapter module). Do not fork or duplicate solver logic under `backend/` unless the human maintainer explicitly approves; prefer importing the package as-is.
 - If a change inside `vrptw-problem/` is unavoidable, **stop** and ask the maintainer first; do not patch it as part of app work.
+- **Documentation:** Changes to **workflow**, **architecture**, or **repo layout** should include concise updates to **this file** and **`README.md`** (see Cursor rule `docs-sync`).
 
 ---
 
@@ -23,7 +24,7 @@ Build **two browser frontends** (participant **client** and **researcher**) and 
 | Layer       | Choice                         | Notes |
 |-------------|--------------------------------|--------|
 | Frontend    | React + Vite                   | Two React entry apps (`client`, `researcher`) plus a static **homepage** (`index.html`) in dev/build for choosing which app to open; shared components as needed. |
-| Backend     | FastAPI                        | Exposed via HTTPS; Cloudflare (or similar) in front when using a public domain. |
+| Backend     | FastAPI                        | Exposed via HTTPS; Cloudflare (or similar) in front when using a public domain. Participant chat uses Google **`google-genai`** (not the deprecated `google-generativeai` package). |
 | Python      | Repo **`venv/`** at project root | Use `venv` for all Python tooling (`pip`, `pytest`, server run). |
 | DB / cache  | SQLite                         | One database file per deployment is sufficient for sessions, chats, runs. |
 | Deploy      | Frontend Vercel; backend own domain | Configure public API base URL and CORS for the Vercel origin; Raspberry Pi or other small host for API. |
@@ -33,7 +34,8 @@ Build **two browser frontends** (participant **client** and **researcher**) and 
 ## 4. Repository layout (target)
 
 - **`frontend/`** — Participant **`client/`** UI and **`researcher/`** UI (separate areas or builds); optional root **`index.html`** homepage linking to both for local dev and static hosting; shared UI and API client code colocated as appropriate.
-- **`backend/`** — FastAPI app, SQLite access, session and logging logic, and a **thin adapter** that imports from **`vrptw-problem`** (no copies of that tree inside `backend/` unless explicitly approved). Documentation for the study may live in repo root or `docs/` outside `vrptw-problem/`.
+- **`backend/`** — FastAPI app, SQLite access, session and logging logic, **`run_server.py`** (Uvicorn entry with optional `--host` / `--port` / `--reload`; defaults from `.env`), editable **LLM system prompts** under **`backend/app/prompts/`** (e.g. participant chat persona), and a **thin adapter** that imports from **`vrptw-problem`** (no copies of that tree inside `backend/` unless explicitly approved).
+- **`docs/`** (outside `vrptw-problem/`) — e.g. **`RASPBERRY_PI_SETUP.txt`** for clone → venv → install → run on a Pi. Other study or deploy notes may live in repo root or `docs/` as needed.
 
 ---
 
@@ -72,14 +74,23 @@ Do **not** add application routes, study-only hacks, or deployment config **insi
 
 ### 6.4 Environment & config
 
-- Use a **`.env`** (or equivalent) for backend: listen host/port, **database path**, **public URL** for redirects or links, **CORS** allowed origins, **client/researcher** auth secrets, and any **Gemini** or other provider keys if proxied server-side.
+- Use a **`.env`** (or equivalent) for backend: listen host/port (`MOPT_HOST`, `MOPT_PORT`), **database path**, **public URL** (`MOPT_PUBLIC_URL`) for redirects or links behind Cloudflare etc., **CORS** allowed origins, **client/researcher** auth secrets, and any **Gemini** or other provider keys if proxied server-side.
+- Prefer **`backend/run_server.py`** to start Uvicorn so host/port match `.env` without repeating flags; optional CLI overrides for ad-hoc runs.
 - **Never** commit real `.env` values. Document variable **names** and example **placeholders** only in the repo.
+
+### 6.5 Agent / LLM prompts
+
+- Use the **`google-genai`** Python SDK for Gemini (`genai.Client`, **`chats.create` + `send_message`** with history and config), not deprecated `google-generativeai` or ad-hoc one-shot `generate_content` for conversational turns unless there is a clear non-chat reason.
+- Store **system prompts** and reusable instruction blocks in **`backend/app/prompts/`** (e.g. `study_chat.py`); import them from services—do not embed long prompt strings in route handlers. Participant chat should use a persona consistent with a **general metaheuristic optimization programmer**: helpful on encodings, operators, objectives, and parameters **without** assuming a specific application domain unless the **user** described it. Do not leak VRPTW, QuickBite, or internal study scenario names in the prompt text unless maintaining parity with participant-visible rules in §6.2 / §7.3.
+- Restart the API (or use `--reload` in dev) after editing prompt files.
 
 ---
 
 ## 7. Frontend specifications
 
 ### 7.1 Client / participant flows
+
+The participant **does not** choose Agile vs Waterfall at session start; that mode is assigned by the **researcher** (see §7.2). The client offers a single **start session** action; the API may default new sessions conservatively (e.g. waterfall / gated runs) until the researcher adjusts the session.
 
 The **client** UI has at least **three panels:** (1) **Chat and upload**, (2) **Information and assumption / controls**, (3) **Visualization and results**.
 
@@ -164,7 +175,7 @@ The **researcher** UI has a **left panel** for session list and management. Sele
 ## 11. Definition of done
 
 - [ ] `vrptw-problem/` **unchanged** (`git status` clean under that path).
-- [ ] **Backend** starts locally with documented **`.env.example`** (no secrets in repo).
+- [ ] **Backend** starts locally with documented **`.env.example`** (no secrets in repo); **`backend/run_server.py`** (or equivalent) documented for host/port.
 - [ ] **Client** and **researcher** frontends **build** and run locally against the API.
 - [ ] **Auth** enforced on API; CORS correct for Vercel + local dev.
 - [ ] At least one **end-to-end path**: session → chat → panel edits → solve → result + cost + violations.

@@ -5,7 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SessionCreate(BaseModel):
-    workflow_mode: Literal["agile", "waterfall"] = "agile"
+    # Participant apps omit this; researcher sets workflow via PATCH. Default is conservative (gated runs).
+    workflow_mode: Literal["agile", "waterfall"] = "waterfall"
 
 
 class SessionPatch(BaseModel):
@@ -47,6 +48,18 @@ class MessageOut(BaseModel):
     content: str
     visible_to_participant: bool
     kind: str
+
+
+class ChatModelTurn(BaseModel):
+    """Structured Gemini reply when applying panel updates from chat."""
+
+    assistant_message: str = Field(..., max_length=32000)
+    panel_patch: dict[str, Any] | None = None
+
+
+class PostMessagesResponse(BaseModel):
+    messages: list[MessageOut]
+    panel_config: dict[str, Any] | None = None
 
 
 class SolveRunCreate(BaseModel):

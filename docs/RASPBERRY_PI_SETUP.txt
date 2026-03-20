@@ -1,0 +1,40 @@
+# Raspberry Pi — after cloning mopt-bot
+
+# Assumptions: Raspberry Pi OS (Debian-based), you have SSH or a terminal, repo cloned
+# e.g.   git clone <your-repo-url> && cd mopt-bot
+
+# --- System packages (Python 3.10+; Pi OS Bookworm has 3.11) ---
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+
+# --- Virtual environment at repo root (matches project convention) ---
+python3 -m venv venv
+source venv/bin/activate
+
+# --- Python dependencies (solver + API) ---
+pip install --upgrade pip
+pip install -r vrptw-problem/requirements.txt -r backend/requirements.txt
+
+# --- Configuration ---
+cp backend/.env.example .env
+# Edit .env: set MOPT_CLIENT_SECRET, MOPT_RESEARCHER_SECRET, MOPT_CORS_ORIGINS,
+# MOPT_PUBLIC_URL (your public API URL behind Cloudflare if applicable), etc.
+
+# --- Run API (production-style: no --reload) ---
+cd backend
+../venv/bin/python run_server.py
+
+# Optional: bind only on localhost if Cloudflare Tunnel / reverse proxy connects locally
+# ../venv/bin/python run_server.py --host 127.0.0.1 --port 8000
+
+# Development on Pi (auto-reload; more CPU use):
+# ../venv/bin/python run_server.py --reload
+
+# --- Optional: systemd ---
+# Create a unit file that runs run_server.py with WorkingDirectory=/path/to/mopt-bot/backend
+# and ExecStart=/path/to/mopt-bot/venv/bin/python /path/to/mopt-bot/backend/run_server.py
+
+# --- Notes ---
+# - mealpy/numpy may take a minute to install on Pi; ensure enough swap if builds OOM.
+# - Point Cloudflare Tunnel or your reverse proxy at 127.0.0.1:8000 (or whatever port you set).
+# - Set MOPT_CORS_ORIGINS to your real frontend origin(s), comma-separated, no trailing slashes.

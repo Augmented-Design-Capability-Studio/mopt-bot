@@ -1,0 +1,9 @@
+---
+description: Centralize LLM / study text prompts under backend/app/prompts.
+globs: "**/*.{py,md}"
+alwaysApply: false
+---
+
+# Prompts
+
+New or changed **LLM system prompts**, instruction blocks, or reusable agent text for this repo should live under **`backend/app/prompts/`** (e.g. extend `study_chat.py` or add a small module there). Avoid scattering long prompt strings in routers or services—**import** from `app.prompts` instead.

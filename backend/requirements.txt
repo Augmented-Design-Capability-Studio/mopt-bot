@@ -5,7 +5,7 @@ sqlalchemy>=2.0.36
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.0
-google-generativeai>=0.8.0
+google-genai>=1.0.0
 cryptography>=43.0.0
 
 # VRPTW solver (also: pip install -r ../vrptw-problem/requirements.txt)

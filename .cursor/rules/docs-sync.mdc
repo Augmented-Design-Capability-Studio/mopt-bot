@@ -1,0 +1,8 @@
+---
+description: Keep AI_INSTRUCTIONS and README in sync when workflow or structure changes.
+alwaysApply: true
+---
+
+# Documentation sync
+
+When a change affects **app workflow**, **architecture**, or **repository layout**, update **`AI_INSTRUCTIONS.md`** and **`README.md`** in the same task. Keep edits **short** and scoped to what changed. Pure typo or comment-only fixes can skip this.

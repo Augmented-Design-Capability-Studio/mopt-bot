@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,6 +19,7 @@ from app.schemas import (
     MessageOut,
     ModelSettingsBody,
     ParticipantPanelUpdate,
+    PostMessagesResponse,
     RunOut,
     SessionCreate,
     SessionOut,
@@ -231,7 +233,7 @@ def _append_message(
     return m
 
 
-@router.post("/{session_id}/messages", response_model=list[MessageOut])
+@router.post("/{session_id}/messages", response_model=PostMessagesResponse)
 def post_message(
     session_id: str,
     body: MessageCreate,
@@ -247,6 +249,7 @@ def post_message(
     out: list[MessageOut] = []
     um = _append_message(db, session_id, "user", body.content, True)
     out.append(MessageOut.model_validate(um))
+    updated_panel: dict | None = None
 
     if body.invoke_model:
         key = decrypt_secret(row.gemini_key_encrypted)
@@ -275,16 +278,32 @@ def post_message(
             for p in prev:
                 if p.role in ("user", "assistant"):
                     hist.append((p.role, p.content))
+            text = "The model request failed. Try again or continue without AI."
             try:
-                from app.services.llm import generate_assistant_reply
+                from app.services.llm import generate_chat_turn
+                from app.services.panel_merge import deep_merge
 
-                text = generate_assistant_reply(body.content, hist, key, model)
+                current = _panel_dict(row)
+                turn = generate_chat_turn(body.content, hist, key, model, current)
+                text = turn.assistant_message
+                if turn.panel_patch:
+                    base = (
+                        deepcopy(current)
+                        if current is not None
+                        else deepcopy(DEFAULT_PANEL_CONFIG)
+                    )
+                    merged = deep_merge(base, turn.panel_patch)
+                    row.panel_config_json = json.dumps(merged)
+                    row.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(row)
+                    updated_panel = merged
             except Exception:
-                text = "The model request failed. Try again or continue without AI."
+                pass
             am = _append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
 
-    return out
+    return PostMessagesResponse(messages=out, panel_config=updated_panel)
 
 
 @router.post("/{session_id}/steer", response_model=MessageOut)

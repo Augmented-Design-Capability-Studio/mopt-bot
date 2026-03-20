@@ -1,0 +1,11 @@
+---
+description: Use the supported Google GenAI Python SDK for Gemini.
+globs: "**/*.{py,md,txt,toml}"
+alwaysApply: false
+---
+
+# Gemini in Python
+
+Use the **`google-genai`** package (`from google import genai`, `genai.Client`, `client.chats`, etc.). Do **not** add or rely on deprecated **`google-generativeai`**.
+
+Prefer the **Chat** API (`client.chats.create` + `chat.send_message` with `history` and `system_instruction` / `GenerateContentConfig`) for conversational flows instead of one-off `generate_content` on the model unless there is a clear non-chat use case.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   apiFetch,
+  assertPostMessagesResponse,
   type Message,
   type RunResult,
   type Session,
@@ -29,7 +30,7 @@ export function ClientApp() {
   const [error, setError] = useState<string | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [modelKey, setModelKey] = useState("");
-  const [modelName, setModelName] = useState("gemini-2.0-flash");
+  const [modelName, setModelName] = useState("gemini-2.5-flash");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const authed = useMemo(() => Boolean(token && sessionId), [token, sessionId]);
@@ -114,7 +115,7 @@ export function ClientApp() {
     setError(null);
   }
 
-  async function startSession(mode: "agile" | "waterfall") {
+  async function startSession() {
     if (!token.trim()) {
       setError("Enter access token first.");
       return;
@@ -124,7 +125,7 @@ export function ClientApp() {
     try {
       const s = await apiFetch<Session>("/sessions", token.trim(), {
         method: "POST",
-        body: JSON.stringify({ workflow_mode: mode }),
+        body: JSON.stringify({}),
       });
       setSessionId(s.id);
       sessionStorage.setItem(TOKEN_KEY, token.trim());
@@ -146,12 +147,20 @@ export function ClientApp() {
     setBusy(true);
     setError(null);
     try {
-      const out = await apiFetch<Message[]>(`/sessions/${sessionId}/messages`, token, {
+      const raw = await apiFetch<unknown>(`/sessions/${sessionId}/messages`, token, {
         method: "POST",
         body: JSON.stringify({ content: chatInput.trim(), invoke_model: invokeModel }),
       });
+      const res = assertPostMessagesResponse(raw);
+      const out = res.messages;
       setMessages((m) => [...m, ...out]);
       if (out.length) setLastMsgId(out[out.length - 1]!.id);
+      if (res.panel_config != null) {
+        setConfigText(JSON.stringify(res.panel_config, null, 2));
+        setSession((prev) =>
+          prev ? { ...prev, panel_config: res.panel_config as Session["panel_config"] } : prev,
+        );
+      }
       setChatInput("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Send failed");
@@ -314,7 +323,10 @@ export function ClientApp() {
           <span className="app-title">Participant</span>
         </header>
         <div className="login-panel">
-          <p className="muted">Enter the access token provided for this station, then start a session.</p>
+          <p className="muted">
+            Enter the access token for this station, then start. Workflow (e.g. agile vs waterfall) is set by the
+            researcher for your session — you do not choose it here.
+          </p>
           <label>
             Access token
             <input
@@ -328,11 +340,8 @@ export function ClientApp() {
             <button type="button" onClick={() => void login()}>
               Save token
             </button>
-            <button type="button" disabled={busy || !token.trim()} onClick={() => void startSession("agile")}>
-              New session — agile workflow
-            </button>
-            <button type="button" disabled={busy || !token.trim()} onClick={() => void startSession("waterfall")}>
-              New session — waterfall workflow
+            <button type="button" disabled={busy || !token.trim()} onClick={() => void startSession()}>
+              Start session
             </button>
           </div>
           {error && <p className="banner-warn" style={{ marginTop: "1rem" }}>{error}</p>}
@@ -378,8 +387,11 @@ export function ClientApp() {
           <div className="panel-header">Chat & upload</div>
           <div className="panel-body">
             <div className="chat-log" aria-live="polite">
-              {messages.map((m) => (
-                <div key={m.id} className={`bubble ${m.role === "user" ? "user" : "assistant"}`}>
+              {messages.map((m, idx) => (
+                <div
+                  key={typeof m.id === "number" ? m.id : `m-${idx}`}
+                  className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
+                >
                   <strong>{m.role}</strong>
                   <div>{m.content}</div>
                 </div>
@@ -387,7 +399,7 @@ export function ClientApp() {
             </div>
             <label className="muted">
               <input type="checkbox" checked={invokeModel} onChange={(e) => setInvokeModel(e.target.checked)} />{" "}
-              Ask model (uses server-stored key)
+              Ask model (server key) — can update problem JSON when you ask (e.g. change weights)
             </label>
             <div className="chat-input-row">
               <textarea

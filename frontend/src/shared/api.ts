@@ -68,6 +68,31 @@ export type Message = {
   kind: string;
 };
 
+export type PostMessagesResponse = {
+  messages: Message[];
+  panel_config: Record<string, unknown> | null;
+};
+
+/** Avoid React crashes if the proxy returns HTML or an old array-shaped body. */
+export function assertPostMessagesResponse(data: unknown): PostMessagesResponse {
+  if (
+    data === null ||
+    typeof data !== "object" ||
+    Array.isArray(data) ||
+    !("messages" in data) ||
+    !Array.isArray((data as PostMessagesResponse).messages)
+  ) {
+    throw new Error(
+      "Invalid message response from server (expected JSON with a messages array). Check the API URL and that the backend is running.",
+    );
+  }
+  const o = data as PostMessagesResponse;
+  return {
+    messages: o.messages,
+    panel_config: o.panel_config ?? null,
+  };
+}
+
 export type RunResult = {
   id: number;
   created_at: string;
