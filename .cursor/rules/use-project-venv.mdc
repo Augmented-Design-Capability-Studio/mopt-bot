@@ -1,0 +1,23 @@
+---
+description: Use the repo-local Python virtual environment for all Python tooling
+alwaysApply: true
+---
+
+# Python virtual environment
+
+This workspace keeps its dependencies in **`venv/`** at the repository root (ignored by git).
+
+When running Python, pip, pytest, ruff, or any other Python CLI in the terminal or when suggesting commands:
+
+1. **Prefer the venv interpreter directly** (no activation required):
+   - **Windows (PowerShell / cmd):** `.\venv\Scripts\python.exe`, `.\venv\Scripts\pip.exe`, `.\venv\Scripts\pytest.exe` (or equivalent under `venv\Scripts\`).
+   - **macOS / Linux:** `venv/bin/python`, `venv/bin/pip`, etc.
+
+2. **Alternatively**, activate then run normally:
+   - **Windows PowerShell:** `.\venv\Scripts\Activate.ps1`
+   - **Windows cmd:** `venv\Scripts\activate.bat`
+   - **Unix:** `source venv/bin/activate`
+
+3. Do **not** install project packages with a system/global `python` or `pip` when working in this repo unless the user explicitly asks.
+
+If `venv/` is missing, tell the user to create it from the repo root (e.g. `python -m venv venv` then install deps) before installing packages.

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Study apps</title>
+    <style>
+      :root {
+        --bg: #e8e6e1;
+        --panel: #f4f2ed;
+        --border: #9a958c;
+        --text: #1c1b18;
+        --muted: #5c5952;
+        --accent: #4a5a6a;
+        --focus: #2f4f6f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+      }
+      main {
+        width: 100%;
+        max-width: 28rem;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        padding: 1.5rem 1.25rem;
+        border-radius: 2px;
+      }
+      h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.15rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      p.intro {
+        margin: 0 0 1.25rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+      }
+      a.card {
+        display: block;
+        padding: 0.75rem 0.85rem;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        text-decoration: none;
+        border-radius: 2px;
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+      a.card:hover {
+        background: #ebe8e2;
+      }
+      a.card:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      a.card span.desc {
+        display: block;
+        margin-top: 0.25rem;
+        font-weight: 400;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      footer {
+        margin-top: 1.25rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Study interface</h1>
+      <p class="intro">Choose which app to open. Ensure the API is running and use the correct access token in each app.</p>
+      <ul>
+        <li>
+          <a class="card" href="/client.html">
+            Participant (client)
+            <span class="desc">Three-panel participant flow: chat, problem settings, results.</span>
+          </a>
+        </li>
+        <li>
+          <a class="card" href="/researcher.html">
+            Researcher
+            <span class="desc">Sessions, steering, workflow controls, export.</span>
+          </a>
+        </li>
+      </ul>
+      <footer>Local dev: API proxied from <code>/api</code> when using <code>npm run dev</code>.</footer>
+    </main>
+    <script type="module" src="/src/home/main.ts"></script>
+  </body>
+</html>

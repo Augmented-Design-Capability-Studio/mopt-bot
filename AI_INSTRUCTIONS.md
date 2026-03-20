@@ -1,0 +1,177 @@
+# AI build instructions
+
+Use this document as the source of truth for implementers and for pasting into Cursor. Do not commit real secrets, API keys, or participant identifiers.
+
+---
+
+## 1. Non-negotiables
+
+- **`vrptw-problem/` is read-only reference.** Do not edit, move, or refactor files inside it. All new application code lives outside that directory (e.g. `backend/`, `frontend/`).
+- **Integration** is by **importing** or **calling** the existing Python API from `backend/` (e.g. a thin adapter module). Do not fork or duplicate solver logic under `backend/` unless the human maintainer explicitly approves; prefer importing the package as-is.
+- If a change inside `vrptw-problem/` is unavoidable, **stop** and ask the maintainer first; do not patch it as part of app work.
+
+---
+
+## 2. Goal
+
+Build **two browser frontends** (participant **client** and **researcher**) and **one backend** suitable for a low-cost host (e.g. Raspberry Pi) to run a **user experience study**. The study examines how **workflow** affects optimization outcomes and experience: a **2×2** design (**Novice vs Expert** participants) × (**Agile vs Waterfall** interaction with the AI). In **Agile**, the user need not fully specify the problem up front; the agent may assume missing details, propose configuration or code-like artifacts, and run optimization frequently. In **Waterfall**, the user follows agent guidance to mature the problem formulation before any **RUN**; optimization runs should be gated accordingly. The underlying task is the VRPTW scenario in `vrptw-problem/`, but the product should **present** as a general metaheuristic-style assistant where required (see §7.3).
+
+---
+
+## 3. Tech stack
+
+| Layer       | Choice                         | Notes |
+|-------------|--------------------------------|--------|
+| Frontend    | React + Vite                   | Two React entry apps (`client`, `researcher`) plus a static **homepage** (`index.html`) in dev/build for choosing which app to open; shared components as needed. |
+| Backend     | FastAPI                        | Exposed via HTTPS; Cloudflare (or similar) in front when using a public domain. |
+| Python      | Repo **`venv/`** at project root | Use `venv` for all Python tooling (`pip`, `pytest`, server run). |
+| DB / cache  | SQLite                         | One database file per deployment is sufficient for sessions, chats, runs. |
+| Deploy      | Frontend Vercel; backend own domain | Configure public API base URL and CORS for the Vercel origin; Raspberry Pi or other small host for API. |
+
+---
+
+## 4. Repository layout (target)
+
+- **`frontend/`** — Participant **`client/`** UI and **`researcher/`** UI (separate areas or builds); optional root **`index.html`** homepage linking to both for local dev and static hosting; shared UI and API client code colocated as appropriate.
+- **`backend/`** — FastAPI app, SQLite access, session and logging logic, and a **thin adapter** that imports from **`vrptw-problem`** (no copies of that tree inside `backend/` unless explicitly approved). Documentation for the study may live in repo root or `docs/` outside `vrptw-problem/`.
+
+---
+
+## 5. Reference material (read-only)
+
+- **Domain and solver behavior:** `vrptw-problem/` — e.g. `DESCRIPTION.md`, `optimizer.py`, `evaluator.py`, `user_input.py`, `orders.py`, `vehicles.py`, `traffic_api.py`.
+- **Study framing (optional):** `vrptw-problem/docs/` (e.g. proposed study materials).
+
+Do **not** add application routes, study-only hacks, or deployment config **inside** `vrptw-problem/`.
+
+---
+
+## 6. Backend specifications
+
+### 6.1 Responsibilities
+
+- Accept a **gathered or assumed problem configuration** (neutral DTOs / JSON on the wire) and return a **solution** suitable for the UI: schedule (or equivalent), **cost** under the user- and agent-defined objective, and **constraint violation** summaries where applicable. For analysis, support scoring with a **reference** cost model when specified by the researcher.
+- Preserve the **illusion** of a **general metaheuristic** assistant in external API names, payloads exposed to the client, and default error copy — without lying in ways that break consent; internal implementation may call VRPTW-specific code.
+- **Persist** interactions the researcher needs: chat transcripts, panel state / edits, run requests and results, workflow mode, and timestamps.
+
+### 6.2 Public API (shape)
+
+- Implement **REST** with **FastAPI**. Support **local dev** and **production** behind Cloudflare (or similar) on a custom domain; document base URL and CORS for the Vercel frontend.
+- **Authentication:** simple **shared-secret or password** per deployment, supplied via `.env` (separate values for **client** vs **researcher** if needed). All mutating and session-sensitive routes require auth.
+- Prefer **stable, domain-neutral** resource names (examples: sessions, messages, runs, exports — e.g. `/session`, `/chat`, `/solve` or RESTful `/sessions/{id}/...`). Initial version does **not** require WebSockets; polling or short requests are fine.
+- **SQLite** as system of record for sessions, chats, configurations, and run history. Provide **GET** (or equivalent) export endpoints for **JSON** logs and run configs for offline analysis.
+- **Solve** endpoint: accept a **problem configuration** JSON (neutral schema on the wire), return **solution**, **cost**, and **violations** in a stable shape. Validate input; on failure return **clear, safe** errors (no raw stack traces to clients by default).
+- **Responses and logs** shown to participants must not **name** VRPTW, QuickBite, or internal zone identifiers unless the **user** introduced those terms in chat.
+
+### 6.3 Adapter to `vrptw-problem`
+
+- The VRPTW solver is driven by a **JSON-shaped configuration** aligned with what the existing code expects; the adapter maps **neutral HTTP JSON → that structure** (and maps results back to neutral DTOs). Study the current modules to see how configuration is built and consumed (e.g. `user_input`, `optimizer`, `evaluator`).
+- Enforce **validation** before calling the solver; return structured errors for invalid or incomplete configs instead of opaque 500s when possible.
+- **Reproducibility:** document and fix **RNG seeds** (and any time-dependent behavior) so the same configuration yields the same result when that is a study requirement.
+- **Timeouts and cancellation:** long runs must not block the process indefinitely; support **request timeouts** and **abort** where the stack allows it.
+
+### 6.4 Environment & config
+
+- Use a **`.env`** (or equivalent) for backend: listen host/port, **database path**, **public URL** for redirects or links, **CORS** allowed origins, **client/researcher** auth secrets, and any **Gemini** or other provider keys if proxied server-side.
+- **Never** commit real `.env` values. Document variable **names** and example **placeholders** only in the repo.
+
+---
+
+## 7. Frontend specifications
+
+### 7.1 Client / participant flows
+
+The **client** UI has at least **three panels:** (1) **Chat and upload**, (2) **Information and assumption / controls**, (3) **Visualization and results**.
+
+- The user states the problem in chat and may **upload** files per agent guidance. **Upload is simulated** for the study: the backend is fixed to the canonical scenario; the agent should **acknowledge** uploads and answer **as if** data were supplied. Canonical inputs include the **travel time matrix** and **30 orders** (see `vrptw-problem` data and docs).
+- Depending on **Agile vs Waterfall**, the agent surfaces **constraints and objectives** on panel 2; the user may edit values or options. Panel 2 state must stay in sync with the **JSON configuration** sent to the solver; when the user changes controls, the **chat** should acknowledge the update.
+- When an **optimization run** completes, show results in panel 3 (**tabs** if multiple runs). For this problem, include an **editable schedule** (edit mode) and **cost** for that run per the configured objective. **Manipulated** schedules should be reflected in chat. **Constraint violations** should update panel 2 when run results exist.
+- Each **RUN** produces a **chat** bubble (acknowledgment); the **result summary** may follow as the next bubble.
+- **Saving** edits on panels 2 and 3 posts a **chat acknowledgment**. While a panel is in **edit mode**, it is visually highlighted and the user **cannot** use other panels until **save** or **exit edit** (per your UX rules).
+
+### 7.2 Researcher flows
+
+The **researcher** UI has a **left panel** for session list and management. Selecting a session shows **chat**, **runs**, and **edits**.
+
+- **Delete session:** client app must detect loss of session and prompt the user to **start fresh** (new session).
+- **Terminate session:** same client prompt; **researcher** can still **review** the archived transcript and runs for that session.
+- **Researcher messages** in chat are **invisible** to the participant; only the researcher sees their own steering messages.
+- The researcher sets **Agile vs Waterfall** mode for the agent driving that session.
+
+### 7.3 UX constraints
+
+- Do **not** surface **VRPTW**, **QuickBite**, or **internal zone names** in UI copy or API-visible labels unless the **participant** used those terms first.
+- **Password** protection for both apps; secrets from `.env` (see §6.4).
+- The agent should **not** dump large explanations into panel 2 **without** prior chat context — especially under **Waterfall**.
+- Chat responses should stay **concise** by default.
+
+### 7.4 State & data
+
+- **Authoritative** session history (chat, runs, configs) lives on the **server** (SQLite). The **browser** may cache a **local copy** for resilience (e.g. offline draft or re-open) and for **participant review** of their own past sessions; define **merge rules** on reconnect (server wins for conflicts unless you specify otherwise).
+- The **researcher** sees **all** server-stored sessions. If a session is **deleted** or **terminated** while the client is open, the next sync should surface the UX in §7.2.
+
+### 7.5 Shared components between researcher and client
+
+- **Model / API key setup:** a **chip** (or control) opens a dialog to paste an **API key** and select **model** (start with **Google Gemini** “Flash” tier or current equivalent). Prefer **Vercel AI SDK** if it fits the stack. **Keys** are stored **server-side** (encrypted at rest if feasible) so sessions can resume; the researcher may **push** a key to the participant flow; participants may also supply their own.
+- Structure the codebase so **other providers** can be added without rewriting the whole chat layer.
+- **Chat + model calls** originate from the **participant client**; the researcher **interferes** (steering messages) through the researcher UI without exposing those lines to the participant.
+
+### 7.6 Look and feel
+
+- The interface design should **avoid high-saturation colors**. Use **moderate or muted palettes** to minimize eye fatigue during long study sessions.
+- It is acceptable—and even preferable for this phase—to keep the **visual design “retro”** or reminiscent of classical **engineering/scientific software** (think understated, functional interfaces: clear panels, plain backgrounds, minimal visual distractions).
+- Avoid glossy, hyper-modern, or overly animated elements. Favor classic typographic hierarchy, static icons, and clear, separated regions.
+- When in doubt, prefer **simplicity and readability** over flash or trendiness. The visual hierarchy should reinforce workflows rather than obscure them.
+- Maintain **strong accessibility** in color choices—ensure sufficient contrast for those with color vision differences, but stay within the muted/retro theme.
+- The overall aesthetic should evoke reliability and clarity; playful or “modern consumer app” motifs are discouraged for now.
+
+
+---
+
+## 8. Logging, study, and ethics
+
+- **Chat logs** are the primary artifact; additional events (timestamps, run IDs, mode changes, exports) may be added later.
+- **Do not** persist **API keys** or passwords in application logs; redact or hash identifiers if logs are shared.
+- The study materials are under IRB review. Overall, this study presents minimal risk. 
+
+---
+
+## 9. Quality bar
+
+- **Tests:** core adapter and API handlers should have **unit tests** where practical; at least a **manual smoke checklist** for client, researcher, and solve path before demos.
+- **Accessibility:** keyboard access to the three client panels and dialogs; visible focus; reasonable contrast (target **WCAG-oriented** behavior without blocking on a full audit unless required).
+- **Browsers:** latest **Chrome** and **Edge** for the study; note if Safari/Firefox are best-effort.
+- The backend should support **one** active study session with **1–3** concurrent users without noticeable UI lag.
+- **Cold start** under **30 seconds** on the target Pi-class host.
+- Typical **chat** and **solve** requests: **1–5 s** when the model and solver are warm; allow up to **~30 s** for occasional heavy runs with **loading** feedback.
+- **Storage** writes should be **durable** and **bounded**; recover cleanly from abrupt shutdown where SQLite allows.
+- **Memory** steady-state **under ~1 GB** on the server; avoid leaks across long sessions.
+- **CPU-heavy** work: **timeouts**, **cancellation**, and user-visible **timeout** messages.
+- **Disk:** avoid chatty logging on **SD cards**; rotate or buffer logs if needed.
+- **No** long-lived WebSockets required initially; **HTTP polling** or short requests are acceptable on low bandwidth.
+- On overload, **fail gracefully** (clear errors, retry guidance) rather than wedging the process.
+
+---
+
+## 10. Out of scope (explicit)
+
+- **No** edits or new features **inside** `vrptw-problem/`.
+- **No** production multi-tenant billing, full OAuth identity platform, or mobile native apps unless later specified.
+- **No** requirement for real file ingestion that changes the canonical problem data **without** maintainer approval (simulated upload only for v1).
+
+---
+
+## 11. Definition of done
+
+- [ ] `vrptw-problem/` **unchanged** (`git status` clean under that path).
+- [ ] **Backend** starts locally with documented **`.env.example`** (no secrets in repo).
+- [ ] **Client** and **researcher** frontends **build** and run locally against the API.
+- [ ] **Auth** enforced on API; CORS correct for Vercel + local dev.
+- [ ] At least one **end-to-end path**: session → chat → panel edits → solve → result + cost + violations.
+- [ ] **Export** of session JSON available for the researcher.
+
+---
+
+## 12. Open questions
+
+- *(Add bullets here as decisions land — e.g. exact neutral JSON schema, debrief wording, encryption for stored keys.)*
