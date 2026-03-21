@@ -25,13 +25,23 @@ class VisitRecord:
     vehicle_id: int
     vehicle_name: str
     order_id: str
+    order_index: int
     zone: str
+    zone_index: int
     arrival_time: float
     departure_time: float
     window_open: int
     window_close: int
     is_express: bool
     is_violation: bool
+    priority_deadline_missed: bool
+    order_size: int
+    service_minutes: int
+    wait_minutes: float
+    time_window_minutes_over: float
+    load_after_stop: int
+    capacity_limit: int
+    capacity_overflow_after_stop: int
 
 
 @dataclass
@@ -169,17 +179,29 @@ def simulate_routes(
                 v_idx, order, is_express, driver_preferences
             )
 
+            wait_minutes = max(0.0, float(order.time_window_open) - arrival)
+
             rm.visits.append(VisitRecord(
                 vehicle_id=vehicle.vehicle_id,
                 vehicle_name=vehicle.name,
                 order_id=order.order_id,
+                order_index=o_idx,
                 zone=ZONE_NAMES[order.zone],
+                zone_index=order.zone,
                 arrival_time=arrival,
                 departure_time=departure,
                 window_open=order.time_window_open,
                 window_close=order.time_window_close,
                 is_express=is_express,
                 is_violation=is_violation,
+                priority_deadline_missed=is_express and arrival > order.time_window_close,
+                order_size=order.size,
+                service_minutes=order.service_time,
+                wait_minutes=wait_minutes,
+                time_window_minutes_over=tw_viol,
+                load_after_stop=load,
+                capacity_limit=vehicle.capacity,
+                capacity_overflow_after_stop=overflow,
             ))
             current_zone = order.zone
 

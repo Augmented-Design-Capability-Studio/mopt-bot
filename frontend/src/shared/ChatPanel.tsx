@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 
 /** Enter sends, Shift+Enter newline — used only by {@link ChatComposer} in this module. */
 function onChatSendKeyDown(
@@ -99,12 +99,19 @@ export function ChatPanel({
   footer,
   composer,
 }: ChatPanelProps) {
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
+
   return (
     <>
       <div className="panel-header">{title}</div>
       <div className="panel-body">
         <div className="chat-log" aria-live={logAriaLive} style={logStyle}>
           {messages}
+          <div ref={logEndRef} />
         </div>
         {betweenLogAndComposer}
         <ChatComposer {...composer} />

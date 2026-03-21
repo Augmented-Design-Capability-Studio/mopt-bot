@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch, type Message, type RunResult, type Session } from "@shared/api";
+import { apiFetch, displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
 import { ChatPanel } from "@shared/ChatPanel";
 import {
   DEFAULT_SUGGESTED_GEMINI_MODEL,
@@ -169,6 +169,36 @@ export function ResearcherApp() {
       await refreshList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRun(run: RunResult) {
+    if (!selected || !savedToken.trim()) return;
+    const sessionId = selected;
+    if (
+      !window.confirm(
+        `Delete run #${displayRunNumber(run)} from this session? This removes the stored run record from the database.`,
+      )
+    ) {
+      return;
+    }
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      await apiFetch(`/sessions/${sessionId}/runs/${run.id}`, savedToken.trim(), { method: "DELETE" });
+      const [nextDetail, nextRuns] = await Promise.all([
+        apiFetch<Session>(`/sessions/${sessionId}/researcher`, savedToken.trim()),
+        apiFetch<RunResult[]>(`/sessions/${sessionId}/runs`, savedToken.trim()),
+      ]);
+      if (sessionId !== selectedRef.current) return;
+      setDetail(nextDetail);
+      setRuns(nextRuns);
+      await refreshList();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete run failed");
     } finally {
       setBusy(false);
     }
@@ -403,9 +433,35 @@ export function ResearcherApp() {
               </section>
               <section>
                 <div className="panel-header">Runs</div>
-                <pre className="mono" style={{ fontSize: "0.75rem", maxHeight: "200px", overflow: "auto" }}>
-                  {JSON.stringify(runs, null, 2)}
-                </pre>
+                {runs.length === 0 ? (
+                  <div className="muted" style={{ padding: "0.45rem 0.2rem" }}>
+                    No runs yet.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginTop: "0.4rem" }}>
+                    {runs.map((run) => (
+                      <details key={run.id}>
+                        <summary className="mono" style={{ cursor: "pointer" }}>
+                          Run #{displayRunNumber(run)} · {run.run_type} · {run.ok ? "ok" : "error"} · cost{" "}
+                          {run.cost ?? "—"} · {new Date(run.created_at).toLocaleString()}
+                        </summary>
+                        <div style={{ marginTop: "0.35rem" }}>
+                          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.35rem" }}>
+                            <button type="button" disabled={busy} onClick={() => void removeRun(run)}>
+                              Delete run
+                            </button>
+                          </div>
+                          <pre
+                            className="mono"
+                            style={{ fontSize: "0.75rem", maxHeight: "240px", overflow: "auto", margin: 0 }}
+                          >
+                            {JSON.stringify(run, null, 2)}
+                          </pre>
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                )}
               </section>
             </>
           )}

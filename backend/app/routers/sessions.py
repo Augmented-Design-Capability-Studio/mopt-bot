@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import Principal, require_any_study_user, require_client, require_researcher
@@ -29,6 +31,7 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+log = logging.getLogger(__name__)
 
 
 def _panel_dict(row: StudySession | None) -> dict | None:
@@ -52,6 +55,39 @@ def _session_to_out(row: StudySession) -> SessionOut:
         gemini_model=row.gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),
     )
+
+
+def _run_number(row: OptimizationRun) -> int:
+    return int(row.session_run_index or row.id)
+
+
+def _run_to_out(row: OptimizationRun) -> RunOut:
+    res = None
+    if row.result_json:
+        try:
+            res = json.loads(row.result_json)
+        except json.JSONDecodeError:
+            res = None
+    return RunOut(
+        id=row.id,
+        run_number=_run_number(row),
+        created_at=row.created_at,
+        run_type=row.run_type,
+        ok=row.ok,
+        cost=row.cost,
+        reference_cost=row.reference_cost,
+        error_message=row.error_message,
+        result=res,
+    )
+
+
+def _next_session_run_number(db: Session, session_id: str) -> int:
+    current_max = (
+        db.query(func.max(OptimizationRun.session_run_index))
+        .filter(OptimizationRun.session_id == session_id)
+        .scalar()
+    )
+    return int(current_max or 0) + 1
 
 
 @router.post("", response_model=SessionOut)
@@ -293,24 +329,74 @@ def post_message(
             for p in prev:
                 if p.role in ("user", "assistant"):
                     hist.append((p.role, p.content))
+
+            steer_rows = (
+                db.query(ChatMessage)
+                .filter(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.role == "researcher",
+                    ChatMessage.visible_to_participant.is_(False),
+                    ChatMessage.id < um.id,
+                )
+                .order_by(ChatMessage.id.desc())
+                .limit(4)
+                .all()
+            )
+            researcher_steers = [m.content for m in reversed(steer_rows)]
+
+            # Build compact recent-runs context for the system instruction.
+            recent_run_rows = (
+                db.query(OptimizationRun)
+                .filter(OptimizationRun.session_id == session_id)
+                .order_by(OptimizationRun.id.desc())
+                .limit(4)
+                .all()
+            )
+            recent_runs_summary: list[dict] = []
+            for rr in reversed(recent_run_rows):
+                entry: dict = {"run_id": rr.id, "run_number": _run_number(rr), "ok": rr.ok, "cost": rr.cost}
+                if rr.result_json:
+                    try:
+                        rd = json.loads(rr.result_json)
+                        entry["violations"] = rd.get("violations")
+                        entry["metrics"] = rd.get("metrics")
+                        entry["algorithm"] = rd.get("algorithm")
+                    except json.JSONDecodeError:
+                        pass
+                recent_runs_summary.append(entry)
+
             text = "The model request failed. Try again or continue without AI."
             try:
+                from app.adapter import sanitize_panel_weights
                 from app.services.llm import generate_chat_turn
                 from app.services.panel_merge import deep_merge
 
                 current = _panel_dict(row)
-                turn = generate_chat_turn(body.content, hist, key, model, current)
+                turn = generate_chat_turn(
+                    body.content,
+                    hist,
+                    key,
+                    model,
+                    current,
+                    workflow_mode=row.workflow_mode,
+                    recent_runs_summary=recent_runs_summary or None,
+                    researcher_steers=researcher_steers or None,
+                )
                 text = turn.assistant_message
                 if turn.panel_patch:
                     # Merge into an empty base until the participant has real panel data; do not seed
                     # DEFAULT_PANEL_CONFIG (that would contradict "empty until researcher pushes").
                     base = deepcopy(current) if current is not None else {}
-                    merged = deep_merge(base, turn.panel_patch)
+                    log.info("Participant model panel_patch: %s", turn.panel_patch)
+                    merged, weight_warnings = sanitize_panel_weights(deep_merge(base, turn.panel_patch))
+                    log.info("Participant merged panel_config: %s", merged)
                     row.panel_config_json = json.dumps(merged)
                     row.updated_at = datetime.now(timezone.utc)
                     db.commit()
                     db.refresh(row)
                     updated_panel = merged
+                    if weight_warnings:
+                        text = f"{text}\n\nNote: {' '.join(weight_warnings)}"
             except Exception:
                 pass
             am = _append_message(db, session_id, "assistant", text, True)
@@ -358,7 +444,9 @@ def post_run(
         "problem": body.problem,
         "routes": body.routes,
     }
+    session_run_number = _next_session_run_number(db, session_id)
     run_row = OptimizationRun(
+        session_run_index=session_run_number,
         session_id=session_id,
         run_type=body.type,
         request_json=json.dumps(payload),
@@ -391,30 +479,47 @@ def post_run(
     db.commit()
     db.refresh(run_row)
 
-    summary = (
-        f"Run #{run_row.id} finished: cost {run_row.cost:.4f}"
-        if run_row.ok and run_row.cost is not None
-        else f"Run #{run_row.id} failed: {run_row.error_message or 'error'}"
-    )
+    if run_row.ok and run_row.cost is not None:
+        summary_parts = [f"Run #{session_run_number} finished — cost {run_row.cost:.2f}"]
+        if run_row.result_json:
+            try:
+                rd = json.loads(run_row.result_json)
+                v = rd.get("violations") or {}
+                tw_stops = int(v.get("time_window_stop_count", 0))
+                tw_mins = float(v.get("time_window_minutes_over", 0))
+                cap_over = int(v.get("capacity_units_over", 0))
+                prio_miss = int(v.get("priority_deadline_misses", 0))
+                shift_pen = float(v.get("shift_limit_penalty", 0))
+                m = rd.get("metrics") or {}
+                travel = float(m.get("total_travel_minutes", 0))
+                wl_var = float(m.get("workload_variance", 0))
+                viol_strs = []
+                if tw_stops:
+                    viol_strs.append(f"{tw_stops} time-window stops late ({tw_mins:.1f} min over)")
+                if cap_over:
+                    viol_strs.append(f"{cap_over} units over capacity")
+                if prio_miss:
+                    viol_strs.append(f"{prio_miss} priority-order deadline misses")
+                if shift_pen:
+                    viol_strs.append("shift limit exceeded")
+                if viol_strs:
+                    summary_parts.append("Violations: " + "; ".join(viol_strs))
+                else:
+                    summary_parts.append("No constraint violations")
+                summary_parts.append(
+                    f"Travel: {travel:.1f} min · workload variance: {wl_var:.1f}"
+                )
+                # Surface any weight key warnings from translation (fuzzy matches / drops).
+                weight_warnings = rd.get("weight_warnings") or []
+                for w in weight_warnings:
+                    summary_parts.append(f"Note: {w}")
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+        summary = ". ".join(summary_parts) + "."
+    else:
+        summary = f"Run #{session_run_number} failed: {run_row.error_message or 'error'}."
     _append_message(db, session_id, "assistant", summary, True, kind="run")
-
-    res = None
-    if run_row.result_json:
-        try:
-            res = json.loads(run_row.result_json)
-        except json.JSONDecodeError:
-            res = None
-
-    return RunOut(
-        id=run_row.id,
-        created_at=run_row.created_at,
-        run_type=run_row.run_type,
-        ok=run_row.ok,
-        cost=run_row.cost,
-        reference_cost=run_row.reference_cost,
-        error_message=run_row.error_message,
-        result=res,
-    )
+    return _run_to_out(run_row)
 
 
 @router.get("/{session_id}/runs", response_model=list[RunOut])
@@ -434,27 +539,30 @@ def list_runs(
         .order_by(OptimizationRun.id.asc())
         .all()
     )
-    out = []
-    for r in rows:
-        res = None
-        if r.result_json:
-            try:
-                res = json.loads(r.result_json)
-            except json.JSONDecodeError:
-                res = None
-        out.append(
-            RunOut(
-                id=r.id,
-                created_at=r.created_at,
-                run_type=r.run_type,
-                ok=r.ok,
-                cost=r.cost,
-                reference_cost=r.reference_cost,
-                error_message=r.error_message,
-                result=res,
-            )
-        )
-    return out
+    return [_run_to_out(r) for r in rows]
+
+
+@router.delete("/{session_id}/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_run(
+    session_id: str,
+    run_id: int,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_researcher),
+):
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    run = (
+        db.query(OptimizationRun)
+        .filter(OptimizationRun.session_id == session_id, OptimizationRun.id == run_id)
+        .first()
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    db.delete(run)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return None
 
 
 @router.patch("/{session_id}/settings", response_model=SessionOut)
@@ -491,12 +599,26 @@ def patch_participant_panel(
         raise HTTPException(status_code=404, detail="Session not found")
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
-    row.panel_config_json = json.dumps(body.panel_config)
+
+    # Sanitize weight keys in the panel before storing, so unknown/fuzzy keys are
+    # translated or dropped early and the stored panel stays consistent.
+    from app.adapter import sanitize_panel_weights
+    sanitized_config, weight_warnings = sanitize_panel_weights(body.panel_config)
+
+    row.panel_config_json = json.dumps(sanitized_config)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+
+    # Build acknowledgement, appending any weight-key correction notices.
+    ack_parts = []
     if body.acknowledgement:
-        _append_message(db, session_id, "assistant", body.acknowledgement, True, kind="panel")
+        ack_parts.append(body.acknowledgement)
+    for w in weight_warnings:
+        ack_parts.append(f"Note: {w}")
+    ack = " ".join(ack_parts).strip()
+    if ack:
+        _append_message(db, session_id, "assistant", ack, True, kind="panel")
     return _session_to_out(row)
 
 
@@ -554,6 +676,7 @@ def export_session(
         "runs": [
             {
                 "id": r.id,
+                "run_number": _run_number(r),
                 "created_at": r.created_at.isoformat(),
                 "run_type": r.run_type,
                 "ok": r.ok,

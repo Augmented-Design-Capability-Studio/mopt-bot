@@ -1,13 +1,18 @@
-"""Default neutral panel configuration for new sessions."""
+"""Default neutral panel configuration for new sessions.
 
+Weight keys use human-readable aliases (see adapter.WEIGHT_ALIASES).
+The adapter translates them to w1–w7 before calling the solver.
+"""
+
+# Canonical default weights using participant-visible alias names.
 _PROBLEM_WEIGHTS: dict = {
-    "w1": 1.0,
-    "w2": 0.15,
-    "w3": 50.0,
-    "w4": 1000.0,
-    "w5": 10.0,
-    "w6": 1.0,
-    "w7": 100.0,
+    "travel_time":       1.0,
+    "fuel_cost":         0.15,
+    "deadline_penalty":  50.0,
+    "capacity_penalty":  1000.0,
+    "workload_balance":  10.0,
+    "worker_preference": 1.0,
+    "priority_penalty":  100.0,
 }
 
 DEFAULT_PANEL_CONFIG: dict = {

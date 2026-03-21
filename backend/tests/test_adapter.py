@@ -1,6 +1,6 @@
 import pytest
 
-from app.adapter import parse_problem_config, run_evaluate_routes
+from app.adapter import parse_problem_config, run_evaluate_routes, sanitize_panel_weights
 
 
 def test_parse_defaults():
@@ -33,3 +33,16 @@ def test_evaluate_routes_roundtrip():
     assert "cost" in out
     assert out["algorithm"] == "evaluate"
     assert len(out["schedule"]["routes"]) == 5
+    assert len(out["schedule"]["vehicle_summaries"]) == 5
+    assert out["schedule"]["time_bounds"]["end_minutes"] >= out["schedule"]["time_bounds"]["start_minutes"]
+    first_stop = out["schedule"]["stops"][0]
+    assert "arrival_minutes" in first_stop
+    assert "load_after_stop" in first_stop
+    assert "capacity_limit" in first_stop
+    assert "time_window_minutes_over" in first_stop
+
+
+def test_sanitize_panel_weights_drops_malformed_weights():
+    panel, warnings = sanitize_panel_weights({"problem": {"weights": "{", "epochs": 500}})
+    assert "weights" not in panel["problem"]
+    assert warnings == ["Ignored malformed `problem.weights`; expected an object."]

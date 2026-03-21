@@ -73,6 +73,7 @@ class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    run_number: int
     created_at: datetime
     run_type: str
     ok: bool

@@ -30,6 +30,7 @@ export async function apiFetch<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const url = `${apiBase()}${path.startsWith("/") ? path : `/${path}`}`;
+  const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     ...(init.headers as Record<string, string> | undefined),
@@ -37,7 +38,11 @@ export async function apiFetch<T>(
   if (init.body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(url, { ...init, headers });
+  const res = await fetch(url, {
+    ...(method === "GET" || method === "HEAD" ? { cache: init.cache ?? "no-store" } : {}),
+    ...init,
+    headers,
+  });
   const data = await parseJson(res);
   if (!res.ok) {
     const msg = typeof data === "object" && data && "detail" in data
@@ -147,13 +152,103 @@ export function normalizePostMessagesResponse(data: unknown): PostMessagesRespon
 /** @deprecated Use normalizePostMessagesResponse */
 export const assertPostMessagesResponse = normalizePostMessagesResponse;
 
+export type RunScheduleRoute = {
+  vehicle_index: number;
+  task_indices: number[];
+};
+
+export type RunScheduleStop = {
+  vehicle_index: number;
+  vehicle_name: string;
+  task_id: string;
+  task_index: number | null;
+  region_index: number;
+  region_name: string;
+  arrival_minutes: number;
+  departure_minutes: number;
+  window_open_minutes: number;
+  window_close_minutes: number;
+  service_minutes: number;
+  wait_minutes: number;
+  time_window_minutes_over: number;
+  priority_urgent: boolean;
+  priority_deadline_missed: boolean;
+  constraint_conflict: boolean;
+  time_window_conflict: boolean;
+  order_size: number;
+  load_after_stop: number;
+  capacity_limit: number;
+  capacity_overflow_after_stop: number;
+  capacity_conflict: boolean;
+};
+
+export type RunVehicleSummary = {
+  vehicle_index: number;
+  vehicle_name: string;
+  capacity_limit: number;
+  assigned_units: number;
+  capacity_overflow_units: number;
+  shift_start_minutes: number;
+  display_end_minutes: number;
+  shift_limit_minutes: number;
+  stop_count: number;
+};
+
+export type RunSchedule = {
+  routes: RunScheduleRoute[];
+  stops: RunScheduleStop[];
+  vehicle_summaries: RunVehicleSummary[];
+  time_bounds: {
+    start_minutes: number;
+    end_minutes: number;
+  };
+};
+
+export type RunViolations = {
+  time_window_minutes_over: number;
+  time_window_stop_count: number;
+  capacity_units_over: number;
+  shift_limit_penalty: number;
+  priority_deadline_misses: number;
+};
+
+export type RunMetrics = {
+  total_travel_minutes: number;
+  fuel_proxy_minutes: number;
+  workload_variance: number;
+  driver_preference_penalty: number;
+};
+
+export type RunPayload = {
+  cost: number;
+  reference_cost: number | null;
+  schedule: RunSchedule;
+  violations: RunViolations;
+  metrics: RunMetrics;
+  runtime_seconds: number;
+  algorithm: string;
+  convergence: number[];
+  weight_warnings?: string[];
+};
+
 export type RunResult = {
   id: number;
+  run_number?: number;
   created_at: string;
   run_type: string;
   ok: boolean;
   cost: number | null;
   reference_cost: number | null;
   error_message: string | null;
-  result: Record<string, unknown> | null;
+  result: RunPayload | null;
 };
+
+export function displayRunNumber(run: Pick<RunResult, "id" | "run_number">, fallbackIndex?: number): number {
+  if (typeof run.run_number === "number" && Number.isFinite(run.run_number) && run.run_number > 0) {
+    return run.run_number;
+  }
+  if (typeof fallbackIndex === "number" && Number.isFinite(fallbackIndex)) {
+    return fallbackIndex + 1;
+  }
+  return run.id;
+}
