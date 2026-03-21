@@ -170,6 +170,31 @@ select:focus-visible {
   font-size: 0.9rem;
 }
 
+.chat-pending-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.5rem;
+  margin-top: 0.25rem;
+}
+
+.chat-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid #c9c5be;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: chat-spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .bubble {
   margin-bottom: 0.5rem;
   padding: 0.35rem 0.5rem;
@@ -200,6 +225,34 @@ select:focus-visible {
   border: 1px solid var(--border);
   padding: 0.35rem;
   background: #fff;
+}
+
+.chat-input-locked textarea {
+  opacity: 0.65;
+  background: #f0eeea;
+  cursor: not-allowed;
+}
+
+.chat-model-details {
+  font-size: 0.85rem;
+}
+
+.chat-model-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat-model-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-model-details .chat-model-state {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.chat-model-check-wrap {
+  margin-top: 0.35rem;
 }
 
 .mono {
@@ -289,6 +342,36 @@ select:focus-visible {
   border-radius: 2px;
 }
 
+.btn-model-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.9rem;
+  border-width: 2px;
+  border-radius: 4px;
+}
+
+.btn-model-key .model-key-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.btn-model-key.status-ok {
+  border-color: #4a7c59;
+  background: #e8f0e9;
+}
+
+.btn-model-key.status-warn {
+  border-color: #b8860b;
+  background: #f5efd8;
+}
+
+.btn-model-key.status-neutral {
+  border-color: var(--border);
+  background: var(--panel);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -303,6 +386,17 @@ select:focus-visible {
 
 .chip:hover {
   background: #f0eeea;
+}
+
+.banner-info {
+  padding: 0.5rem 1rem;
+  background: #d8e4ec;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .banner-warn {

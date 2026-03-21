@@ -12,7 +12,7 @@ from app.auth import Principal, require_any_study_user, require_client, require_
 from app.config import get_settings
 from app.crypto_util import decrypt_secret, encrypt_secret
 from app.database import get_db
-from app.default_config import DEFAULT_PANEL_CONFIG
+from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
 from app.models import ChatMessage, OptimizationRun, StudySession
 from app.schemas import (
     MessageCreate,
@@ -50,6 +50,7 @@ def _session_to_out(row: StudySession) -> SessionOut:
         panel_config=_panel_dict(row),
         optimization_allowed=row.optimization_allowed,
         gemini_model=row.gemini_model,
+        gemini_key_configured=bool(row.gemini_key_encrypted),
     )
 
 
@@ -60,12 +61,11 @@ def create_session(
     _: Principal = Depends(require_client),
 ):
     opt_allowed = body.workflow_mode == "agile"
-    cfg = json.dumps(DEFAULT_PANEL_CONFIG)
     row = StudySession(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
         status="active",
-        panel_config_json=cfg,
+        panel_config_json=None,
         optimization_allowed=opt_allowed,
     )
     db.add(row)
@@ -83,6 +83,23 @@ def list_sessions(
     return [_session_to_out(r) for r in rows]
 
 
+@router.post("/{session_id}/participant-starter-panel", response_model=SessionOut)
+def push_participant_starter_panel(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Apply a mediocre default problem JSON so the participant can see panel 2 / run the solver."""
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    row.panel_config_json = json.dumps(MEDIOCRE_PARTICIPANT_STARTER_CONFIG)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return _session_to_out(row)
+
+
 @router.get("/{session_id}", response_model=SessionOut)
 def get_session(
     session_id: str,
@@ -92,8 +109,6 @@ def get_session(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if row.status == "terminated":
-        raise HTTPException(status_code=410, detail="Session ended")
     if row.status == "deleted":
         raise HTTPException(status_code=410, detail="Session removed")
     return _session_to_out(row)
@@ -177,8 +192,8 @@ def list_messages(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if row.status in ("terminated", "deleted"):
-        raise HTTPException(status_code=410, detail="Session ended")
+    if row.status == "deleted":
+        raise HTTPException(status_code=410, detail="Session removed")
     q = (
         db.query(ChatMessage)
         .filter(
@@ -287,11 +302,9 @@ def post_message(
                 turn = generate_chat_turn(body.content, hist, key, model, current)
                 text = turn.assistant_message
                 if turn.panel_patch:
-                    base = (
-                        deepcopy(current)
-                        if current is not None
-                        else deepcopy(DEFAULT_PANEL_CONFIG)
-                    )
+                    # Merge into an empty base until the participant has real panel data; do not seed
+                    # DEFAULT_PANEL_CONFIG (that would contradict "empty until researcher pushes").
+                    base = deepcopy(current) if current is not None else {}
                     merged = deep_merge(base, turn.panel_patch)
                     row.panel_config_json = json.dumps(merged)
                     row.updated_at = datetime.now(timezone.utc)
@@ -413,8 +426,8 @@ def list_runs(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if principal == Principal.client and row.status in ("terminated", "deleted"):
-        raise HTTPException(status_code=410, detail="Session ended")
+    if principal == Principal.client and row.status == "deleted":
+        raise HTTPException(status_code=410, detail="Session removed")
     rows = (
         db.query(OptimizationRun)
         .filter(OptimizationRun.session_id == session_id)

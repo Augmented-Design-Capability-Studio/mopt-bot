@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, type Message, type RunResult, type Session } from "@shared/api";
+import { ChatPanel } from "@shared/ChatPanel";
+import {
+  DEFAULT_SUGGESTED_GEMINI_MODEL,
+  GEMINI_MODEL_DATALIST_ID,
+  GeminiModelDatalist,
+} from "@shared/geminiModelSuggestions";
 
 const TOKEN_KEY = "mopt_researcher_token";
 
@@ -15,9 +21,15 @@ export function ResearcherApp() {
   const [runs, setRuns] = useState<RunResult[]>([]);
   const [steerText, setSteerText] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
-  const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash");
+  const [geminiModel, setGeminiModel] = useState(DEFAULT_SUGGESTED_GEMINI_MODEL);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pushKeySuccess, setPushKeySuccess] = useState<string | null>(null);
+
+  /** Bumped when the server session may change from a mutation so in-flight GET /researcher polls are ignored. */
+  const detailPollGen = useRef(0);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
 
   const refreshList = useCallback(async () => {
     if (!savedToken.trim()) return;
@@ -32,17 +44,23 @@ export function ResearcherApp() {
 
   const loadDetail = useCallback(async () => {
     if (!savedToken.trim() || !selected) return;
+    const sessionId = selected;
+    const gen = detailPollGen.current;
     try {
-      const s = await apiFetch<Session>(`/sessions/${selected}/researcher`, savedToken.trim());
+      const s = await apiFetch<Session>(`/sessions/${sessionId}/researcher`, savedToken.trim());
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
       setDetail(s);
       const msgs = await apiFetch<Message[]>(
-        `/sessions/${selected}/messages/researcher?after_id=0`,
+        `/sessions/${sessionId}/messages/researcher?after_id=0`,
         savedToken.trim(),
       );
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
       setMessages(msgs);
-      const r = await apiFetch<RunResult[]>(`/sessions/${selected}/runs`, savedToken.trim());
+      const r = await apiFetch<RunResult[]>(`/sessions/${sessionId}/runs`, savedToken.trim());
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
       setRuns(r);
     } catch (e) {
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
       setError(e instanceof Error ? e.message : "Load failed");
     }
   }, [savedToken, selected]);
@@ -57,6 +75,11 @@ export function ResearcherApp() {
     return () => window.clearInterval(t);
   }, [loadDetail]);
 
+  useEffect(() => {
+    if (!detail) return;
+    setGeminiModel(detail.gemini_model?.trim() || DEFAULT_SUGGESTED_GEMINI_MODEL);
+  }, [detail?.id]);
+
   function saveToken() {
     const t = tokenInput.trim();
     sessionStorage.setItem(TOKEN_KEY, t);
@@ -66,8 +89,10 @@ export function ResearcherApp() {
     // List refresh runs via useEffect when savedToken updates
   }
 
-  async function patchSession(patch: Record<string, unknown>) {
-    if (!savedToken.trim() || !selected) return;
+  /** Returns true only when the PATCH succeeded (callers can clear inputs safely). */
+  async function patchSession(patch: Record<string, unknown>): Promise<boolean> {
+    if (!savedToken.trim() || !selected) return false;
+    detailPollGen.current += 1;
     setBusy(true);
     try {
       const s = await apiFetch<Session>(`/sessions/${selected}`, savedToken.trim(), {
@@ -76,8 +101,11 @@ export function ResearcherApp() {
       });
       setDetail(s);
       await refreshList();
+      setError(null);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Update failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -85,15 +113,28 @@ export function ResearcherApp() {
 
   async function sendSteer() {
     if (!steerText.trim() || !savedToken.trim() || !selected) return;
+    const text = steerText.trim();
+    const tempId = -Date.now();
+    const optimistic: Message = {
+      id: tempId,
+      created_at: new Date().toISOString(),
+      role: "researcher",
+      content: text,
+      visible_to_participant: false,
+      kind: "chat",
+    };
+    setMessages((m) => [...m, optimistic]);
+    setSteerText("");
     setBusy(true);
     try {
-      await apiFetch(`/sessions/${selected}/steer`, savedToken.trim(), {
+      const saved = await apiFetch<Message>(`/sessions/${selected}/steer`, savedToken.trim(), {
         method: "POST",
-        body: JSON.stringify({ content: steerText.trim() }),
+        body: JSON.stringify({ content: text }),
       });
-      setSteerText("");
-      await loadDetail();
+      setMessages((m) => [...m.filter((x) => x.id !== tempId), saved]);
     } catch (e) {
+      setMessages((m) => m.filter((x) => x.id !== tempId));
+      setSteerText(text);
       setError(e instanceof Error ? e.message : "Steer failed");
     } finally {
       setBusy(false);
@@ -102,6 +143,7 @@ export function ResearcherApp() {
 
   async function terminate() {
     if (!selected || !savedToken.trim()) return;
+    detailPollGen.current += 1;
     setBusy(true);
     try {
       await apiFetch(`/sessions/${selected}/terminate`, savedToken.trim(), { method: "POST" });
@@ -127,6 +169,26 @@ export function ResearcherApp() {
       await refreshList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pushParticipantStarterPanel() {
+    if (!savedToken.trim() || !selected) return;
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      const s = await apiFetch<Session>(
+        `/sessions/${selected}/participant-starter-panel`,
+        savedToken.trim(),
+        { method: "POST" },
+      );
+      setDetail(s);
+      await refreshList();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Push starter config failed");
     } finally {
       setBusy(false);
     }
@@ -238,7 +300,14 @@ export function ResearcherApp() {
                   />{" "}
                   Allow optimization runs
                 </label>
+                <button type="button" disabled={busy} onClick={() => void pushParticipantStarterPanel()}>
+                  Push starter problem config
+                </button>
               </div>
+              <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
+                New participant sessions start with empty panels until you push this mediocre default (GA weights +
+                modest epochs/population).
+              </p>
               <div
                 style={{
                   border: "1px solid var(--border)",
@@ -247,27 +316,56 @@ export function ResearcherApp() {
                 }}
               >
                 <strong className="muted">Push model key to participant session</strong>
+                <p className="muted" style={{ fontSize: "0.8rem", margin: "0.35rem 0 0" }}>
+                  Server status for this session:{" "}
+                  <strong>{detail.gemini_key_configured ? "API key stored" : "No API key yet"}</strong>
+                </p>
+                {pushKeySuccess && (
+                  <p className="banner-info" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                    {pushKeySuccess}
+                  </p>
+                )}
+                <GeminiModelDatalist />
                 <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginTop: "0.35rem" }}>
                   <input
                     type="password"
                     placeholder="Gemini API key"
                     value={geminiKey}
-                    onChange={(e) => setGeminiKey(e.target.value)}
+                    onChange={(e) => {
+                      setGeminiKey(e.target.value);
+                      setPushKeySuccess(null);
+                    }}
                     style={{ flex: 1, minWidth: "10rem" }}
                   />
                   <input
                     value={geminiModel}
                     onChange={(e) => setGeminiModel(e.target.value)}
-                    style={{ width: "10rem" }}
+                    list={GEMINI_MODEL_DATALIST_ID}
+                    placeholder={DEFAULT_SUGGESTED_GEMINI_MODEL}
+                    autoComplete="off"
+                    style={{ minWidth: "12rem", flex: "1 1 10rem" }}
                   />
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() =>
-                      void patchSession({
-                        gemini_api_key: geminiKey || undefined,
-                        gemini_model: geminiModel || undefined,
-                      }).then(() => setGeminiKey(""))
+                      void (async () => {
+                        const key = geminiKey.trim();
+                        if (!key) {
+                          setError("Enter a Gemini API key to push.");
+                          return;
+                        }
+                        const ok = await patchSession({
+                          gemini_api_key: key,
+                          gemini_model: geminiModel.trim() || undefined,
+                        });
+                        if (ok) {
+                          setGeminiKey("");
+                          setPushKeySuccess(
+                            "Key saved on the server. The participant app will show a check on the Model / API key chip after the next sync.",
+                          );
+                        }
+                      })()
                     }
                   >
                     Push key
@@ -275,29 +373,33 @@ export function ResearcherApp() {
                 </div>
               </div>
               <section>
-                <div className="panel-header">Chat (incl. steering)</div>
-                <div className="chat-log" style={{ maxHeight: "240px" }}>
-                  {messages.map((m) => (
-                    <div key={m.id} className="bubble assistant">
-                      <strong>
-                        {m.role}
-                        {!m.visible_to_participant ? " (hidden from participant)" : ""}
-                      </strong>
-                      <div>{m.content}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="chat-input-row" style={{ marginTop: "0.35rem" }}>
-                  <textarea
-                    value={steerText}
-                    onChange={(e) => setSteerText(e.target.value)}
-                    placeholder="Steering note (participant does not see)"
-                    style={{ minHeight: "2.5rem" }}
-                  />
-                  <button type="button" disabled={busy} onClick={() => void sendSteer()}>
-                    Send steer
-                  </button>
-                </div>
+                <ChatPanel
+                  title="Chat (incl. steering)"
+                  logStyle={{ maxHeight: "240px" }}
+                  messages={
+                    <>
+                      {messages.map((m, i) => (
+                        <div key={m.id < 0 ? `tmp-${m.id}-${i}` : m.id} className="bubble assistant">
+                          <strong>
+                            {m.role}
+                            {!m.visible_to_participant ? " (hidden from participant)" : ""}
+                          </strong>
+                          <div>{m.content}</div>
+                        </div>
+                      ))}
+                    </>
+                  }
+                  composer={{
+                    value: steerText,
+                    onChange: setSteerText,
+                    onSend: sendSteer,
+                    sendDisabled: busy,
+                    sendLabel: "Send steer",
+                    placeholder:
+                      "Steering note (participant does not see). Enter to send, Shift+Enter for newline.",
+                    textareaStyle: { minHeight: "2.5rem" },
+                  }}
+                />
               </section>
               <section>
                 <div className="panel-header">Runs</div>

@@ -17,7 +17,8 @@ Install dependencies once (repo root):
 .\venv\Scripts\pip.exe install -r vrptw-problem\requirements.txt -r backend\requirements.txt
 Copy-Item backend\.env.example .env
 # Edit `.env` (real secrets). `.env.example` is only a template — the server does not read it.
-# Set MOPT_CLIENT_SECRET, MOPT_RESEARCHER_SECRET, MOPT_CORS_ORIGINS, MOPT_HOST, MOPT_PORT, etc.
+# Set MOPT_CLIENT_SECRET, MOPT_RESEARCHER_SECRET, MOPT_CORS_ORIGINS, MOPT_HOST, MOPT_PORT,
+# MOPT_DEFAULT_GEMINI_MODEL (defaults to gemini-3-flash-preview), etc.
 ```
 
 **Linux / Raspberry Pi** — see `docs/RASPBERRY_PI_SETUP.txt` for `apt`, `venv`, and `pip` commands.
@@ -66,7 +67,11 @@ You can still use Uvicorn directly if you prefer:
 
 Install **mealpy** (via `vrptw-problem/requirements.txt`) or optimization runs return a clear error.
 
-**Participant chat (Gemini):** Python package **`google-genai`** (`pip` installs it via `backend/requirements.txt`). System prompt: `backend/app/prompts/study_chat.py`. With **Ask model** checked, the API uses structured JSON from Gemini to merge `panel_patch` into the session’s problem panel and returns the updated config to the UI.
+**Participant chat (Gemini):** Python package **`google-genai`** (`pip` installs it via `backend/requirements.txt`). System prompt: `backend/app/prompts/study_chat.py` — frames the study as **general metaheuristic / solver-configuration** help; the run uses a **fixed benchmark** on the server; **`panel_patch`** is **solver JSON**, not source code. With **Ask model (requires API key).** enabled, structured replies merge `panel_patch` when applicable. New sessions start without panel JSON until the researcher **Push starter problem config** (see researcher UI) or the model/chat supplies `panel_patch`; the participant client uses an **empty-until-server-panel** hydration mode so polling does not overwrite the cleared textarea until the server has real panel JSON (then it follows the server).
+
+**Frontend:** participant and researcher chat panels share **`frontend/src/shared/ChatPanel.tsx`** (`ChatPanel`, `ChatComposer`, `ChatAiPendingBubble`); Enter-to-send lives in that module. Messages show **optimistically**; with **Ask model** on, a **spinner** shows until Gemini returns.
+
+**Session lifecycle:** **Terminate** keeps the row so the participant can still **read** chat/runs; **Delete** removes the row — the client returns to the start gate (saved token) when polling detects the session is gone.
 
 ## Frontend
 
@@ -102,6 +107,6 @@ cd backend
 ## Smoke checklist (manual)
 
 1. Researcher token: list sessions, open one, export JSON.
-2. Participant token: **Start session** (no workflow choice). New sessions default to **waterfall** with runs gated until the researcher sets **agile** and/or **Allow optimization runs**. Then: chat, edit/save panel JSON, run optimization (with mealpy installed), see run tab and violations.
+2. Participant token: **Start session** (no workflow choice), or expand **Past sessions on this browser** to **Resume** a stored session id (same token; local list only — not IP-based). New sessions default to **waterfall** with runs gated until the researcher sets **agile** and/or **Allow optimization runs**. Then: chat, edit/save panel JSON, run optimization (with mealpy installed), see run tab and violations.
 3. Researcher: toggle “allow optimization” and workflow; participant sees gated runs when disabled.
 4. Terminate session; participant next sync shows “start fresh”.

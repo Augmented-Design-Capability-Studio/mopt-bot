@@ -28,6 +28,7 @@ class SessionOut(BaseModel):
     panel_config: dict[str, Any] | None
     optimization_allowed: bool
     gemini_model: str | None
+    gemini_key_configured: bool = False
 
 
 class MessageCreate(BaseModel):

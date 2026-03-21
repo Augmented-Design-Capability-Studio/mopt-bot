@@ -57,7 +57,16 @@ export type Session = {
   panel_config: Record<string, unknown> | null;
   optimization_allowed: boolean;
   gemini_model: string | null;
+  gemini_key_configured: boolean;
 };
+
+/** Text for the problem-config editor: empty string when there is nothing to show. */
+export function sessionPanelToConfigText(panel: Session["panel_config"]): string {
+  if (panel == null) return "";
+  if (typeof panel !== "object" || Array.isArray(panel)) return "";
+  if (Object.keys(panel as object).length === 0) return "";
+  return JSON.stringify(panel, null, 2);
+}
 
 export type Message = {
   id: number;
@@ -73,25 +82,70 @@ export type PostMessagesResponse = {
   panel_config: Record<string, unknown> | null;
 };
 
-/** Avoid React crashes if the proxy returns HTML or an old array-shaped body. */
-export function assertPostMessagesResponse(data: unknown): PostMessagesResponse {
-  if (
-    data === null ||
-    typeof data !== "object" ||
-    Array.isArray(data) ||
-    !("messages" in data) ||
-    !Array.isArray((data as PostMessagesResponse).messages)
-  ) {
-    throw new Error(
-      "Invalid message response from server (expected JSON with a messages array). Check the API URL and that the backend is running.",
-    );
-  }
-  const o = data as PostMessagesResponse;
+function isLooseMessage(x: unknown): x is Record<string, unknown> {
+  if (x === null || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return typeof o.id === "number" && typeof o.role === "string" && typeof o.content === "string";
+}
+
+function coerceMessage(o: Record<string, unknown>): Message {
   return {
-    messages: o.messages,
-    panel_config: o.panel_config ?? null,
+    id: o.id as number,
+    created_at: typeof o.created_at === "string" ? o.created_at : "",
+    role: o.role as string,
+    content: o.content as string,
+    visible_to_participant: typeof o.visible_to_participant === "boolean" ? o.visible_to_participant : true,
+    kind: typeof o.kind === "string" ? o.kind : "chat",
   };
 }
+
+/**
+ * POST /sessions/:id/messages should return `{ messages, panel_config? }`.
+ * Also accepts a top-level message array (legacy / misconfigured proxies).
+ * If the server returns HTML (e.g. SPA fallback when VITE_API_BASE is unset), `parseJson` yields a string — explain that clearly.
+ */
+export function normalizePostMessagesResponse(data: unknown): PostMessagesResponse {
+  if (data == null) {
+    throw new Error(
+      "Empty response when sending a message. For production builds served separately from the API, set VITE_API_BASE (see frontend/.env.example).",
+    );
+  }
+  if (typeof data === "string") {
+    const t = data.trimStart().toLowerCase();
+    if (t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<!")) {
+      throw new Error(
+        "The server returned a web page instead of JSON for the chat API. Set VITE_API_BASE to your API origin when you build or host the frontend away from the backend (see frontend/.env.example).",
+      );
+    }
+    throw new Error(
+      "Invalid message response (body is not JSON). Check the API URL and that the backend is running.",
+    );
+  }
+  if (Array.isArray(data)) {
+    if (data.length > 0 && !data.every(isLooseMessage)) {
+      throw new Error(
+        "Invalid message response (expected an object with a messages array or a JSON array of message objects).",
+      );
+    }
+    return {
+      messages: (data as Record<string, unknown>[]).map(coerceMessage),
+      panel_config: null,
+    };
+  }
+  if (typeof data === "object" && Array.isArray((data as PostMessagesResponse).messages)) {
+    const o = data as PostMessagesResponse;
+    return {
+      messages: o.messages,
+      panel_config: o.panel_config ?? null,
+    };
+  }
+  throw new Error(
+    "Invalid message response (expected JSON with a messages array). Check the API URL and that the backend is running.",
+  );
+}
+
+/** @deprecated Use normalizePostMessagesResponse */
+export const assertPostMessagesResponse = normalizePostMessagesResponse;
 
 export type RunResult = {
   id: number;

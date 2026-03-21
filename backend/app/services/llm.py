@@ -14,6 +14,28 @@ from app.schemas import ChatModelTurn
 
 log = logging.getLogger(__name__)
 
+# Gemini rejects nested OpenAPI "additional_properties" when passing a Pydantic model as
+# response_schema (dict[str, Any] becomes additionalProperties: true). Use response_json_schema
+# with a plain object branch (no additionalProperties) instead. Parsing still goes through
+# ChatModelTurn.model_validate below.
+CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "ChatModelTurn",
+    "type": "object",
+    "properties": {
+        "assistant_message": {
+            "type": "string",
+            "description": "Visible reply to the participant.",
+        },
+        "panel_patch": {
+            "anyOf": [
+                {"type": "object"},
+                {"type": "null"},
+            ],
+        },
+    },
+    "required": ["assistant_message"],
+}
+
 
 def _history_to_contents(history_lines: list[tuple[str, str]]) -> list[types.Content]:
     """Map DB roles user/assistant to Gemini user/model Content turns."""
@@ -77,7 +99,7 @@ def generate_chat_turn(
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         response_mime_type="application/json",
-        response_schema=ChatModelTurn,
+        response_json_schema=CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     )
     try:
         chat = client.chats.create(
@@ -86,8 +108,11 @@ def generate_chat_turn(
             history=history,
         )
         resp = chat.send_message(user_text)
-        if resp.parsed is not None and isinstance(resp.parsed, ChatModelTurn):
-            return resp.parsed
+        if resp.parsed is not None:
+            if isinstance(resp.parsed, ChatModelTurn):
+                return resp.parsed
+            if isinstance(resp.parsed, dict):
+                return ChatModelTurn.model_validate(resp.parsed)
         raw = resp.text
         if not raw:
             raise RuntimeError("Empty model response")
