@@ -171,7 +171,9 @@ export type RunScheduleStop = {
   service_minutes: number;
   wait_minutes: number;
   time_window_minutes_over: number;
-  priority_urgent: boolean;
+  priority_express?: boolean;
+  /** @deprecated Use `priority_express`. */
+  priority_urgent?: boolean;
   priority_deadline_missed: boolean;
   constraint_conflict: boolean;
   time_window_conflict: boolean;

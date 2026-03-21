@@ -336,6 +336,38 @@ select:focus-visible {
   border: 1px solid var(--border);
   background: #fff;
   padding: 0.15rem 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.timeline-legend-swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 1px solid #506273;
+  background: #8094a8;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.timeline-legend-swatch.service {
+  border-color: #506273;
+  background: #8094a8;
+}
+
+.timeline-legend-swatch.tw-miss {
+  border: 2px solid #9b4132;
+  background: #8094a8;
+}
+
+.timeline-legend-swatch.express {
+  border-color: #705a36;
+  background: #8f7447;
+}
+
+.timeline-legend-swatch.capacity {
+  border-color: #506273;
+  background: linear-gradient(to top, #b54734 45%, #8094a8 45%);
 }
 
 .run-timeline-axis,
@@ -393,7 +425,7 @@ select:focus-visible {
   border-radius: 2px;
 }
 
-.run-stop-bar.urgent {
+.run-stop-bar.express {
   background: #8f7447;
   border-color: #705a36;
 }

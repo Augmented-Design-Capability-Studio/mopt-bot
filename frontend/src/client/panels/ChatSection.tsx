@@ -86,11 +86,11 @@ export function ChatSection({
             disabled={editMode !== "none" || chatLocked}
             onClick={() => fileRef.current?.click()}
           >
-            Simulated upload
+            Upload file(s)...
           </button>
-          <span className="muted" style={{ marginLeft: "0.5rem" }}>
+          {/* <span className="muted" style={{ marginLeft: "0.5rem" }}>
             (canonical scenario; no file contents used)
-          </span>
+          </span> */}
         </div>
       }
       composer={{

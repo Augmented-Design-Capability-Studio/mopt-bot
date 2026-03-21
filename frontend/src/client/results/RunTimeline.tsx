@@ -12,6 +12,10 @@ function stopLabel(stop: RunScheduleStop): string {
   return stop.task_id.replace(/^O/, "");
 }
 
+function isExpressStop(stop: RunScheduleStop): boolean {
+  return stop.priority_express ?? stop.priority_urgent ?? false;
+}
+
 type RunTimelineProps = {
   schedule: RunSchedule;
 };
@@ -76,10 +80,22 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
   return (
     <div className="run-timeline-wrap">
       <div className="run-timeline-legend muted">
-        <span className="timeline-legend-item">Solid bar = stop service block</span>
-        <span className="timeline-legend-item">Red outline = time-window miss</span>
-        <span className="timeline-legend-item">Amber badge = urgent stop</span>
-        <span className="timeline-legend-item">Red chip = capacity overflow</span>
+        <span className="timeline-legend-item">
+          <span className="timeline-legend-swatch service" />
+          Stop service block
+        </span>
+        <span className="timeline-legend-item">
+          <span className="timeline-legend-swatch tw-miss" />
+          Time-window miss
+        </span>
+        <span className="timeline-legend-item">
+          <span className="timeline-legend-swatch express" />
+          Express stop
+        </span>
+        <span className="timeline-legend-item">
+          <span className="timeline-legend-swatch capacity" />
+          Capacity overflow
+        </span>
       </div>
       <div className="run-timeline-axis">
         <div className="run-timeline-label-spacer" />
@@ -125,7 +141,7 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
                         "run-stop-bar",
                         stop.time_window_conflict ? "violation-tw" : "",
                         stop.capacity_conflict ? "violation-capacity" : "",
-                        stop.priority_urgent ? "urgent" : "",
+                        isExpressStop(stop) ? "express" : "",
                         selected ? "selected" : "",
                       ]
                         .filter(Boolean)
@@ -180,7 +196,7 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
                   selectedStop.time_window_conflict
                     ? `${selectedStop.time_window_minutes_over.toFixed(0)}m late`
                     : "",
-                  selectedStop.priority_deadline_missed ? "urgent miss" : "",
+                  selectedStop.priority_deadline_missed ? "express miss" : "",
                   selectedStop.capacity_conflict
                     ? `${selectedStop.capacity_overflow_after_stop} over capacity`
                     : "",

@@ -242,6 +242,8 @@ def _visits_from_evaluator_records(visits_per_vehicle: list) -> list[dict[str, A
                     "time_window_minutes_over": float(
                         getattr(rec, "time_window_minutes_over", 0)
                     ),
+                    "priority_express": bool(rec.is_express),
+                    # Backward-compatible alias for older frontend payloads.
                     "priority_urgent": bool(rec.is_express),
                     "priority_deadline_missed": bool(
                         getattr(rec, "priority_deadline_missed", False)

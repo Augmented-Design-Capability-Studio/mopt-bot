@@ -28,7 +28,7 @@ const TRACKABLE: {
   {
     key: "priority_penalty",
     label: "Priority Misses",
-    hint: "urgent orders delivered outside their deadline",
+    hint: "express orders delivered outside their deadline",
     card: (v) => ({
       value: `${v.priority_deadline_misses} missed`,
       warn: v.priority_deadline_misses > 0,

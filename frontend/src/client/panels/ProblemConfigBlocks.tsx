@@ -46,7 +46,7 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
   priority_penalty: {
     label: "Priority Order Deadlines",
     description:
-      "Penalizes late delivery of urgent or high-priority tasks. Higher values protect critical deadlines.",
+      "Penalizes late delivery of express or high-priority tasks. Higher values protect critical deadlines.",
   },
 };
 
