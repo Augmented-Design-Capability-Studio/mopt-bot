@@ -339,7 +339,8 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     from user_input import DEFAULT_DRIVER_PREFERENCES, SHIFT_HARD_PENALTY, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
-    only_active = bool(raw.get("only_active_terms", False))
+    # Default to explicit-only objective scoring when the field is omitted.
+    only_active = bool(raw.get("only_active_terms", True))
     weights = build_weights(weights_raw, only_active_terms=only_active)
 
     driver_preferences = raw.get("driver_preferences")

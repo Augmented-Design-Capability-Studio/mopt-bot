@@ -9,6 +9,14 @@ import {
 
 const TOKEN_KEY = "mopt_researcher_token";
 
+function getOnlyActiveTerms(panel: Session["panel_config"]): boolean {
+  if (!panel || typeof panel !== "object" || Array.isArray(panel)) return true;
+  const problem = (panel as Record<string, unknown>).problem;
+  if (!problem || typeof problem !== "object" || Array.isArray(problem)) return true;
+  const flag = (problem as Record<string, unknown>).only_active_terms;
+  return typeof flag === "boolean" ? flag : true;
+}
+
 export function ResearcherApp() {
   /** Value in the input; not sent to the API until "Save token". */
   const [tokenInput, setTokenInput] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
@@ -224,6 +232,21 @@ export function ResearcherApp() {
     }
   }
 
+  async function setOnlyActiveTerms(enabled: boolean) {
+    if (!detail) return;
+    const panel =
+      detail.panel_config && typeof detail.panel_config === "object" && !Array.isArray(detail.panel_config)
+        ? { ...(detail.panel_config as Record<string, unknown>) }
+        : {};
+    const problem =
+      panel.problem && typeof panel.problem === "object" && !Array.isArray(panel.problem)
+        ? { ...(panel.problem as Record<string, unknown>) }
+        : {};
+    problem.only_active_terms = enabled;
+    panel.problem = problem;
+    await patchSession({ panel_config: panel });
+  }
+
   async function exportJson() {
     if (!selected || !savedToken.trim()) return;
     try {
@@ -333,6 +356,15 @@ export function ResearcherApp() {
                 <button type="button" disabled={busy} onClick={() => void pushParticipantStarterPanel()}>
                   Push starter problem config
                 </button>
+                <label className="muted">
+                  <input
+                    type="checkbox"
+                    checked={getOnlyActiveTerms(detail.panel_config)}
+                    disabled={busy}
+                    onChange={(e) => void setOnlyActiveTerms(e.target.checked)}
+                  />{" "}
+                  Only score explicitly listed objectives
+                </label>
               </div>
               <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
                 New participant sessions start with empty panels until you push this mediocre default (GA weights +

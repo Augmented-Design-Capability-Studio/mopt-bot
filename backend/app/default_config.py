@@ -18,7 +18,7 @@ _PROBLEM_WEIGHTS: dict = {
 DEFAULT_PANEL_CONFIG: dict = {
     "problem": {
         "weights": dict(_PROBLEM_WEIGHTS),
-        "only_active_terms": False,
+        "only_active_terms": True,
         "algorithm": "GA",
         "epochs": 80,
         "pop_size": 40,
@@ -30,7 +30,7 @@ DEFAULT_PANEL_CONFIG: dict = {
 MEDIOCRE_PARTICIPANT_STARTER_CONFIG: dict = {
     "problem": {
         "weights": dict(_PROBLEM_WEIGHTS),
-        "only_active_terms": False,
+        "only_active_terms": True,
         "algorithm": "GA",
         "epochs": 35,
         "pop_size": 20,

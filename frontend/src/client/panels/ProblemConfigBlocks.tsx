@@ -112,7 +112,12 @@ function parseProblem(json: string): {
     hasProblemKey,
     p: {
       weights,
-      only_active_terms: Boolean(inner.only_active_terms),
+      // Participant UI does not expose this toggle; default to explicit-only scoring
+      // when the field is absent so hidden defaults are not silently applied.
+      only_active_terms:
+        typeof inner.only_active_terms === "boolean"
+          ? inner.only_active_terms
+          : true,
       algorithm: typeof inner.algorithm === "string" ? inner.algorithm : "",
       epochs: typeof inner.epochs === "number" ? inner.epochs : null,
       pop_size: typeof inner.pop_size === "number" ? inner.pop_size : null,
@@ -206,26 +211,6 @@ export function ProblemConfigBlocks({
       {/* ── OPTIMIZATION OBJECTIVES ── */}
       {hasObjectives && (
         <BlockSection title="Optimization Objectives">
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.4rem",
-              fontSize: "0.78rem",
-              marginBottom: "0.5rem",
-              cursor: editable ? "pointer" : "default",
-            }}
-            className="muted"
-          >
-            <input
-              type="checkbox"
-              checked={p.only_active_terms}
-              disabled={!editable}
-              onChange={(e) => update({ only_active_terms: e.target.checked })}
-            />
-            Only score the objectives listed here; treat all others as zero
-          </label>
-
           {weightKeys.map((key) => {
             const info = WEIGHT_INFO[key];
             return (
