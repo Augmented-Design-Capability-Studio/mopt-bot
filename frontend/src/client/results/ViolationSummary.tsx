@@ -4,13 +4,11 @@ import type { RunMetrics, RunViolations } from "@shared/api";
 const TRACKABLE: {
   key: string;
   label: string;
-  hint: string;
   card: (v: RunViolations, m: RunMetrics) => { value: string; warn: boolean };
 }[] = [
   {
     key: "deadline_penalty",
     label: "On-Time Delivery",
-    hint: "late deliveries & minutes over time windows",
     card: (v) => ({
       value: `${v.time_window_stop_count} late · ${v.time_window_minutes_over.toFixed(0)} min`,
       warn: v.time_window_stop_count > 0,
@@ -19,7 +17,6 @@ const TRACKABLE: {
   {
     key: "capacity_penalty",
     label: "Capacity Overflow",
-    hint: "units loaded beyond vehicle capacity",
     card: (v) => ({
       value: `${v.capacity_units_over} units over`,
       warn: v.capacity_units_over > 0,
@@ -28,7 +25,6 @@ const TRACKABLE: {
   {
     key: "priority_penalty",
     label: "Priority Misses",
-    hint: "express orders delivered outside their deadline",
     card: (v) => ({
       value: `${v.priority_deadline_misses} missed`,
       warn: v.priority_deadline_misses > 0,
@@ -37,7 +33,6 @@ const TRACKABLE: {
   {
     key: "workload_balance",
     label: "Workload Variance",
-    hint: "inequality in shift lengths across workers",
     card: (_, m) => ({
       value: m.workload_variance.toFixed(1),
       warn: m.workload_variance > 5,
@@ -62,9 +57,7 @@ export function ViolationSummary({
   activeWeightKeys,
 }: ViolationSummaryProps) {
   const active = new Set(activeWeightKeys);
-
   const visibleCards = TRACKABLE.filter((t) => active.has(t.key));
-  const hiddenObjectives = TRACKABLE.filter((t) => !active.has(t.key));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
@@ -92,25 +85,6 @@ export function ViolationSummary({
           </div>
         </div>
       </div>
-
-      {/* ── Undiscovered objectives hint ── */}
-      {hiddenObjectives.length > 0 && (
-        <div
-          className="muted"
-          style={{
-            fontSize: "0.78rem",
-            fontStyle: "italic",
-            borderLeft: "2px solid var(--border)",
-            paddingLeft: "0.5rem",
-          }}
-        >
-          {hiddenObjectives.length === TRACKABLE.length
-            ? "No objectives configured yet — "
-            : `${hiddenObjectives.length} more objective${hiddenObjectives.length > 1 ? "s" : ""} not tracked yet — `}
-          chat with the assistant to explore{" "}
-          {hiddenObjectives.map((t) => t.hint).join(", ")}.
-        </div>
-      )}
     </div>
   );
 }
