@@ -81,25 +81,6 @@ export function useParticipantSessionSync({
     sessionIdRef.current = sessionId;
   }, [sessionId, sessionIdRef]);
 
-  // Always holds the latest syncMessages so the eager-poll timer doesn't
-  // capture a stale closure from when it was started.
-  const syncMessagesRef = useRef(syncMessages);
-  syncMessagesRef.current = syncMessages;
-  const eagerTimerRef = useRef<number | null>(null);
-
-  const startEagerMessagePoll = useCallback(() => {
-    if (eagerTimerRef.current !== null) window.clearInterval(eagerTimerRef.current);
-    const startedAt = Date.now();
-    eagerTimerRef.current = window.setInterval(() => {
-      if (Date.now() - startedAt >= EAGER_POLL_DURATION_MS) {
-        window.clearInterval(eagerTimerRef.current!);
-        eagerTimerRef.current = null;
-        return;
-      }
-      void syncMessagesRef.current();
-    }, EAGER_POLL_INTERVAL_MS);
-  }, []);
-
   const invalidateRemovedSession = useCallback(
     (message: string) => {
       const goneId = sessionIdRef.current;
@@ -201,6 +182,25 @@ export function useParticipantSessionSync({
       }
     }
   }, [invalidateRemovedSession, lastMsgId, sessionId, sessionIdRef, setLastMsgId, setMessages, token]);
+
+  // Always holds the latest syncMessages so the eager-poll timer doesn't
+  // capture a stale closure from when it was started.
+  const syncMessagesRef = useRef(syncMessages);
+  syncMessagesRef.current = syncMessages;
+  const eagerTimerRef = useRef<number | null>(null);
+
+  const startEagerMessagePoll = useCallback(() => {
+    if (eagerTimerRef.current !== null) window.clearInterval(eagerTimerRef.current);
+    const startedAt = Date.now();
+    eagerTimerRef.current = window.setInterval(() => {
+      if (Date.now() - startedAt >= EAGER_POLL_DURATION_MS) {
+        window.clearInterval(eagerTimerRef.current!);
+        eagerTimerRef.current = null;
+        return;
+      }
+      void syncMessagesRef.current();
+    }, EAGER_POLL_INTERVAL_MS);
+  }, []);
 
   const syncRuns = useCallback(async () => {
     if (!token || !sessionId) return;
