@@ -2,11 +2,11 @@ import type { RefObject } from "react";
 
 import type { Message, RunResult, Session } from "@shared/api";
 
+import { ChatSection } from "../chat/ChatSection";
+import { type EditMode } from "../lib/participantTypes";
+import { ConfigPanel } from "../problemConfig/ConfigPanel";
+import { ResultsPanel } from "../results/ResultsPanel";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
-import { type EditMode } from "./participantTypes";
-import { ChatSection } from "./panels/ChatSection";
-import { ConfigPanel } from "./panels/ConfigPanel";
-import { ResultsPanel } from "./panels/ResultsPanel";
 
 type ParticipantShellProps = {
   sessionId: string;
@@ -87,15 +87,12 @@ export function ParticipantShell({
   onCloseModelDialog,
   onSaveModelSettings,
 }: ParticipantShellProps) {
-  const panelClass = (name: EditMode) =>
-    editMode !== "none" && editMode !== name ? "panel panel-locked" : "panel";
+  const panelClass = (name: EditMode) => (editMode !== "none" && editMode !== name ? "panel panel-locked" : "panel");
 
   const sessionTerminated = session?.status === "terminated";
   const chatLocked = sessionTerminated;
-  const modelKeyStatus =
-    session == null ? "neutral" : session.gemini_key_configured ? "ok" : "warn";
-  const modelKeyIcon =
-    modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
+  const modelKeyStatus = session == null ? "neutral" : session.gemini_key_configured ? "ok" : "warn";
+  const modelKeyIcon = modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
 
   return (
     <div className="app-shell">
@@ -114,7 +111,7 @@ export function ParticipantShell({
               modelKeyStatus === "ok"
                 ? "API key is set for this session"
                 : modelKeyStatus === "warn"
-                  ? "No API key on the session — add one or ask the researcher"
+                  ? "No API key on the session - add one or ask the researcher"
                   : "Session loading"
             }
             onClick={() => onSetShowModelDialog(true)}
@@ -132,8 +129,8 @@ export function ParticipantShell({
       {sessionTerminated && (
         <div className="banner-info" role="status">
           <span>
-            This session was ended by the researcher. You can still read chat and
-            runs below. Start a new session when you are ready to continue.
+            This session was ended by the researcher. You can still read chat and runs below. Start a new session when
+            you are ready to continue.
           </span>
           <button type="button" disabled={busy} onClick={() => void onStartSession()}>
             Start new session

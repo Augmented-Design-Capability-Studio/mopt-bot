@@ -1,4 +1,4 @@
-import type { RecentSessionRow } from "./participantTypes";
+import type { RecentSessionRow } from "../lib/participantTypes";
 
 type LoginGateProps = {
   token: string;
@@ -39,9 +39,8 @@ export function LoginGate({
           </p>
         )}
         <p className="muted">
-          Enter the access token for this station, then start. Workflow
-          (e.g. agile vs waterfall) is set by the researcher for your
-          session — you do not choose it here.
+          Enter the access token for this station, then start. Workflow (for example agile vs waterfall) is set by the
+          researcher for your session - you do not choose it here.
         </p>
         <label>
           Access token
@@ -63,25 +62,15 @@ export function LoginGate({
           <button type="button" onClick={() => void onLogin()}>
             Save token
           </button>
-          <button
-            type="button"
-            disabled={busy || !token.trim()}
-            onClick={() => void onStartSession()}
-          >
+          <button type="button" disabled={busy || !token.trim()} onClick={() => void onStartSession()}>
             Start session
           </button>
         </div>
-        <details
-          style={{ marginTop: "1.25rem" }}
-          className="login-recent-sessions"
-        >
-          <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-            Past sessions on this browser
-          </summary>
+        <details style={{ marginTop: "1.25rem" }} className="login-recent-sessions">
+          <summary style={{ cursor: "pointer", fontWeight: 600 }}>Past sessions on this browser</summary>
           <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Session ids are stored only on this device (not by IP on the server).
-            You still need the same access token to open them. Anyone with this
-            browser profile can see these entries.
+            Session ids are stored only on this device (not by IP on the server). You still need the same access token
+            to open them. Anyone with this browser profile can see these entries.
           </p>
           <div
             style={{
@@ -96,15 +85,12 @@ export function LoginGate({
               disabled={recentBusy || !token.trim()}
               onClick={() => void onRefreshRecentSessions()}
             >
-              {recentBusy ? "Checking…" : "Refresh list"}
+              {recentBusy ? "Checking..." : "Refresh list"}
             </button>
           </div>
           {recentRows.length === 0 ? (
-            <p
-              className="muted"
-              style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}
-            >
-              None yet — they appear after you start or leave a session.
+            <p className="muted" style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
+              None yet - they appear after you start or leave a session.
             </p>
           ) : (
             <ul
@@ -129,7 +115,7 @@ export function LoginGate({
                   }}
                 >
                   <div className="mono" style={{ wordBreak: "break-all" }}>
-                    {row.id.slice(0, 8)}…{row.id.slice(-4)}
+                    {row.id.slice(0, 8)}...{row.id.slice(-4)}
                   </div>
                   {row.error ? (
                     <span className="muted">{row.error}</span>
@@ -140,8 +126,7 @@ export function LoginGate({
                     </div>
                   ) : (
                     <span className="muted">
-                      Optional: Refresh list to show status — Resume still works if
-                      the id is valid.
+                      Optional: Refresh list to show status - Resume still works if the id is valid.
                     </span>
                   )}
                   <div
@@ -159,11 +144,7 @@ export function LoginGate({
                     >
                       Resume
                     </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onForgetSession(row.id)}
-                    >
+                    <button type="button" disabled={busy} onClick={() => onForgetSession(row.id)}>
                       Forget
                     </button>
                   </div>

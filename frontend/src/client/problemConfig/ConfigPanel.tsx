@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { EditMode } from "../participantTypes";
+import type { EditMode } from "../lib/participantTypes";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 
 type ConfigPanelProps = {
@@ -34,19 +34,13 @@ export function ConfigPanel({
     <section className={className}>
       <div className="panel-header">
         Problem configuration
-        {isEditing && <span className="muted"> — editing</span>}
+        {isEditing && <span className="muted"> - editing</span>}
       </div>
       <div className="panel-body">
-        {/* ── Natural-language form view ── */}
         <div style={{ flex: 1, overflowY: "auto", paddingRight: "0.1rem" }}>
-          <ProblemConfigBlocks
-            configJson={configText}
-            onChange={onConfigTextChange}
-            editable={editable}
-          />
+          <ProblemConfigBlocks configJson={configText} onChange={onConfigTextChange} editable={editable} />
         </div>
 
-        {/* ── Raw JSON toggle (collapsed by default) ── */}
         <details
           open={showRaw}
           onToggle={(e) => setShowRaw((e.currentTarget as HTMLDetailsElement).open)}
@@ -80,7 +74,6 @@ export function ConfigPanel({
           />
         </details>
 
-        {/* ── Action buttons ── */}
         <div
           style={{
             display: "flex",
@@ -99,11 +92,7 @@ export function ConfigPanel({
             </button>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => void onSaveConfig()}
-                disabled={busy || sessionTerminated}
-              >
+              <button type="button" onClick={() => void onSaveConfig()} disabled={busy || sessionTerminated}>
                 Save
               </button>
               <button type="button" onClick={() => onSetEditMode("none")}>

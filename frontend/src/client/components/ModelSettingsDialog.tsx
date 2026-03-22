@@ -30,12 +30,7 @@ export function ModelSettingsDialog({
   if (!open) return null;
 
   return (
-    <div
-      className="dialog-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="model-dlg-title"
-    >
+    <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="model-dlg-title">
       <div className="dialog">
         <h2 id="model-dlg-title" style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>
           Model & API key
@@ -79,11 +74,7 @@ export function ModelSettingsDialog({
           <button type="button" onClick={onClose}>
             Close
           </button>
-          <button
-            type="button"
-            disabled={busy || sessionTerminated}
-            onClick={() => void onSave()}
-          >
+          <button type="button" disabled={busy || sessionTerminated} onClick={() => void onSave()}>
             Save
           </button>
         </div>

@@ -1,6 +1,12 @@
-import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 
-/** Enter sends, Shift+Enter newline — used only by {@link ChatComposer} in this module. */
+/** Enter sends, Shift+Enter newline - used only by {@link ChatComposer}. */
 function onChatSendKeyDown(
   e: ReactKeyboardEvent<HTMLTextAreaElement>,
   onSend: () => void,
@@ -16,20 +22,17 @@ export type ChatComposerProps = {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void | Promise<void>;
-  /** Disables Send, blocks Enter-to-send, and disables textarea if `textareaDisabled` omitted */
+  /** Disables Send, blocks Enter-to-send, and disables textarea if `textareaDisabled` omitted. */
   sendDisabled: boolean;
   sendLabel: string;
   placeholder: string;
-  /** Extra class on the input row (e.g. `chat-input-locked`) */
+  /** Extra class on the input row (for example `chat-input-locked`). */
   inputRowClassName?: string;
-  /** When set, overrides disabled state on the textarea alone (e.g. allow typing while busy) */
+  /** When set, overrides disabled state on the textarea alone. */
   textareaDisabled?: boolean;
   textareaStyle?: CSSProperties;
 };
 
-/**
- * Shared textarea + Send row: Enter sends, Shift+Enter newline.
- */
 export function ChatComposer({
   value,
   onChange,
@@ -41,17 +44,16 @@ export function ChatComposer({
   textareaDisabled,
   textareaStyle,
 }: ChatComposerProps) {
-  const taDisabled = textareaDisabled ?? sendDisabled;
+  const textareaIsDisabled = textareaDisabled ?? sendDisabled;
+
   return (
     <div className={`chat-input-row${inputRowClassName ? ` ${inputRowClassName}` : ""}`}>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) =>
-          onChatSendKeyDown(e, () => void onSend(), { disabled: sendDisabled })
-        }
+        onKeyDown={(e) => onChatSendKeyDown(e, () => void onSend(), { disabled: sendDisabled })}
         placeholder={placeholder}
-        disabled={taDisabled}
+        disabled={textareaIsDisabled}
         style={textareaStyle}
       />
       <button type="button" disabled={sendDisabled} onClick={() => void onSend()}>
@@ -61,14 +63,14 @@ export function ChatComposer({
   );
 }
 
-/** Shown while the participant is waiting for a model reply (invoke model on). */
+/** Shown while the participant is waiting for a model reply. */
 export function ChatAiPendingBubble() {
   return (
     <div className="bubble assistant chat-pending-ai" aria-live="polite">
       <strong>assistant</strong>
       <div className="chat-pending-wrap">
         <span className="chat-spinner" role="status" aria-label="Loading model response" />
-        <span className="muted">Thinking…</span>
+        <span className="muted">Thinking...</span>
       </div>
     </div>
   );
@@ -76,19 +78,17 @@ export function ChatAiPendingBubble() {
 
 export type ChatPanelProps = {
   title: string;
-  /** Message bubbles (or any content) inside `.chat-log` */
   messages: ReactNode;
   logAriaLive?: "polite" | "assertive" | "off";
   logStyle?: CSSProperties;
-  /** Inserted after the log, before the composer (e.g. participant “ask model” block) */
   betweenLogAndComposer?: ReactNode;
-  /** Inserted after the composer (e.g. upload row) */
   footer?: ReactNode;
   composer: ChatComposerProps;
 };
 
 /**
- * Shared chat shell: panel header + body, scrollable log, optional slots, then {@link ChatComposer}.
+ * Shared chat shell: panel header + body, scrollable log, optional slots, then
+ * the composer row.
  */
 export function ChatPanel({
   title,

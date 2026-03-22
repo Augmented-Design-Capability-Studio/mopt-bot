@@ -1,9 +1,10 @@
 import type { RefObject } from "react";
 
 import type { Message } from "@shared/api";
-import { ChatAiPendingBubble, ChatPanel } from "@shared/ChatPanel";
+import { ChatAiPendingBubble, ChatPanel } from "@shared/chat/ChatPanel";
+import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
 
-import type { EditMode } from "../participantTypes";
+import type { EditMode } from "../lib/participantTypes";
 
 type ChatSectionProps = {
   messages: Message[];
@@ -37,30 +38,11 @@ export function ChatSection({
   return (
     <ChatPanel
       title="Chat & upload"
-      messages={
-        <>
-          {messages.map((m, idx) => (
-            <div
-              key={m.id < 0 ? `tmp-${m.id}-${idx}` : m.id}
-              className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
-            >
-              <strong>{m.role}</strong>
-              <div>{m.content}</div>
-            </div>
-          ))}
-          {aiPending && <ChatAiPendingBubble />}
-        </>
-      }
+      messages={<MessageBubbleList messages={messages} afterMessages={aiPending && <ChatAiPendingBubble />} />}
       betweenLogAndComposer={
-        <details
-          className="muted chat-model-details"
-          {...(chatLocked ? { open: false } : {})}
-        >
-          <summary
-            style={chatLocked ? { pointerEvents: "none", opacity: 0.55 } : undefined}
-          >
-            Ask model (requires API key).{" "}
-            <span className="chat-model-state">{invokeModel ? "On" : "Off"}</span>
+        <details className="muted chat-model-details" {...(chatLocked ? { open: false } : {})}>
+          <summary style={chatLocked ? { pointerEvents: "none", opacity: 0.55 } : undefined}>
+            Ask model (requires API key). <span className="chat-model-state">{invokeModel ? "On" : "Off"}</span>
           </summary>
           <div className="chat-model-check-wrap">
             <input
@@ -75,12 +57,7 @@ export function ChatSection({
       }
       footer={
         <div>
-          <input
-            ref={fileRef}
-            type="file"
-            hidden
-            onChange={() => void onSimulateUpload()}
-          />
+          <input ref={fileRef} type="file" hidden onChange={() => void onSimulateUpload()} />
           <button
             type="button"
             disabled={editMode !== "none" || chatLocked}
@@ -88,9 +65,6 @@ export function ChatSection({
           >
             Upload file(s)...
           </button>
-          {/* <span className="muted" style={{ marginLeft: "0.5rem" }}>
-            (canonical scenario; no file contents used)
-          </span> */}
         </div>
       }
       composer={{
@@ -100,7 +74,7 @@ export function ChatSection({
         sendDisabled: busy || editMode !== "none" || chatLocked,
         textareaDisabled: editMode !== "none" || chatLocked,
         sendLabel: "Send",
-        placeholder: "Message… (Enter to send, Shift+Enter for newline)",
+        placeholder: "Message... (Enter to send, Shift+Enter for newline)",
         inputRowClassName: chatLocked ? "chat-input-locked" : undefined,
       }}
     />

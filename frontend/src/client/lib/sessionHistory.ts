@@ -18,8 +18,8 @@ function parseStored(): ClientSessionHistoryEntry[] {
     const data = JSON.parse(raw) as unknown;
     if (!Array.isArray(data)) return [];
     return data.filter(
-      (x): x is ClientSessionHistoryEntry =>
-        x !== null && typeof x === "object" && typeof (x as ClientSessionHistoryEntry).id === "string",
+      (entry): entry is ClientSessionHistoryEntry =>
+        entry !== null && typeof entry === "object" && typeof (entry as ClientSessionHistoryEntry).id === "string",
     );
   } catch {
     return [];
@@ -30,24 +30,23 @@ function writeStored(entries: ClientSessionHistoryEntry[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_ENTRIES)));
 }
 
-/** Last-known sessions for this browser (not sent to the server). */
+/** Last-known sessions for this browser only; this list is never sent to the server. */
 export function readSessionHistory(): ClientSessionHistoryEntry[] {
   return parseStored();
 }
 
-export function upsertSessionHistoryFromServer(s: Session): void {
-  const entries = parseStored().filter((e) => e.id !== s.id);
-  const next: ClientSessionHistoryEntry = {
-    id: s.id,
-    created_at: s.created_at,
-    updated_at: s.updated_at,
-    status: s.status,
-    workflow_mode: s.workflow_mode,
-  };
-  entries.unshift(next);
+export function upsertSessionHistoryFromServer(session: Session): void {
+  const entries = parseStored().filter((entry) => entry.id !== session.id);
+  entries.unshift({
+    id: session.id,
+    created_at: session.created_at,
+    updated_at: session.updated_at,
+    status: session.status,
+    workflow_mode: session.workflow_mode,
+  });
   writeStored(entries);
 }
 
 export function removeSessionHistoryEntry(id: string): void {
-  writeStored(parseStored().filter((e) => e.id !== id));
+  writeStored(parseStored().filter((entry) => entry.id !== id));
 }

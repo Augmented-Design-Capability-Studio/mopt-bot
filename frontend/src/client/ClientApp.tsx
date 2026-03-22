@@ -1,6 +1,6 @@
-import { LoginGate } from "./LoginGate";
-import { ParticipantShell } from "./ParticipantShell";
-import { useParticipantController } from "./useParticipantController";
+import { LoginGate } from "./components/LoginGate";
+import { ParticipantShell } from "./components/ParticipantShell";
+import { useParticipantController } from "./hooks/useParticipantController";
 
 export function ClientApp() {
   const controller = useParticipantController();

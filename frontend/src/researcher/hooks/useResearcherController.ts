@@ -1,0 +1,318 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { apiFetch, displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
+import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
+
+import { getOnlyActiveTerms } from "../lib/sessionConfig";
+
+const TOKEN_KEY = "mopt_researcher_token";
+
+export function useResearcherController() {
+  /** Value in the input; not sent to the API until "Save token". */
+  const [tokenInput, setTokenInput] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
+  /** Bearer token used for all requests after the user confirms the input. */
+  const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Session | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [runs, setRuns] = useState<RunResult[]>([]);
+  const [steerText, setSteerText] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
+  const [geminiModel, setGeminiModel] = useState(DEFAULT_SUGGESTED_GEMINI_MODEL);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pushKeySuccess, setPushKeySuccess] = useState<string | null>(null);
+
+  // Every mutation increments this generation counter so older poll responses
+  // cannot overwrite fresher researcher state.
+  const detailPollGen = useRef(0);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
+
+  const refreshList = useCallback(async () => {
+    if (!savedToken.trim()) return;
+    try {
+      const list = await apiFetch<Session[]>("/sessions", savedToken.trim());
+      setSessions(list);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "List failed");
+    }
+  }, [savedToken]);
+
+  const loadDetail = useCallback(async () => {
+    if (!savedToken.trim() || !selected) return;
+    const sessionId = selected;
+    const gen = detailPollGen.current;
+    try {
+      const session = await apiFetch<Session>(`/sessions/${sessionId}/researcher`, savedToken.trim());
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
+      setDetail(session);
+
+      const nextMessages = await apiFetch<Message[]>(
+        `/sessions/${sessionId}/messages/researcher?after_id=0`,
+        savedToken.trim(),
+      );
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
+      setMessages(nextMessages);
+
+      const nextRuns = await apiFetch<RunResult[]>(`/sessions/${sessionId}/runs`, savedToken.trim());
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
+      setRuns(nextRuns);
+    } catch (e) {
+      if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
+      setError(e instanceof Error ? e.message : "Load failed");
+    }
+  }, [savedToken, selected]);
+
+  useEffect(() => {
+    void refreshList();
+  }, [refreshList]);
+
+  useEffect(() => {
+    void loadDetail();
+    const timer = window.setInterval(() => void loadDetail(), 4000);
+    return () => window.clearInterval(timer);
+  }, [loadDetail]);
+
+  useEffect(() => {
+    if (!detail) return;
+    setGeminiModel(detail.gemini_model?.trim() || DEFAULT_SUGGESTED_GEMINI_MODEL);
+  }, [detail?.id]);
+
+  function saveToken() {
+    const trimmed = tokenInput.trim();
+    sessionStorage.setItem(TOKEN_KEY, trimmed);
+    setSavedToken(trimmed);
+    setTokenInput(trimmed);
+    setError(null);
+  }
+
+  /**
+   * Shared PATCH helper for researcher controls. Returning a boolean lets the
+   * caller decide whether to clear UI state like inputs or success banners.
+   */
+  const patchSession = useCallback(
+    async (patch: Record<string, unknown>): Promise<boolean> => {
+      if (!savedToken.trim() || !selected) return false;
+      detailPollGen.current += 1;
+      setBusy(true);
+      try {
+        const session = await apiFetch<Session>(`/sessions/${selected}`, savedToken.trim(), {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        });
+        setDetail(session);
+        await refreshList();
+        setError(null);
+        return true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Update failed");
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshList, savedToken, selected],
+  );
+
+  async function sendSteer() {
+    if (!steerText.trim() || !savedToken.trim() || !selected) return;
+    const text = steerText.trim();
+    const tempId = -Date.now();
+    const optimistic: Message = {
+      id: tempId,
+      created_at: new Date().toISOString(),
+      role: "researcher",
+      content: text,
+      visible_to_participant: false,
+      kind: "chat",
+    };
+    setMessages((current) => [...current, optimistic]);
+    setSteerText("");
+    setBusy(true);
+    try {
+      const saved = await apiFetch<Message>(`/sessions/${selected}/steer`, savedToken.trim(), {
+        method: "POST",
+        body: JSON.stringify({ content: text }),
+      });
+      setMessages((current) => [...current.filter((message) => message.id !== tempId), saved]);
+    } catch (e) {
+      setMessages((current) => current.filter((message) => message.id !== tempId));
+      setSteerText(text);
+      setError(e instanceof Error ? e.message : "Steer failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function terminate() {
+    if (!selected || !savedToken.trim()) return;
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      await apiFetch(`/sessions/${selected}/terminate`, savedToken.trim(), { method: "POST" });
+      await refreshList();
+      await loadDetail();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Terminate failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeSession() {
+    if (!selected || !savedToken.trim()) return;
+    if (!window.confirm("Delete this session and all logs?")) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/sessions/${selected}`, savedToken.trim(), { method: "DELETE" });
+      setSelected(null);
+      setDetail(null);
+      setMessages([]);
+      setRuns([]);
+      await refreshList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRun(run: RunResult) {
+    if (!selected || !savedToken.trim()) return;
+    const sessionId = selected;
+    if (
+      !window.confirm(
+        `Delete run #${displayRunNumber(run)} from this session? This removes the stored run record from the database.`,
+      )
+    ) {
+      return;
+    }
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      await apiFetch(`/sessions/${sessionId}/runs/${run.id}`, savedToken.trim(), { method: "DELETE" });
+      const [nextDetail, nextRuns] = await Promise.all([
+        apiFetch<Session>(`/sessions/${sessionId}/researcher`, savedToken.trim()),
+        apiFetch<RunResult[]>(`/sessions/${sessionId}/runs`, savedToken.trim()),
+      ]);
+      if (sessionId !== selectedRef.current) return;
+      setDetail(nextDetail);
+      setRuns(nextRuns);
+      await refreshList();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete run failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pushParticipantStarterPanel() {
+    if (!savedToken.trim() || !selected) return;
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      const session = await apiFetch<Session>(
+        `/sessions/${selected}/participant-starter-panel`,
+        savedToken.trim(),
+        { method: "POST" },
+      );
+      setDetail(session);
+      await refreshList();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Push starter config failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setOnlyActiveTerms(enabled: boolean) {
+    if (!detail) return;
+    const panel =
+      detail.panel_config && typeof detail.panel_config === "object" && !Array.isArray(detail.panel_config)
+        ? { ...(detail.panel_config as Record<string, unknown>) }
+        : {};
+    const problem =
+      panel.problem && typeof panel.problem === "object" && !Array.isArray(panel.problem)
+        ? { ...(panel.problem as Record<string, unknown>) }
+        : {};
+    problem.only_active_terms = enabled;
+    panel.problem = problem;
+    await patchSession({ panel_config: panel });
+  }
+
+  async function exportJson() {
+    if (!selected || !savedToken.trim()) return;
+    try {
+      const data = await apiFetch<unknown>(`/sessions/${selected}/export`, savedToken.trim());
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `session-${selected}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    }
+  }
+
+  async function pushGeminiKey() {
+    const key = geminiKey.trim();
+    if (!key) {
+      setError("Enter a Gemini API key to push.");
+      return;
+    }
+    const ok = await patchSession({
+      gemini_api_key: key,
+      gemini_model: geminiModel.trim() || undefined,
+    });
+    if (ok) {
+      setGeminiKey("");
+      setPushKeySuccess(
+        "Key saved on the server. The participant app will show a check on the Model / API key chip after the next sync.",
+      );
+    }
+  }
+
+  const tokenDirty = useMemo(() => tokenInput.trim() !== savedToken.trim(), [savedToken, tokenInput]);
+
+  return {
+    tokenInput,
+    savedToken,
+    sessions,
+    selected,
+    detail,
+    messages,
+    runs,
+    steerText,
+    geminiKey,
+    geminiModel,
+    busy,
+    error,
+    pushKeySuccess,
+    tokenDirty,
+    setTokenInput,
+    setSelected,
+    setSteerText,
+    setGeminiKey,
+    setGeminiModel,
+    setPushKeySuccess,
+    refreshList,
+    saveToken,
+    patchSession,
+    sendSteer,
+    terminate,
+    removeSession,
+    removeRun,
+    pushParticipantStarterPanel,
+    setOnlyActiveTerms,
+    exportJson,
+    pushGeminiKey,
+    getOnlyActiveTerms,
+  };
+}
