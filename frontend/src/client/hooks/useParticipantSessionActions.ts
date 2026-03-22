@@ -48,6 +48,7 @@ type UseParticipantSessionActionsArgs = {
   setAiPending: (value: boolean) => void;
   syncMessages: () => Promise<void>;
   syncSession: () => Promise<void>;
+  startEagerMessagePoll: () => void;
 };
 
 export function useParticipantSessionActions({
@@ -81,6 +82,7 @@ export function useParticipantSessionActions({
   setAiPending,
   syncMessages,
   syncSession,
+  startEagerMessagePoll,
 }: UseParticipantSessionActionsArgs) {
   const applyPanelConfigFromResponse = useCallback(
     (panelConfig: Session["panel_config"] | null | undefined) => {
@@ -126,6 +128,7 @@ export function useParticipantSessionActions({
         if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
         applyPanelConfigFromResponse(response.panel_config);
         applyProblemBriefFromResponse(response.problem_brief);
+        if (withModel) startEagerMessagePoll();
       } catch {
         setMessages((current) => current.filter((message) => message.id !== tempId));
       } finally {
@@ -140,6 +143,7 @@ export function useParticipantSessionActions({
       setAiPending,
       setLastMsgId,
       setMessages,
+      startEagerMessagePoll,
       token,
     ],
   );
@@ -172,6 +176,7 @@ export function useParticipantSessionActions({
       if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
       applyPanelConfigFromResponse(response.panel_config);
       applyProblemBriefFromResponse(response.problem_brief);
+      if (invokeModel) startEagerMessagePoll();
     } catch (error) {
       setMessages((current) => current.filter((message) => message.id !== tempUserId));
       setChatInput(text);
@@ -193,6 +198,7 @@ export function useParticipantSessionActions({
     setError,
     setLastMsgId,
     setMessages,
+    startEagerMessagePoll,
     token,
   ]);
 

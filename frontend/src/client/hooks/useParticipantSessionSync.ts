@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 
 import { apiFetch, type RunResult, type Session } from "@shared/api";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
@@ -17,6 +17,8 @@ import { mergeMessagesFromPoll } from "../chat/messageMerge";
 const MESSAGE_POLL_MS = 4000;
 const RUN_POLL_MS = 8000;
 const SESSION_POLL_MS = 15000;
+const EAGER_POLL_INTERVAL_MS = 2000;
+const EAGER_POLL_DURATION_MS = 10000;
 
 type UseParticipantSessionSyncArgs = {
   token: string;
@@ -78,6 +80,25 @@ export function useParticipantSessionSync({
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId, sessionIdRef]);
+
+  // Always holds the latest syncMessages so the eager-poll timer doesn't
+  // capture a stale closure from when it was started.
+  const syncMessagesRef = useRef(syncMessages);
+  syncMessagesRef.current = syncMessages;
+  const eagerTimerRef = useRef<number | null>(null);
+
+  const startEagerMessagePoll = useCallback(() => {
+    if (eagerTimerRef.current !== null) window.clearInterval(eagerTimerRef.current);
+    const startedAt = Date.now();
+    eagerTimerRef.current = window.setInterval(() => {
+      if (Date.now() - startedAt >= EAGER_POLL_DURATION_MS) {
+        window.clearInterval(eagerTimerRef.current!);
+        eagerTimerRef.current = null;
+        return;
+      }
+      void syncMessagesRef.current();
+    }, EAGER_POLL_INTERVAL_MS);
+  }, []);
 
   const invalidateRemovedSession = useCallback(
     (message: string) => {
@@ -296,5 +317,6 @@ export function useParticipantSessionSync({
     syncSession,
     syncMessages,
     syncRuns,
+    startEagerMessagePoll,
   };
 }

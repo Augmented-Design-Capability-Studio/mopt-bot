@@ -140,6 +140,7 @@ export function useParticipantController() {
     setAiPending,
     syncMessages: sync.syncMessages,
     syncSession: sync.syncSession,
+    startEagerMessagePoll: sync.startEagerMessagePoll,
   });
 
   return {
