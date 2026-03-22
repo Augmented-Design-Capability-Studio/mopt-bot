@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -16,11 +17,19 @@ from app.crypto_util import decrypt_secret, encrypt_secret
 from app.database import get_db
 from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
 from app.models import ChatMessage, OptimizationRun, StudySession
+from app.problem_config_seed import derive_problem_panel_from_brief
+from app.problem_brief import (
+    default_problem_brief,
+    merge_problem_brief_patch,
+    normalize_problem_brief,
+    sync_problem_brief_from_panel,
+)
 from app.schemas import (
     MessageCreate,
     MessageOut,
     ModelSettingsBody,
     ParticipantPanelUpdate,
+    ParticipantProblemBriefUpdate,
     PostMessagesResponse,
     RunOut,
     SessionCreate,
@@ -32,6 +41,28 @@ from app.schemas import (
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 log = logging.getLogger(__name__)
+_CLEANUP_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bclean\s*up\b", re.IGNORECASE),
+    re.compile(r"\bconsolidat(?:e|ion)\b", re.IGNORECASE),
+    re.compile(r"\bdeduplicat(?:e|ion)\b", re.IGNORECASE),
+    re.compile(r"\breorgan(?:ize|ise|ization|isation)\b", re.IGNORECASE),
+    re.compile(r"\b(remove|delete|drop)\b.{0,80}\b(assumption|gathered|definition|item|fact)\b", re.IGNORECASE),
+    re.compile(r"\bmerge\b.{0,60}\b(gathered|assumption)\b", re.IGNORECASE),
+)
+
+
+def _clean_participant_number(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _is_definition_cleanup_request(content: str) -> bool:
+    text = content.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _CLEANUP_INTENT_PATTERNS)
 
 
 def _panel_dict(row: StudySession | None) -> dict | None:
@@ -43,14 +74,83 @@ def _panel_dict(row: StudySession | None) -> dict | None:
         return None
 
 
+def _problem_brief_dict(row: StudySession | None) -> dict:
+    if row is None or not row.problem_brief_json:
+        return default_problem_brief()
+    try:
+        return normalize_problem_brief(json.loads(row.problem_brief_json))
+    except json.JSONDecodeError:
+        return default_problem_brief()
+
+
+def _sync_panel_from_problem_brief(
+    row: StudySession,
+    db: Session,
+    problem_brief: dict,
+    api_key: str | None = None,
+    model_name: str | None = None,
+) -> tuple[dict | None, list[str]]:
+    from app.adapter import sanitize_panel_weights
+    from app.services.llm import generate_config_from_brief
+
+    current_panel = _panel_dict(row)
+    derived_panel = None
+    if api_key and model_name:
+        derived_panel = generate_config_from_brief(
+            brief=problem_brief,
+            current_panel=current_panel,
+            api_key=api_key,
+            model_name=model_name,
+        )
+    if derived_panel is None:
+        derived_panel = derive_problem_panel_from_brief(problem_brief)
+    if derived_panel is None:
+        return None, []
+
+    next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
+    next_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
+    for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size", "shift_hard_penalty"):
+        next_problem.pop(key, None)
+    next_problem.update(deepcopy(derived_panel["problem"]))
+    next_panel["problem"] = next_problem
+    merged, weight_warnings = sanitize_panel_weights(next_panel)
+    if merged == current_panel:
+        return merged, weight_warnings
+
+    log.info("Participant synced panel_config from brief: %s", merged)
+    row.panel_config_json = json.dumps(merged)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return merged, weight_warnings
+
+
+def _sync_problem_brief_from_panel(
+    row: StudySession,
+    db: Session,
+    panel_config: dict,
+) -> dict:
+    current_problem_brief = _problem_brief_dict(row)
+    next_problem_brief = sync_problem_brief_from_panel(current_problem_brief, panel_config)
+    if next_problem_brief == current_problem_brief:
+        return current_problem_brief
+    row.problem_brief_json = json.dumps(next_problem_brief)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return next_problem_brief
+
+
 def _session_to_out(row: StudySession) -> SessionOut:
     return SessionOut(
         id=row.id,
         created_at=row.created_at,
         updated_at=row.updated_at,
         workflow_mode=row.workflow_mode,
+        participant_number=row.participant_number,
         status=row.status,
         panel_config=_panel_dict(row),
+        problem_brief=_problem_brief_dict(row),
         optimization_allowed=row.optimization_allowed,
         gemini_model=row.gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),
@@ -100,8 +200,10 @@ def create_session(
     row = StudySession(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
+        participant_number=_clean_participant_number(body.participant_number),
         status="active",
         panel_config_json=None,
+        problem_brief_json=json.dumps(default_problem_brief()),
         optimization_allowed=opt_allowed,
     )
     db.add(row)
@@ -174,8 +276,12 @@ def patch_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if body.workflow_mode is not None:
         row.workflow_mode = body.workflow_mode
+    if "participant_number" in body.model_fields_set:
+        row.participant_number = _clean_participant_number(body.participant_number)
     if body.panel_config is not None:
         row.panel_config_json = json.dumps(body.panel_config)
+    if body.problem_brief is not None:
+        row.problem_brief_json = json.dumps(normalize_problem_brief(body.problem_brief))
     if body.optimization_allowed is not None:
         row.optimization_allowed = body.optimization_allowed
     if body.gemini_model is not None:
@@ -301,6 +407,7 @@ def post_message(
     um = _append_message(db, session_id, "user", body.content, True)
     out.append(MessageOut.model_validate(um))
     updated_panel: dict | None = None
+    updated_problem_brief: dict | None = None
 
     if body.invoke_model:
         key = decrypt_secret(row.gemini_key_encrypted)
@@ -323,10 +430,11 @@ def post_message(
                     ChatMessage.visible_to_participant.is_(True),
                     ChatMessage.id < um.id,
                 )
-                .order_by(ChatMessage.id.asc())
+                .order_by(ChatMessage.id.desc())
+                .limit(12)
                 .all()
             )
-            for p in prev:
+            for p in reversed(prev):
                 if p.role in ("user", "assistant"):
                     hist.append((p.role, p.content))
 
@@ -367,42 +475,64 @@ def post_message(
 
             text = "The model request failed. Try again or continue without AI."
             try:
-                from app.adapter import sanitize_panel_weights
                 from app.services.llm import generate_chat_turn
-                from app.services.panel_merge import deep_merge
 
                 current = _panel_dict(row)
+                current_problem_brief = _problem_brief_dict(row)
+                cleanup_requested = _is_definition_cleanup_request(body.content)
                 turn = generate_chat_turn(
                     body.content,
                     hist,
                     key,
                     model,
-                    current,
+                    current_problem_brief,
                     workflow_mode=row.workflow_mode,
                     recent_runs_summary=recent_runs_summary or None,
                     researcher_steers=researcher_steers or None,
+                    cleanup_mode=cleanup_requested,
                 )
                 text = turn.assistant_message
-                if turn.panel_patch:
-                    # Merge into an empty base until the participant has real panel data; do not seed
-                    # DEFAULT_PANEL_CONFIG (that would contradict "empty until researcher pushes").
-                    base = deepcopy(current) if current is not None else {}
-                    log.info("Participant model panel_patch: %s", turn.panel_patch)
-                    merged, weight_warnings = sanitize_panel_weights(deep_merge(base, turn.panel_patch))
-                    log.info("Participant merged panel_config: %s", merged)
-                    row.panel_config_json = json.dumps(merged)
+                brief_changed = False
+                if turn.problem_brief_patch:
+                    base_brief = current_problem_brief
+                    patch_payload = dict(turn.problem_brief_patch)
+                    if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
+                        patch_payload["replace_editable_items"] = True
+                    if "open_questions" in patch_payload and (
+                        cleanup_requested or turn.cleanup_mode or turn.replace_open_questions
+                    ):
+                        patch_payload["replace_open_questions"] = True
+                    merged_brief = merge_problem_brief_patch(base_brief, patch_payload)
+                    if merged_brief != base_brief:
+                        row.problem_brief_json = json.dumps(merged_brief)
+                        updated_problem_brief = merged_brief
+                        brief_changed = True
+                effective_problem_brief = updated_problem_brief or current_problem_brief
+                updated_panel, weight_warnings = _sync_panel_from_problem_brief(
+                    row,
+                    db,
+                    effective_problem_brief,
+                    api_key=key,
+                    model_name=model,
+                )
+                if updated_panel is not None and weight_warnings:
+                    text = f"{text}\n\nNote: {' '.join(weight_warnings)}"
+                if brief_changed and updated_problem_brief is None:
+                    updated_problem_brief = _problem_brief_dict(row)
+                if updated_problem_brief is not None and updated_panel is None:
                     row.updated_at = datetime.now(timezone.utc)
                     db.commit()
                     db.refresh(row)
-                    updated_panel = merged
-                    if weight_warnings:
-                        text = f"{text}\n\nNote: {' '.join(weight_warnings)}"
             except Exception:
-                pass
+                log.exception("Participant model turn failed for session %s", session_id)
             am = _append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
 
-    return PostMessagesResponse(messages=out, panel_config=updated_panel)
+    return PostMessagesResponse(
+        messages=out,
+        panel_config=updated_panel,
+        problem_brief=updated_problem_brief,
+    )
 
 
 @router.post("/{session_id}/steer", response_model=MessageOut)
@@ -609,6 +739,7 @@ def patch_participant_panel(
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+    _sync_problem_brief_from_panel(row, db, sanitized_config)
 
     # Build acknowledgement, appending any weight-key correction notices.
     ack_parts = []
@@ -619,6 +750,66 @@ def patch_participant_panel(
     ack = " ".join(ack_parts).strip()
     if ack:
         _append_message(db, session_id, "assistant", ack, True, kind="panel")
+    return _session_to_out(row)
+
+
+@router.patch("/{session_id}/problem-brief", response_model=SessionOut)
+def patch_participant_problem_brief(
+    session_id: str,
+    body: ParticipantProblemBriefUpdate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+
+    next_problem_brief = normalize_problem_brief(body.problem_brief.model_dump())
+    row.problem_brief_json = json.dumps(next_problem_brief)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+
+    _sync_panel_from_problem_brief(
+        row,
+        db,
+        next_problem_brief,
+        api_key=decrypt_secret(row.gemini_key_encrypted),
+        model_name=row.gemini_model or get_settings().default_gemini_model,
+    )
+
+    if body.acknowledgement:
+        _append_message(db, session_id, "assistant", body.acknowledgement, True, kind="panel")
+    return _session_to_out(row)
+
+
+@router.post("/{session_id}/sync-panel", response_model=SessionOut)
+def sync_panel_from_problem_brief(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+
+    problem_brief = _problem_brief_dict(row)
+    updated_panel, _ = _sync_panel_from_problem_brief(
+        row,
+        db,
+        problem_brief,
+        api_key=decrypt_secret(row.gemini_key_encrypted),
+        model_name=row.gemini_model or get_settings().default_gemini_model,
+    )
+    if updated_panel is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Problem definition is not specific enough to sync a solver configuration yet",
+        )
     return _session_to_out(row)
 
 
@@ -657,8 +848,10 @@ def export_session(
             "created_at": row.created_at.isoformat(),
             "updated_at": row.updated_at.isoformat(),
             "workflow_mode": row.workflow_mode,
+            "participant_number": row.participant_number,
             "status": row.status,
             "panel_config": _panel_dict(row),
+            "problem_brief": _problem_brief_dict(row),
             "optimization_allowed": row.optimization_allowed,
             "gemini_model": row.gemini_model,
         },

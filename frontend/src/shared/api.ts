@@ -1,8 +1,4 @@
-function apiBase(): string {
-  if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE.replace(/\/$/, "");
-  if (import.meta.env.DEV) return "/api";
-  return "";
-}
+import { buildApiUrl } from "@shared/backendConfig";
 
 export class ApiError extends Error {
   status: number;
@@ -29,7 +25,7 @@ export async function apiFetch<T>(
   token: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const url = `${apiBase()}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = buildApiUrl(path);
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -57,12 +53,36 @@ export type Session = {
   id: string;
   created_at: string;
   updated_at: string;
+  participant_number?: string | null;
   workflow_mode: string;
   status: string;
   panel_config: Record<string, unknown> | null;
+  problem_brief: ProblemBrief;
   optimization_allowed: boolean;
   gemini_model: string | null;
   gemini_key_configured: boolean;
+};
+
+export type ProblemBriefItem = {
+  id: string;
+  text: string;
+  kind: "gathered" | "assumption" | "system";
+  source: "user" | "upload" | "agent" | "system";
+  status: "active" | "confirmed" | "rejected";
+  editable: boolean;
+};
+
+export type ProblemBriefQuestion = {
+  id: string;
+  text: string;
+};
+
+export type ProblemBrief = {
+  goal_summary: string;
+  items: ProblemBriefItem[];
+  open_questions: ProblemBriefQuestion[];
+  solver_scope: string;
+  backend_template: string;
 };
 
 /** Text for the problem-config editor: empty string when there is nothing to show. */
@@ -85,6 +105,7 @@ export type Message = {
 export type PostMessagesResponse = {
   messages: Message[];
   panel_config: Record<string, unknown> | null;
+  problem_brief: ProblemBrief | null;
 };
 
 function isLooseMessage(x: unknown): x is Record<string, unknown> {
@@ -135,6 +156,7 @@ export function normalizePostMessagesResponse(data: unknown): PostMessagesRespon
     return {
       messages: (data as Record<string, unknown>[]).map(coerceMessage),
       panel_config: null,
+      problem_brief: null,
     };
   }
   if (typeof data === "object" && Array.isArray((data as PostMessagesResponse).messages)) {
@@ -142,6 +164,7 @@ export function normalizePostMessagesResponse(data: unknown): PostMessagesRespon
     return {
       messages: o.messages,
       panel_config: o.panel_config ?? null,
+      problem_brief: o.problem_brief ?? null,
     };
   }
   throw new Error(

@@ -3,6 +3,7 @@ import {
   GEMINI_MODEL_DATALIST_ID,
   GeminiModelDatalist,
 } from "@shared/geminiModelSuggestions";
+import { DialogShell } from "@shared/components/DialogShell";
 
 type ModelSettingsDialogProps = {
   open: boolean;
@@ -27,14 +28,22 @@ export function ModelSettingsDialog({
   onClose,
   onSave,
 }: ModelSettingsDialogProps) {
-  if (!open) return null;
-
   return (
-    <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="model-dlg-title">
-      <div className="dialog">
-        <h2 id="model-dlg-title" style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>
-          Model & API key
-        </h2>
+    <DialogShell
+      open={open}
+      title="Model & API key"
+      titleId="model-dlg-title"
+      actions={
+        <>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+          <button type="button" disabled={busy || sessionTerminated} onClick={() => void onSave()}>
+            Save
+          </button>
+        </>
+      }
+    >
         <p className="muted" style={{ fontSize: "0.85rem" }}>
           Keys are stored on the server for this session (encrypted if the server is configured for it).
         </p>
@@ -63,22 +72,6 @@ export function ModelSettingsDialog({
             placeholder="Paste key (optional if researcher pushed one)"
           />
         </label>
-        <div
-          style={{
-            marginTop: "1rem",
-            display: "flex",
-            gap: "0.5rem",
-            justifyContent: "flex-end",
-          }}
-        >
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-          <button type="button" disabled={busy || sessionTerminated} onClick={() => void onSave()}>
-            Save
-          </button>
-        </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

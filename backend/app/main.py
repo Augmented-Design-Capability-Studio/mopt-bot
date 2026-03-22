@@ -8,12 +8,33 @@ from app.config import get_settings
 from app.db_maintenance import ensure_database_shape
 from app.routers import sessions
 
-logging.basicConfig(level=logging.INFO)
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def configure_logging() -> None:
+    formatter = logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT)
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+    else:
+        root.setLevel(logging.INFO)
+        for handler in root.handlers:
+            handler.setFormatter(formatter)
+
+    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.INFO)
+        for handler in logger.handlers:
+            handler.setFormatter(formatter)
+
+
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    configure_logging()
     ensure_database_shape()
     yield
 

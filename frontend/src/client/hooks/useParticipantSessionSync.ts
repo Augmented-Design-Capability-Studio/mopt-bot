@@ -14,6 +14,10 @@ import {
 import { readSessionHistory, removeSessionHistoryEntry } from "../lib/sessionHistory";
 import { mergeMessagesFromPoll } from "../chat/messageMerge";
 
+const MESSAGE_POLL_MS = 4000;
+const RUN_POLL_MS = 8000;
+const SESSION_POLL_MS = 15000;
+
 type UseParticipantSessionSyncArgs = {
   token: string;
   sessionId: string;
@@ -33,6 +37,7 @@ type UseParticipantSessionSyncArgs = {
   setMessages: (value: ((prev: import("@shared/api").Message[]) => import("@shared/api").Message[]) | import("@shared/api").Message[]) => void;
   setRuns: (value: RunResult[] | ((prev: RunResult[]) => RunResult[])) => void;
   setConfigText: (value: string) => void;
+  setProblemBrief: (value: import("@shared/api").ProblemBrief | null) => void;
   setScheduleText: (value: string) => void;
   setLastMsgId: (value: number | ((prev: number) => number)) => void;
   setActiveRun: (value: number | ((prev: number) => number)) => void;
@@ -61,6 +66,7 @@ export function useParticipantSessionSync({
   setMessages,
   setRuns,
   setConfigText,
+  setProblemBrief,
   setScheduleText,
   setLastMsgId,
   setActiveRun,
@@ -84,6 +90,7 @@ export function useParticipantSessionSync({
       setMessages([]);
       setRuns([]);
       setConfigText("");
+      setProblemBrief(null);
       setScheduleText("");
       setLastMsgId(0);
       setEditMode("none");
@@ -98,6 +105,7 @@ export function useParticipantSessionSync({
       setError,
       setLastMsgId,
       setMessages,
+      setProblemBrief,
       setRuns,
       setScheduleText,
       setSession,
@@ -117,6 +125,9 @@ export function useParticipantSessionSync({
         setSession(nextSession);
         const resolved = resolveProblemPanelFromServer(problemPanelHydrationRef.current, nextSession.panel_config);
         problemPanelHydrationRef.current = resolved.mode;
+        if (editModeRef.current !== "definition") {
+          setProblemBrief(nextSession.problem_brief);
+        }
         if (editModeRef.current !== "config" && resolved.text !== undefined) {
           setConfigText(resolved.text);
         }
@@ -143,6 +154,7 @@ export function useParticipantSessionSync({
       setConfigText,
       setError,
       setSession,
+      setProblemBrief,
       token,
     ],
   );
@@ -206,16 +218,33 @@ export function useParticipantSessionSync({
   useEffect(() => {
     if (!authed) return;
     const timer = window.setInterval(() => {
-      void syncSession();
+      if (document.visibilityState !== "visible") return;
       void syncMessages();
-      void syncRuns();
-    }, 1500);
+    }, MESSAGE_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [authed, syncMessages, syncRuns, syncSession]);
+  }, [authed, syncMessages]);
+
+  useEffect(() => {
+    if (!authed) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void syncRuns();
+    }, RUN_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [authed, syncRuns]);
+
+  useEffect(() => {
+    if (!authed) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void syncSession();
+    }, SESSION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [authed, syncSession]);
 
   useEffect(() => {
     if (!authed) {
-      setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id })));
+      setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id, history: entry })));
     }
   }, [authed, setRecentRows]);
 
@@ -238,11 +267,15 @@ export function useParticipantSessionSync({
   useEffect(() => {
     if (!authed) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") void syncSession();
+      if (document.visibilityState === "visible") {
+        void syncSession();
+        void syncMessages();
+        void syncRuns();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [authed, syncSession]);
+  }, [authed, syncMessages, syncRuns, syncSession]);
 
   useEffect(() => {
     if (runs.length === 0) {

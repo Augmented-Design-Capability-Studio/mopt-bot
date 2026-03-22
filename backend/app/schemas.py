@@ -7,14 +7,40 @@ from pydantic import BaseModel, ConfigDict, Field
 class SessionCreate(BaseModel):
     # Participant apps omit this; researcher sets workflow via PATCH. Default is conservative (gated runs).
     workflow_mode: Literal["agile", "waterfall"] = "waterfall"
+    participant_number: str | None = Field(default=None, max_length=64)
 
 
 class SessionPatch(BaseModel):
     workflow_mode: Literal["agile", "waterfall"] | None = None
+    participant_number: str | None = Field(default=None, max_length=64)
     panel_config: dict[str, Any] | None = None
+    problem_brief: dict[str, Any] | None = None
     optimization_allowed: bool | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
+
+
+class ProblemBriefItem(BaseModel):
+    id: str
+    text: str
+    kind: Literal["gathered", "assumption", "system"]
+    source: Literal["user", "upload", "agent", "system"]
+    status: Literal["active", "confirmed", "rejected"]
+    editable: bool = True
+
+
+class ProblemBriefQuestion(BaseModel):
+    id: str
+    text: str
+
+
+class ProblemBrief(BaseModel):
+    goal_summary: str = ""
+    items: list[ProblemBriefItem] = Field(default_factory=list)
+    # Accept legacy string questions; normalize_problem_brief coerces to {id, text}.
+    open_questions: list[ProblemBriefQuestion | str] = Field(default_factory=list)
+    solver_scope: str = ""
+    backend_template: str = ""
 
 
 class SessionOut(BaseModel):
@@ -24,8 +50,10 @@ class SessionOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     workflow_mode: str
+    participant_number: str | None
     status: str
     panel_config: dict[str, Any] | None
+    problem_brief: ProblemBrief
     optimization_allowed: bool
     gemini_model: str | None
     gemini_key_configured: bool = False
@@ -52,15 +80,22 @@ class MessageOut(BaseModel):
 
 
 class ChatModelTurn(BaseModel):
-    """Structured Gemini reply when applying panel updates from chat."""
+    """Structured Gemini reply for chat-to-brief updates."""
 
     assistant_message: str = Field(..., max_length=32000)
+    # Back-compat field: kept optional for old callers/tests, but chat agent should not emit it.
     panel_patch: dict[str, Any] | None = None
+    problem_brief_patch: dict[str, Any] | None = None
+    # Cleanup-mode controls: when true, backend replaces existing editable content.
+    replace_editable_items: bool = False
+    replace_open_questions: bool = False
+    cleanup_mode: bool = False
 
 
 class PostMessagesResponse(BaseModel):
     messages: list[MessageOut]
     panel_config: dict[str, Any] | None = None
+    problem_brief: ProblemBrief | None = None
 
 
 class SolveRunCreate(BaseModel):
@@ -90,4 +125,9 @@ class ModelSettingsBody(BaseModel):
 
 class ParticipantPanelUpdate(BaseModel):
     panel_config: dict[str, Any]
+    acknowledgement: str | None = Field(default=None, max_length=2000)
+
+
+class ParticipantProblemBriefUpdate(BaseModel):
+    problem_brief: ProblemBrief
     acknowledgement: str | None = Field(default=None, max_length=2000)

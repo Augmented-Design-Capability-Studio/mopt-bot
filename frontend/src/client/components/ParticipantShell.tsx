@@ -1,6 +1,8 @@
 import type { RefObject } from "react";
 
-import type { Message, RunResult, Session } from "@shared/api";
+import type { Message, ProblemBrief, RunResult, Session } from "@shared/api";
+import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
+import { StatusChip } from "@shared/status/StatusChip";
 
 import { ChatSection } from "../chat/ChatSection";
 import { type EditMode } from "../lib/participantTypes";
@@ -18,6 +20,7 @@ type ParticipantShellProps = {
   chatInput: string;
   invokeModel: boolean;
   configText: string;
+  problemBrief: ProblemBrief | null;
   scheduleText: string;
   editMode: EditMode;
   busy: boolean;
@@ -31,6 +34,7 @@ type ParticipantShellProps = {
   onChatInputChange: (value: string) => void;
   onInvokeModelChange: (value: boolean) => void;
   onConfigTextChange: (value: string) => void;
+  onProblemBriefChange: (value: ProblemBrief | null) => void;
   onScheduleTextChange: (value: string) => void;
   onSetActiveRun: (index: number) => void;
   onSetEditMode: (mode: EditMode) => void;
@@ -42,6 +46,8 @@ type ParticipantShellProps = {
   onSendChat: () => void | Promise<void>;
   onSimulateUpload: () => void | Promise<void>;
   onSaveConfig: () => void | Promise<void>;
+  onSaveProblemBrief: () => void | Promise<void>;
+  onSyncProblemConfig: () => void | Promise<void>;
   onRunOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
   onCloseModelDialog: () => void;
@@ -58,6 +64,7 @@ export function ParticipantShell({
   chatInput,
   invokeModel,
   configText,
+  problemBrief,
   scheduleText,
   editMode,
   busy,
@@ -71,6 +78,7 @@ export function ParticipantShell({
   onChatInputChange,
   onInvokeModelChange,
   onConfigTextChange,
+  onProblemBriefChange,
   onScheduleTextChange,
   onSetActiveRun,
   onSetEditMode,
@@ -82,6 +90,8 @@ export function ParticipantShell({
   onSendChat,
   onSimulateUpload,
   onSaveConfig,
+  onSaveProblemBrief,
+  onSyncProblemConfig,
   onRunOptimize,
   onRunEvaluateEdited,
   onCloseModelDialog,
@@ -104,9 +114,10 @@ export function ParticipantShell({
           {!session?.optimization_allowed ? " · runs gated" : ""}
         </span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-          <button
-            type="button"
-            className={`btn-model-key status-${modelKeyStatus}`}
+          <StatusChip
+            label="Model / API key"
+            status={modelKeyStatus}
+            icon={modelKeyIcon}
             title={
               modelKeyStatus === "ok"
                 ? "API key is set for this session"
@@ -115,12 +126,8 @@ export function ParticipantShell({
                   : "Session loading"
             }
             onClick={() => onSetShowModelDialog(true)}
-          >
-            <span className="model-key-icon" aria-hidden>
-              {modelKeyIcon}
-            </span>
-            Model / API key
-          </button>
+          />
+          <BackendConnectionControl />
           <button type="button" onClick={onLeaveSession}>
             Leave session
           </button>
@@ -157,14 +164,18 @@ export function ParticipantShell({
         </section>
 
         <ConfigPanel
-          className={editMode === "config" ? "panel" : panelClass("config")}
+          className={editMode === "config" || editMode === "definition" ? "panel" : panelClass("config")}
           configText={configText}
+          problemBrief={problemBrief}
           editMode={editMode}
           busy={busy}
           sessionTerminated={sessionTerminated}
           onConfigTextChange={onConfigTextChange}
+          onProblemBriefChange={onProblemBriefChange}
           onSetEditMode={onSetEditMode}
           onSaveConfig={onSaveConfig}
+          onSaveProblemBrief={onSaveProblemBrief}
+          onSyncProblemConfig={onSyncProblemConfig}
         />
 
         <ResultsPanel

@@ -2,11 +2,13 @@ import type { RecentSessionRow } from "../lib/participantTypes";
 
 type LoginGateProps = {
   token: string;
+  participantNumber: string;
   busy: boolean;
   error: string | null;
   recentBusy: boolean;
   recentRows: RecentSessionRow[];
   onTokenChange: (value: string) => void;
+  onParticipantNumberChange: (value: string) => void;
   onLogin: () => void | Promise<void>;
   onStartSession: () => void | Promise<void>;
   onRefreshRecentSessions: () => void | Promise<void>;
@@ -16,17 +18,26 @@ type LoginGateProps = {
 
 export function LoginGate({
   token,
+  participantNumber,
   busy,
   error,
   recentBusy,
   recentRows,
   onTokenChange,
+  onParticipantNumberChange,
   onLogin,
   onStartSession,
   onRefreshRecentSessions,
   onResumeSession,
   onForgetSession,
 }: LoginGateProps) {
+  function formatStartTime(value?: string): string {
+    if (!value) return "Start time unknown";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "Start time unknown";
+    return `Started ${parsed.toLocaleString()}`;
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -42,6 +53,16 @@ export function LoginGate({
           Enter the access token for this station, then start. Workflow (for example agile vs waterfall) is set by the
           researcher for your session - you do not choose it here.
         </p>
+        <label>
+          Participant number
+          <input
+            type="text"
+            value={participantNumber}
+            onChange={(e) => onParticipantNumberChange(e.target.value)}
+            placeholder="Optional, e.g. 007"
+            autoComplete="off"
+          />
+        </label>
         <label>
           Access token
           <input
@@ -116,6 +137,12 @@ export function LoginGate({
                 >
                   <div className="mono" style={{ wordBreak: "break-all" }}>
                     {row.id.slice(0, 8)}...{row.id.slice(-4)}
+                  </div>
+                  <div className="muted">
+                    Participant #{row.session?.participant_number ?? row.history?.participant_number ?? "n/a"}
+                  </div>
+                  <div className="muted">
+                    {formatStartTime(row.session?.created_at ?? row.history?.created_at)}
                   </div>
                   {row.error ? (
                     <span className="muted">{row.error}</span>

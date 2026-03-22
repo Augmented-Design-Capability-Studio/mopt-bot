@@ -174,6 +174,30 @@ select:focus-visible {
   gap: 0.35rem;
 }
 
+.config-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.config-panel-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.config-raw-textarea {
+  width: 100%;
+  min-height: 16rem;
+  resize: vertical;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.4rem;
+}
+
 .chat-log {
   flex: 1;
   min-height: 0;
@@ -291,6 +315,112 @@ select:focus-visible {
   background: var(--accent-dim);
   color: #f4f2ed;
   border-color: var(--accent-dim);
+}
+
+.definition-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.definition-section {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.45rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.definition-section textarea,
+.definition-item textarea,
+.definition-item select {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.35rem;
+}
+
+.definition-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.definition-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.definition-count {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0.1rem 0.35rem;
+  font-size: 0.75rem;
+  min-width: 1.6rem;
+  text-align: center;
+}
+
+.definition-empty {
+  padding: 0.2rem 0;
+}
+
+.definition-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.definition-item {
+  border: 1px solid #d5d2cb;
+  background: #faf9f6;
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.definition-item-meta,
+.definition-item-actions,
+.definition-footer,
+.definition-add-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.definition-chip {
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--panel);
+}
+
+.definition-chip.kind-gathered {
+  background: #dfe8ec;
+}
+
+.definition-chip.kind-assumption {
+  background: #ece5d9;
+}
+
+.definition-chip.kind-system {
+  background: #e6e3dd;
+}
+
+.definition-chip.status-confirmed {
+  border-color: #4a7c59;
+}
+
+.definition-chip.status-rejected {
+  border-color: #9b4132;
+}
+
+.definition-source {
+  color: var(--muted);
 }
 
 .run-summary-grid {
@@ -530,50 +660,58 @@ select:focus-visible {
   border-radius: 2px;
 }
 
-.btn-model-key {
+.dialog-actions {
+  margin-top: 1rem;
   display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 0.85rem;
-  font-size: 0.9rem;
-  border-width: 2px;
-  border-radius: 4px;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  width: 100%;
 }
 
-.btn-model-key .model-key-icon {
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.82rem;
+  border-width: 2px;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.status-chip-icon {
   font-size: 1rem;
   line-height: 1;
 }
 
-.btn-model-key.status-ok {
+.status-chip-detail {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.status-chip.status-ok {
   border-color: #4a7c59;
   background: #e8f0e9;
 }
 
-.btn-model-key.status-warn {
+.status-chip.status-warn {
   border-color: #b8860b;
   background: #f5efd8;
 }
 
-.btn-model-key.status-neutral {
+.status-chip.status-neutral {
   border-color: var(--border);
   background: var(--panel);
 }
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.45rem;
-  border: 1px solid var(--border);
-  background: #fff;
-  font-size: 0.8rem;
-  border-radius: 2px;
-  cursor: pointer;
+.btn-primary {
+  border-color: #5e7386;
+  background: #dde7ef;
+  color: #1b2934;
 }
 
-.chip:hover {
-  background: #f0eeea;
+.btn-primary:hover:not(:disabled) {
+  background: #cfdae3;
 }
 
 .banner-info {
@@ -592,6 +730,11 @@ select:focus-visible {
   border: 1px solid var(--border);
   padding: 0.5rem;
   font-size: 0.85rem;
+}
+
+.results-panel-actions {
+  margin-top: auto;
+  padding-top: 0.5rem;
 }
 
 /* Indeterminate progress bar shown while an optimization run is in-flight */

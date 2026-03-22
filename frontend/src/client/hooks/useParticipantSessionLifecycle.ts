@@ -1,6 +1,13 @@
 import { useCallback, type MutableRefObject } from "react";
 
-import { ApiError, apiFetch, sessionPanelToConfigText, type RunResult, type Session } from "@shared/api";
+import {
+  ApiError,
+  apiFetch,
+  sessionPanelToConfigText,
+  type ProblemBrief,
+  type RunResult,
+  type Session,
+} from "@shared/api";
 
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import type { RecentSessionRow } from "../lib/participantTypes";
@@ -10,6 +17,7 @@ import { readSessionHistory, removeSessionHistoryEntry, upsertSessionHistoryFrom
 
 type UseParticipantSessionLifecycleArgs = {
   token: string;
+  participantNumber: string;
   session: Session | null;
   sessionIdRef: MutableRefObject<string>;
   problemPanelHydrationRef: MutableRefObject<ProblemPanelHydration>;
@@ -21,6 +29,7 @@ type UseParticipantSessionLifecycleArgs = {
   setLastMsgId: (value: number) => void;
   setChatInput: (value: string) => void;
   setConfigText: (value: string) => void;
+  setProblemBrief: (value: ProblemBrief | null) => void;
   setScheduleText: (value: string) => void;
   setActiveRun: (value: number) => void;
   setEditMode: (value: import("../lib/participantTypes").EditMode) => void;
@@ -32,6 +41,7 @@ type UseParticipantSessionLifecycleArgs = {
 
 export function useParticipantSessionLifecycle({
   token,
+  participantNumber,
   session,
   sessionIdRef,
   problemPanelHydrationRef,
@@ -43,6 +53,7 @@ export function useParticipantSessionLifecycle({
   setLastMsgId,
   setChatInput,
   setConfigText,
+  setProblemBrief,
   setScheduleText,
   setActiveRun,
   setEditMode,
@@ -72,13 +83,14 @@ export function useParticipantSessionLifecycle({
         try {
           const currentSession = await apiFetch<Session>(`/sessions/${entry.id}`, trimmed);
           upsertSessionHistoryFromServer(currentSession);
-          next.push({ id: entry.id, session: currentSession });
+          next.push({ id: entry.id, session: currentSession, history: entry });
         } catch (error) {
           if (error instanceof ApiError && (error.status === 404 || error.status === 410)) {
             removeSessionHistoryEntry(entry.id);
           } else {
             next.push({
               id: entry.id,
+              history: entry,
               error: error instanceof Error ? error.message : "Could not load",
             });
           }
@@ -107,6 +119,7 @@ export function useParticipantSessionLifecycle({
       setSession(nextSession);
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+      setProblemBrief(nextSession.problem_brief);
       setMessages([]);
       setLastMsgId(0);
       setRuns([]);
@@ -129,7 +142,7 @@ export function useParticipantSessionLifecycle({
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 410)) {
         removeSessionHistoryEntry(resumeId);
-        setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id })));
+        setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id, history: entry })));
         setError("That session no longer exists; removed from this browser list.");
       } else {
         setError(error instanceof Error ? error.message : "Could not open session");
@@ -148,6 +161,7 @@ export function useParticipantSessionLifecycle({
     setError,
     setLastMsgId,
     setMessages,
+    setProblemBrief,
     setRecentRows,
     setRuns,
     setScheduleText,
@@ -168,11 +182,14 @@ export function useParticipantSessionLifecycle({
     setEditMode("none");
     setChatInput("");
     setConfigText("");
+    setProblemBrief(null);
     setScheduleText("");
     try {
       const nextSession = await apiFetch<Session>("/sessions", trimmed, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          participant_number: participantNumber.trim() || undefined,
+        }),
       });
       sessionIdRef.current = nextSession.id;
       setSessionId(nextSession.id);
@@ -184,6 +201,7 @@ export function useParticipantSessionLifecycle({
       setRuns([]);
       setScheduleText("");
       setConfigText("");
+      setProblemBrief(nextSession.problem_brief);
       problemPanelHydrationRef.current = "empty_until_server_panel";
       upsertSessionHistoryFromServer(nextSession);
     } catch (error) {
@@ -201,11 +219,13 @@ export function useParticipantSessionLifecycle({
     setError,
     setLastMsgId,
     setMessages,
+    setProblemBrief,
     setRuns,
     setScheduleText,
     setSession,
     setSessionId,
     token,
+    participantNumber,
   ]);
 
   const leaveSession = useCallback(() => {
@@ -216,14 +236,26 @@ export function useParticipantSessionLifecycle({
     setMessages([]);
     setRuns([]);
     setConfigText("");
+    setProblemBrief(null);
     setScheduleText("");
     problemPanelHydrationRef.current = "follow";
     setError(null);
-  }, [problemPanelHydrationRef, session, setConfigText, setError, setMessages, setRuns, setScheduleText, setSession, setSessionId]);
+  }, [
+    problemPanelHydrationRef,
+    session,
+    setConfigText,
+    setError,
+    setMessages,
+    setProblemBrief,
+    setRuns,
+    setScheduleText,
+    setSession,
+    setSessionId,
+  ]);
 
   const forgetRecentSession = useCallback((id: string) => {
     removeSessionHistoryEntry(id);
-    setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id })));
+    setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id, history: entry })));
   }, [setRecentRows]);
 
   return {

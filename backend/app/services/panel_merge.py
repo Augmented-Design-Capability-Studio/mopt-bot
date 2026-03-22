@@ -71,6 +71,9 @@ def deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     patch = _preserve_invalid_problem_objects(base, patch)
     out = deepcopy(base)
     for key, val in patch.items():
+        if key in {"weights", "algorithm_params"} and isinstance(val, dict):
+            out[key] = deepcopy(val)
+            continue
         if (
             key in out
             and isinstance(out[key], dict)

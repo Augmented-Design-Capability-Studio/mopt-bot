@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { displayRunNumber, type RunResult, type Session } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
 import { parseActiveWeightKeys } from "../problemConfig/serialization";
+import { ConvergencePlot } from "./ConvergencePlot";
 import { RunTimeline } from "./RunTimeline";
 import { ViolationSummary } from "./ViolationSummary";
 
@@ -46,11 +47,19 @@ export function ResultsPanel({
 }: ResultsPanelProps) {
   const activeWeightKeys = parseActiveWeightKeys(configText);
   const [showRaw, setShowRaw] = useState(false);
+  const [vizTab, setVizTab] = useState<"schedule" | "convergence">("schedule");
+  const currentResult = currentRun?.result ?? null;
+  const hasResult = currentResult !== null;
+  const convergence = currentResult?.convergence ?? [];
+
+  useEffect(() => {
+    setVizTab("schedule");
+  }, [activeRun]);
 
   return (
     <section className={className}>
       <div className="panel-header">
-        Results &amp; schedule
+        Results &amp; visualization
         {editMode === "results" && <span className="muted"> - editing</span>}
       </div>
       <div className="panel-body">
@@ -106,28 +115,50 @@ export function ResultsPanel({
             onChange={(e) => onScheduleTextChange(e.target.value)}
             disabled={sessionTerminated}
             spellCheck={false}
-            placeholder="Run optimization to populate routes, or paste JSON once a problem configuration exists."
+            placeholder="Edit schedule JSON for this run."
           />
         ) : optimizing ? (
           <div className="muted" style={{ fontSize: "0.85rem", paddingTop: "0.25rem" }}>
             Optimization in progress - the solver is searching for a good solution...
           </div>
-        ) : currentRun?.result ? (
+        ) : hasResult ? (
           <div className="results-visualization-scroll">
             <ViolationSummary
-              violations={currentRun.result.violations}
-              metrics={currentRun.result.metrics}
-              referenceCost={currentRun.reference_cost}
-              runtimeSeconds={currentRun.result.runtime_seconds}
+              violations={currentResult.violations}
+              metrics={currentResult.metrics}
+              referenceCost={currentRun?.reference_cost ?? null}
+              runtimeSeconds={currentResult.runtime_seconds}
               activeWeightKeys={activeWeightKeys}
             />
-            <RunTimeline schedule={currentRun.result.schedule} />
+            {convergence.length > 0 && (
+              <div className="tabs" style={{ marginTop: "0.6rem" }}>
+                <button
+                  type="button"
+                  className={`tab ${vizTab === "schedule" ? "active" : ""}`}
+                  onClick={() => setVizTab("schedule")}
+                >
+                  Schedule
+                </button>
+                <button
+                  type="button"
+                  className={`tab ${vizTab === "convergence" ? "active" : ""}`}
+                  onClick={() => setVizTab("convergence")}
+                >
+                  Convergence
+                </button>
+              </div>
+            )}
+            {vizTab === "convergence" && convergence.length > 0 ? (
+              <ConvergencePlot convergence={convergence} referenceCost={currentRun?.reference_cost} />
+            ) : (
+              <RunTimeline schedule={currentResult.schedule} />
+            )}
           </div>
         ) : (
-          <div className="muted">Run optimization to populate a timeline view, or switch to edit mode to paste schedule JSON.</div>
+          <div className="muted">Run optimization to populate a timeline view and schedule details.</div>
         )}
 
-        {currentRun?.result && editMode !== "results" && (
+        {hasResult && editMode !== "results" && (
           <details
             open={showRaw}
             onToggle={(e) => setShowRaw((e.currentTarget as HTMLDetailsElement).open)}
@@ -146,8 +177,8 @@ export function ResultsPanel({
             <pre className="mono run-json-preview" style={{ marginTop: "0.35rem" }}>
               {JSON.stringify(
                 {
-                  schedule: currentRun.result.schedule,
-                  violations: currentRun.result.violations,
+                  schedule: currentResult.schedule,
+                  violations: currentResult.violations,
                 },
                 null,
                 2,
@@ -156,9 +187,10 @@ export function ResultsPanel({
           </details>
         )}
 
-        <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
+        <div className="results-panel-actions" style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
           <button
             type="button"
+            className="btn-primary"
             disabled={busy || !session?.optimization_allowed || editMode !== "none" || sessionTerminated}
             onClick={() => void onRunOptimize()}
           >
@@ -168,7 +200,7 @@ export function ResultsPanel({
             <button
               type="button"
               onClick={() => onSetEditMode("results")}
-              disabled={editMode !== "none" || sessionTerminated}
+              disabled={!hasResult || editMode !== "none" || sessionTerminated}
             >
               Edit
             </button>

@@ -22,8 +22,10 @@ class StudySession(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
     workflow_mode: Mapped[str] = mapped_column(String(16), default="waterfall")
+    participant_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
     panel_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    problem_brief_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     optimization_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     gemini_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gemini_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

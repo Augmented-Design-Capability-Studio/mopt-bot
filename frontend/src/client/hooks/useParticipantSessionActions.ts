@@ -6,22 +6,26 @@ import {
   normalizePostMessagesResponse,
   sessionPanelToConfigText,
   type Message,
+  type ProblemBrief,
   type RunResult,
   type Session,
 } from "@shared/api";
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { configChangeSummary } from "../problemConfig/configSummary";
+import { cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
 
 type UseParticipantSessionActionsArgs = {
   token: string;
+  participantNumber?: string;
   sessionId: string;
   session: Session | null;
   chatInput: string;
   invokeModel: boolean;
   configText: string;
+  problemBrief: ProblemBrief | null;
   scheduleText: string;
   modelKey: string;
   modelName: string;
@@ -32,6 +36,7 @@ type UseParticipantSessionActionsArgs = {
   setLastMsgId: (value: number | ((prev: number) => number)) => void;
   setChatInput: (value: string) => void;
   setConfigText: (value: string) => void;
+  setProblemBrief: (value: ProblemBrief | null | ((prev: ProblemBrief | null) => ProblemBrief | null)) => void;
   setActiveRun: (value: number | ((prev: number) => number)) => void;
   setEditMode: (value: import("../lib/participantTypes").EditMode) => void;
   setBusy: (value: boolean) => void;
@@ -46,11 +51,13 @@ type UseParticipantSessionActionsArgs = {
 
 export function useParticipantSessionActions({
   token,
+  participantNumber: _participantNumber,
   sessionId,
   session,
   chatInput,
   invokeModel,
   configText,
+  problemBrief,
   scheduleText,
   modelKey,
   modelName,
@@ -61,6 +68,7 @@ export function useParticipantSessionActions({
   setLastMsgId,
   setChatInput,
   setConfigText,
+  setProblemBrief,
   setActiveRun,
   setEditMode,
   setBusy,
@@ -80,6 +88,15 @@ export function useParticipantSessionActions({
       setSession((previous) => (previous ? { ...previous, panel_config: panelConfig } : previous));
     },
     [problemPanelHydrationRef, setConfigText, setSession],
+  );
+
+  const applyProblemBriefFromResponse = useCallback(
+    (nextProblemBrief: ProblemBrief | null | undefined) => {
+      if (nextProblemBrief == null) return;
+      setProblemBrief(cloneProblemBrief(nextProblemBrief));
+      setSession((previous) => (previous ? { ...previous, problem_brief: cloneProblemBrief(nextProblemBrief) } : previous));
+    },
+    [setProblemBrief, setSession],
   );
 
   const postContextMessage = useCallback(
@@ -106,6 +123,7 @@ export function useParticipantSessionActions({
         setMessages((current) => mergeMessagesFromPost(current, outgoing));
         if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
         applyPanelConfigFromResponse(response.panel_config);
+        applyProblemBriefFromResponse(response.problem_brief);
       } catch {
         setMessages((current) => current.filter((message) => message.id !== tempId));
       } finally {
@@ -114,6 +132,7 @@ export function useParticipantSessionActions({
     },
     [
       applyPanelConfigFromResponse,
+      applyProblemBriefFromResponse,
       session?.status,
       sessionId,
       setAiPending,
@@ -150,6 +169,7 @@ export function useParticipantSessionActions({
       setMessages((current) => mergeMessagesFromPost(current, outgoing));
       if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
       applyPanelConfigFromResponse(response.panel_config);
+      applyProblemBriefFromResponse(response.problem_brief);
     } catch (error) {
       setMessages((current) => current.filter((message) => message.id !== tempUserId));
       setChatInput(text);
@@ -160,6 +180,7 @@ export function useParticipantSessionActions({
     }
   }, [
     applyPanelConfigFromResponse,
+    applyProblemBriefFromResponse,
     chatInput,
     invokeModel,
     session?.status,
@@ -208,6 +229,7 @@ export function useParticipantSessionActions({
       setSession(nextSession);
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+      setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
       setEditMode("none");
       if (invokeModel) {
         await postContextMessage(
@@ -231,6 +253,107 @@ export function useParticipantSessionActions({
     setConfigText,
     setEditMode,
     setError,
+    setProblemBrief,
+    setSession,
+    token,
+  ]);
+
+  const saveProblemBrief = useCallback(async () => {
+    if (!token || !sessionId || !problemBrief) return;
+    const cleanedBrief: ProblemBrief = {
+      ...problemBrief,
+      goal_summary: problemBrief.goal_summary.trim(),
+      items: problemBrief.items
+        .map((item) => ({ ...item, text: item.text.trim() }))
+        .filter((item) => item.kind === "system" || item.text.length > 0),
+      open_questions: problemBrief.open_questions
+        .map((question) => ({ ...question, text: question.text.trim() }))
+        .filter((question) => question.text.length > 0),
+    };
+    const previousBrief = session?.problem_brief;
+    if (!previousBrief) return;
+    const changedSummary = problemBriefChangeSummary(previousBrief, cleanedBrief);
+    const acknowledgement = `Problem definition saved (${changedSummary}).`;
+    setBusy(true);
+    try {
+      const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          problem_brief: cleanedBrief,
+          acknowledgement,
+        }),
+      });
+      setSession(nextSession);
+      problemPanelHydrationRef.current = "follow";
+      setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+      setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+      setEditMode("none");
+      if (invokeModel) {
+        await postContextMessage(
+          `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`,
+          true,
+        );
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    invokeModel,
+    postContextMessage,
+    problemPanelHydrationRef,
+    problemBrief,
+    session?.problem_brief,
+    sessionId,
+    setBusy,
+    setConfigText,
+    setEditMode,
+    setError,
+    setProblemBrief,
+    setSession,
+    token,
+  ]);
+
+  const syncProblemConfig = useCallback(async () => {
+    if (!token || !sessionId || !problemBrief) return;
+    const cleanedBrief: ProblemBrief = {
+      ...problemBrief,
+      goal_summary: problemBrief.goal_summary.trim(),
+      items: problemBrief.items
+        .map((item) => ({ ...item, text: item.text.trim() }))
+        .filter((item) => item.kind === "system" || item.text.length > 0),
+      open_questions: problemBrief.open_questions
+        .map((question) => ({ ...question, text: question.text.trim() }))
+        .filter((question) => question.text.length > 0),
+    };
+    setBusy(true);
+    setError(null);
+    try {
+      const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          problem_brief: cleanedBrief,
+          acknowledgement: "Problem config synced from the saved definition.",
+        }),
+      });
+      setSession(nextSession);
+      problemPanelHydrationRef.current = "follow";
+      setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+      setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Sync failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    problemPanelHydrationRef,
+    sessionId,
+    setBusy,
+    setConfigText,
+    setError,
+    problemBrief,
+    setProblemBrief,
     setSession,
     token,
   ]);
@@ -371,6 +494,8 @@ export function useParticipantSessionActions({
     sendChat,
     simulateUpload,
     saveConfig,
+    saveProblemBrief,
+    syncProblemConfig,
     runOptimize,
     runEvaluateEdited,
     saveModelSettings,

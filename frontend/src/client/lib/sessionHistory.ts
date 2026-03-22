@@ -9,6 +9,7 @@ export type ClientSessionHistoryEntry = {
   updated_at?: string;
   status?: string;
   workflow_mode?: string;
+  participant_number?: string | null;
 };
 
 function parseStored(): ClientSessionHistoryEntry[] {
@@ -43,6 +44,7 @@ export function upsertSessionHistoryFromServer(session: Session): void {
     updated_at: session.updated_at,
     status: session.status,
     workflow_mode: session.workflow_mode,
+    participant_number: session.participant_number,
   });
   writeStored(entries);
 }

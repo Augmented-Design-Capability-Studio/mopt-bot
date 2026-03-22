@@ -6,6 +6,7 @@ import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 import { getOnlyActiveTerms } from "../lib/sessionConfig";
 
 const TOKEN_KEY = "mopt_researcher_token";
+const RESEARCHER_DETAIL_POLL_MS = 10000;
 
 export function useResearcherController() {
   /** Value in the input; not sent to the API until "Save token". */
@@ -14,6 +15,7 @@ export function useResearcherController() {
   const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detail, setDetail] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [runs, setRuns] = useState<RunResult[]>([]);
@@ -35,6 +37,7 @@ export function useResearcherController() {
     try {
       const list = await apiFetch<Session[]>("/sessions", savedToken.trim());
       setSessions(list);
+      setSelectedIds((current) => current.filter((id) => list.some((session) => session.id === id)));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "List failed");
@@ -72,8 +75,19 @@ export function useResearcherController() {
 
   useEffect(() => {
     void loadDetail();
-    const timer = window.setInterval(() => void loadDetail(), 4000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadDetail();
+    }, RESEARCHER_DETAIL_POLL_MS);
     return () => window.clearInterval(timer);
+  }, [loadDetail]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadDetail();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [loadDetail]);
 
   useEffect(() => {
@@ -180,6 +194,31 @@ export function useResearcherController() {
     }
   }
 
+  async function removeSelectedSessions() {
+    if (!savedToken.trim() || selectedIds.length === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.length} selected session(s) and all logs?`)) return;
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      for (const sessionId of selectedIds) {
+        await apiFetch(`/sessions/${sessionId}`, savedToken.trim(), { method: "DELETE" });
+      }
+      if (selected && selectedIds.includes(selected)) {
+        setSelected(null);
+        setDetail(null);
+        setMessages([]);
+        setRuns([]);
+      }
+      setSelectedIds([]);
+      await refreshList();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Batch delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeRun(run: RunResult) {
     if (!selected || !savedToken.trim()) return;
     const sessionId = selected;
@@ -281,11 +320,25 @@ export function useResearcherController() {
 
   const tokenDirty = useMemo(() => tokenInput.trim() !== savedToken.trim(), [savedToken, tokenInput]);
 
+  const toggleSessionSelected = useCallback((sessionId: string, checked: boolean) => {
+    setSelectedIds((current) =>
+      checked ? (current.includes(sessionId) ? current : [...current, sessionId]) : current.filter((id) => id !== sessionId),
+    );
+  }, []);
+
+  const toggleAllSessionsSelected = useCallback(
+    (checked: boolean) => {
+      setSelectedIds(checked ? sessions.map((session) => session.id) : []);
+    },
+    [sessions],
+  );
+
   return {
     tokenInput,
     savedToken,
     sessions,
     selected,
+    selectedIds,
     detail,
     messages,
     runs,
@@ -302,12 +355,15 @@ export function useResearcherController() {
     setGeminiKey,
     setGeminiModel,
     setPushKeySuccess,
+    toggleSessionSelected,
+    toggleAllSessionsSelected,
     refreshList,
     saveToken,
     patchSession,
     sendSteer,
     terminate,
     removeSession,
+    removeSelectedSessions,
     removeRun,
     pushParticipantStarterPanel,
     setOnlyActiveTerms,

@@ -26,14 +26,18 @@ DEFAULT_PANEL_CONFIG: dict = {
     }
 }
 
-# Weaker GA settings for a deliberate "starter" the researcher pushes to the participant.
+# Deliberately sparse, mediocre starter that should still leave obvious room for improvement.
 MEDIOCRE_PARTICIPANT_STARTER_CONFIG: dict = {
     "problem": {
-        "weights": dict(_PROBLEM_WEIGHTS),
+        "weights": {
+            "travel_time": 1.0,
+            "workload_balance": 4.0,
+        },
         "only_active_terms": True,
-        "algorithm": "GA",
-        "epochs": 35,
-        "pop_size": 20,
+        "algorithm": "SA",
+        "algorithm_params": {"temp_init": 40, "cooling_rate": 0.92},
+        "epochs": 18,
+        "pop_size": 12,
         "random_seed": 42,
     }
 }

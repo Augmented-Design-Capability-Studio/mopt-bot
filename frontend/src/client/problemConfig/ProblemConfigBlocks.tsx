@@ -31,8 +31,8 @@ export function ProblemConfigBlocks({
   if (!hasObjectives && !hasSearch && !hasConstraints) {
     return (
       <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>
-        No configuration yet. Chat with the assistant to define objectives and solver parameters, or ask the researcher
-        to push a starter configuration.
+        No solver configuration has been created yet. Use chat or the Definition tab to clarify objectives and
+        constraints first, or ask the researcher to push a starter configuration.
       </p>
     );
   }

@@ -13,8 +13,34 @@ log = logging.getLogger(__name__)
 
 def ensure_database_shape() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_sessions_problem_brief_column()
+    _ensure_sessions_participant_number_column()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
+
+
+def _ensure_sessions_problem_brief_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "problem_brief_json" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN problem_brief_json TEXT"))
+    log.info("Added sessions.problem_brief_json column")
+
+
+def _ensure_sessions_participant_number_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "participant_number" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN participant_number VARCHAR(64)"))
+    log.info("Added sessions.participant_number column")
 
 
 def _ensure_runs_session_index_column() -> None:

@@ -72,7 +72,7 @@ export function ChatSection({
         onChange: onChatInputChange,
         onSend: onSendChat,
         sendDisabled: busy || editMode !== "none" || chatLocked,
-        textareaDisabled: editMode !== "none" || chatLocked,
+        textareaDisabled: busy || editMode !== "none" || chatLocked,
         sendLabel: "Send",
         placeholder: "Message... (Enter to send, Shift+Enter for newline)",
         inputRowClassName: chatLocked ? "chat-input-locked" : undefined,

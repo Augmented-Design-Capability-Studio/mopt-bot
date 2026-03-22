@@ -21,7 +21,12 @@ export function ResearcherApp() {
         <ResearcherSessionList
           sessions={researcher.sessions}
           selectedId={researcher.selected}
+          selectedIds={researcher.selectedIds}
           onSelect={researcher.setSelected}
+          onToggleSelect={researcher.toggleSessionSelected}
+          onToggleSelectAll={researcher.toggleAllSessionsSelected}
+          onRemoveSelected={researcher.removeSelectedSessions}
+          busy={researcher.busy}
         />
         <ResearcherDetail
           savedToken={researcher.savedToken}

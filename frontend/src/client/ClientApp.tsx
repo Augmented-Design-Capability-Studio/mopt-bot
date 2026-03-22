@@ -9,11 +9,13 @@ export function ClientApp() {
     return (
       <LoginGate
         token={controller.token}
+          participantNumber={controller.participantNumber}
         busy={controller.busy}
         error={controller.error}
         recentBusy={controller.recentBusy}
         recentRows={controller.recentRows}
         onTokenChange={controller.setToken}
+          onParticipantNumberChange={controller.setParticipantNumber}
         onLogin={controller.login}
         onStartSession={controller.startSession}
         onRefreshRecentSessions={controller.refreshRecentSessionsList}
@@ -34,6 +36,7 @@ export function ClientApp() {
       chatInput={controller.chatInput}
       invokeModel={controller.invokeModel}
       configText={controller.configText}
+      problemBrief={controller.problemBrief}
       scheduleText={controller.scheduleText}
       editMode={controller.editMode}
       busy={controller.busy}
@@ -47,6 +50,7 @@ export function ClientApp() {
       onChatInputChange={controller.setChatInput}
       onInvokeModelChange={controller.setInvokeModel}
       onConfigTextChange={controller.setConfigText}
+      onProblemBriefChange={controller.setProblemBrief}
       onScheduleTextChange={controller.setScheduleText}
       onSetActiveRun={controller.setActiveRun}
       onSetEditMode={controller.setEditMode}
@@ -58,6 +62,8 @@ export function ClientApp() {
       onSendChat={controller.sendChat}
       onSimulateUpload={controller.simulateUpload}
       onSaveConfig={controller.saveConfig}
+      onSaveProblemBrief={controller.saveProblemBrief}
+      onSyncProblemConfig={controller.syncProblemConfig}
       onRunOptimize={controller.runOptimize}
       onRunEvaluateEdited={controller.runEvaluateEdited}
       onCloseModelDialog={controller.closeModelDialog}

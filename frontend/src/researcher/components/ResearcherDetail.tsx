@@ -1,11 +1,12 @@
+import { useEffect, useState } from "react";
+
 import { displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
 import { ChatPanel } from "@shared/chat/ChatPanel";
 import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
-import {
-  DEFAULT_SUGGESTED_GEMINI_MODEL,
-  GEMINI_MODEL_DATALIST_ID,
-  GeminiModelDatalist,
-} from "@shared/geminiModelSuggestions";
+import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
+import { StatusChip } from "@shared/status/StatusChip";
+
+import { ResearcherModelKeyDialog } from "./ResearcherModelKeyDialog";
 
 type ResearcherDetailProps = {
   savedToken: string;
@@ -60,6 +61,17 @@ export function ResearcherDetail({
   onSendSteer,
   onRemoveRun,
 }: ResearcherDetailProps) {
+  const [showModelDialog, setShowModelDialog] = useState(false);
+  const [participantNumberDraft, setParticipantNumberDraft] = useState("");
+
+  useEffect(() => {
+    setShowModelDialog(false);
+  }, [detail?.id]);
+
+  useEffect(() => {
+    setParticipantNumberDraft(detail?.participant_number ?? "");
+  }, [detail?.id, detail?.participant_number]);
+
   return (
     <main className="detail">
       {!savedToken.trim() && (
@@ -97,6 +109,25 @@ export function ResearcherDetail({
               </select>
             </label>
             <label className="muted">
+              Participant number
+              <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.2rem" }}>
+                <input
+                  type="text"
+                  value={participantNumberDraft}
+                  disabled={busy}
+                  onChange={(e) => setParticipantNumberDraft(e.target.value)}
+                  placeholder="e.g. 007"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onPatchSession({ participant_number: participantNumberDraft })}
+                >
+                  Save
+                </button>
+              </div>
+            </label>
+            <label className="muted">
               <input
                 type="checkbox"
                 checked={detail.optimization_allowed}
@@ -119,50 +150,23 @@ export function ResearcherDetail({
           </div>
 
           <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
-            New participant sessions start with empty panels until you push this mediocre default (GA weights + modest
-            epochs/population).
+            New participant sessions start with empty panels until you push this deliberately mediocre starter (sparse
+            objectives and a weak search setup).
           </p>
 
-          <div
-            style={{
-              border: "1px solid var(--border)",
-              padding: "0.5rem",
-              background: "var(--panel)",
-            }}
-          >
-            <strong className="muted">Push model key to participant session</strong>
-            <p className="muted" style={{ fontSize: "0.8rem", margin: "0.35rem 0 0" }}>
-              Server status for this session: <strong>{detail.gemini_key_configured ? "API key stored" : "No API key yet"}</strong>
-            </p>
-            {pushKeySuccess && (
-              <p className="banner-info" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                {pushKeySuccess}
-              </p>
-            )}
-            <GeminiModelDatalist />
-            <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginTop: "0.35rem" }}>
-              <input
-                type="password"
-                placeholder="Gemini API key"
-                value={geminiKey}
-                onChange={(e) => {
-                  onGeminiKeyChange(e.target.value);
-                  onClearPushKeySuccess();
-                }}
-                style={{ flex: 1, minWidth: "10rem" }}
-              />
-              <input
-                value={geminiModel}
-                onChange={(e) => onGeminiModelChange(e.target.value)}
-                list={GEMINI_MODEL_DATALIST_ID}
-                placeholder={DEFAULT_SUGGESTED_GEMINI_MODEL}
-                autoComplete="off"
-                style={{ minWidth: "12rem", flex: "1 1 10rem" }}
-              />
-              <button type="button" disabled={busy} onClick={() => void onPushGeminiKey()}>
-                Push key
-              </button>
-            </div>
+          <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center" }}>
+            <StatusChip
+              label="Participant model / API key"
+              status={detail.gemini_key_configured ? "ok" : "warn"}
+              icon={detail.gemini_key_configured ? "✓" : "⚠"}
+              title={
+                detail.gemini_key_configured
+                  ? "The participant session already has a stored API key"
+                  : "No API key is stored for this participant session yet"
+              }
+              onClick={() => setShowModelDialog(true)}
+            />
+            <BackendConnectionControl />
           </div>
 
           <section>
@@ -192,6 +196,22 @@ export function ResearcherDetail({
               }}
             />
           </section>
+
+          <ResearcherModelKeyDialog
+            open={showModelDialog}
+            configured={detail.gemini_key_configured}
+            geminiKey={geminiKey}
+            geminiModel={geminiModel}
+            busy={busy}
+            pushKeySuccess={pushKeySuccess}
+            onGeminiKeyChange={(value) => {
+              onGeminiKeyChange(value);
+              onClearPushKeySuccess();
+            }}
+            onGeminiModelChange={onGeminiModelChange}
+            onClose={() => setShowModelDialog(false)}
+            onPush={onPushGeminiKey}
+          />
 
           <section>
             <div className="panel-header">Runs</div>
