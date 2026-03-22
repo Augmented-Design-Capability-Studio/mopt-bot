@@ -49,6 +49,12 @@ _CLEANUP_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(remove|delete|drop)\b.{0,80}\b(assumption|gathered|definition|item|fact)\b", re.IGNORECASE),
     re.compile(r"\bmerge\b.{0,60}\b(gathered|assumption)\b", re.IGNORECASE),
 )
+_CLEAR_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bclear\b.{0,40}\b(definition|brief|gathered|assumption|open question|everything|all)\b", re.IGNORECASE),
+    re.compile(r"\breset\b.{0,40}\b(definition|brief|everything|all)\b", re.IGNORECASE),
+    re.compile(r"\brestart\b", re.IGNORECASE),
+    re.compile(r"\bfresh slate\b", re.IGNORECASE),
+)
 
 
 def _clean_participant_number(value: str | None) -> str | None:
@@ -63,6 +69,13 @@ def _is_definition_cleanup_request(content: str) -> bool:
     if not text:
         return False
     return any(pattern.search(text) for pattern in _CLEANUP_INTENT_PATTERNS)
+
+
+def _is_definition_clear_request(content: str) -> bool:
+    text = content.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _CLEAR_INTENT_PATTERNS)
 
 
 def _panel_dict(row: StudySession | None) -> dict | None:
@@ -98,7 +111,8 @@ def _sync_panel_from_problem_brief(
     if api_key and model_name:
         derived_panel = generate_config_from_brief(
             brief=problem_brief,
-            current_panel=current_panel,
+            # Definition-driven sync should not carry forward stale managed fields.
+            current_panel=None,
             api_key=api_key,
             model_name=model_name,
         )
@@ -480,6 +494,7 @@ def post_message(
                 current = _panel_dict(row)
                 current_problem_brief = _problem_brief_dict(row)
                 cleanup_requested = _is_definition_cleanup_request(body.content)
+                clear_requested = _is_definition_clear_request(body.content)
                 turn = generate_chat_turn(
                     body.content,
                     hist,
@@ -493,13 +508,25 @@ def post_message(
                 )
                 text = turn.assistant_message
                 brief_changed = False
+                patch_payload: dict | None = None
                 if turn.problem_brief_patch:
-                    base_brief = current_problem_brief
                     patch_payload = dict(turn.problem_brief_patch)
+                elif clear_requested:
+                    # Deterministic safety net: clear requests must not silently no-op.
+                    patch_payload = {"items": [], "open_questions": []}
+                elif cleanup_requested:
+                    log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
+
+                if patch_payload is not None:
+                    base_brief = current_problem_brief
                     if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
                         patch_payload["replace_editable_items"] = True
-                    if "open_questions" in patch_payload and (
-                        cleanup_requested or turn.cleanup_mode or turn.replace_open_questions
+                    if clear_requested:
+                        patch_payload["replace_open_questions"] = True
+                    elif turn.replace_open_questions:
+                        patch_payload["replace_open_questions"] = True
+                    elif "open_questions" in patch_payload and (
+                        cleanup_requested or turn.cleanup_mode
                     ):
                         patch_payload["replace_open_questions"] = True
                     merged_brief = merge_problem_brief_patch(base_brief, patch_payload)

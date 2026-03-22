@@ -27,6 +27,7 @@ export function useParticipantController() {
   const [activeRun, setActiveRun] = useState(0);
   const [editMode, setEditMode] = useState<EditMode>("none");
   const [busy, setBusy] = useState(false);
+  const [syncingProblemConfig, setSyncingProblemConfig] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
@@ -131,6 +132,7 @@ export function useParticipantController() {
     setActiveRun,
     setEditMode,
     setBusy,
+    setSyncingProblemConfig,
     setOptimizing,
     setError,
     setShowModelDialog,
@@ -156,6 +158,7 @@ export function useParticipantController() {
     scheduleText,
     editMode,
     busy,
+    syncingProblemConfig,
     optimizing,
     error,
     showModelDialog,

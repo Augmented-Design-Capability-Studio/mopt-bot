@@ -14,11 +14,12 @@ type ChatSectionProps = {
   busy: boolean;
   chatLocked: boolean;
   chatInput: string;
+  chatAttentionKey?: string | number;
   fileRef: RefObject<HTMLInputElement>;
   onInvokeModelChange: (value: boolean) => void;
   onChatInputChange: (value: string) => void;
   onSendChat: () => void | Promise<void>;
-  onSimulateUpload: () => void | Promise<void>;
+  onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
 };
 
 export function ChatSection({
@@ -29,6 +30,7 @@ export function ChatSection({
   busy,
   chatLocked,
   chatInput,
+  chatAttentionKey,
   fileRef,
   onInvokeModelChange,
   onChatInputChange,
@@ -57,7 +59,18 @@ export function ChatSection({
       }
       footer={
         <div>
-          <input ref={fileRef} type="file" hidden onChange={() => void onSimulateUpload()} />
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={() => {
+              const files = fileRef.current?.files;
+              const names = files ? Array.from(files).map((f) => f.name) : [];
+              if (fileRef.current) fileRef.current.value = "";
+              if (names.length > 0) void onSimulateUpload(names);
+            }}
+          />
           <button
             type="button"
             disabled={editMode !== "none" || chatLocked}
@@ -76,6 +89,7 @@ export function ChatSection({
         sendLabel: "Send",
         placeholder: "Message... (Enter to send, Shift+Enter for newline)",
         inputRowClassName: chatLocked ? "chat-input-locked" : undefined,
+        attentionKey: chatAttentionKey,
       }}
     />
   );

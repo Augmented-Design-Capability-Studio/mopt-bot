@@ -11,6 +11,7 @@ type ConfigPanelProps = {
   problemBrief: ProblemBrief | null;
   editMode: EditMode;
   busy: boolean;
+  syncingProblemConfig: boolean;
   sessionTerminated: boolean;
   className: string;
   onConfigTextChange: (value: string) => void;
@@ -28,6 +29,7 @@ export function ConfigPanel({
   problemBrief,
   editMode,
   busy,
+  syncingProblemConfig,
   sessionTerminated,
   className,
   onConfigTextChange,
@@ -150,8 +152,18 @@ export function ConfigPanel({
                   disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
                   title="Debug: rebuild the saved problem config from the saved definition"
                 >
-                  Sync to config
+                  {syncingProblemConfig ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                      <span className="inline-spinner" aria-hidden="true" />
+                      Syncing...
+                    </span>
+                  ) : (
+                    "Sync to config"
+                  )}
                 </button>
+                {syncingProblemConfig && (
+                  <span className="muted">Rebuilding config from definition (may use model derivation)...</span>
+                )}
               </>
             ) : (
               <>

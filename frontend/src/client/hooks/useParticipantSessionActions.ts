@@ -40,6 +40,7 @@ type UseParticipantSessionActionsArgs = {
   setActiveRun: (value: number | ((prev: number) => number)) => void;
   setEditMode: (value: import("../lib/participantTypes").EditMode) => void;
   setBusy: (value: boolean) => void;
+  setSyncingProblemConfig: (value: boolean) => void;
   setOptimizing: (value: boolean) => void;
   setError: (value: string | null) => void;
   setShowModelDialog: (value: boolean) => void;
@@ -72,6 +73,7 @@ export function useParticipantSessionActions({
   setActiveRun,
   setEditMode,
   setBusy,
+  setSyncingProblemConfig,
   setOptimizing,
   setError,
   setShowModelDialog,
@@ -194,15 +196,20 @@ export function useParticipantSessionActions({
     token,
   ]);
 
-  const simulateUpload = useCallback(async () => {
-    if (!token || !sessionId) return;
-    try {
-      await apiFetch(`/sessions/${sessionId}/simulate-upload`, token, { method: "POST" });
-      setError(null);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Upload failed");
-    }
-  }, [sessionId, setError, token]);
+  const simulateUpload = useCallback(
+    async (fileNames: string[]) => {
+      if (!token || !sessionId) return;
+      const fileList = fileNames.join(", ");
+      await postContextMessage(`I'm uploading the following file(s): ${fileList}`, invokeModel);
+      try {
+        await apiFetch(`/sessions/${sessionId}/simulate-upload`, token, { method: "POST" });
+        setError(null);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Upload failed");
+      }
+    },
+    [invokeModel, postContextMessage, sessionId, setError, token],
+  );
 
   const saveConfig = useCallback(async () => {
     if (!token || !sessionId) return;
@@ -328,6 +335,7 @@ export function useParticipantSessionActions({
         .filter((question) => question.text.length > 0),
     };
     setBusy(true);
+    setSyncingProblemConfig(true);
     setError(null);
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
@@ -344,6 +352,7 @@ export function useParticipantSessionActions({
     } catch (error) {
       setError(error instanceof Error ? error.message : "Sync failed");
     } finally {
+      setSyncingProblemConfig(false);
       setBusy(false);
     }
   }, [
@@ -352,6 +361,7 @@ export function useParticipantSessionActions({
     setBusy,
     setConfigText,
     setError,
+    setSyncingProblemConfig,
     problemBrief,
     setProblemBrief,
     setSession,

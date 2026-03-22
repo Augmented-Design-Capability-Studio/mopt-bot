@@ -315,18 +315,21 @@ def generate_chat_turn(
 _CONFIG_DERIVE_SYSTEM_PROMPT = """
 You are a strict configuration translator.
 
-Given the current problem brief and current panel JSON, produce a single JSON object with exactly:
+Given the current problem brief, produce a single JSON object with exactly:
 - root key "problem"
 - only known problem fields
 - no markdown, no commentary
 
 Rules:
 - Prefer values explicitly stated in the problem brief.
-- Keep unchanged current-panel values when the brief is silent.
+- Do not preserve old managed values just because they existed before.
+- For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, shift_hard_penalty,
+  only_active_terms), derive from the brief for this turn.
+- If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
   "travel_time", "fuel_cost", "deadline_penalty", "capacity_penalty",
   "workload_balance", "worker_preference", "priority_penalty".
-- If "weights" is emitted, emit a complete object for active terms.
+- If "weights" is emitted, include only terms justified by the brief.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - Keep output compact and valid JSON.
 """.strip()
@@ -343,12 +346,11 @@ def generate_config_from_brief(
         return None
     client = genai.Client(api_key=api_key)
     brief_blob = json.dumps(brief or {}, ensure_ascii=False)
-    panel_blob = json.dumps(current_panel or {}, ensure_ascii=False)
     user_prompt = (
         "Current problem brief JSON:\n"
         f"{brief_blob}\n\n"
-        "Current panel JSON:\n"
-        f"{panel_blob}\n"
+        "Current panel JSON (auxiliary only; do not preserve managed fields from it):\n"
+        f"{json.dumps(current_panel or {}, ensure_ascii=False)}\n"
     )
     config = types.GenerateContentConfig(
         system_instruction=_CONFIG_DERIVE_SYSTEM_PROMPT,

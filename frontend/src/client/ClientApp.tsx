@@ -40,6 +40,7 @@ export function ClientApp() {
       scheduleText={controller.scheduleText}
       editMode={controller.editMode}
       busy={controller.busy}
+      syncingProblemConfig={controller.syncingProblemConfig}
       optimizing={controller.optimizing}
       error={controller.error}
       showModelDialog={controller.showModelDialog}

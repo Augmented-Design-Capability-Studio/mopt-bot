@@ -1018,6 +1018,210 @@ def test_non_cleanup_request_keeps_additive_merge_behavior(monkeypatch):
         assert "fact-new" in non_system_ids
 
 
+def test_clear_definition_request_clears_editable_items_when_model_omits_patch(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-clear-definition-fallback-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="I've cleared the definition and reset everything.",
+            problem_brief_patch=None,
+            cleanup_mode=True,
+            replace_editable_items=True,
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-clear-definition-fallback-secret"},
+        )
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Temporary definition to clear.",
+                    "items": [
+                        {
+                            "id": "fact-old",
+                            "text": "Old gathered fact to remove.",
+                            "kind": "gathered",
+                            "source": "user",
+                            "status": "confirmed",
+                            "editable": True,
+                        },
+                        {
+                            "id": "assumption-old",
+                            "text": "Old assumption to remove.",
+                            "kind": "assumption",
+                            "source": "agent",
+                            "status": "active",
+                            "editable": True,
+                        },
+                    ],
+                    "open_questions": [{"id": "oq-1", "text": "Old question?"}],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-clear-definition-fallback-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Can you clear every definition? I want to restart.", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-clear-definition-fallback-secret"},
+        )
+        assert send.status_code == 200
+        brief = send.json()["problem_brief"]
+        assert brief is not None
+        assert [item for item in brief["items"] if item["kind"] != "system"] == []
+        assert brief["open_questions"] == []
+
+
+def test_cleanup_replace_flag_without_items_clears_editable_rows(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-cleanup-replace-no-items-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Cleanup done.",
+            problem_brief_patch={"goal_summary": "Cleaned up"},
+            cleanup_mode=True,
+            replace_editable_items=True,
+            replace_open_questions=True,
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-cleanup-replace-no-items-secret"},
+        )
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Before cleanup.",
+                    "items": [
+                        {
+                            "id": "fact-a",
+                            "text": "Keep for now.",
+                            "kind": "gathered",
+                            "source": "user",
+                            "status": "confirmed",
+                            "editable": True,
+                        }
+                    ],
+                    "open_questions": [{"id": "oq-a", "text": "Question A?"}],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-cleanup-replace-no-items-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Please clean up and consolidate the definition.", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-cleanup-replace-no-items-secret"},
+        )
+        assert send.status_code == 200
+        brief = send.json()["problem_brief"]
+        assert brief is not None
+        assert [item for item in brief["items"] if item["kind"] != "system"] == []
+        assert brief["open_questions"] == []
+        assert brief["goal_summary"] == "Cleaned up"
+
+
+def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-brief-only-sync-secret")
+    get_settings.cache_clear()
+
+    captured: dict[str, object] = {}
+
+    def fake_generate_config_from_brief(brief, current_panel, api_key, model_name):
+        captured["current_panel"] = current_panel
+        return {
+            "problem": {
+                "weights": {"deadline_penalty": 80.0},
+                "algorithm": "GA",
+            }
+        }
+
+    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.services.llm.generate_config_from_brief", fake_generate_config_from_brief)
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-brief-only-sync-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        save_panel = client.patch(
+            f"/sessions/{sid}/panel",
+            json={
+                "panel_config": {
+                    "problem": {
+                        "weights": {
+                            "travel_time": 1.0,
+                            "fuel_cost": 1.0,
+                            "deadline_penalty": 60.0,
+                            "capacity_penalty": 100.0,
+                            "workload_balance": 15.0,
+                        },
+                        "algorithm": "PSO",
+                    }
+                }
+            },
+            headers={"Authorization": "Bearer test-client-brief-only-sync-secret"},
+        )
+        assert save_panel.status_code == 200
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Focus heavily on on-time delivery only.",
+                    "items": [
+                        {
+                            "id": "fact-deadline",
+                            "text": "Deadline penalty is set to 80.",
+                            "kind": "gathered",
+                            "source": "user",
+                            "status": "confirmed",
+                            "editable": True,
+                        }
+                    ],
+                    "open_questions": [],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-brief-only-sync-secret"},
+        )
+        assert patch.status_code == 200
+        assert captured["current_panel"] is None
+        weights = patch.json()["panel_config"]["problem"]["weights"]
+        assert set(weights) == {"deadline_penalty"}
+        assert weights["deadline_penalty"] == 80.0
+
+
 def test_definition_save_collapses_conflicting_config_linked_facts(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-definition-reconcile-secret")
     get_settings.cache_clear()

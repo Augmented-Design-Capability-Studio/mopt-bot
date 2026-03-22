@@ -24,6 +24,7 @@ type ParticipantShellProps = {
   scheduleText: string;
   editMode: EditMode;
   busy: boolean;
+  syncingProblemConfig: boolean;
   optimizing: boolean;
   error: string | null;
   showModelDialog: boolean;
@@ -44,7 +45,7 @@ type ParticipantShellProps = {
   onLeaveSession: () => void;
   onStartSession: () => void | Promise<void>;
   onSendChat: () => void | Promise<void>;
-  onSimulateUpload: () => void | Promise<void>;
+  onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
   onSaveConfig: () => void | Promise<void>;
   onSaveProblemBrief: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
@@ -68,6 +69,7 @@ export function ParticipantShell({
   scheduleText,
   editMode,
   busy,
+  syncingProblemConfig,
   optimizing,
   error,
   showModelDialog,
@@ -101,6 +103,9 @@ export function ParticipantShell({
 
   const sessionTerminated = session?.status === "terminated";
   const chatLocked = sessionTerminated;
+  const chatFirstMode = !chatLocked && editMode === "none" && messages.length === 0;
+  const shouldNudgeChat = chatFirstMode && !showModelDialog;
+  const chatAttentionKey = shouldNudgeChat ? `${sessionId}:new-session-chat-focus` : undefined;
   const modelKeyStatus = session == null ? "neutral" : session.gemini_key_configured ? "ok" : "warn";
   const modelKeyIcon = modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
 
@@ -145,7 +150,7 @@ export function ParticipantShell({
         </div>
       )}
       {error && !sessionTerminated && <div className="banner-warn">{error}</div>}
-      <div className="grid-3">
+      <div className={chatFirstMode ? "grid-3 grid-chat-only" : "grid-3"}>
         <section className={panelClass("none")}>
           <ChatSection
             messages={messages}
@@ -155,6 +160,7 @@ export function ParticipantShell({
             busy={busy}
             chatLocked={chatLocked}
             chatInput={chatInput}
+            chatAttentionKey={chatAttentionKey}
             fileRef={fileRef}
             onInvokeModelChange={onInvokeModelChange}
             onChatInputChange={onChatInputChange}
@@ -163,39 +169,46 @@ export function ParticipantShell({
           />
         </section>
 
-        <ConfigPanel
-          className={editMode === "config" || editMode === "definition" ? "panel" : panelClass("config")}
-          configText={configText}
-          problemBrief={problemBrief}
-          editMode={editMode}
-          busy={busy}
-          sessionTerminated={sessionTerminated}
-          onConfigTextChange={onConfigTextChange}
-          onProblemBriefChange={onProblemBriefChange}
-          onSetEditMode={onSetEditMode}
-          onSaveConfig={onSaveConfig}
-          onSaveProblemBrief={onSaveProblemBrief}
-          onSyncProblemConfig={onSyncProblemConfig}
-        />
+        {chatFirstMode && <div className="chat-first-spacer" aria-hidden="true" />}
 
-        <ResultsPanel
-          className={editMode === "results" ? "panel" : panelClass("results")}
-          runs={runs}
-          activeRun={activeRun}
-          currentRun={currentRun}
-          scheduleText={scheduleText}
-          editMode={editMode}
-          busy={busy}
-          optimizing={optimizing}
-          configText={configText}
-          session={session}
-          sessionTerminated={sessionTerminated}
-          onSetActiveRun={onSetActiveRun}
-          onScheduleTextChange={onScheduleTextChange}
-          onSetEditMode={onSetEditMode}
-          onRunOptimize={onRunOptimize}
-          onRunEvaluateEdited={onRunEvaluateEdited}
-        />
+        {!chatFirstMode && (
+          <ConfigPanel
+            className={editMode === "config" || editMode === "definition" ? "panel" : panelClass("config")}
+            configText={configText}
+            problemBrief={problemBrief}
+            editMode={editMode}
+            busy={busy}
+            syncingProblemConfig={syncingProblemConfig}
+            sessionTerminated={sessionTerminated}
+            onConfigTextChange={onConfigTextChange}
+            onProblemBriefChange={onProblemBriefChange}
+            onSetEditMode={onSetEditMode}
+            onSaveConfig={onSaveConfig}
+            onSaveProblemBrief={onSaveProblemBrief}
+            onSyncProblemConfig={onSyncProblemConfig}
+          />
+        )}
+
+        {!chatFirstMode && (
+          <ResultsPanel
+            className={editMode === "results" ? "panel" : panelClass("results")}
+            runs={runs}
+            activeRun={activeRun}
+            currentRun={currentRun}
+            scheduleText={scheduleText}
+            editMode={editMode}
+            busy={busy}
+            optimizing={optimizing}
+            configText={configText}
+            session={session}
+            sessionTerminated={sessionTerminated}
+            onSetActiveRun={onSetActiveRun}
+            onScheduleTextChange={onScheduleTextChange}
+            onSetEditMode={onSetEditMode}
+            onRunOptimize={onRunOptimize}
+            onRunEvaluateEdited={onRunEvaluateEdited}
+          />
+        )}
       </div>
 
       <ModelSettingsDialog

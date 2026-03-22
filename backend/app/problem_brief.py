@@ -198,7 +198,9 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
 
     if "goal_summary" in patch:
         merged["goal_summary"] = str(patch.get("goal_summary") or "").strip()
-    if "open_questions" in patch:
+    if replace_open_questions and "open_questions" not in patch:
+        merged["open_questions"] = []
+    elif "open_questions" in patch:
         incoming_questions = _coerce_question_list(patch.get("open_questions"))
         if replace_open_questions:
             merged["open_questions"] = incoming_questions
@@ -219,6 +221,14 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
             str(patch.get("backend_template") or base["backend_template"]).strip() or base["backend_template"]
         )
 
+    if replace_editable_items and "items" not in patch:
+        preserved_system = [
+            deepcopy(item)
+            for item in merged["items"]
+            if isinstance(item, dict) and str(item.get("kind") or "").strip().lower() == "system"
+        ]
+        merged["items"] = preserved_system
+        return normalize_problem_brief(merged)
     if "items" in patch and isinstance(patch.get("items"), list):
         incoming_items = [item for raw in patch["items"] if (item := _normalize_item(raw)) is not None]
         if replace_editable_items:

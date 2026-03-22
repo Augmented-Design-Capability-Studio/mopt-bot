@@ -1,6 +1,7 @@
 import {
   useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -31,6 +32,8 @@ export type ChatComposerProps = {
   /** When set, overrides disabled state on the textarea alone. */
   textareaDisabled?: boolean;
   textareaStyle?: CSSProperties;
+  /** When this key changes, move focus to the composer and show a subtle pulse. */
+  attentionKey?: string | number;
 };
 
 export function ChatComposer({
@@ -43,12 +46,38 @@ export function ChatComposer({
   inputRowClassName,
   textareaDisabled,
   textareaStyle,
+  attentionKey,
 }: ChatComposerProps) {
   const textareaIsDisabled = textareaDisabled ?? sendDisabled;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [attentionPulse, setAttentionPulse] = useState(false);
+
+  useEffect(() => {
+    if (attentionKey == null || textareaIsDisabled) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      active !== textarea &&
+      (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
+    ) {
+      return;
+    }
+
+    textarea.focus();
+    setAttentionPulse(true);
+    const timeoutId = window.setTimeout(() => setAttentionPulse(false), 1600);
+    return () => window.clearTimeout(timeoutId);
+  }, [attentionKey, textareaIsDisabled]);
 
   return (
-    <div className={`chat-input-row${inputRowClassName ? ` ${inputRowClassName}` : ""}`}>
+    <div
+      className={`chat-input-row${inputRowClassName ? ` ${inputRowClassName}` : ""}${attentionPulse ? " chat-attention-pulse" : ""}`}
+    >
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => onChatSendKeyDown(e, () => void onSend(), { disabled: sendDisabled })}
