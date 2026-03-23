@@ -103,6 +103,14 @@ export function useParticipantSessionActions({
     [setProblemBrief, setSession],
   );
 
+  const applyProcessingFromResponse = useCallback(
+    (processing: Session["processing"] | null | undefined) => {
+      if (processing == null) return;
+      setSession((previous) => (previous ? { ...previous, processing } : previous));
+    },
+    [setSession],
+  );
+
   const postContextMessage = useCallback(
     async (content: string, withModel: boolean) => {
       if (!token || !sessionId || session?.status === "terminated") return;
@@ -128,6 +136,7 @@ export function useParticipantSessionActions({
         if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
         applyPanelConfigFromResponse(response.panel_config);
         applyProblemBriefFromResponse(response.problem_brief);
+        applyProcessingFromResponse(response.processing);
         if (withModel) startEagerMessagePoll();
       } catch {
         setMessages((current) => current.filter((message) => message.id !== tempId));
@@ -136,6 +145,7 @@ export function useParticipantSessionActions({
       }
     },
     [
+      applyProcessingFromResponse,
       applyPanelConfigFromResponse,
       applyProblemBriefFromResponse,
       session?.status,
@@ -176,6 +186,7 @@ export function useParticipantSessionActions({
       if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
       applyPanelConfigFromResponse(response.panel_config);
       applyProblemBriefFromResponse(response.problem_brief);
+      applyProcessingFromResponse(response.processing);
       if (invokeModel) startEagerMessagePoll();
     } catch (error) {
       setMessages((current) => current.filter((message) => message.id !== tempUserId));
@@ -186,6 +197,7 @@ export function useParticipantSessionActions({
       setAiPending(false);
     }
   }, [
+    applyProcessingFromResponse,
     applyPanelConfigFromResponse,
     applyProblemBriefFromResponse,
     chatInput,

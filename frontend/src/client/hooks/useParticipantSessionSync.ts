@@ -187,6 +187,8 @@ export function useParticipantSessionSync({
   // capture a stale closure from when it was started.
   const syncMessagesRef = useRef(syncMessages);
   syncMessagesRef.current = syncMessages;
+  const syncSessionRef = useRef(syncSession);
+  syncSessionRef.current = syncSession;
   const eagerTimerRef = useRef<number | null>(null);
 
   const startEagerMessagePoll = useCallback(() => {
@@ -199,6 +201,7 @@ export function useParticipantSessionSync({
         return;
       }
       void syncMessagesRef.current();
+      void syncSessionRef.current();
     }, EAGER_POLL_INTERVAL_MS);
   }, []);
 

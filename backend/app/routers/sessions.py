@@ -6,6 +6,8 @@ import re
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
+from threading import Thread
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.auth import Principal, require_any_study_user, require_client, require_researcher
 from app.config import get_settings
 from app.crypto_util import decrypt_secret, encrypt_secret
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
 from app.models import ChatMessage, OptimizationRun, StudySession
 from app.problem_config_seed import derive_problem_panel_from_brief
@@ -33,6 +35,7 @@ from app.schemas import (
     PostMessagesResponse,
     RunOut,
     SessionCreate,
+    SessionProcessingState,
     SessionOut,
     SessionPatch,
     SolveRunCreate,
@@ -96,12 +99,106 @@ def _problem_brief_dict(row: StudySession | None) -> dict:
         return default_problem_brief()
 
 
+def _touch_session(row: StudySession) -> None:
+    row.updated_at = datetime.now(timezone.utc)
+
+
+def _processing_state(row: StudySession) -> SessionProcessingState:
+    return SessionProcessingState(
+        processing_revision=int(row.processing_revision or 0),
+        brief_status=str(row.brief_status or "idle"),
+        config_status=str(row.config_status or "idle"),
+        processing_error=row.processing_error,
+    )
+
+
+def _desired_config_status(row: StudySession) -> str:
+    return "ready" if _panel_dict(row) is not None else "idle"
+
+
+def _settle_processing_state(row: StudySession, *, cancel_revision: bool = False) -> None:
+    if cancel_revision:
+        row.processing_revision = int(row.processing_revision or 0) + 1
+    row.brief_status = "ready"
+    row.config_status = _desired_config_status(row)
+    row.processing_error = None
+
+
+def _mark_processing_pending(row: StudySession) -> int:
+    row.processing_revision = int(row.processing_revision or 0) + 1
+    row.brief_status = "pending"
+    row.config_status = "pending"
+    row.processing_error = None
+    _touch_session(row)
+    return row.processing_revision
+
+
+def _load_turn_context(db: Session, session_id: str, before_message_id: int) -> tuple[list[tuple[str, str]], list[str], list[dict[str, Any]]]:
+    hist: list[tuple[str, str]] = []
+    prev = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.visible_to_participant.is_(True),
+            ChatMessage.id < before_message_id,
+        )
+        .order_by(ChatMessage.id.desc())
+        .limit(12)
+        .all()
+    )
+    for entry in reversed(prev):
+        if entry.role in ("user", "assistant"):
+            hist.append((entry.role, entry.content))
+
+    steer_rows = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "researcher",
+            ChatMessage.visible_to_participant.is_(False),
+            ChatMessage.id < before_message_id,
+        )
+        .order_by(ChatMessage.id.desc())
+        .limit(4)
+        .all()
+    )
+    researcher_steers = [message.content for message in reversed(steer_rows)]
+
+    recent_run_rows = (
+        db.query(OptimizationRun)
+        .filter(OptimizationRun.session_id == session_id)
+        .order_by(OptimizationRun.id.desc())
+        .limit(4)
+        .all()
+    )
+    recent_runs_summary: list[dict[str, Any]] = []
+    for run_row in reversed(recent_run_rows):
+        entry: dict[str, Any] = {
+            "run_id": run_row.id,
+            "run_number": _run_number(run_row),
+            "ok": run_row.ok,
+            "cost": run_row.cost,
+        }
+        if run_row.result_json:
+            try:
+                result_data = json.loads(run_row.result_json)
+                entry["violations"] = result_data.get("violations")
+                entry["metrics"] = result_data.get("metrics")
+                entry["algorithm"] = result_data.get("algorithm")
+            except json.JSONDecodeError:
+                pass
+        recent_runs_summary.append(entry)
+    return hist, researcher_steers, recent_runs_summary
+
+
 def _sync_panel_from_problem_brief(
     row: StudySession,
     db: Session,
     problem_brief: dict,
     api_key: str | None = None,
     model_name: str | None = None,
+    workflow_mode: str | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
 ) -> tuple[dict | None, list[str]]:
     from app.adapter import sanitize_panel_weights
     from app.services.llm import generate_config_from_brief
@@ -109,13 +206,24 @@ def _sync_panel_from_problem_brief(
     current_panel = _panel_dict(row)
     derived_panel = None
     if api_key and model_name:
-        derived_panel = generate_config_from_brief(
-            brief=problem_brief,
-            # Definition-driven sync should not carry forward stale managed fields.
-            current_panel=None,
-            api_key=api_key,
-            model_name=model_name,
-        )
+        try:
+            derived_panel = generate_config_from_brief(
+                brief=problem_brief,
+                # Definition-driven sync should not carry forward stale managed fields.
+                current_panel=None,
+                api_key=api_key,
+                model_name=model_name,
+                workflow_mode=workflow_mode or row.workflow_mode,
+                recent_runs_summary=recent_runs_summary,
+            )
+        except TypeError:
+            # Back-compat for tests or callers that monkeypatch the older 4-arg signature.
+            derived_panel = generate_config_from_brief(
+                brief=problem_brief,
+                current_panel=None,
+                api_key=api_key,
+                model_name=model_name,
+            )
     if derived_panel is None:
         derived_panel = derive_problem_panel_from_brief(problem_brief)
     if derived_panel is None:
@@ -165,6 +273,7 @@ def _session_to_out(row: StudySession) -> SessionOut:
         status=row.status,
         panel_config=_panel_dict(row),
         problem_brief=_problem_brief_dict(row),
+        processing=_processing_state(row),
         optimization_allowed=row.optimization_allowed,
         gemini_model=row.gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),
@@ -218,6 +327,10 @@ def create_session(
         status="active",
         panel_config_json=None,
         problem_brief_json=json.dumps(default_problem_brief()),
+        processing_revision=0,
+        brief_status="ready",
+        config_status="idle",
+        processing_error=None,
         optimization_allowed=opt_allowed,
     )
     db.add(row)
@@ -246,6 +359,7 @@ def push_participant_starter_panel(
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
     row.panel_config_json = json.dumps(MEDIOCRE_PARTICIPANT_STARTER_CONFIG)
+    _settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
@@ -302,6 +416,7 @@ def patch_session(
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
         row.gemini_key_encrypted = encrypt_secret(body.gemini_api_key)
+    _settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
@@ -404,6 +519,110 @@ def _append_message(
     return m
 
 
+def _persist_processing_failure(session_id: str, revision: int, detail: str) -> None:
+    with SessionLocal() as db:
+        row = db.get(StudySession, session_id)
+        if row is None or row.processing_revision != revision:
+            return
+        row.brief_status = "failed"
+        row.config_status = "failed"
+        row.processing_error = detail
+        _touch_session(row)
+        db.commit()
+
+
+def _run_background_derivation(
+    *,
+    session_id: str,
+    revision: int,
+    user_text: str,
+    workflow_mode: str,
+    api_key: str,
+    model_name: str,
+    history_lines: list[tuple[str, str]],
+    researcher_steers: list[str],
+    recent_runs_summary: list[dict[str, Any]],
+    base_problem_brief: dict[str, Any],
+    base_panel: dict[str, Any] | None,
+    cleanup_requested: bool,
+    clear_requested: bool,
+) -> None:
+    try:
+        from app.services.llm import generate_problem_brief_update
+
+        brief_turn = generate_problem_brief_update(
+            user_text=user_text,
+            history_lines=history_lines,
+            api_key=api_key,
+            model_name=model_name,
+            current_problem_brief=base_problem_brief,
+            workflow_mode=workflow_mode,
+            current_panel=base_panel,
+            recent_runs_summary=recent_runs_summary or None,
+            researcher_steers=researcher_steers or None,
+            cleanup_mode=cleanup_requested,
+        )
+        patch_payload: dict[str, Any] | None = None
+        if brief_turn.problem_brief_patch:
+            patch_payload = dict(brief_turn.problem_brief_patch)
+        elif clear_requested:
+            patch_payload = {"items": [], "open_questions": []}
+        elif cleanup_requested:
+            log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
+
+        effective_problem_brief = base_problem_brief
+        if patch_payload is not None:
+            if cleanup_requested or brief_turn.cleanup_mode or brief_turn.replace_editable_items:
+                patch_payload["replace_editable_items"] = True
+            if clear_requested:
+                patch_payload["replace_open_questions"] = True
+            elif brief_turn.replace_open_questions:
+                patch_payload["replace_open_questions"] = True
+            elif "open_questions" in patch_payload and (cleanup_requested or brief_turn.cleanup_mode):
+                patch_payload["replace_open_questions"] = True
+            effective_problem_brief = merge_problem_brief_patch(base_problem_brief, patch_payload)
+
+        with SessionLocal() as db:
+            row = db.get(StudySession, session_id)
+            if row is None or row.status != "active" or row.processing_revision != revision:
+                return
+            if effective_problem_brief != _problem_brief_dict(row):
+                row.problem_brief_json = json.dumps(effective_problem_brief)
+            row.brief_status = "ready"
+            row.config_status = "pending"
+            row.processing_error = None
+            _touch_session(row)
+            db.commit()
+            db.refresh(row)
+
+            _sync_panel_from_problem_brief(
+                row,
+                db,
+                effective_problem_brief,
+                api_key=api_key,
+                model_name=model_name,
+                workflow_mode=workflow_mode,
+                recent_runs_summary=recent_runs_summary,
+            )
+
+            row = db.get(StudySession, session_id)
+            if row is None or row.processing_revision != revision:
+                return
+            row.brief_status = "ready"
+            row.config_status = _desired_config_status(row)
+            row.processing_error = None
+            _touch_session(row)
+            db.commit()
+    except Exception:
+        log.exception("Background derivation failed for session %s", session_id)
+        _persist_processing_failure(session_id, revision, "Background problem derivation failed")
+
+
+def _launch_background_derivation(**kwargs: Any) -> None:
+    thread = Thread(target=_run_background_derivation, kwargs=kwargs, daemon=True, name=f"session-derive-{kwargs['session_id']}")
+    thread.start()
+
+
 @router.post("/{session_id}/messages", response_model=PostMessagesResponse)
 def post_message(
     session_id: str,
@@ -422,6 +641,7 @@ def post_message(
     out.append(MessageOut.model_validate(um))
     updated_panel: dict | None = None
     updated_problem_brief: dict | None = None
+    processing_state: SessionProcessingState | None = None
 
     if body.invoke_model:
         key = decrypt_secret(row.gemini_key_encrypted)
@@ -435,66 +655,19 @@ def post_message(
                 True,
             )
             out.append(MessageOut.model_validate(am))
+            processing_state = _processing_state(db.get(StudySession, session_id) or row)
         else:
-            hist: list[tuple[str, str]] = []
-            prev = (
-                db.query(ChatMessage)
-                .filter(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.visible_to_participant.is_(True),
-                    ChatMessage.id < um.id,
-                )
-                .order_by(ChatMessage.id.desc())
-                .limit(12)
-                .all()
-            )
-            for p in reversed(prev):
-                if p.role in ("user", "assistant"):
-                    hist.append((p.role, p.content))
-
-            steer_rows = (
-                db.query(ChatMessage)
-                .filter(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.role == "researcher",
-                    ChatMessage.visible_to_participant.is_(False),
-                    ChatMessage.id < um.id,
-                )
-                .order_by(ChatMessage.id.desc())
-                .limit(4)
-                .all()
-            )
-            researcher_steers = [m.content for m in reversed(steer_rows)]
-
-            # Build compact recent-runs context for the system instruction.
-            recent_run_rows = (
-                db.query(OptimizationRun)
-                .filter(OptimizationRun.session_id == session_id)
-                .order_by(OptimizationRun.id.desc())
-                .limit(4)
-                .all()
-            )
-            recent_runs_summary: list[dict] = []
-            for rr in reversed(recent_run_rows):
-                entry: dict = {"run_id": rr.id, "run_number": _run_number(rr), "ok": rr.ok, "cost": rr.cost}
-                if rr.result_json:
-                    try:
-                        rd = json.loads(rr.result_json)
-                        entry["violations"] = rd.get("violations")
-                        entry["metrics"] = rd.get("metrics")
-                        entry["algorithm"] = rd.get("algorithm")
-                    except json.JSONDecodeError:
-                        pass
-                recent_runs_summary.append(entry)
-
+            hist, researcher_steers, recent_runs_summary = _load_turn_context(db, session_id, um.id)
             text = "The model request failed. Try again or continue without AI."
+            current = _panel_dict(row)
+            current_problem_brief = _problem_brief_dict(row)
+            updated_panel = current
+            cleanup_requested = _is_definition_cleanup_request(body.content)
+            clear_requested = _is_definition_clear_request(body.content)
+            turn = None
             try:
                 from app.services.llm import generate_chat_turn
 
-                current = _panel_dict(row)
-                current_problem_brief = _problem_brief_dict(row)
-                cleanup_requested = _is_definition_cleanup_request(body.content)
-                clear_requested = _is_definition_clear_request(body.content)
                 turn = generate_chat_turn(
                     body.content,
                     hist,
@@ -503,22 +676,31 @@ def post_message(
                     current_problem_brief,
                     workflow_mode=row.workflow_mode,
                     recent_runs_summary=recent_runs_summary or None,
+                    current_panel=current,
                     researcher_steers=researcher_steers or None,
                     cleanup_mode=cleanup_requested,
                 )
                 text = turn.assistant_message
-                brief_changed = False
-                patch_payload: dict | None = None
+            except Exception:
+                log.exception("Participant model turn failed for session %s", session_id)
+            am = _append_message(db, session_id, "assistant", text, True)
+            out.append(MessageOut.model_validate(am))
+            if turn and (
+                turn.problem_brief_patch is not None
+                or turn.replace_editable_items
+                or turn.replace_open_questions
+                or turn.cleanup_mode
+                or clear_requested
+            ):
+                patch_payload: dict[str, Any] | None = None
                 if turn.problem_brief_patch:
                     patch_payload = dict(turn.problem_brief_patch)
                 elif clear_requested:
-                    # Deterministic safety net: clear requests must not silently no-op.
                     patch_payload = {"items": [], "open_questions": []}
                 elif cleanup_requested:
                     log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
 
                 if patch_payload is not None:
-                    base_brief = current_problem_brief
                     if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
                         patch_payload["replace_editable_items"] = True
                     if clear_requested:
@@ -529,36 +711,58 @@ def post_message(
                         cleanup_requested or turn.cleanup_mode
                     ):
                         patch_payload["replace_open_questions"] = True
-                    merged_brief = merge_problem_brief_patch(base_brief, patch_payload)
-                    if merged_brief != base_brief:
+                    merged_brief = merge_problem_brief_patch(current_problem_brief, patch_payload)
+                    if merged_brief != current_problem_brief:
+                        row = db.get(StudySession, session_id) or row
                         row.problem_brief_json = json.dumps(merged_brief)
                         updated_problem_brief = merged_brief
-                        brief_changed = True
+                        _touch_session(row)
+                        db.commit()
+                        db.refresh(row)
                 effective_problem_brief = updated_problem_brief or current_problem_brief
-                updated_panel, weight_warnings = _sync_panel_from_problem_brief(
+                row = db.get(StudySession, session_id) or row
+                updated_panel, _ = _sync_panel_from_problem_brief(
                     row,
                     db,
                     effective_problem_brief,
                     api_key=key,
                     model_name=model,
+                    workflow_mode=row.workflow_mode,
+                    recent_runs_summary=recent_runs_summary,
                 )
-                if updated_panel is not None and weight_warnings:
-                    text = f"{text}\n\nNote: {' '.join(weight_warnings)}"
-                if brief_changed and updated_problem_brief is None:
-                    updated_problem_brief = _problem_brief_dict(row)
-                if updated_problem_brief is not None and updated_panel is None:
-                    row.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-                    db.refresh(row)
-            except Exception:
-                log.exception("Participant model turn failed for session %s", session_id)
-            am = _append_message(db, session_id, "assistant", text, True)
-            out.append(MessageOut.model_validate(am))
+                row = db.get(StudySession, session_id) or row
+                _settle_processing_state(row, cancel_revision=True)
+                _touch_session(row)
+                db.commit()
+                db.refresh(row)
+                processing_state = _processing_state(row)
+            else:
+                row = db.get(StudySession, session_id) or row
+                revision = _mark_processing_pending(row)
+                db.commit()
+                db.refresh(row)
+                processing_state = _processing_state(row)
+                _launch_background_derivation(
+                    session_id=session_id,
+                    revision=revision,
+                    user_text=body.content,
+                    workflow_mode=row.workflow_mode,
+                    api_key=key,
+                    model_name=model,
+                    history_lines=hist,
+                    researcher_steers=researcher_steers,
+                    recent_runs_summary=recent_runs_summary,
+                    base_problem_brief=current_problem_brief,
+                    base_panel=current,
+                    cleanup_requested=cleanup_requested,
+                    clear_requested=clear_requested,
+                )
 
     return PostMessagesResponse(
         messages=out,
         panel_config=updated_panel,
         problem_brief=updated_problem_brief,
+        processing=processing_state,
     )
 
 
@@ -738,6 +942,7 @@ def patch_participant_model_settings(
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
         row.gemini_key_encrypted = encrypt_secret(body.gemini_api_key)
+    _settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
@@ -763,10 +968,15 @@ def patch_participant_panel(
     sanitized_config, weight_warnings = sanitize_panel_weights(body.panel_config)
 
     row.panel_config_json = json.dumps(sanitized_config)
+    _settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
     _sync_problem_brief_from_panel(row, db, sanitized_config)
+    _settle_processing_state(row)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
 
     # Build acknowledgement, appending any weight-key correction notices.
     ack_parts = []
@@ -795,6 +1005,7 @@ def patch_participant_problem_brief(
 
     next_problem_brief = normalize_problem_brief(body.problem_brief.model_dump())
     row.problem_brief_json = json.dumps(next_problem_brief)
+    _settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
@@ -805,7 +1016,12 @@ def patch_participant_problem_brief(
         next_problem_brief,
         api_key=decrypt_secret(row.gemini_key_encrypted),
         model_name=row.gemini_model or get_settings().default_gemini_model,
+        workflow_mode=row.workflow_mode,
     )
+    _settle_processing_state(row)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
 
     if body.acknowledgement:
         _append_message(db, session_id, "assistant", body.acknowledgement, True, kind="panel")
@@ -825,18 +1041,27 @@ def sync_panel_from_problem_brief(
         raise HTTPException(status_code=410, detail="Session ended")
 
     problem_brief = _problem_brief_dict(row)
+    _settle_processing_state(row, cancel_revision=True)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
     updated_panel, _ = _sync_panel_from_problem_brief(
         row,
         db,
         problem_brief,
         api_key=decrypt_secret(row.gemini_key_encrypted),
         model_name=row.gemini_model or get_settings().default_gemini_model,
+        workflow_mode=row.workflow_mode,
     )
     if updated_panel is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Problem definition is not specific enough to sync a solver configuration yet",
         )
+    _settle_processing_state(row)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
     return _session_to_out(row)
 
 

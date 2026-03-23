@@ -28,6 +28,64 @@ def test_create_session_returns_null_panel_config(monkeypatch):
         assert r2.status_code == 200
         assert r2.json().get("panel_config") is None
         assert any(item["kind"] == "system" for item in r2.json()["problem_brief"]["items"])
+        assert r2.json()["processing"] == {
+            "processing_revision": 0,
+            "brief_status": "ready",
+            "config_status": "idle",
+            "processing_error": None,
+        }
+
+
+def test_message_response_marks_processing_pending_before_background_finishes(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-processing-pending-secret")
+    get_settings.cache_clear()
+
+    launched: dict[str, object] = {}
+
+    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="I have the chat response ready while I rebuild the panels.",
+            panel_patch=None,
+            problem_brief_patch=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.sessions._launch_background_derivation",
+        lambda **kwargs: launched.update(kwargs),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-processing-pending-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Can you help refine this?", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-processing-pending-secret"},
+        )
+        assert send.status_code == 200
+        body = send.json()
+        assert body["messages"][-1]["content"] == "I have the chat response ready while I rebuild the panels."
+        assert body["processing"]["brief_status"] == "pending"
+        assert body["processing"]["config_status"] == "pending"
+        assert body["processing"]["processing_revision"] == 1
+        assert launched["session_id"] == sid
+        assert launched["revision"] == 1
+
+        session = client.get(
+            f"/sessions/{sid}",
+            headers={"Authorization": "Bearer test-client-processing-pending-secret"},
+        )
+        assert session.status_code == 200
+        assert session.json()["processing"]["brief_status"] == "pending"
+        assert session.json()["processing"]["config_status"] == "pending"
 
 
 def test_steer_messages_hidden_and_forwarded_to_next_model_turn(monkeypatch):

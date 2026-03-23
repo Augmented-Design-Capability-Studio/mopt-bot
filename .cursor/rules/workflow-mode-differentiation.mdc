@@ -1,0 +1,17 @@
+---
+description: Preserve and extend agile vs waterfall workflow differences across prompts, flow, and UI
+alwaysApply: true
+---
+
+# Workflow mode differentiation
+
+Treat `agile` and `waterfall` as an intentional study variable, not just a prompt wording detail.
+
+When changing workflow logic, prompts, participant UX, researcher UX, or session state:
+
+- Keep `session.workflow_mode` as a first-class input.
+- Do not collapse the two modes into one generic behavior unless the user explicitly asks.
+- Consider differences in prompts, backend flow, gating, defaults, nudges, and visible UI language or controls.
+- It is acceptable if the current implementation keeps the differences modest, but new architecture should make stronger divergence easy to add later.
+- When adding new workflow-related features, decide whether they should behave the same in both modes or differently, and encode that choice deliberately.
+- If a change affects workflow semantics, document the distinction clearly and keep `README.md` and `AI_INSTRUCTIONS.md` aligned.

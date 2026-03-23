@@ -58,9 +58,19 @@ export type Session = {
   status: string;
   panel_config: Record<string, unknown> | null;
   problem_brief: ProblemBrief;
+  processing: SessionProcessingState;
   optimization_allowed: boolean;
   gemini_model: string | null;
   gemini_key_configured: boolean;
+};
+
+export type SessionProcessingStatus = "idle" | "pending" | "ready" | "failed";
+
+export type SessionProcessingState = {
+  processing_revision: number;
+  brief_status: SessionProcessingStatus;
+  config_status: SessionProcessingStatus;
+  processing_error: string | null;
 };
 
 export type ProblemBriefItem = {
@@ -106,6 +116,7 @@ export type PostMessagesResponse = {
   messages: Message[];
   panel_config: Record<string, unknown> | null;
   problem_brief: ProblemBrief | null;
+  processing: SessionProcessingState | null;
 };
 
 function isLooseMessage(x: unknown): x is Record<string, unknown> {
@@ -157,6 +168,7 @@ export function normalizePostMessagesResponse(data: unknown): PostMessagesRespon
       messages: (data as Record<string, unknown>[]).map(coerceMessage),
       panel_config: null,
       problem_brief: null,
+      processing: null,
     };
   }
   if (typeof data === "object" && Array.isArray((data as PostMessagesResponse).messages)) {
@@ -165,6 +177,7 @@ export function normalizePostMessagesResponse(data: unknown): PostMessagesRespon
       messages: o.messages,
       panel_config: o.panel_config ?? null,
       problem_brief: o.problem_brief ?? null,
+      processing: o.processing ?? null,
     };
   }
   throw new Error(

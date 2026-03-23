@@ -2,13 +2,16 @@ import type { Message } from "@shared/api";
 
 export function mergeMessagesFromPoll(existing: Message[], incoming: Message[]): Message[] {
   const seen = new Set(existing.map((message) => message.id));
-  const hasOptimisticUser = existing.some(
+  let optimisticUserSlots = existing.filter(
     (message) => message.id < 0 && message.role === "user" && message.kind === "chat",
-  );
+  ).length;
 
   const toAdd = incoming.filter((message) => {
     if (seen.has(message.id)) return false;
-    if (hasOptimisticUser && message.role === "user" && message.kind === "chat") return false;
+    if (message.role === "user" && message.kind === "chat" && optimisticUserSlots > 0) {
+      optimisticUserSlots -= 1;
+      return false;
+    }
     return true;
   });
 
@@ -16,7 +19,15 @@ export function mergeMessagesFromPoll(existing: Message[], incoming: Message[]):
 }
 
 export function mergeMessagesFromPost(existing: Message[], incoming: Message[]): Message[] {
-  const base = existing.filter((message) => message.id >= 0);
+  let optimisticUsersToDrop = incoming.filter((message) => message.role === "user" && message.kind === "chat").length;
+  const base = existing.filter((message) => {
+    if (message.id >= 0) return true;
+    if (message.role === "user" && message.kind === "chat" && optimisticUsersToDrop > 0) {
+      optimisticUsersToDrop -= 1;
+      return false;
+    }
+    return true;
+  });
   const seen = new Set(base.map((message) => message.id));
   const merged = [...base];
 

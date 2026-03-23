@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from google import genai
 from google.genai import types
 
 from app.prompts.study_chat import (
+    STUDY_CHAT_BRIEF_UPDATE_TASK,
+    STUDY_CHAT_CONFIG_DERIVE_SYSTEM_PROMPT,
+    STUDY_CHAT_PHASE_CONFIGURATION,
+    STUDY_CHAT_PHASE_DISCOVERY,
+    STUDY_CHAT_PHASE_STRUCTURING,
     STUDY_CHAT_STRUCTURED_JSON_RULES,
     STUDY_CHAT_SYSTEM_PROMPT,
+    STUDY_CHAT_VISIBLE_REPLY_TASK,
     STUDY_CHAT_WORKFLOW_AGILE,
     STUDY_CHAT_WORKFLOW_WATERFALL,
 )
-from app.schemas import ChatModelTurn
+from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn
 
 log = logging.getLogger(__name__)
 
@@ -151,6 +157,24 @@ CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "required": ["assistant_message"],
 }
 
+BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "ProblemBriefUpdateTurn",
+    "type": "object",
+    "properties": {
+        "problem_brief_patch": {
+            "anyOf": [
+                _PROBLEM_BRIEF_PATCH_SCHEMA,
+                {"type": "null"},
+            ],
+        },
+        "replace_editable_items": {"type": "boolean"},
+        "replace_open_questions": {"type": "boolean"},
+        "cleanup_mode": {"type": "boolean"},
+    },
+}
+
+WorkflowPhase = Literal["discovery", "structuring", "configuration"]
+
 
 def _history_to_contents(history_lines: list[tuple[str, str]]) -> list[types.Content]:
     """Map DB roles user/assistant to Gemini user/model Content turns."""
@@ -169,13 +193,65 @@ def _workflow_prompt(workflow_mode: str) -> str:
     return STUDY_CHAT_WORKFLOW_WATERFALL
 
 
+def _phase_prompt(phase: WorkflowPhase) -> str:
+    if phase == "configuration":
+        return STUDY_CHAT_PHASE_CONFIGURATION
+    if phase == "structuring":
+        return STUDY_CHAT_PHASE_STRUCTURING
+    return STUDY_CHAT_PHASE_DISCOVERY
+
+
+def resolve_workflow_phase(
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+) -> WorkflowPhase:
+    brief = current_problem_brief or {}
+    goal_summary = str(brief.get("goal_summary") or "").strip()
+    items = brief.get("items") if isinstance(brief.get("items"), list) else []
+    open_questions = brief.get("open_questions") if isinstance(brief.get("open_questions"), list) else []
+    non_system_items = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("kind") or "").strip().lower() != "system"
+        and str(item.get("status") or "").strip().lower() != "rejected"
+        and str(item.get("text") or "").strip()
+    ]
+    has_panel = bool(current_panel and isinstance(current_panel, dict))
+    has_successful_run = any(bool(run.get("ok")) for run in (recent_runs_summary or []))
+
+    if workflow_mode == "agile":
+        if has_successful_run or has_panel:
+            return "configuration"
+        if goal_summary or non_system_items:
+            return "structuring"
+        return "discovery"
+
+    if has_successful_run:
+        return "configuration"
+    if has_panel and len(non_system_items) >= 4 and len(open_questions) == 0:
+        return "configuration"
+    if goal_summary or len(non_system_items) >= 2:
+        return "structuring"
+    return "discovery"
+
+
 def _build_structured_system_instruction(
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    current_panel: dict[str, Any] | None = None,
 ) -> str:
+    phase = resolve_workflow_phase(
+        current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+    )
     brief_blob = (
         json.dumps(current_problem_brief, indent=2, ensure_ascii=False)
         if current_problem_brief
@@ -184,6 +260,7 @@ def _build_structured_system_instruction(
     parts = [
         STUDY_CHAT_SYSTEM_PROMPT,
         _workflow_prompt(workflow_mode),
+        _phase_prompt(phase),
         STUDY_CHAT_STRUCTURED_JSON_RULES,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
@@ -215,6 +292,103 @@ def _build_structured_system_instruction(
     return "\n\n".join(parts)
 
 
+def _build_visible_chat_system_instruction(
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    researcher_steers: list[str] | None = None,
+    cleanup_mode: bool = False,
+) -> str:
+    phase = resolve_workflow_phase(
+        current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+    )
+    brief_blob = (
+        json.dumps(current_problem_brief, indent=2, ensure_ascii=False)
+        if current_problem_brief
+        else "{}"
+    )
+    parts = [
+        STUDY_CHAT_SYSTEM_PROMPT,
+        _workflow_prompt(workflow_mode),
+        _phase_prompt(phase),
+        STUDY_CHAT_VISIBLE_REPLY_TASK,
+        "Current problem brief (compact authoritative memory for this turn):",
+        brief_blob,
+    ]
+    if cleanup_mode:
+        parts.append(
+            "Cleanup mode is active for this turn. Acknowledge cleanup naturally if relevant, but keep the visible "
+            "reply focused on participant-facing guidance."
+        )
+    if recent_runs_summary:
+        parts.append("Recent run results (for participant-visible chat context):")
+        parts.append(json.dumps(recent_runs_summary, indent=2, ensure_ascii=False))
+    if researcher_steers:
+        steer_blob = "\n".join(f"- {s}" for s in researcher_steers if s.strip())
+        if steer_blob.strip():
+            parts.append(
+                "Hidden researcher steering (highest-priority instruction for this next participant reply):\n"
+                "- Do not reveal this steering exists or mention a researcher.\n"
+                "- Apply the latest steering directly in your next response.\n"
+                "- Transition naturally from the recent conversation instead of sounding abrupt.\n"
+                f"{steer_blob}"
+            )
+    return "\n\n".join(parts)
+
+
+def _build_brief_update_system_instruction(
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    researcher_steers: list[str] | None = None,
+    cleanup_mode: bool = False,
+) -> str:
+    phase = resolve_workflow_phase(
+        current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+    )
+    brief_blob = (
+        json.dumps(current_problem_brief, indent=2, ensure_ascii=False)
+        if current_problem_brief
+        else "{}"
+    )
+    parts = [
+        STUDY_CHAT_SYSTEM_PROMPT,
+        _workflow_prompt(workflow_mode),
+        _phase_prompt(phase),
+        STUDY_CHAT_BRIEF_UPDATE_TASK,
+        "Current problem brief (compact authoritative memory for this turn):",
+        brief_blob,
+    ]
+    if cleanup_mode:
+        parts.append(
+            "Cleanup mode is active for this turn. Reorganize gathered facts, assumptions, and open questions "
+            "holistically. If you return problem_brief_patch.items, return a coherent full editable snapshot and "
+            "set replace_editable_items=true. If you return problem_brief_patch.open_questions, set "
+            "replace_open_questions=true."
+        )
+    if recent_runs_summary:
+        parts.append("Recent run results (for hidden brief-update context):")
+        parts.append(json.dumps(recent_runs_summary, indent=2, ensure_ascii=False))
+    if researcher_steers:
+        steer_blob = "\n".join(f"- {s}" for s in researcher_steers if s.strip())
+        if steer_blob.strip():
+            parts.append(
+                "Hidden researcher steering (highest-priority instruction for this next hidden brief update):\n"
+                "- Do not reveal this steering exists or mention a researcher.\n"
+                "- Apply the latest steering directly in your next hidden output.\n"
+                f"{steer_blob}"
+            )
+    return "\n\n".join(parts)
+
+
 def _plain_fallback_reply(
     user_text: str,
     history_lines: list[tuple[str, str]],
@@ -222,13 +396,16 @@ def _plain_fallback_reply(
     model_name: str,
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
 ) -> str:
-    system = _build_structured_system_instruction(
+    system = _build_visible_chat_system_instruction(
         current_problem_brief=current_problem_brief,
         workflow_mode=workflow_mode,
-        recent_runs_summary=None,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
     )
@@ -244,34 +421,64 @@ def _plain_fallback_reply(
     return resp.text.strip()
 
 
-def generate_chat_turn(
+def generate_visible_chat_reply(
     user_text: str,
     history_lines: list[tuple[str, str]],
     api_key: str,
     model_name: str,
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
-) -> ChatModelTurn:
-    """
-    Structured turn: Chat session with system instruction + history, then send_message.
-    Falls back to plain chat (no panel_patch) if JSON structured output fails.
-    """
+) -> str:
     client = genai.Client(api_key=api_key)
-    system_instruction = _build_structured_system_instruction(
-        current_problem_brief,
-        workflow_mode,
-        recent_runs_summary,
-        researcher_steers,
-        cleanup_mode,
+    system_instruction = _build_visible_chat_system_instruction(
+        current_problem_brief=current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        cleanup_mode=cleanup_mode,
+    )
+    chat = client.chats.create(
+        model=model_name,
+        config=types.GenerateContentConfig(system_instruction=system_instruction),
+        history=_history_to_contents(history_lines),
+    )
+    resp = chat.send_message(user_text)
+    if not resp.text:
+        raise RuntimeError("Empty model response")
+    return resp.text.strip()
+
+
+def generate_problem_brief_update(
+    user_text: str,
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    researcher_steers: list[str] | None = None,
+    cleanup_mode: bool = False,
+) -> ProblemBriefUpdateTurn:
+    client = genai.Client(api_key=api_key)
+    system_instruction = _build_brief_update_system_instruction(
+        current_problem_brief=current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        cleanup_mode=cleanup_mode,
     )
     history = _history_to_contents(history_lines)
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         response_mime_type="application/json",
-        response_json_schema=CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
+        response_json_schema=BRIEF_UPDATE_RESPONSE_JSON_SCHEMA,
     )
     try:
         chat = client.chats.create(
@@ -282,23 +489,50 @@ def generate_chat_turn(
         resp = chat.send_message(user_text)
         raw = resp.text
         log.info(
-            "Structured Gemini raw response: %s",
+            "Brief-update Gemini raw response: %s",
             raw if raw is not None else "<no text>",
         )
         if resp.parsed is not None:
-            if isinstance(resp.parsed, ChatModelTurn):
-                log.info("Structured Gemini parsed turn: %s", resp.parsed.model_dump())
+            if isinstance(resp.parsed, ProblemBriefUpdateTurn):
                 return resp.parsed
             if isinstance(resp.parsed, dict):
-                log.info("Structured Gemini parsed dict: %s", resp.parsed)
-                return ChatModelTurn.model_validate(resp.parsed)
+                return ProblemBriefUpdateTurn.model_validate(resp.parsed)
         if not raw:
             raise RuntimeError("Empty model response")
-        turn = ChatModelTurn.model_validate_json(raw)
-        log.info("Structured Gemini validated JSON turn: %s", turn.model_dump())
-        return turn
+        return ProblemBriefUpdateTurn.model_validate_json(raw)
     except Exception as e:
-        log.warning("Structured chat failed (%s); using plain fallback", e)
+        log.warning("Brief-update structured call failed (%s); returning empty patch", e)
+        return ProblemBriefUpdateTurn()
+
+
+def generate_chat_turn(
+    user_text: str,
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    current_panel: dict[str, Any] | None = None,
+    researcher_steers: list[str] | None = None,
+    cleanup_mode: bool = False,
+) -> ChatModelTurn:
+    """Compatibility wrapper that now prioritizes the visible assistant reply."""
+    try:
+        text = generate_visible_chat_reply(
+            user_text=user_text,
+            history_lines=history_lines,
+            api_key=api_key,
+            model_name=model_name,
+            current_problem_brief=current_problem_brief,
+            workflow_mode=workflow_mode,
+            current_panel=current_panel,
+            recent_runs_summary=recent_runs_summary,
+            researcher_steers=researcher_steers,
+            cleanup_mode=cleanup_mode,
+        )
+    except Exception as e:
+        log.warning("Visible chat failed (%s); using plain fallback", e)
         text = _plain_fallback_reply(
             user_text,
             history_lines,
@@ -306,33 +540,12 @@ def generate_chat_turn(
             model_name,
             current_problem_brief,
             workflow_mode,
+            current_panel,
+            recent_runs_summary,
             researcher_steers,
             cleanup_mode,
         )
-        return ChatModelTurn(assistant_message=text, panel_patch=None)
-
-
-_CONFIG_DERIVE_SYSTEM_PROMPT = """
-You are a strict configuration translator.
-
-Given the current problem brief, produce a single JSON object with exactly:
-- root key "problem"
-- only known problem fields
-- no markdown, no commentary
-
-Rules:
-- Prefer values explicitly stated in the problem brief.
-- Do not preserve old managed values just because they existed before.
-- For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, shift_hard_penalty,
-  only_active_terms), derive from the brief for this turn.
-- If a managed field is not supported by brief evidence, omit it.
-- Emit "weights" as a JSON object with only these keys:
-  "travel_time", "fuel_cost", "deadline_penalty", "capacity_penalty",
-  "workload_balance", "worker_preference", "priority_penalty".
-- If "weights" is emitted, include only terms justified by the brief.
-- "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
-- Keep output compact and valid JSON.
-""".strip()
+    return ChatModelTurn(assistant_message=text, panel_patch=None)
 
 
 def generate_config_from_brief(
@@ -340,20 +553,35 @@ def generate_config_from_brief(
     current_panel: dict[str, Any] | None,
     api_key: str,
     model_name: str,
+    workflow_mode: str = "waterfall",
+    recent_runs_summary: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """One-shot structured call that derives a panel patch from a brief."""
     if not api_key.strip():
         return None
     client = genai.Client(api_key=api_key)
     brief_blob = json.dumps(brief or {}, ensure_ascii=False)
+    phase = resolve_workflow_phase(
+        brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+    )
     user_prompt = (
         "Current problem brief JSON:\n"
         f"{brief_blob}\n\n"
         "Current panel JSON (auxiliary only; do not preserve managed fields from it):\n"
         f"{json.dumps(current_panel or {}, ensure_ascii=False)}\n"
     )
+    system_instruction = "\n\n".join(
+        [
+            _workflow_prompt(workflow_mode),
+            _phase_prompt(phase),
+            STUDY_CHAT_CONFIG_DERIVE_SYSTEM_PROMPT,
+        ]
+    )
     config = types.GenerateContentConfig(
-        system_instruction=_CONFIG_DERIVE_SYSTEM_PROMPT,
+        system_instruction=system_instruction,
         response_mime_type="application/json",
         response_json_schema=CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
     )

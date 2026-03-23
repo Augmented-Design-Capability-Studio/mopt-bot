@@ -12,6 +12,9 @@ type ConfigPanelProps = {
   editMode: EditMode;
   busy: boolean;
   syncingProblemConfig: boolean;
+  backgroundBriefPending: boolean;
+  backgroundConfigPending: boolean;
+  backgroundProcessingError?: string | null;
   sessionTerminated: boolean;
   className: string;
   onConfigTextChange: (value: string) => void;
@@ -30,6 +33,9 @@ export function ConfigPanel({
   editMode,
   busy,
   syncingProblemConfig,
+  backgroundBriefPending,
+  backgroundConfigPending,
+  backgroundProcessingError,
   sessionTerminated,
   className,
   onConfigTextChange,
@@ -87,6 +93,12 @@ export function ConfigPanel({
       <div className="panel-header">
         Problem setup
         {(definitionEditing || configEditing) && <span className="muted"> - editing {tabTitle.toLowerCase()}</span>}
+        {!definitionEditing && !configEditing && (backgroundBriefPending || backgroundConfigPending) && (
+          <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", marginLeft: "0.5rem" }}>
+            <span className="inline-spinner" aria-hidden="true" />
+            {backgroundBriefPending ? "Updating definition" : "Updating config"}
+          </span>
+        )}
       </div>
       <div className="panel-body">
         <div className="tabs">
@@ -103,26 +115,52 @@ export function ConfigPanel({
               disabled={tabLocked && activeTab !== tabId}
             >
               {label}
+              {tabId === "definition" && backgroundBriefPending ? (
+                <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
+              ) : null}
+              {tabId === "config" && backgroundConfigPending ? (
+                <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
+              ) : null}
             </button>
           ))}
         </div>
 
+        {backgroundProcessingError && !definitionEditing && !configEditing && (
+          <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+            Background update issue: {backgroundProcessingError}
+          </p>
+        )}
+
         <div className="config-panel-scroll">
           {activeTab === "definition" ? (
             problemBrief ? (
-              <DefinitionPanel
-                problemBrief={problemBrief}
-                editable={editableDefinition}
-                sessionTerminated={sessionTerminated}
-                onChange={onProblemBriefChange}
-              />
+              <>
+                {backgroundBriefPending && !definitionEditing && (
+                  <p className="muted" style={{ fontSize: "0.85rem", padding: "0.1rem 0 0.35rem" }}>
+                    Refreshing the definition from the latest chat turn...
+                  </p>
+                )}
+                <DefinitionPanel
+                  problemBrief={problemBrief}
+                  editable={editableDefinition}
+                  sessionTerminated={sessionTerminated}
+                  onChange={onProblemBriefChange}
+                />
+              </>
             ) : (
               <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>
                 Loading problem definition...
               </p>
             )
           ) : activeTab === "config" ? (
-            <ProblemConfigBlocks configJson={configText} onChange={onConfigTextChange} editable={editableConfig} />
+            <>
+              {backgroundConfigPending && !configEditing && (
+                <p className="muted" style={{ fontSize: "0.85rem", padding: "0.1rem 0 0.35rem" }}>
+                  Rebuilding solver config from the latest definition...
+                </p>
+              )}
+              <ProblemConfigBlocks configJson={configText} onChange={onConfigTextChange} editable={editableConfig} />
+            </>
           ) : (
             <textarea
               className="mono config-raw-textarea"

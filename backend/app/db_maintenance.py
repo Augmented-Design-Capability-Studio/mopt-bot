@@ -15,6 +15,7 @@ def ensure_database_shape() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_sessions_problem_brief_column()
     _ensure_sessions_participant_number_column()
+    _ensure_sessions_processing_columns()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
 
@@ -41,6 +42,31 @@ def _ensure_sessions_participant_number_column() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE sessions ADD COLUMN participant_number VARCHAR(64)"))
     log.info("Added sessions.participant_number column")
+
+
+def _ensure_sessions_processing_columns() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    statements: list[tuple[str, str]] = []
+    if "processing_revision" not in columns:
+        statements.append(
+            ("ALTER TABLE sessions ADD COLUMN processing_revision INTEGER NOT NULL DEFAULT 0", "sessions.processing_revision")
+        )
+    if "brief_status" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN brief_status VARCHAR(16) NOT NULL DEFAULT 'idle'", "sessions.brief_status"))
+    if "config_status" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN config_status VARCHAR(16) NOT NULL DEFAULT 'idle'", "sessions.config_status"))
+    if "processing_error" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN processing_error TEXT", "sessions.processing_error"))
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for sql, _ in statements:
+            conn.execute(text(sql))
+    for _, column_name in statements:
+        log.info("Added %s column", column_name)
 
 
 def _ensure_runs_session_index_column() -> None:

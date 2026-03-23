@@ -108,6 +108,9 @@ export function ParticipantShell({
   const chatAttentionKey = shouldNudgeChat ? `${sessionId}:new-session-chat-focus` : undefined;
   const modelKeyStatus = session == null ? "neutral" : session.gemini_key_configured ? "ok" : "warn";
   const modelKeyIcon = modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
+  const backgroundBriefPending = session?.processing?.brief_status === "pending";
+  const backgroundConfigPending = session?.processing?.config_status === "pending";
+  const backgroundProcessingError = session?.processing?.processing_error ?? null;
 
   return (
     <div className="app-shell">
@@ -179,6 +182,9 @@ export function ParticipantShell({
             editMode={editMode}
             busy={busy}
             syncingProblemConfig={syncingProblemConfig}
+            backgroundBriefPending={backgroundBriefPending}
+            backgroundConfigPending={backgroundConfigPending}
+            backgroundProcessingError={backgroundProcessingError}
             sessionTerminated={sessionTerminated}
             onConfigTextChange={onConfigTextChange}
             onProblemBriefChange={onProblemBriefChange}

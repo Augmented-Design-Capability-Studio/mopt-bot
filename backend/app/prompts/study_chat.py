@@ -281,3 +281,93 @@ assumption rows instead of incremental append-style edits.
 {"assistant_message": "I removed the old population setting.", "problem_brief_patch": {"items": [{"id": "fact-pop-size-100", "text": "Population size is set to 100.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}, {"id": "fact-pop-size-150", "text": "Population size is set to 150.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}]}}
 ```
 """.strip()
+
+
+# ---------------------------------------------------------------------------
+# Task-specific prompt fragments for the refactored chat pipeline.
+# ---------------------------------------------------------------------------
+
+STUDY_CHAT_VISIBLE_REPLY_TASK = """
+## Visible chat task
+
+Produce the participant-visible chat reply only.
+
+- Reply as plain text, not JSON.
+- Keep the response natural and concise.
+- Do not mention hidden state, background processing, schemas, or internal patching.
+- Respect the active workflow mode: waterfall should sound more specification-first, while
+  agile can be more iterative and run-oriented.
+- If the user requests cleanup/reorganization, acknowledge that naturally in the reply, but
+  do not claim the hidden brief is updated unless the hidden extraction task can support it.
+""".strip()
+
+STUDY_CHAT_BRIEF_UPDATE_TASK = """
+## Hidden brief-update task
+
+Update the authoritative hidden problem brief memory for this turn.
+
+Reply as JSON only (no markdown fences) with exactly these keys:
+
+- `"problem_brief_patch"`: object or null.
+- `"replace_editable_items"`: boolean.
+- `"replace_open_questions"`: boolean.
+- `"cleanup_mode"`: boolean.
+
+Rules:
+
+- This task is hidden from the participant; do not generate visible chat text here.
+- Preserve existing `"kind": "system"` items unchanged and non-editable.
+- Keep the brief coherent: if a newer fact supersedes an older fact, keep the newer fact
+  active and mark the superseded one `"rejected"` instead of leaving both active.
+- Omit untouched fields.
+- Cleanup requests must be holistic: set `cleanup_mode=true`, `replace_editable_items=true`,
+  and emit a coherent editable snapshot when the user asks to clean up, consolidate,
+  deduplicate, reorganize, or clear definition content.
+""".strip()
+
+STUDY_CHAT_PHASE_DISCOVERY = """
+## Phase guidance: discovery
+
+- Prioritize gathering facts, constraints, priorities, and open questions.
+- Avoid overcommitting to a detailed solver setup too early.
+- Waterfall should lean more strongly into clarification before configuration.
+- Agile may suggest a lightweight baseline only if that fits the current user request.
+""".strip()
+
+STUDY_CHAT_PHASE_STRUCTURING = """
+## Phase guidance: structuring
+
+- Consolidate the current understanding into a cleaner problem definition.
+- Resolve contradictions and convert loose statements into reusable brief facts.
+- Prepare the information so solver configuration can be derived more reliably.
+""".strip()
+
+STUDY_CHAT_PHASE_CONFIGURATION = """
+## Phase guidance: configuration
+
+- The brief is specific enough to support more direct solver-configuration reasoning.
+- Waterfall should still relate configuration changes back to the stated requirements.
+- Agile can be more action-oriented and emphasize targeted iteration from the current state.
+""".strip()
+
+STUDY_CHAT_CONFIG_DERIVE_SYSTEM_PROMPT = """
+You are a strict configuration translator.
+
+Given the current problem brief, produce a single JSON object with exactly:
+- root key "problem"
+- only known problem fields
+- no markdown, no commentary
+
+Rules:
+- Prefer values explicitly stated in the problem brief.
+- Do not preserve old managed values just because they existed before.
+- For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, shift_hard_penalty,
+  only_active_terms), derive from the brief for this turn.
+- If a managed field is not supported by brief evidence, omit it.
+- Emit "weights" as a JSON object with only these keys:
+  "travel_time", "fuel_cost", "deadline_penalty", "capacity_penalty",
+  "workload_balance", "worker_preference", "priority_penalty".
+- If "weights" is emitted, include only terms justified by the brief.
+- "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
+- Keep output compact and valid JSON.
+""".strip()

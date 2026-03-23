@@ -43,6 +43,16 @@ class ProblemBrief(BaseModel):
     backend_template: str = ""
 
 
+ProcessingStatus = Literal["idle", "pending", "ready", "failed"]
+
+
+class SessionProcessingState(BaseModel):
+    processing_revision: int = 0
+    brief_status: ProcessingStatus = "idle"
+    config_status: ProcessingStatus = "idle"
+    processing_error: str | None = None
+
+
 class SessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -54,6 +64,7 @@ class SessionOut(BaseModel):
     status: str
     panel_config: dict[str, Any] | None
     problem_brief: ProblemBrief
+    processing: SessionProcessingState = Field(default_factory=SessionProcessingState)
     optimization_allowed: bool
     gemini_model: str | None
     gemini_key_configured: bool = False
@@ -92,10 +103,20 @@ class ChatModelTurn(BaseModel):
     cleanup_mode: bool = False
 
 
+class ProblemBriefUpdateTurn(BaseModel):
+    """Structured hidden Gemini reply for brief extraction/update only."""
+
+    problem_brief_patch: dict[str, Any] | None = None
+    replace_editable_items: bool = False
+    replace_open_questions: bool = False
+    cleanup_mode: bool = False
+
+
 class PostMessagesResponse(BaseModel):
     messages: list[MessageOut]
     panel_config: dict[str, Any] | None = None
     problem_brief: ProblemBrief | None = None
+    processing: SessionProcessingState | None = None
 
 
 class SolveRunCreate(BaseModel):
