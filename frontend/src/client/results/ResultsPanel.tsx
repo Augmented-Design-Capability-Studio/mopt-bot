@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { displayRunNumber, type RunResult, type Session } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
-import { parseActiveWeightKeys } from "../problemConfig/serialization";
 import { ConvergencePlot } from "./ConvergencePlot";
 import { RunTimeline } from "./RunTimeline";
 import { ViolationSummary } from "./ViolationSummary";
@@ -16,7 +15,6 @@ type ResultsPanelProps = {
   editMode: EditMode;
   busy: boolean;
   optimizing: boolean;
-  configText: string;
   session: Session | null;
   sessionTerminated: boolean;
   className: string;
@@ -35,7 +33,6 @@ export function ResultsPanel({
   editMode,
   busy,
   optimizing,
-  configText,
   session,
   sessionTerminated,
   className,
@@ -45,12 +42,29 @@ export function ResultsPanel({
   onRunOptimize,
   onRunEvaluateEdited,
 }: ResultsPanelProps) {
-  const activeWeightKeys = parseActiveWeightKeys(configText);
   const [showRaw, setShowRaw] = useState(false);
   const [vizTab, setVizTab] = useState<"schedule" | "convergence">("schedule");
   const currentResult = currentRun?.result ?? null;
+  const runProblem = (currentRun?.request?.problem ?? {}) as Record<string, unknown>;
+  const runWeights =
+    runProblem.weights && typeof runProblem.weights === "object" && !Array.isArray(runProblem.weights)
+      ? (runProblem.weights as Record<string, unknown>)
+      : {};
+  const runSoftConstraints = Array.isArray(runProblem.soft_constraints)
+    ? runProblem.soft_constraints.map((entry) => String(entry))
+    : [];
+  const runHardConstraints = Array.isArray(runProblem.hard_constraints)
+    ? runProblem.hard_constraints.map((entry) => String(entry))
+    : [];
+  const runAlgorithm =
+    typeof runProblem.algorithm === "string"
+      ? runProblem.algorithm
+      : typeof currentResult?.algorithm === "string"
+        ? currentResult.algorithm
+        : null;
   const hasResult = currentResult !== null;
   const convergence = currentResult?.convergence ?? [];
+  const runActiveWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
 
   useEffect(() => {
     setVizTab("schedule");
@@ -123,12 +137,35 @@ export function ResultsPanel({
           </div>
         ) : hasResult ? (
           <div className="results-visualization-scroll">
+            <div className="run-summary-grid">
+              <div className="run-summary-card">
+                <div className="muted">Algorithm</div>
+                <div className="mono">{runAlgorithm ?? "not captured in this run snapshot"}</div>
+              </div>
+              <div className="run-summary-card">
+                <div className="muted">Objective Weights</div>
+                <div className="mono">
+                  {runActiveWeightKeys.length > 0
+                    ? runActiveWeightKeys.map((key) => `${key}: ${runWeights[key]}`).join(" · ")
+                    : "not captured in this run snapshot"}
+                </div>
+              </div>
+              <div className="run-summary-card">
+                <div className="muted">Constraints</div>
+                <div className="mono">
+                  {[
+                    runHardConstraints.length ? `hard: ${runHardConstraints.join(", ")}` : "",
+                    runSoftConstraints.length ? `soft: ${runSoftConstraints.join(", ")}` : "",
+                  ].filter(Boolean).join(" · ") || "not captured in this run snapshot"}
+                </div>
+              </div>
+            </div>
             <ViolationSummary
               violations={currentResult.violations}
               metrics={currentResult.metrics}
               referenceCost={currentRun?.reference_cost ?? null}
               runtimeSeconds={currentResult.runtime_seconds}
-              activeWeightKeys={activeWeightKeys}
+              activeWeightKeys={runActiveWeightKeys}
             />
             {convergence.length > 0 && (
               <div className="tabs" style={{ marginTop: "0.6rem" }}>

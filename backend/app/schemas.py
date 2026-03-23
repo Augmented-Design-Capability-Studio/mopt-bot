@@ -138,6 +138,7 @@ class RunOut(BaseModel):
     cost: float | None
     reference_cost: float | None
     error_message: str | None
+    request: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
 
 

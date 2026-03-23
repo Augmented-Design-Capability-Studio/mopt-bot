@@ -59,6 +59,21 @@ class ChatMessage(Base):
     session: Mapped["StudySession"] = relationship("StudySession", back_populates="messages")
 
 
+class SessionSnapshot(Base):
+    """Stores brief+panel state before runs or manual saves for session continuity."""
+
+    __tablename__ = "session_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    event_type: Mapped[str] = mapped_column(String(32), default="before_run")
+    problem_brief_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    panel_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class OptimizationRun(Base):
     __tablename__ = "runs"
 

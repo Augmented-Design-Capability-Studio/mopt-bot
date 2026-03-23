@@ -108,6 +108,8 @@ export function ChatAiPendingBubble() {
 export type ChatPanelProps = {
   title: string;
   messages: ReactNode;
+  /** When this changes, scroll to end. Use a stable value (e.g. message count + last id) to avoid scrolling on unrelated re-renders. */
+  scrollTriggerKey?: React.Key;
   logAriaLive?: "polite" | "assertive" | "off";
   logStyle?: CSSProperties;
   betweenLogAndComposer?: ReactNode;
@@ -122,6 +124,7 @@ export type ChatPanelProps = {
 export function ChatPanel({
   title,
   messages,
+  scrollTriggerKey,
   logAriaLive = "polite",
   logStyle,
   betweenLogAndComposer,
@@ -131,8 +134,9 @@ export function ChatPanel({
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (scrollTriggerKey === undefined) return;
     logEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messages]);
+  }, [scrollTriggerKey]);
 
   return (
     <>

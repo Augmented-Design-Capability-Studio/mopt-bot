@@ -49,6 +49,11 @@ type ParticipantShellProps = {
   onSaveConfig: () => void | Promise<void>;
   onSaveProblemBrief: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
+  onEnterConfigEdit?: () => void;
+  onLoadConfigFromLastRun?: () => void;
+  onLoadConfigFromPreviousEdit?: () => void;
+  canLoadFromLastRun?: boolean;
+  canLoadFromPreviousEdit?: boolean;
   onRunOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
   onCloseModelDialog: () => void;
@@ -94,6 +99,11 @@ export function ParticipantShell({
   onSaveConfig,
   onSaveProblemBrief,
   onSyncProblemConfig,
+  onEnterConfigEdit,
+  onLoadConfigFromLastRun,
+  onLoadConfigFromPreviousEdit,
+  canLoadFromLastRun,
+  canLoadFromPreviousEdit,
   onRunOptimize,
   onRunEvaluateEdited,
   onCloseModelDialog,
@@ -192,6 +202,11 @@ export function ParticipantShell({
             onSaveConfig={onSaveConfig}
             onSaveProblemBrief={onSaveProblemBrief}
             onSyncProblemConfig={onSyncProblemConfig}
+            onEnterConfigEdit={onEnterConfigEdit}
+            onLoadConfigFromLastRun={onLoadConfigFromLastRun}
+            onLoadConfigFromPreviousEdit={onLoadConfigFromPreviousEdit}
+            canLoadFromLastRun={canLoadFromLastRun}
+            canLoadFromPreviousEdit={canLoadFromPreviousEdit}
           />
         )}
 
@@ -205,7 +220,6 @@ export function ParticipantShell({
             editMode={editMode}
             busy={busy}
             optimizing={optimizing}
-            configText={configText}
             session={session}
             sessionTerminated={sessionTerminated}
             onSetActiveRun={onSetActiveRun}

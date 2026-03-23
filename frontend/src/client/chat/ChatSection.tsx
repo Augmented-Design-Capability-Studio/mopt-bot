@@ -37,10 +37,12 @@ export function ChatSection({
   onSendChat,
   onSimulateUpload,
 }: ChatSectionProps) {
+  const scrollTriggerKey = `${messages.length}-${messages[messages.length - 1]?.id ?? ""}-${aiPending}`;
   return (
     <ChatPanel
       title="Chat & upload"
-      messages={<MessageBubbleList messages={messages} afterMessages={aiPending && <ChatAiPendingBubble />} />}
+      messages={<MessageBubbleList messages={messages} afterMessages={aiPending ? <ChatAiPendingBubble /> : null} />}
+      scrollTriggerKey={scrollTriggerKey}
       betweenLogAndComposer={
         <details className="muted chat-model-details" {...(chatLocked ? { open: false } : {})}>
           <summary style={chatLocked ? { pointerEvents: "none", opacity: 0.55 } : undefined}>

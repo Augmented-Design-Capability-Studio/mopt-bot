@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProblemBrief } from "@shared/api";
 
@@ -21,8 +21,16 @@ type ConfigPanelProps = {
   onProblemBriefChange: (value: ProblemBrief | null) => void;
   onSetEditMode: (mode: EditMode) => void;
   onSaveConfig: () => void | Promise<void>;
-  onSaveProblemBrief: (overrideBrief?: ProblemBrief) => void | Promise<void>;
+  onSaveProblemBrief: (
+    overrideBrief?: ProblemBrief,
+    options?: { chatNote?: string },
+  ) => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
+  onEnterConfigEdit?: () => void;
+  onLoadConfigFromLastRun?: () => void;
+  onLoadConfigFromPreviousEdit?: () => void;
+  canLoadFromLastRun?: boolean;
+  canLoadFromPreviousEdit?: boolean;
 };
 
 type PanelTab = "definition" | "config" | "raw";
@@ -44,8 +52,28 @@ export function ConfigPanel({
   onSaveConfig,
   onSaveProblemBrief,
   onSyncProblemConfig,
+  onEnterConfigEdit,
+  onLoadConfigFromLastRun,
+  onLoadConfigFromPreviousEdit,
+  canLoadFromLastRun = false,
+  canLoadFromPreviousEdit = false,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
+  const [loadMenuOpen, setLoadMenuOpen] = useState(false);
+  const loadMenuRef = useRef<HTMLDivElement>(null);
+
+  const hasLoadOptions = canLoadFromLastRun || canLoadFromPreviousEdit;
+
+  useEffect(() => {
+    if (!loadMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (loadMenuRef.current && !loadMenuRef.current.contains(e.target as Node)) {
+        setLoadMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [loadMenuOpen]);
 
   useEffect(() => {
     if (editMode === "config" && activeTab !== "config") setActiveTab("config");
@@ -94,9 +122,8 @@ export function ConfigPanel({
         Problem setup
         {configEditing && <span className="muted"> - editing {tabTitle.toLowerCase()}</span>}
         {!definitionEditing && !configEditing && (backgroundBriefPending || backgroundConfigPending) && (
-          <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", marginLeft: "0.5rem" }}>
+          <span className="muted" style={{ display: "inline-flex", alignItems: "center", marginLeft: "0.5rem" }}>
             <span className="inline-spinner" aria-hidden="true" />
-            {backgroundBriefPending ? "Updating definition" : "Updating config"}
           </span>
         )}
       </div>
@@ -118,7 +145,7 @@ export function ConfigPanel({
               {tabId === "definition" && backgroundBriefPending ? (
                 <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
               ) : null}
-              {tabId === "config" && backgroundConfigPending ? (
+              {tabId === "config" && (backgroundConfigPending || syncingProblemConfig) ? (
                 <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
               ) : null}
             </button>
@@ -135,11 +162,6 @@ export function ConfigPanel({
           {activeTab === "definition" ? (
             problemBrief ? (
               <>
-                {backgroundBriefPending && !definitionEditing && (
-                  <p className="muted" style={{ fontSize: "0.85rem", padding: "0.1rem 0 0.35rem" }}>
-                    Refreshing the definition from the latest chat turn...
-                  </p>
-                )}
                 <DefinitionPanel
                   problemBrief={problemBrief}
                   editable={editableDefinition}
@@ -155,11 +177,6 @@ export function ConfigPanel({
             )
           ) : activeTab === "config" ? (
             <>
-              {backgroundConfigPending && !configEditing && (
-                <p className="muted" style={{ fontSize: "0.85rem", padding: "0.1rem 0 0.35rem" }}>
-                  Rebuilding solver config from the latest definition...
-                </p>
-              )}
               <ProblemConfigBlocks configJson={configText} onChange={onConfigTextChange} editable={editableConfig} />
             </>
           ) : (
@@ -192,18 +209,80 @@ export function ConfigPanel({
                   "Sync to config"
                 )}
               </button>
-              {syncingProblemConfig && (
-                <span className="muted">Rebuilding config from definition (may use model derivation)...</span>
-              )}
             </>
           ) : activeTab === "config" ? !configEditing ? (
-            <button
-              type="button"
-              onClick={() => onSetEditMode("config")}
-              disabled={editMode !== "none" || sessionTerminated}
-            >
-              Edit
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => (onEnterConfigEdit ? onEnterConfigEdit() : onSetEditMode("config"))}
+                disabled={editMode !== "none" || sessionTerminated}
+              >
+                Edit
+              </button>
+              {hasLoadOptions && onLoadConfigFromLastRun && onLoadConfigFromPreviousEdit && (
+                <div ref={loadMenuRef} style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    onClick={() => setLoadMenuOpen((o) => !o)}
+                    disabled={sessionTerminated || (!canLoadFromLastRun && !canLoadFromPreviousEdit)}
+                    title="Load config from previous run or edit"
+                    aria-expanded={loadMenuOpen}
+                    aria-haspopup="menu"
+                  >
+                    Load config <span aria-hidden="true">{loadMenuOpen ? "▼" : "▲"}</span>
+                  </button>
+                  {loadMenuOpen && (
+                    <div
+                      className="config-load-dropup"
+                      role="menu"
+                      style={{
+                        position: "absolute",
+                        bottom: "100%",
+                        left: 0,
+                        marginBottom: "0.2rem",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0,
+                        background: "var(--bg)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "2px",
+                        boxShadow: "0 -2px 6px rgba(0,0,0,0.12)",
+                        minWidth: "100%",
+                        overflow: "hidden",
+                        zIndex: 10,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!canLoadFromLastRun || sessionTerminated}
+                        onClick={() => {
+                          onLoadConfigFromLastRun();
+                          setLoadMenuOpen(false);
+                        }}
+                        title="Restore config from the most recent optimization run"
+                        style={{ padding: "0.4rem 0.6rem", textAlign: "left", fontSize: "0.9rem" }}
+                      >
+                        From most recent run
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!canLoadFromPreviousEdit || sessionTerminated}
+                        onClick={() => {
+                          onLoadConfigFromPreviousEdit();
+                          setLoadMenuOpen(false);
+                        }}
+                        title="Restore config from the previous manual edit"
+                        style={{ padding: "0.4rem 0.6rem", textAlign: "left", fontSize: "0.9rem" }}
+                      >
+                        From previous edit
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           ) : (
             <>
               <button type="button" onClick={() => void onSaveConfig()} disabled={busy || sessionTerminated}>

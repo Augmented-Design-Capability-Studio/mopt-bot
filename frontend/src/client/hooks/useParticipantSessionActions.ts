@@ -23,7 +23,7 @@ type UseParticipantSessionActionsArgs = {
   participantNumber?: string;
   sessionId: string;
   session: Session | null;
-  chatInput: string;
+  chatInputRef: MutableRefObject<string>;
   invokeModel: boolean;
   configText: string;
   problemBrief: ProblemBrief | null;
@@ -52,12 +52,16 @@ type UseParticipantSessionActionsArgs = {
   startEagerMessagePoll: () => void;
 };
 
+type SaveProblemBriefOptions = {
+  chatNote?: string;
+};
+
 export function useParticipantSessionActions({
   token,
   participantNumber: _participantNumber,
   sessionId,
   session,
-  chatInput,
+  chatInputRef,
   invokeModel,
   configText,
   problemBrief,
@@ -161,8 +165,8 @@ export function useParticipantSessionActions({
   );
 
   const sendChat = useCallback(async () => {
-    if (!chatInput.trim() || !token || !sessionId || session?.status === "terminated") return;
-    const text = chatInput.trim();
+    const text = (chatInputRef.current ?? "").trim();
+    if (!text || !token || !sessionId || session?.status === "terminated") return;
     const tempUserId = -Date.now();
     const optimisticUser: Message = {
       id: tempUserId,
@@ -202,7 +206,7 @@ export function useParticipantSessionActions({
     applyProcessingFromResponse,
     applyPanelConfigFromResponse,
     applyProblemBriefFromResponse,
-    chatInput,
+    chatInputRef,
     invokeModel,
     session?.status,
     sessionId,
@@ -231,11 +235,12 @@ export function useParticipantSessionActions({
     [invokeModel, postContextMessage, sessionId, setError, token],
   );
 
-  const saveConfig = useCallback(async () => {
+  const saveConfig = useCallback(async (overrideConfig?: string) => {
     if (!token || !sessionId) return;
+    const textToSave = overrideConfig !== undefined ? overrideConfig : configText;
     let parsed: Record<string, unknown>;
     try {
-      const raw = configText.trim();
+      const raw = textToSave.trim();
       parsed = raw === "" ? {} : (JSON.parse(raw) as Record<string, unknown>);
     } catch {
       setError("Configuration JSON is invalid.");
@@ -285,7 +290,7 @@ export function useParticipantSessionActions({
     token,
   ]);
 
-  const saveProblemBrief = useCallback(async (overrideBrief?: ProblemBrief) => {
+  const saveProblemBrief = useCallback(async (overrideBrief?: ProblemBrief, options?: SaveProblemBriefOptions) => {
     const baseBrief = overrideBrief ?? problemBrief;
     if (!token || !sessionId || !baseBrief) return;
     if (savingProblemBriefRef.current) return;
@@ -329,10 +334,10 @@ export function useParticipantSessionActions({
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
       setEditMode("none");
       if (invokeModel) {
-        await postContextMessage(
-          `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`,
-          true,
-        );
+        const chatMessage = options?.chatNote?.trim()
+          ? options.chatNote.trim()
+          : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
+        await postContextMessage(chatMessage, true);
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
@@ -448,7 +453,7 @@ export function useParticipantSessionActions({
               violations.capacity_units_over ? `${violations.capacity_units_over} units over capacity` : "",
             ].filter(Boolean).join(", ") || "no violations"
           : "unknown";
-        await postContextMessage(
+        void postContextMessage(
           `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). Please interpret these results, compare to any previous runs, and suggest what to adjust next.`,
           true,
         );

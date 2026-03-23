@@ -293,6 +293,9 @@ STUDY_CHAT_VISIBLE_REPLY_TASK = """
 Produce the participant-visible chat reply only.
 
 - Reply as plain text, not JSON.
+- Never include JSON objects, schema-like keys, or patch payloads in the visible reply
+  (for example: `problem_brief_patch`, `panel_patch`, `replace_editable_items`,
+  `replace_open_questions`, `cleanup_mode`, or raw `{...}` config snippets).
 - Keep the response natural and concise.
 - Do not mention hidden state, background processing, schemas, or internal patching.
 - Respect the active workflow mode: waterfall should sound more specification-first, while

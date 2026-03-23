@@ -173,6 +173,7 @@ export function ResearcherDetail({
             <ChatPanel
               title="Chat (incl. steering)"
               logStyle={{ maxHeight: "240px" }}
+              scrollTriggerKey={`${messages.length}-${messages[messages.length - 1]?.id ?? ""}`}
               messages={
                 <MessageBubbleList
                   messages={messages}

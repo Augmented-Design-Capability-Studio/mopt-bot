@@ -33,6 +33,7 @@ type UseParticipantSessionLifecycleArgs = {
   setScheduleText: (value: string) => void;
   setActiveRun: (value: number) => void;
   setEditMode: (value: import("../lib/participantTypes").EditMode) => void;
+  setConfigEditSnapshot: (value: string) => void;
   setBusy: (value: boolean) => void;
   setError: (value: string | null) => void;
   setRecentRows: (value: RecentSessionRow[]) => void;
@@ -57,6 +58,7 @@ export function useParticipantSessionLifecycle({
   setScheduleText,
   setActiveRun,
   setEditMode,
+  setConfigEditSnapshot,
   setBusy,
   setError,
   setRecentRows,
@@ -126,6 +128,7 @@ export function useParticipantSessionLifecycle({
       setActiveRun(0);
       setScheduleText("");
       setEditMode("none");
+      setConfigEditSnapshot("");
       setChatInput("");
 
       const rawMessages = await apiFetch<unknown>(`/sessions/${resumeId}/messages?after_id=0`, trimmed);
@@ -180,6 +183,7 @@ export function useParticipantSessionLifecycle({
     setBusy(true);
     setError(null);
     setEditMode("none");
+    setConfigEditSnapshot("");
     setChatInput("");
     setConfigText("");
     setProblemBrief(null);
@@ -235,6 +239,7 @@ export function useParticipantSessionLifecycle({
     setSession(null);
     setMessages([]);
     setRuns([]);
+    setConfigEditSnapshot("");
     setConfigText("");
     setProblemBrief(null);
     setScheduleText("");
@@ -243,6 +248,7 @@ export function useParticipantSessionLifecycle({
   }, [
     problemPanelHydrationRef,
     session,
+    setConfigEditSnapshot,
     setConfigText,
     setError,
     setMessages,

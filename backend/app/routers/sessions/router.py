@@ -1,31 +1,23 @@
+"""Sessions API router."""
+
 from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
-from copy import deepcopy
 from datetime import datetime, timezone
-from threading import Thread
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import Principal, require_any_study_user, require_client, require_researcher
 from app.config import get_settings
-from app.crypto_util import decrypt_secret, encrypt_secret
-from app.database import SessionLocal, get_db
+from app.crypto_util import encrypt_secret
+from app.database import get_db
 from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
 from app.models import ChatMessage, OptimizationRun, StudySession
-from app.problem_config_seed import derive_problem_panel_from_brief
-from app.problem_brief import (
-    default_problem_brief,
-    merge_problem_brief_patch,
-    normalize_problem_brief,
-    sync_problem_brief_from_panel,
-)
+from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
 from app.schemas import (
     MessageCreate,
     MessageOut,
@@ -41,276 +33,12 @@ from app.schemas import (
     SolveRunCreate,
     SteerCreate,
 )
+from app.session_snapshots import EVENT_BEFORE_RUN, EVENT_MANUAL_SAVE, create_snapshot
+
+from . import context, derivation, helpers, intent, sync
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 log = logging.getLogger(__name__)
-_CLEANUP_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bclean\s*up\b", re.IGNORECASE),
-    re.compile(r"\bconsolidat(?:e|ion)\b", re.IGNORECASE),
-    re.compile(r"\bdeduplicat(?:e|ion)\b", re.IGNORECASE),
-    re.compile(r"\breorgan(?:ize|ise|ization|isation)\b", re.IGNORECASE),
-    re.compile(r"\b(remove|delete|drop)\b.{0,80}\b(assumption|gathered|definition|item|fact)\b", re.IGNORECASE),
-    re.compile(r"\bmerge\b.{0,60}\b(gathered|assumption)\b", re.IGNORECASE),
-)
-_CLEAR_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bclear\b.{0,40}\b(definition|brief|gathered|assumption|open question|everything|all)\b", re.IGNORECASE),
-    re.compile(r"\breset\b.{0,40}\b(definition|brief|everything|all)\b", re.IGNORECASE),
-    re.compile(r"\brestart\b", re.IGNORECASE),
-    re.compile(r"\bfresh slate\b", re.IGNORECASE),
-)
-
-
-def _clean_participant_number(value: str | None) -> str | None:
-    if value is None:
-        return None
-    cleaned = value.strip()
-    return cleaned or None
-
-
-def _is_definition_cleanup_request(content: str) -> bool:
-    text = content.strip()
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in _CLEANUP_INTENT_PATTERNS)
-
-
-def _is_definition_clear_request(content: str) -> bool:
-    text = content.strip()
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in _CLEAR_INTENT_PATTERNS)
-
-
-def _panel_dict(row: StudySession | None) -> dict | None:
-    if row is None or not row.panel_config_json:
-        return None
-    try:
-        return json.loads(row.panel_config_json)
-    except json.JSONDecodeError:
-        return None
-
-
-def _problem_brief_dict(row: StudySession | None) -> dict:
-    if row is None or not row.problem_brief_json:
-        return default_problem_brief()
-    try:
-        return normalize_problem_brief(json.loads(row.problem_brief_json))
-    except json.JSONDecodeError:
-        return default_problem_brief()
-
-
-def _touch_session(row: StudySession) -> None:
-    row.updated_at = datetime.now(timezone.utc)
-
-
-def _processing_state(row: StudySession) -> SessionProcessingState:
-    return SessionProcessingState(
-        processing_revision=int(row.processing_revision or 0),
-        brief_status=str(row.brief_status or "idle"),
-        config_status=str(row.config_status or "idle"),
-        processing_error=row.processing_error,
-    )
-
-
-def _desired_config_status(row: StudySession) -> str:
-    return "ready" if _panel_dict(row) is not None else "idle"
-
-
-def _settle_processing_state(row: StudySession, *, cancel_revision: bool = False) -> None:
-    if cancel_revision:
-        row.processing_revision = int(row.processing_revision or 0) + 1
-    row.brief_status = "ready"
-    row.config_status = _desired_config_status(row)
-    row.processing_error = None
-
-
-def _mark_processing_pending(row: StudySession) -> int:
-    row.processing_revision = int(row.processing_revision or 0) + 1
-    row.brief_status = "pending"
-    row.config_status = "pending"
-    row.processing_error = None
-    _touch_session(row)
-    return row.processing_revision
-
-
-def _load_turn_context(db: Session, session_id: str, before_message_id: int) -> tuple[list[tuple[str, str]], list[str], list[dict[str, Any]]]:
-    hist: list[tuple[str, str]] = []
-    prev = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.session_id == session_id,
-            ChatMessage.visible_to_participant.is_(True),
-            ChatMessage.id < before_message_id,
-        )
-        .order_by(ChatMessage.id.desc())
-        .limit(12)
-        .all()
-    )
-    for entry in reversed(prev):
-        if entry.role in ("user", "assistant"):
-            hist.append((entry.role, entry.content))
-
-    steer_rows = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.session_id == session_id,
-            ChatMessage.role == "researcher",
-            ChatMessage.visible_to_participant.is_(False),
-            ChatMessage.id < before_message_id,
-        )
-        .order_by(ChatMessage.id.desc())
-        .limit(4)
-        .all()
-    )
-    researcher_steers = [message.content for message in reversed(steer_rows)]
-
-    recent_run_rows = (
-        db.query(OptimizationRun)
-        .filter(OptimizationRun.session_id == session_id)
-        .order_by(OptimizationRun.id.desc())
-        .limit(4)
-        .all()
-    )
-    recent_runs_summary: list[dict[str, Any]] = []
-    for run_row in reversed(recent_run_rows):
-        entry: dict[str, Any] = {
-            "run_id": run_row.id,
-            "run_number": _run_number(run_row),
-            "ok": run_row.ok,
-            "cost": run_row.cost,
-        }
-        if run_row.result_json:
-            try:
-                result_data = json.loads(run_row.result_json)
-                entry["violations"] = result_data.get("violations")
-                entry["metrics"] = result_data.get("metrics")
-                entry["algorithm"] = result_data.get("algorithm")
-            except json.JSONDecodeError:
-                pass
-        recent_runs_summary.append(entry)
-    return hist, researcher_steers, recent_runs_summary
-
-
-def _sync_panel_from_problem_brief(
-    row: StudySession,
-    db: Session,
-    problem_brief: dict,
-    api_key: str | None = None,
-    model_name: str | None = None,
-    workflow_mode: str | None = None,
-    recent_runs_summary: list[dict[str, Any]] | None = None,
-) -> tuple[dict | None, list[str]]:
-    from app.adapter import sanitize_panel_weights
-    from app.services.llm import generate_config_from_brief
-
-    current_panel = _panel_dict(row)
-    derived_panel = None
-    if api_key and model_name:
-        try:
-            derived_panel = generate_config_from_brief(
-                brief=problem_brief,
-                # Definition-driven sync should not carry forward stale managed fields.
-                current_panel=None,
-                api_key=api_key,
-                model_name=model_name,
-                workflow_mode=workflow_mode or row.workflow_mode,
-                recent_runs_summary=recent_runs_summary,
-            )
-        except TypeError:
-            # Back-compat for tests or callers that monkeypatch the older 4-arg signature.
-            derived_panel = generate_config_from_brief(
-                brief=problem_brief,
-                current_panel=None,
-                api_key=api_key,
-                model_name=model_name,
-            )
-    if derived_panel is None:
-        derived_panel = derive_problem_panel_from_brief(problem_brief)
-    if derived_panel is None:
-        return None, []
-
-    next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
-    next_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
-    for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size", "shift_hard_penalty"):
-        next_problem.pop(key, None)
-    next_problem.update(deepcopy(derived_panel["problem"]))
-    next_panel["problem"] = next_problem
-    merged, weight_warnings = sanitize_panel_weights(next_panel)
-    if merged == current_panel:
-        return merged, weight_warnings
-
-    log.info("Participant synced panel_config from brief: %s", merged)
-    row.panel_config_json = json.dumps(merged)
-    row.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(row)
-    return merged, weight_warnings
-
-
-def _sync_problem_brief_from_panel(
-    row: StudySession,
-    db: Session,
-    panel_config: dict,
-) -> dict:
-    current_problem_brief = _problem_brief_dict(row)
-    next_problem_brief = sync_problem_brief_from_panel(current_problem_brief, panel_config)
-    if next_problem_brief == current_problem_brief:
-        return current_problem_brief
-    row.problem_brief_json = json.dumps(next_problem_brief)
-    row.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(row)
-    return next_problem_brief
-
-
-def _session_to_out(row: StudySession) -> SessionOut:
-    return SessionOut(
-        id=row.id,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        workflow_mode=row.workflow_mode,
-        participant_number=row.participant_number,
-        status=row.status,
-        panel_config=_panel_dict(row),
-        problem_brief=_problem_brief_dict(row),
-        processing=_processing_state(row),
-        optimization_allowed=row.optimization_allowed,
-        gemini_model=row.gemini_model,
-        gemini_key_configured=bool(row.gemini_key_encrypted),
-    )
-
-
-def _run_number(row: OptimizationRun) -> int:
-    return int(row.session_run_index or row.id)
-
-
-def _run_to_out(row: OptimizationRun) -> RunOut:
-    res = None
-    if row.result_json:
-        try:
-            res = json.loads(row.result_json)
-        except json.JSONDecodeError:
-            res = None
-    return RunOut(
-        id=row.id,
-        run_number=_run_number(row),
-        created_at=row.created_at,
-        run_type=row.run_type,
-        ok=row.ok,
-        cost=row.cost,
-        reference_cost=row.reference_cost,
-        error_message=row.error_message,
-        result=res,
-    )
-
-
-def _next_session_run_number(db: Session, session_id: str) -> int:
-    current_max = (
-        db.query(func.max(OptimizationRun.session_run_index))
-        .filter(OptimizationRun.session_id == session_id)
-        .scalar()
-    )
-    return int(current_max or 0) + 1
 
 
 @router.post("", response_model=SessionOut)
@@ -323,7 +51,7 @@ def create_session(
     row = StudySession(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
-        participant_number=_clean_participant_number(body.participant_number),
+        participant_number=helpers.clean_participant_number(body.participant_number),
         status="active",
         panel_config_json=None,
         problem_brief_json=json.dumps(default_problem_brief()),
@@ -336,7 +64,7 @@ def create_session(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.get("", response_model=list[SessionOut])
@@ -345,7 +73,7 @@ def list_sessions(
     _: Principal = Depends(require_researcher),
 ):
     rows = db.query(StudySession).order_by(StudySession.updated_at.desc()).all()
-    return [_session_to_out(r) for r in rows]
+    return [helpers.session_to_out(r) for r in rows]
 
 
 @router.post("/{session_id}/participant-starter-panel", response_model=SessionOut)
@@ -359,11 +87,11 @@ def push_participant_starter_panel(
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
     row.panel_config_json = json.dumps(MEDIOCRE_PARTICIPANT_STARTER_CONFIG)
-    _settle_processing_state(row, cancel_revision=True)
+    helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.get("/{session_id}", response_model=SessionOut)
@@ -377,7 +105,7 @@ def get_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if row.status == "deleted":
         raise HTTPException(status_code=410, detail="Session removed")
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.get("/{session_id}/researcher", response_model=SessionOut)
@@ -389,7 +117,7 @@ def get_session_researcher(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.patch("/{session_id}", response_model=SessionOut)
@@ -405,7 +133,7 @@ def patch_session(
     if body.workflow_mode is not None:
         row.workflow_mode = body.workflow_mode
     if "participant_number" in body.model_fields_set:
-        row.participant_number = _clean_participant_number(body.participant_number)
+        row.participant_number = helpers.clean_participant_number(body.participant_number)
     if body.panel_config is not None:
         row.panel_config_json = json.dumps(body.panel_config)
     if body.problem_brief is not None:
@@ -416,11 +144,11 @@ def patch_session(
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
         row.gemini_key_encrypted = encrypt_secret(body.gemini_api_key)
-    _settle_processing_state(row, cancel_revision=True)
+    helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.post("/{session_id}/terminate", response_model=SessionOut)
@@ -436,7 +164,7 @@ def terminate_session(
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -495,134 +223,6 @@ def list_messages_researcher(
     return list(q.all())
 
 
-def _append_message(
-    db: Session,
-    session_id: str,
-    role: str,
-    content: str,
-    visible: bool,
-    kind: str = "chat",
-):
-    m = ChatMessage(
-        session_id=session_id,
-        role=role,
-        content=content,
-        visible_to_participant=visible,
-        kind=kind,
-    )
-    db.add(m)
-    s = db.get(StudySession, session_id)
-    if s:
-        s.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(m)
-    return m
-
-
-def _persist_processing_failure(session_id: str, revision: int, detail: str) -> None:
-    with SessionLocal() as db:
-        row = db.get(StudySession, session_id)
-        if row is None or row.processing_revision != revision:
-            return
-        row.brief_status = "failed"
-        row.config_status = "failed"
-        row.processing_error = detail
-        _touch_session(row)
-        db.commit()
-
-
-def _run_background_derivation(
-    *,
-    session_id: str,
-    revision: int,
-    user_text: str,
-    workflow_mode: str,
-    api_key: str,
-    model_name: str,
-    history_lines: list[tuple[str, str]],
-    researcher_steers: list[str],
-    recent_runs_summary: list[dict[str, Any]],
-    base_problem_brief: dict[str, Any],
-    base_panel: dict[str, Any] | None,
-    cleanup_requested: bool,
-    clear_requested: bool,
-) -> None:
-    try:
-        from app.services.llm import generate_problem_brief_update
-
-        brief_turn = generate_problem_brief_update(
-            user_text=user_text,
-            history_lines=history_lines,
-            api_key=api_key,
-            model_name=model_name,
-            current_problem_brief=base_problem_brief,
-            workflow_mode=workflow_mode,
-            current_panel=base_panel,
-            recent_runs_summary=recent_runs_summary or None,
-            researcher_steers=researcher_steers or None,
-            cleanup_mode=cleanup_requested,
-        )
-        patch_payload: dict[str, Any] | None = None
-        if brief_turn.problem_brief_patch:
-            patch_payload = dict(brief_turn.problem_brief_patch)
-        elif clear_requested:
-            patch_payload = {"items": [], "open_questions": []}
-        elif cleanup_requested:
-            log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
-
-        effective_problem_brief = base_problem_brief
-        if patch_payload is not None:
-            if cleanup_requested or brief_turn.cleanup_mode or brief_turn.replace_editable_items:
-                patch_payload["replace_editable_items"] = True
-            if clear_requested:
-                patch_payload["replace_open_questions"] = True
-            elif brief_turn.replace_open_questions:
-                patch_payload["replace_open_questions"] = True
-            elif "open_questions" in patch_payload and (cleanup_requested or brief_turn.cleanup_mode):
-                patch_payload["replace_open_questions"] = True
-            effective_problem_brief = merge_problem_brief_patch(base_problem_brief, patch_payload)
-
-        with SessionLocal() as db:
-            row = db.get(StudySession, session_id)
-            if row is None or row.status != "active" or row.processing_revision != revision:
-                return
-            if effective_problem_brief != _problem_brief_dict(row):
-                row.problem_brief_json = json.dumps(effective_problem_brief)
-            row.brief_status = "ready"
-            row.config_status = "pending"
-            row.processing_error = None
-            _touch_session(row)
-            db.commit()
-            db.refresh(row)
-
-            _sync_panel_from_problem_brief(
-                row,
-                db,
-                effective_problem_brief,
-                api_key=api_key,
-                model_name=model_name,
-                workflow_mode=workflow_mode,
-                recent_runs_summary=recent_runs_summary,
-            )
-
-            row = db.get(StudySession, session_id)
-            if row is None or row.processing_revision != revision:
-                return
-            row.brief_status = "ready"
-            row.config_status = _desired_config_status(row)
-            row.processing_error = None
-            _touch_session(row)
-            db.commit()
-    except Exception:
-        log.exception("Background derivation failed for session %s", session_id)
-        _persist_processing_failure(session_id, revision, "Background problem derivation failed")
-
-
-def _launch_background_derivation(**kwargs: Any) -> None:
-    thread = Thread(target=_run_background_derivation, kwargs=kwargs, daemon=True, name=f"session-derive-{kwargs['session_id']}")
-    thread.start()
-
-
 @router.post("/{session_id}/messages", response_model=PostMessagesResponse)
 def post_message(
     session_id: str,
@@ -637,17 +237,19 @@ def post_message(
         raise HTTPException(status_code=410, detail="Session ended")
 
     out: list[MessageOut] = []
-    um = _append_message(db, session_id, "user", body.content, True)
+    um = derivation.append_message(db, session_id, "user", body.content, True)
     out.append(MessageOut.model_validate(um))
     updated_panel: dict | None = None
     updated_problem_brief: dict | None = None
-    processing_state: SessionProcessingState | None = None
+    proc_state: SessionProcessingState | None = None
 
     if body.invoke_model:
+        from app.crypto_util import decrypt_secret
+
         key = decrypt_secret(row.gemini_key_encrypted)
         model = row.gemini_model or get_settings().default_gemini_model
         if not key:
-            am = _append_message(
+            am = derivation.append_message(
                 db,
                 session_id,
                 "assistant",
@@ -655,15 +257,15 @@ def post_message(
                 True,
             )
             out.append(MessageOut.model_validate(am))
-            processing_state = _processing_state(db.get(StudySession, session_id) or row)
+            proc_state = helpers.processing_state(db.get(StudySession, session_id) or row)
         else:
-            hist, researcher_steers, recent_runs_summary = _load_turn_context(db, session_id, um.id)
+            hist, researcher_steers, recent_runs_summary = context.load_turn_context(db, session_id, um.id)
             text = "The model request failed. Try again or continue without AI."
-            current = _panel_dict(row)
-            current_problem_brief = _problem_brief_dict(row)
+            current = helpers.panel_dict(row)
+            current_problem_brief = helpers.problem_brief_dict(row)
             updated_panel = current
-            cleanup_requested = _is_definition_cleanup_request(body.content)
-            clear_requested = _is_definition_clear_request(body.content)
+            cleanup_requested = intent.is_definition_cleanup_request(body.content)
+            clear_requested = intent.is_definition_clear_request(body.content)
             turn = None
             try:
                 from app.services.llm import generate_chat_turn
@@ -683,7 +285,8 @@ def post_message(
                 text = turn.assistant_message
             except Exception:
                 log.exception("Participant model turn failed for session %s", session_id)
-            am = _append_message(db, session_id, "assistant", text, True)
+            text = intent.sanitize_visible_assistant_reply(text)
+            am = derivation.append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
             if turn and (
                 turn.problem_brief_patch is not None
@@ -716,12 +319,12 @@ def post_message(
                         row = db.get(StudySession, session_id) or row
                         row.problem_brief_json = json.dumps(merged_brief)
                         updated_problem_brief = merged_brief
-                        _touch_session(row)
+                        helpers.touch_session(row)
                         db.commit()
                         db.refresh(row)
                 effective_problem_brief = updated_problem_brief or current_problem_brief
                 row = db.get(StudySession, session_id) or row
-                updated_panel, _ = _sync_panel_from_problem_brief(
+                updated_panel, _ = sync.sync_panel_from_problem_brief(
                     row,
                     db,
                     effective_problem_brief,
@@ -729,20 +332,21 @@ def post_message(
                     model_name=model,
                     workflow_mode=row.workflow_mode,
                     recent_runs_summary=recent_runs_summary,
+                    preserve_missing_managed_fields=True,
                 )
                 row = db.get(StudySession, session_id) or row
-                _settle_processing_state(row, cancel_revision=True)
-                _touch_session(row)
+                helpers.settle_processing_state(row, cancel_revision=True)
+                helpers.touch_session(row)
                 db.commit()
                 db.refresh(row)
-                processing_state = _processing_state(row)
+                proc_state = helpers.processing_state(row)
             else:
                 row = db.get(StudySession, session_id) or row
-                revision = _mark_processing_pending(row)
+                revision = helpers.mark_processing_pending(row)
                 db.commit()
                 db.refresh(row)
-                processing_state = _processing_state(row)
-                _launch_background_derivation(
+                proc_state = helpers.processing_state(row)
+                derivation.launch_background_derivation(
                     session_id=session_id,
                     revision=revision,
                     user_text=body.content,
@@ -762,7 +366,7 @@ def post_message(
         messages=out,
         panel_config=updated_panel,
         problem_brief=updated_problem_brief,
-        processing=processing_state,
+        processing=proc_state,
     )
 
 
@@ -776,7 +380,7 @@ def post_steer(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    m = _append_message(db, session_id, "researcher", body.content, False)
+    m = derivation.append_message(db, session_id, "researcher", body.content, False)
     return MessageOut.model_validate(m)
 
 
@@ -805,7 +409,7 @@ def post_run(
         "problem": body.problem,
         "routes": body.routes,
     }
-    session_run_number = _next_session_run_number(db, session_id)
+    session_run_number = helpers.next_session_run_number(db, session_id)
     run_row = OptimizationRun(
         session_run_index=session_run_number,
         session_id=session_id,
@@ -816,6 +420,8 @@ def post_run(
     db.add(run_row)
     db.commit()
     db.refresh(run_row)
+
+    create_snapshot(db, session_id, EVENT_BEFORE_RUN)
 
     try:
         timeout = get_settings().solve_timeout_sec
@@ -870,7 +476,6 @@ def post_run(
                 summary_parts.append(
                     f"Travel: {travel:.1f} min · workload variance: {wl_var:.1f}"
                 )
-                # Surface any weight key warnings from translation (fuzzy matches / drops).
                 weight_warnings = rd.get("weight_warnings") or []
                 for w in weight_warnings:
                     summary_parts.append(f"Note: {w}")
@@ -879,8 +484,8 @@ def post_run(
         summary = ". ".join(summary_parts) + "."
     else:
         summary = f"Run #{session_run_number} failed: {run_row.error_message or 'error'}."
-    _append_message(db, session_id, "assistant", summary, True, kind="run")
-    return _run_to_out(run_row)
+    derivation.append_message(db, session_id, "assistant", summary, True, kind="run")
+    return helpers.run_to_out(run_row)
 
 
 @router.get("/{session_id}/runs", response_model=list[RunOut])
@@ -900,7 +505,7 @@ def list_runs(
         .order_by(OptimizationRun.id.asc())
         .all()
     )
-    return [_run_to_out(r) for r in rows]
+    return [helpers.run_to_out(r) for r in rows]
 
 
 @router.delete("/{session_id}/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -942,11 +547,11 @@ def patch_participant_model_settings(
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
         row.gemini_key_encrypted = encrypt_secret(body.gemini_api_key)
-    _settle_processing_state(row, cancel_revision=True)
+    helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.patch("/{session_id}/panel", response_model=SessionOut)
@@ -962,23 +567,23 @@ def patch_participant_panel(
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
 
-    # Sanitize weight keys in the panel before storing, so unknown/fuzzy keys are
-    # translated or dropped early and the stored panel stays consistent.
     from app.adapter import sanitize_panel_weights
+
     sanitized_config, weight_warnings = sanitize_panel_weights(body.panel_config)
 
     row.panel_config_json = json.dumps(sanitized_config)
-    _settle_processing_state(row, cancel_revision=True)
+    helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    _sync_problem_brief_from_panel(row, db, sanitized_config)
-    _settle_processing_state(row)
+    sync.sync_problem_brief_from_panel(row, db, sanitized_config)
+    helpers.settle_processing_state(row)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
 
-    # Build acknowledgement, appending any weight-key correction notices.
+    create_snapshot(db, session_id, EVENT_MANUAL_SAVE)
+
     ack_parts = []
     if body.acknowledgement:
         ack_parts.append(body.acknowledgement)
@@ -986,8 +591,8 @@ def patch_participant_panel(
         ack_parts.append(f"Note: {w}")
     ack = " ".join(ack_parts).strip()
     if ack:
-        _append_message(db, session_id, "assistant", ack, True, kind="panel")
-    return _session_to_out(row)
+        derivation.append_message(db, session_id, "assistant", ack, True, kind="panel")
+    return helpers.session_to_out(row)
 
 
 @router.patch("/{session_id}/problem-brief", response_model=SessionOut)
@@ -1005,12 +610,14 @@ def patch_participant_problem_brief(
 
     next_problem_brief = normalize_problem_brief(body.problem_brief.model_dump())
     row.problem_brief_json = json.dumps(next_problem_brief)
-    _settle_processing_state(row, cancel_revision=True)
+    helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
 
-    _sync_panel_from_problem_brief(
+    from app.crypto_util import decrypt_secret
+
+    sync.sync_panel_from_problem_brief(
         row,
         db,
         next_problem_brief,
@@ -1018,18 +625,20 @@ def patch_participant_problem_brief(
         model_name=row.gemini_model or get_settings().default_gemini_model,
         workflow_mode=row.workflow_mode,
     )
-    _settle_processing_state(row)
+    helpers.settle_processing_state(row)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
 
+    create_snapshot(db, session_id, EVENT_MANUAL_SAVE)
+
     if body.acknowledgement:
-        _append_message(db, session_id, "assistant", body.acknowledgement, True, kind="panel")
-    return _session_to_out(row)
+        derivation.append_message(db, session_id, "assistant", body.acknowledgement, True, kind="panel")
+    return helpers.session_to_out(row)
 
 
 @router.post("/{session_id}/sync-panel", response_model=SessionOut)
-def sync_panel_from_problem_brief(
+def sync_panel_from_problem_brief_route(
     session_id: str,
     db: Session = Depends(get_db),
     _: Principal = Depends(require_client),
@@ -1040,12 +649,14 @@ def sync_panel_from_problem_brief(
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
 
-    problem_brief = _problem_brief_dict(row)
-    _settle_processing_state(row, cancel_revision=True)
+    from app.crypto_util import decrypt_secret
+
+    problem_brief = helpers.problem_brief_dict(row)
+    helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    updated_panel, _ = _sync_panel_from_problem_brief(
+    updated_panel, _ = sync.sync_panel_from_problem_brief(
         row,
         db,
         problem_brief,
@@ -1058,11 +669,11 @@ def sync_panel_from_problem_brief(
             status_code=status.HTTP_409_CONFLICT,
             detail="Problem definition is not specific enough to sync a solver configuration yet",
         )
-    _settle_processing_state(row)
+    helpers.settle_processing_state(row)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return _session_to_out(row)
+    return helpers.session_to_out(row)
 
 
 @router.post("/{session_id}/simulate-upload", status_code=status.HTTP_204_NO_CONTENT)
@@ -1102,8 +713,8 @@ def export_session(
             "workflow_mode": row.workflow_mode,
             "participant_number": row.participant_number,
             "status": row.status,
-            "panel_config": _panel_dict(row),
-            "problem_brief": _problem_brief_dict(row),
+            "panel_config": helpers.panel_dict(row),
+            "problem_brief": helpers.problem_brief_dict(row),
             "optimization_allowed": row.optimization_allowed,
             "gemini_model": row.gemini_model,
         },
@@ -1121,7 +732,7 @@ def export_session(
         "runs": [
             {
                 "id": r.id,
-                "run_number": _run_number(r),
+                "run_number": helpers.run_number(r),
                 "created_at": r.created_at.isoformat(),
                 "run_type": r.run_type,
                 "ok": r.ok,

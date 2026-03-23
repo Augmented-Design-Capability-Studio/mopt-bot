@@ -7,7 +7,10 @@ type DefinitionPanelProps = {
   editable: boolean;
   sessionTerminated: boolean;
   onChange: (value: ProblemBrief) => void;
-  onPersistInlineEdit: (value: ProblemBrief) => void | Promise<void>;
+  onPersistInlineEdit: (
+    value: ProblemBrief,
+    options?: { chatNote?: string },
+  ) => void | Promise<void>;
 };
 
 type DefinitionSectionProps = {
@@ -206,9 +209,9 @@ export function DefinitionPanel({
   const [savingAnswerQuestionId, setSavingAnswerQuestionId] = useState<string | null>(null);
   const [answerDraftByQuestionId, setAnswerDraftByQuestionId] = useState<Record<string, string>>({});
 
-  async function persistBrief(nextBrief: ProblemBrief): Promise<void> {
+  async function persistBrief(nextBrief: ProblemBrief, options?: { chatNote?: string }): Promise<void> {
     onChange(nextBrief);
-    await onPersistInlineEdit(nextBrief);
+    await onPersistInlineEdit(nextBrief, options);
   }
 
   function updateItem(id: string, patch: Partial<ProblemBriefItem>) {
@@ -235,7 +238,7 @@ export function DefinitionPanel({
         editable: true,
       },
     ]);
-    void persistBrief(next);
+    onChange(next);
   }
 
   function removeOpenQuestion(questionId: string) {
@@ -260,7 +263,7 @@ export function DefinitionPanel({
       ...problemBrief,
       open_questions: nextQuestions,
     };
-    void persistBrief(next);
+    onChange(next);
   }
 
   function startGoalSummaryEdit() {
@@ -300,6 +303,8 @@ export function DefinitionPanel({
     await persistBrief({
       ...problemBrief,
       open_questions: nextQuestions,
+    }, {
+      chatNote: `I answered an open question. Question: "${question.text}". Answer: "${answer || "(left blank)"}". Please acknowledge this specific answer and tell me whether to keep this question open or close it. Do not change unrelated definition rows.`,
     });
     setSavingAnswerQuestionId(null);
     setEditingAnswerQuestionId(null);

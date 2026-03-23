@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -7,6 +7,10 @@ import type { Message } from "@shared/api";
 export function messageBubbleKey(message: Message, index: number): number | string {
   return message.id < 0 ? `tmp-${message.id}-${index}` : message.id;
 }
+
+const defaultGetBubbleClassName = (message: Message) =>
+  `bubble ${message.role === "user" ? "user" : "assistant"}`;
+const defaultRenderHeading = (message: Message) => <strong>{message.role}</strong>;
 
 type MessageBubbleListProps = {
   messages: Message[];
@@ -19,10 +23,10 @@ type MessageBubbleListProps = {
  * Shared message renderer so participant and researcher views keep bubble
  * structure and optimistic-key handling in one place.
  */
-export function MessageBubbleList({
+export const MessageBubbleList = memo(function MessageBubbleList({
   messages,
-  getBubbleClassName = (message) => `bubble ${message.role === "user" ? "user" : "assistant"}`,
-  renderHeading = (message) => <strong>{message.role}</strong>,
+  getBubbleClassName = defaultGetBubbleClassName,
+  renderHeading = defaultRenderHeading,
   afterMessages,
 }: MessageBubbleListProps) {
   return (
@@ -50,4 +54,4 @@ export function MessageBubbleList({
       {afterMessages}
     </>
   );
-}
+});

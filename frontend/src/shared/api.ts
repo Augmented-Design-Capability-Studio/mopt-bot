@@ -280,6 +280,11 @@ export type RunResult = {
   cost: number | null;
   reference_cost: number | null;
   error_message: string | null;
+  request: {
+    type?: string;
+    problem?: Record<string, unknown>;
+    routes?: number[][];
+  } | null;
   result: RunPayload | null;
 };
 

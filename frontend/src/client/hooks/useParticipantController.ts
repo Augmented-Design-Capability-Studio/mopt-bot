@@ -26,6 +26,7 @@ export function useParticipantController() {
   const [scheduleText, setScheduleText] = useState("");
   const [activeRun, setActiveRun] = useState(0);
   const [editMode, setEditMode] = useState<EditMode>("none");
+  const [configEditSnapshot, setConfigEditSnapshot] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncingProblemConfig, setSyncingProblemConfig] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
@@ -45,6 +46,8 @@ export function useParticipantController() {
   sessionRef.current = session;
   const editModeRef = useRef<EditMode>(editMode);
   editModeRef.current = editMode;
+  const chatInputRef = useRef(chatInput);
+  chatInputRef.current = chatInput;
   const setProblemBriefState = useCallback(
     (value: ProblemBrief | null | ((prev: ProblemBrief | null) => ProblemBrief | null)) => {
       setProblemBrief((previous) => {
@@ -104,17 +107,23 @@ export function useParticipantController() {
     setScheduleText,
     setActiveRun,
     setEditMode,
+    setConfigEditSnapshot,
     setBusy,
     setError,
     setRecentRows,
     setRecentBusy,
   });
 
+  const enterConfigEdit = useCallback(() => {
+    setConfigEditSnapshot(configText);
+    setEditMode("config");
+  }, [configText]);
+
   const actions = useParticipantSessionActions({
     token,
     sessionId,
     session,
-    chatInput,
+    chatInputRef,
     invokeModel,
     configText,
     problemBrief,
@@ -142,6 +151,25 @@ export function useParticipantController() {
     syncSession: sync.syncSession,
     startEagerMessagePoll: sync.startEagerMessagePoll,
   });
+
+  const loadConfigFromLastRun = useCallback(() => {
+    const latest = runs[runs.length - 1];
+    const problem = latest?.request?.problem;
+    if (problem == null || typeof problem !== "object") return;
+    const panel = { problem };
+    const newConfig = JSON.stringify(panel, null, 2);
+    setConfigText(newConfig);
+    void actions.saveConfig(newConfig);
+  }, [runs, setConfigText, actions.saveConfig]);
+
+  const loadConfigFromPreviousEdit = useCallback(() => {
+    if (!configEditSnapshot) return;
+    setConfigText(configEditSnapshot);
+    void actions.saveConfig(configEditSnapshot);
+  }, [configEditSnapshot, setConfigText, actions.saveConfig]);
+
+  const canLoadFromLastRun = runs.length > 0 && runs[runs.length - 1]?.request?.problem != null;
+  const canLoadFromPreviousEdit = configEditSnapshot.length > 0;
 
   return {
     token,
@@ -197,5 +225,10 @@ export function useParticipantController() {
     leaveSession: lifecycle.leaveSession,
     forgetRecentSession: lifecycle.forgetRecentSession,
     closeModelDialog: actions.closeModelDialog,
+    enterConfigEdit,
+    loadConfigFromLastRun,
+    loadConfigFromPreviousEdit,
+    canLoadFromLastRun,
+    canLoadFromPreviousEdit,
   };
 }

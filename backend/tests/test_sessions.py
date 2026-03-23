@@ -42,7 +42,7 @@ def test_message_response_marks_processing_pending_before_background_finishes(mo
 
     launched: dict[str, object] = {}
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -52,7 +52,7 @@ def test_message_response_marks_processing_pending_before_background_finishes(mo
         ),
     )
     monkeypatch.setattr(
-        "app.routers.sessions._launch_background_derivation",
+        "app.routers.sessions.derivation.launch_background_derivation",
         lambda **kwargs: launched.update(kwargs),
     )
 
@@ -104,7 +104,7 @@ def test_steer_messages_hidden_and_forwarded_to_next_model_turn(monkeypatch):
             problem_brief_patch=None,
         )
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr("app.services.llm.generate_chat_turn", fake_generate_chat_turn)
 
     with TestClient(create_app()) as client:
@@ -276,7 +276,7 @@ def test_waterfall_can_infer_first_panel_from_complete_problem_brief(monkeypatch
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-waterfall-infer-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -423,7 +423,7 @@ def test_chat_can_override_pushed_starter_panel(monkeypatch):
     monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-override-starter-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -510,7 +510,7 @@ def test_completed_delivery_brief_syncs_config_without_model_panel_patch(monkeyp
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-delivery-brief-sync-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -604,7 +604,7 @@ def test_chat_brief_patch_rebuilds_config_from_definition(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-brief-config-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -704,7 +704,7 @@ def test_partial_problem_brief_patch_preserves_prior_facts_for_config_derivation
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-partial-brief-patch-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -812,7 +812,7 @@ def test_partial_problem_brief_patch_preserves_answered_open_question_state(monk
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-partial-open-question-merge-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -932,7 +932,7 @@ def test_chat_ignores_panel_patch_and_relies_on_brief_patch(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-panel-brief-sync-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -973,7 +973,7 @@ def test_chat_brief_patch_replaces_conflicting_population_size_fact(monkeypatch)
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-pop-size-reconcile-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -1043,7 +1043,7 @@ def test_cleanup_request_replaces_editable_brief_items(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-cleanup-replace-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -1118,7 +1118,7 @@ def test_non_cleanup_request_keeps_additive_merge_behavior(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-non-cleanup-additive-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -1186,7 +1186,7 @@ def test_clear_definition_request_clears_editable_items_when_model_omits_patch(m
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-clear-definition-fallback-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -1253,7 +1253,7 @@ def test_cleanup_replace_flag_without_items_clears_editable_rows(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-cleanup-replace-no-items-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -1314,7 +1314,7 @@ def test_replace_open_questions_round_trips_answer_fields(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-replace-open-question-answer-secret")
     get_settings.cache_clear()
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr(
         "app.services.llm.generate_chat_turn",
         lambda *args, **kwargs: ChatModelTurn(
@@ -1378,6 +1378,42 @@ def test_replace_open_questions_round_trips_answer_fields(monkeypatch):
         assert questions[0]["answer_text"] == "Target 95% on-time deliveries."
 
 
+def test_visible_assistant_reply_strips_hidden_patch_json(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-strip-visible-json-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message=(
+                "I captured your latest answer and will keep this question open for now.\n\n"
+                '{"problem_brief_patch":{"items":[{"id":"fact-1","text":"x","kind":"gathered","source":"user","status":"confirmed","editable":true}]}}'
+            ),
+            problem_brief_patch=None,
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-strip-visible-json-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Please acknowledge this answer.", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-strip-visible-json-secret"},
+        )
+        assert send.status_code == 200
+        reply = send.json()["messages"][-1]["content"]
+        assert "problem_brief_patch" not in reply
+        assert "I captured your latest answer" in reply
+
+
 def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-brief-only-sync-secret")
     get_settings.cache_clear()
@@ -1393,7 +1429,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
             }
         }
 
-    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
     monkeypatch.setattr("app.services.llm.generate_config_from_brief", fake_generate_config_from_brief)
 
     with TestClient(create_app()) as client:
