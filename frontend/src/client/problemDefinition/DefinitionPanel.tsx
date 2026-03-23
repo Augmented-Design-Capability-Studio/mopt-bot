@@ -1,3 +1,5 @@
+import { useState, type FocusEvent } from "react";
+
 import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
 
 type DefinitionPanelProps = {
@@ -5,6 +7,7 @@ type DefinitionPanelProps = {
   editable: boolean;
   sessionTerminated: boolean;
   onChange: (value: ProblemBrief) => void;
+  onPersistInlineEdit: (value: ProblemBrief) => void | Promise<void>;
 };
 
 type DefinitionSectionProps = {
@@ -13,6 +16,8 @@ type DefinitionSectionProps = {
   items: ProblemBriefItem[];
   editable: boolean;
   sessionTerminated: boolean;
+  onAddItem: () => void;
+  onSaveItemText: (id: string, text: string) => Promise<void>;
   onUpdateItem: (id: string, patch: Partial<ProblemBriefItem>) => void;
   onRemoveItem: (id: string) => void;
 };
@@ -40,9 +45,39 @@ function DefinitionSection({
   items,
   editable,
   sessionTerminated,
+  onAddItem,
+  onSaveItemText,
   onUpdateItem,
   onRemoveItem,
 }: DefinitionSectionProps) {
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [savingItemId, setSavingItemId] = useState<string | null>(null);
+  const [draftByItemId, setDraftByItemId] = useState<Record<string, string>>({});
+
+  function startEdit(item: ProblemBriefItem) {
+    setEditingItemId(item.id);
+    setDraftByItemId((current) => ({ ...current, [item.id]: item.text }));
+  }
+
+  async function saveItem(item: ProblemBriefItem) {
+    const draft = (draftByItemId[item.id] ?? item.text).trim();
+    setSavingItemId(item.id);
+    await onSaveItemText(item.id, draft);
+    setSavingItemId(null);
+    setEditingItemId(null);
+  }
+
+  function cancelItem(item: ProblemBriefItem) {
+    setDraftByItemId((current) => ({ ...current, [item.id]: item.text }));
+    setEditingItemId(null);
+  }
+
+  function handleEditorBlur(event: FocusEvent<HTMLDivElement>, item: ProblemBriefItem) {
+    if (savingItemId === item.id) return;
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    cancelItem(item);
+  }
+
   return (
     <section className="definition-section">
       <div className="definition-section-header">
@@ -50,7 +85,19 @@ function DefinitionSection({
           <div className="definition-section-title">{title}</div>
           <div className="muted">{description}</div>
         </div>
-        <span className="definition-count">{items.length}</span>
+        <div className="definition-header-actions">
+          {editable && !sessionTerminated ? (
+            <button
+              type="button"
+              className="definition-icon-btn definition-add-btn"
+              aria-label={`Add ${title}`}
+              onClick={onAddItem}
+            >
+              +
+            </button>
+          ) : null}
+          <span className="definition-count">{items.length}</span>
+        </div>
       </div>
       {items.length === 0 ? (
         <div className="muted definition-empty">Nothing here yet.</div>
@@ -58,20 +105,56 @@ function DefinitionSection({
         <div className="definition-list">
           {items.map((item) => {
             const locked = sessionTerminated || !editable || !item.editable;
+            const editing = editingItemId === item.id;
+            const saving = savingItemId === item.id;
+            const draft = draftByItemId[item.id] ?? item.text;
             return (
-              <div key={item.id} className={`definition-item kind-${item.kind}`}>
+              <div key={item.id} className={`definition-item kind-${item.kind} ${editing ? "is-editing" : ""}`}>
                 <div className="definition-item-meta">
                   <span className={`definition-chip kind-${item.kind}`}>{item.kind}</span>
                   <span className={`definition-chip status-${item.status}`}>{item.status}</span>
                   <span className="definition-source mono">{item.source}</span>
+                  {(editable && item.editable && !sessionTerminated) ? (
+                    <button
+                      type="button"
+                      className="definition-icon-btn definition-remove-btn"
+                      aria-label="Remove row"
+                      onClick={() => onRemoveItem(item.id)}
+                    >
+                      X
+                    </button>
+                  ) : null}
                 </div>
-                <textarea
-                  value={item.text}
-                  onChange={(e) => onUpdateItem(item.id, { text: e.target.value })}
-                  disabled={locked}
-                  rows={2}
-                />
-                {editable && item.editable && !sessionTerminated && (
+                {!editing ? (
+                  <button
+                    type="button"
+                    className="definition-inline-display"
+                    disabled={locked}
+                    onClick={() => startEdit(item)}
+                  >
+                    {item.text || "Click to add details..."}
+                  </button>
+                ) : (
+                  <div className="definition-inline-editor" onBlur={(event) => handleEditorBlur(event, item)}>
+                    <textarea
+                      value={draft}
+                      onChange={(event) =>
+                        setDraftByItemId((current) => ({ ...current, [item.id]: event.target.value }))}
+                      disabled={locked || saving}
+                      rows={2}
+                      autoFocus
+                    />
+                    <div className="definition-inline-actions">
+                      <button type="button" onClick={() => void saveItem(item)} disabled={locked || saving}>
+                        {saving ? "Saving..." : "Save"}
+                      </button>
+                      <button type="button" onClick={() => cancelItem(item)} disabled={saving}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {(editable && item.editable && !sessionTerminated && editing) ? (
                   <div className="definition-item-actions">
                     <label className="muted">
                       Type
@@ -94,11 +177,8 @@ function DefinitionSection({
                         <option value="rejected">Rejected</option>
                       </select>
                     </label>
-                    <button type="button" onClick={() => onRemoveItem(item.id)}>
-                      Remove
-                    </button>
                   </div>
-                )}
+                ) : null}
               </div>
             );
           })}
@@ -113,70 +193,168 @@ export function DefinitionPanel({
   editable,
   sessionTerminated,
   onChange,
+  onPersistInlineEdit,
 }: DefinitionPanelProps) {
   const gatheredItems = problemBrief.items.filter((item) => item.kind === "gathered");
   const assumptionItems = problemBrief.items.filter((item) => item.kind === "assumption");
   const openQuestions = problemBrief.open_questions;
   const openQuestionsLocked = sessionTerminated || !editable;
+  const [editingGoalSummary, setEditingGoalSummary] = useState(false);
+  const [savingGoalSummary, setSavingGoalSummary] = useState(false);
+  const [goalSummaryDraft, setGoalSummaryDraft] = useState(problemBrief.goal_summary);
+  const [editingAnswerQuestionId, setEditingAnswerQuestionId] = useState<string | null>(null);
+  const [savingAnswerQuestionId, setSavingAnswerQuestionId] = useState<string | null>(null);
+  const [answerDraftByQuestionId, setAnswerDraftByQuestionId] = useState<Record<string, string>>({});
+
+  async function persistBrief(nextBrief: ProblemBrief): Promise<void> {
+    onChange(nextBrief);
+    await onPersistInlineEdit(nextBrief);
+  }
 
   function updateItem(id: string, patch: Partial<ProblemBriefItem>) {
-    onChange(
-      updateItems(problemBrief, (items) =>
-        items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-      ),
+    const next = updateItems(problemBrief, (items) =>
+      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
+    void persistBrief(next);
   }
 
   function removeItem(id: string) {
-    onChange(updateItems(problemBrief, (items) => items.filter((item) => item.id !== id)));
+    const next = updateItems(problemBrief, (items) => items.filter((item) => item.id !== id));
+    void persistBrief(next);
   }
 
   function addItem(kind: "gathered" | "assumption") {
-    onChange(
-      updateItems(problemBrief, (items) => [
-        ...items,
-        {
-          id: makeId(kind),
-          text: "",
-          kind,
-          source: "user",
-          status: "active",
-          editable: true,
-        },
-      ]),
-    );
-  }
-
-  function setOpenQuestions(nextQuestions: ProblemBriefQuestion[]) {
-    onChange({
-      ...problemBrief,
-      open_questions: nextQuestions,
-    });
-  }
-
-  function updateOpenQuestion(questionId: string, value: string) {
-    setOpenQuestions(openQuestions.map((question) => (question.id === questionId ? { ...question, text: value } : question)));
+    const next = updateItems(problemBrief, (items) => [
+      ...items,
+      {
+        id: makeId(kind),
+        text: "Click to edit",
+        kind,
+        source: "user",
+        status: "active",
+        editable: true,
+      },
+    ]);
+    void persistBrief(next);
   }
 
   function removeOpenQuestion(questionId: string) {
-    setOpenQuestions(openQuestions.filter((question) => question.id !== questionId));
+    const nextQuestions = openQuestions.filter((question) => question.id !== questionId);
+    const next = {
+      ...problemBrief,
+      open_questions: nextQuestions,
+    };
+    void persistBrief(next);
   }
 
   function addOpenQuestion() {
-    setOpenQuestions([...openQuestions, { id: makeId("open-question"), text: "" }]);
+    if (openQuestionsLocked) return;
+    const raw = window.prompt("Enter the open question");
+    const text = raw == null ? "" : raw.trim();
+    if (!text) return;
+    const nextQuestions = [
+      ...openQuestions,
+      { id: makeId("open-question"), text, status: "open" as ProblemBriefQuestion["status"], answer_text: null },
+    ];
+    const next = {
+      ...problemBrief,
+      open_questions: nextQuestions,
+    };
+    void persistBrief(next);
+  }
+
+  function startGoalSummaryEdit() {
+    setGoalSummaryDraft(problemBrief.goal_summary);
+    setEditingGoalSummary(true);
+  }
+
+  async function saveGoalSummary() {
+    setSavingGoalSummary(true);
+    await persistBrief({ ...problemBrief, goal_summary: goalSummaryDraft.trim() });
+    setSavingGoalSummary(false);
+    setEditingGoalSummary(false);
+  }
+
+  function cancelGoalSummary() {
+    setGoalSummaryDraft(problemBrief.goal_summary);
+    setEditingGoalSummary(false);
+  }
+
+  function startOpenQuestionAnswerEdit(question: ProblemBriefQuestion) {
+    setEditingAnswerQuestionId(question.id);
+    setAnswerDraftByQuestionId((current) => ({ ...current, [question.id]: question.answer_text ?? "" }));
+  }
+
+  async function saveOpenQuestionAnswer(question: ProblemBriefQuestion) {
+    const answer = (answerDraftByQuestionId[question.id] ?? "").trim();
+    const nextQuestions = openQuestions.map((row) =>
+      row.id !== question.id
+        ? row
+        : {
+            ...row,
+            answer_text: answer || null,
+            status: (answer ? "answered" : "open") as ProblemBriefQuestion["status"],
+          },
+    );
+    setSavingAnswerQuestionId(question.id);
+    await persistBrief({
+      ...problemBrief,
+      open_questions: nextQuestions,
+    });
+    setSavingAnswerQuestionId(null);
+    setEditingAnswerQuestionId(null);
+  }
+
+  function cancelOpenQuestionAnswer(question: ProblemBriefQuestion) {
+    setAnswerDraftByQuestionId((current) => ({ ...current, [question.id]: question.answer_text ?? "" }));
+    setEditingAnswerQuestionId(null);
+  }
+
+  function handleOpenQuestionEditorBlur(event: FocusEvent<HTMLDivElement>, question: ProblemBriefQuestion) {
+    if (savingAnswerQuestionId === question.id) return;
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    cancelOpenQuestionAnswer(question);
+  }
+
+  function handleGoalSummaryEditorBlur(event: FocusEvent<HTMLDivElement>) {
+    if (savingGoalSummary) return;
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    cancelGoalSummary();
   }
 
   return (
     <div className="definition-panel">
-      <section className="definition-section">
+      <section className={`definition-section ${editingGoalSummary ? "is-editing" : ""}`}>
         <div className="definition-section-title">Goal Summary</div>
-        <textarea
-          value={problemBrief.goal_summary}
-          onChange={(e) => onChange({ ...problemBrief, goal_summary: e.target.value })}
-          disabled={!editable || sessionTerminated}
-          rows={3}
-          placeholder="Summarize what the solver should optimize for."
-        />
+        {!editingGoalSummary ? (
+          <button
+            type="button"
+            className="definition-inline-display"
+            onClick={startGoalSummaryEdit}
+            disabled={!editable || sessionTerminated}
+          >
+            {problemBrief.goal_summary || "Summarize what the solver should optimize for."}
+          </button>
+        ) : (
+          <div className="definition-inline-editor" onBlur={handleGoalSummaryEditorBlur}>
+            <textarea
+              value={goalSummaryDraft}
+              onChange={(event) => setGoalSummaryDraft(event.target.value)}
+              disabled={!editable || sessionTerminated}
+              rows={3}
+              autoFocus
+              placeholder="Summarize what the solver should optimize for."
+            />
+            <div className="definition-inline-actions">
+              <button type="button" onClick={() => void saveGoalSummary()} disabled={!editable || sessionTerminated || savingGoalSummary}>
+                {savingGoalSummary ? "Saving..." : "Save"}
+              </button>
+              <button type="button" onClick={cancelGoalSummary} disabled={savingGoalSummary}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <DefinitionSection
@@ -185,6 +363,14 @@ export function DefinitionPanel({
         items={gatheredItems}
         editable={editable}
         sessionTerminated={sessionTerminated}
+        onAddItem={() => addItem("gathered")}
+        onSaveItemText={async (id, text) => {
+          await persistBrief(
+            updateItems(problemBrief, (items) =>
+              items.map((item) => (item.id === id ? { ...item, text } : item)),
+            ),
+          );
+        }}
         onUpdateItem={updateItem}
         onRemoveItem={removeItem}
       />
@@ -195,6 +381,14 @@ export function DefinitionPanel({
         items={assumptionItems}
         editable={editable}
         sessionTerminated={sessionTerminated}
+        onAddItem={() => addItem("assumption")}
+        onSaveItemText={async (id, text) => {
+          await persistBrief(
+            updateItems(problemBrief, (items) =>
+              items.map((item) => (item.id === id ? { ...item, text } : item)),
+            ),
+          );
+        }}
         onUpdateItem={updateItem}
         onRemoveItem={removeItem}
       />
@@ -205,47 +399,80 @@ export function DefinitionPanel({
             <div className="definition-section-title">Open Questions</div>
             <div className="muted">Outstanding clarifications that would improve the configuration.</div>
           </div>
-          <span className="definition-count">{openQuestions.length}</span>
+          <div className="definition-header-actions">
+            {editable && !sessionTerminated ? (
+              <button
+                type="button"
+                className="definition-icon-btn definition-add-btn"
+                aria-label="Add open question"
+                onClick={addOpenQuestion}
+              >
+                +
+              </button>
+            ) : null}
+            <span className="definition-count">{openQuestions.length}</span>
+          </div>
         </div>
         {openQuestions.length === 0 ? (
           <div className="muted definition-empty">Nothing here yet.</div>
         ) : (
           <div className="definition-list">
-            {openQuestions.map((question) => (
-              <div key={question.id} className="definition-item">
-                <textarea
-                  value={question.text}
-                  onChange={(e) => updateOpenQuestion(question.id, e.target.value)}
-                  disabled={openQuestionsLocked}
-                  rows={2}
-                  placeholder="Add an open question."
-                />
-                {editable && !sessionTerminated && (
-                  <div className="definition-item-actions">
-                    <button type="button" onClick={() => removeOpenQuestion(question.id)}>
-                      Remove
-                    </button>
+            {openQuestions.map((question) => {
+              const questionStatus = question.status === "answered" ? "answered" : "open";
+              return (
+                <div key={question.id} className={`definition-item ${editingAnswerQuestionId === question.id ? "is-editing" : ""}`}>
+                  <div className="definition-item-meta">
+                    <span className={`definition-chip status-${questionStatus}`}>{questionStatus}</span>
+                    {editable && !sessionTerminated ? (
+                      <button
+                        type="button"
+                        className="definition-icon-btn definition-remove-btn"
+                        aria-label="Remove open question"
+                        onClick={() => removeOpenQuestion(question.id)}
+                      >
+                        X
+                      </button>
+                    ) : null}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="definition-question-text">{question.text}</div>
+                  <div
+                    className="definition-inline-editor"
+                    onBlur={(event) => handleOpenQuestionEditorBlur(event, question)}
+                  >
+                    <input
+                      type="text"
+                      value={editingAnswerQuestionId === question.id ? (answerDraftByQuestionId[question.id] ?? "") : (question.answer_text ?? "")}
+                      placeholder="Type answer..."
+                      disabled={openQuestionsLocked}
+                      onFocus={() => startOpenQuestionAnswerEdit(question)}
+                      onChange={(event) =>
+                        setAnswerDraftByQuestionId((current) => ({ ...current, [question.id]: event.target.value }))}
+                    />
+                    {editingAnswerQuestionId === question.id ? (
+                      <div className="definition-inline-actions">
+                        <button
+                          type="button"
+                          onClick={() => void saveOpenQuestionAnswer(question)}
+                          disabled={openQuestionsLocked || savingAnswerQuestionId === question.id}
+                        >
+                          {savingAnswerQuestionId === question.id ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancelOpenQuestionAnswer(question)}
+                          disabled={savingAnswerQuestionId === question.id}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
-
-      {editable && !sessionTerminated && (
-        <div className="definition-add-actions">
-          <button type="button" onClick={() => addItem("gathered")}>
-            Add gathered info
-          </button>
-          <button type="button" onClick={() => addItem("assumption")}>
-            Add assumption
-          </button>
-          <button type="button" onClick={addOpenQuestion}>
-            Add open question
-          </button>
-        </div>
-      )}
     </div>
   );
 }

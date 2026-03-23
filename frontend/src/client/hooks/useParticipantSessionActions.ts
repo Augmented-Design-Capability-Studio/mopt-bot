@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject } from "react";
 
 import {
   apiFetch,
@@ -7,6 +7,7 @@ import {
   sessionPanelToConfigText,
   type Message,
   type ProblemBrief,
+  type ProblemBriefQuestion,
   type RunResult,
   type Session,
 } from "@shared/api";
@@ -84,6 +85,7 @@ export function useParticipantSessionActions({
   syncSession,
   startEagerMessagePoll,
 }: UseParticipantSessionActionsArgs) {
+  const savingProblemBriefRef = useRef(false);
   const applyPanelConfigFromResponse = useCallback(
     (panelConfig: Session["panel_config"] | null | undefined) => {
       if (panelConfig == null) return;
@@ -283,22 +285,35 @@ export function useParticipantSessionActions({
     token,
   ]);
 
-  const saveProblemBrief = useCallback(async () => {
-    if (!token || !sessionId || !problemBrief) return;
+  const saveProblemBrief = useCallback(async (overrideBrief?: ProblemBrief) => {
+    const baseBrief = overrideBrief ?? problemBrief;
+    if (!token || !sessionId || !baseBrief) return;
+    if (savingProblemBriefRef.current) return;
     const cleanedBrief: ProblemBrief = {
-      ...problemBrief,
-      goal_summary: problemBrief.goal_summary.trim(),
-      items: problemBrief.items
+      ...baseBrief,
+      goal_summary: baseBrief.goal_summary.trim(),
+      items: baseBrief.items
         .map((item) => ({ ...item, text: item.text.trim() }))
         .filter((item) => item.kind === "system" || item.text.length > 0),
-      open_questions: problemBrief.open_questions
-        .map((question) => ({ ...question, text: question.text.trim() }))
+      open_questions: baseBrief.open_questions
+        .map((question) => {
+          const text = question.text.trim();
+          const status: ProblemBriefQuestion["status"] = question.status === "answered" ? "answered" : "open";
+          const answerText = (question.answer_text ?? "").trim();
+          return {
+            ...question,
+            text,
+            status,
+            answer_text: status === "answered" ? (answerText || null) : null,
+          };
+        })
         .filter((question) => question.text.length > 0),
     };
     const previousBrief = session?.problem_brief;
     if (!previousBrief) return;
     const changedSummary = problemBriefChangeSummary(previousBrief, cleanedBrief);
     const acknowledgement = `Problem definition saved (${changedSummary}).`;
+    savingProblemBriefRef.current = true;
     setBusy(true);
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
@@ -322,6 +337,7 @@ export function useParticipantSessionActions({
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
     } finally {
+      savingProblemBriefRef.current = false;
       setBusy(false);
     }
   }, [
@@ -338,6 +354,7 @@ export function useParticipantSessionActions({
     setProblemBrief,
     setSession,
     token,
+    problemBrief,
   ]);
 
   const syncProblemConfig = useCallback(async () => {
@@ -349,7 +366,17 @@ export function useParticipantSessionActions({
         .map((item) => ({ ...item, text: item.text.trim() }))
         .filter((item) => item.kind === "system" || item.text.length > 0),
       open_questions: problemBrief.open_questions
-        .map((question) => ({ ...question, text: question.text.trim() }))
+        .map((question) => {
+          const text = question.text.trim();
+          const status: ProblemBriefQuestion["status"] = question.status === "answered" ? "answered" : "open";
+          const answerText = (question.answer_text ?? "").trim();
+          return {
+            ...question,
+            text,
+            status,
+            answer_text: status === "answered" ? (answerText || null) : null,
+          };
+        })
         .filter((question) => question.text.length > 0),
     };
     setBusy(true);

@@ -24,7 +24,12 @@ export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemB
   const questionDelta = Math.abs(next.open_questions.length - previous.open_questions.length);
   const changedQuestions = next.open_questions.filter((question) => {
     const before = previousQuestionsById.get(question.id);
-    return before == null || before.text !== question.text;
+    return (
+      before == null ||
+      before.text !== question.text ||
+      before.status !== question.status ||
+      (before.answer_text ?? "") !== (question.answer_text ?? "")
+    );
   }).length;
   const goalChanged = previous.goal_summary.trim() !== next.goal_summary.trim() ? 1 : 0;
   const total = addedOrRemovedItemCount + changedRows + questionDelta + changedQuestions + goalChanged;

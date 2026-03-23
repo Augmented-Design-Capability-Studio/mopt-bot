@@ -423,6 +423,7 @@ select:focus-visible {
 
 .definition-section textarea,
 .definition-item textarea,
+.definition-item input,
 .definition-item select {
   border: 1px solid var(--border);
   background: #fff;
@@ -444,9 +445,13 @@ select:focus-visible {
 .definition-count {
   border: 1px solid var(--border);
   background: var(--panel);
-  padding: 0.1rem 0.35rem;
+  padding: 0 0.35rem;
   font-size: 0.75rem;
   min-width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
 }
 
@@ -466,6 +471,18 @@ select:focus-visible {
   padding: 0.4rem;
   display: flex;
   flex-direction: column;
+  gap: 0.35rem;
+}
+
+.definition-item.is-editing,
+.definition-section.is-editing {
+  border-color: #8a7f6a;
+  box-shadow: inset 0 0 0 1px #e2d8c5;
+}
+
+.definition-header-actions {
+  display: inline-flex;
+  align-items: center;
   gap: 0.35rem;
 }
 
@@ -508,8 +525,68 @@ select:focus-visible {
   border-color: #9b4132;
 }
 
+.definition-chip.status-open {
+  border-color: #7b6f5a;
+}
+
+.definition-chip.status-answered {
+  border-color: #2f6b3f;
+}
+
 .definition-source {
   color: var(--muted);
+}
+
+.definition-question-text {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.35rem;
+  white-space: pre-wrap;
+}
+
+.definition-inline-display {
+  border: 1px solid var(--border);
+  background: #fff;
+  text-align: left;
+  padding: 0.35rem;
+  min-height: 2.2rem;
+  width: 100%;
+}
+
+.definition-inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.definition-inline-actions {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.definition-icon-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  width: 1.6rem;
+  height: 1.6rem;
+  min-width: 1.6rem;
+  min-height: 1.6rem;
+  padding: 0;
+  line-height: 1;
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.definition-add-btn {
+  font-size: 0.85rem;
+}
+
+.definition-remove-btn {
+  margin-left: auto;
+  border-color: #b94a4a;
+  color: #b94a4a;
 }
 
 .run-summary-grid {

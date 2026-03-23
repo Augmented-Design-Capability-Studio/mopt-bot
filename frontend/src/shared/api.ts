@@ -85,6 +85,8 @@ export type ProblemBriefItem = {
 export type ProblemBriefQuestion = {
   id: string;
   text: string;
+  status: "open" | "answered";
+  answer_text: string | null;
 };
 
 export type ProblemBrief = {

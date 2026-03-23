@@ -21,7 +21,7 @@ type ConfigPanelProps = {
   onProblemBriefChange: (value: ProblemBrief | null) => void;
   onSetEditMode: (mode: EditMode) => void;
   onSaveConfig: () => void | Promise<void>;
-  onSaveProblemBrief: () => void | Promise<void>;
+  onSaveProblemBrief: (overrideBrief?: ProblemBrief) => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
 };
 
@@ -52,9 +52,9 @@ export function ConfigPanel({
     if (editMode === "definition" && activeTab !== "definition") setActiveTab("definition");
   }, [activeTab, editMode]);
 
-  const definitionEditing = editMode === "definition";
+  const definitionEditing = false;
   const configEditing = editMode === "config";
-  const editableDefinition = definitionEditing && !sessionTerminated;
+  const editableDefinition = !sessionTerminated;
   const editableConfig = configEditing && !sessionTerminated;
   const tabLocked = editMode !== "none";
 
@@ -92,7 +92,7 @@ export function ConfigPanel({
     <section className={className}>
       <div className="panel-header">
         Problem setup
-        {(definitionEditing || configEditing) && <span className="muted"> - editing {tabTitle.toLowerCase()}</span>}
+        {configEditing && <span className="muted"> - editing {tabTitle.toLowerCase()}</span>}
         {!definitionEditing && !configEditing && (backgroundBriefPending || backgroundConfigPending) && (
           <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", marginLeft: "0.5rem" }}>
             <span className="inline-spinner" aria-hidden="true" />
@@ -145,6 +145,7 @@ export function ConfigPanel({
                   editable={editableDefinition}
                   sessionTerminated={sessionTerminated}
                   onChange={onProblemBriefChange}
+                  onPersistInlineEdit={onSaveProblemBrief}
                 />
               </>
             ) : (
@@ -175,44 +176,26 @@ export function ConfigPanel({
 
         <div className="config-panel-actions">
           {activeTab === "definition" ? (
-            !definitionEditing ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onSetEditMode("definition")}
-                  disabled={editMode !== "none" || sessionTerminated || !problemBrief}
-                >
-                  Edit definition
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void onSyncProblemConfig()}
-                  disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
-                  title="Debug: rebuild the saved problem config from the saved definition"
-                >
-                  {syncingProblemConfig ? (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-                      <span className="inline-spinner" aria-hidden="true" />
-                      Syncing...
-                    </span>
-                  ) : (
-                    "Sync to config"
-                  )}
-                </button>
-                {syncingProblemConfig && (
-                  <span className="muted">Rebuilding config from definition (may use model derivation)...</span>
+            <>
+              <button
+                type="button"
+                onClick={() => void onSyncProblemConfig()}
+                disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
+                title="Debug: rebuild the saved problem config from the saved definition"
+              >
+                {syncingProblemConfig ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                    <span className="inline-spinner" aria-hidden="true" />
+                    Syncing...
+                  </span>
+                ) : (
+                  "Sync to config"
                 )}
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={() => void onSaveProblemBrief()} disabled={busy || sessionTerminated}>
-                  Save
-                </button>
-                <button type="button" onClick={() => onSetEditMode("none")}>
-                  Cancel
-                </button>
-              </>
-            )
+              </button>
+              {syncingProblemConfig && (
+                <span className="muted">Rebuilding config from definition (may use model derivation)...</span>
+              )}
+            </>
           ) : activeTab === "config" ? !configEditing ? (
             <button
               type="button"

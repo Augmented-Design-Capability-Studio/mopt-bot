@@ -32,6 +32,8 @@ class ProblemBriefItem(BaseModel):
 class ProblemBriefQuestion(BaseModel):
     id: str
     text: str
+    status: Literal["open", "answered"] = "open"
+    answer_text: str | None = None
 
 
 class ProblemBrief(BaseModel):

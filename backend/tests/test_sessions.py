@@ -229,6 +229,49 @@ def test_problem_brief_open_questions_are_split(monkeypatch):
         ]
 
 
+def test_problem_brief_open_question_answer_fields_round_trip(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-open-question-answer-roundtrip-secret")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-open-question-answer-roundtrip-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Track unanswered clarifications with explicit answers.",
+                    "items": [],
+                    "open_questions": [
+                        {
+                            "id": "oq-answered",
+                            "text": "What overtime cap should we enforce?",
+                            "status": "answered",
+                            "answer_text": "Cap overtime at 30 minutes per shift.",
+                        },
+                        "Which deliveries are highest priority?",
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-open-question-answer-roundtrip-secret"},
+        )
+        assert patch.status_code == 200
+        questions = patch.json()["problem_brief"]["open_questions"]
+        assert questions[0]["id"] == "oq-answered"
+        assert questions[0]["status"] == "answered"
+        assert questions[0]["answer_text"] == "Cap overtime at 30 minutes per shift."
+        assert questions[1]["status"] == "open"
+        assert questions[1]["answer_text"] is None
+
+
 def test_waterfall_can_infer_first_panel_from_complete_problem_brief(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-waterfall-infer-secret")
     get_settings.cache_clear()
@@ -765,6 +808,69 @@ def test_partial_problem_brief_patch_preserves_prior_facts_for_config_derivation
         assert "Vehicle capacity and driver shift limits are treated as strict constraints." in gathered_texts
 
 
+def test_partial_problem_brief_patch_preserves_answered_open_question_state(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-partial-open-question-merge-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Added a new clarification request.",
+            panel_patch=None,
+            problem_brief_patch={
+                "open_questions": [
+                    "What overtime cap should we enforce?",
+                    "Should any vehicle assignments remain fixed?",
+                ]
+            },
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-partial-open-question-merge-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Preserve answered clarifications across additive updates.",
+                    "items": [],
+                    "open_questions": [
+                        {
+                            "id": "oq-overtime-cap",
+                            "text": "What overtime cap should we enforce?",
+                            "status": "answered",
+                            "answer_text": "Cap overtime at 30 minutes per shift.",
+                        }
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-partial-open-question-merge-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Any follow-up questions?", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-partial-open-question-merge-secret"},
+        )
+        assert send.status_code == 200
+        questions = send.json()["problem_brief"]["open_questions"]
+        overtime = next(q for q in questions if q["text"] == "What overtime cap should we enforce?")
+        assert overtime["status"] == "answered"
+        assert overtime["answer_text"] == "Cap overtime at 30 minutes per shift."
+        assert any(q["text"] == "Should any vehicle assignments remain fixed?" for q in questions)
+
+
 def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-panel-brief-sync-secret")
     get_settings.cache_clear()
@@ -1202,6 +1308,74 @@ def test_cleanup_replace_flag_without_items_clears_editable_rows(monkeypatch):
         assert [item for item in brief["items"] if item["kind"] != "system"] == []
         assert brief["open_questions"] == []
         assert brief["goal_summary"] == "Cleaned up"
+
+
+def test_replace_open_questions_round_trips_answer_fields(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-replace-open-question-answer-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.routers.sessions.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Replaced open questions with the cleaned set.",
+            panel_patch=None,
+            problem_brief_patch={
+                "open_questions": [
+                    {
+                        "id": "oq-new",
+                        "text": "What target service level should we optimize for?",
+                        "status": "answered",
+                        "answer_text": "Target 95% on-time deliveries.",
+                    }
+                ]
+            },
+            replace_open_questions=True,
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-replace-open-question-answer-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Start with an open question list to replace.",
+                    "items": [],
+                    "open_questions": [
+                        {
+                            "id": "oq-old",
+                            "text": "Old question to replace?",
+                            "status": "open",
+                            "answer_text": None,
+                        }
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-replace-open-question-answer-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Please replace the clarification list.", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-replace-open-question-answer-secret"},
+        )
+        assert send.status_code == 200
+        questions = send.json()["problem_brief"]["open_questions"]
+        assert len(questions) == 1
+        assert questions[0]["id"] == "oq-new"
+        assert questions[0]["status"] == "answered"
+        assert questions[0]["answer_text"] == "Target 95% on-time deliveries."
 
 
 def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):

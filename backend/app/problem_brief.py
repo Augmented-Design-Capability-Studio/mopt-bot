@@ -80,25 +80,43 @@ def _clean_question_fragment(text: str) -> str:
     return re.sub(r"^\s*(?:[-*•]\s+|\d+[\.\)]\s*)", "", text).strip()
 
 
-def _normalize_question(raw: Any) -> dict[str, str] | None:
+def _normalize_question_status(raw: Any) -> str:
+    status = str(raw or "open").strip().lower()
+    if status not in {"open", "answered"}:
+        return "open"
+    return status
+
+
+def _normalize_question_answer_text(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def _normalize_question(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         text = str(raw.get("text") or "").strip()
         if not text:
             return None
         question_id = str(raw.get("id") or uuid4())
-        return {"id": question_id, "text": text}
+        status = _normalize_question_status(raw.get("status"))
+        answer_text = _normalize_question_answer_text(raw.get("answer_text"))
+        if status == "open":
+            answer_text = None
+        return {"id": question_id, "text": text, "status": status, "answer_text": answer_text}
     if raw is None:
         return None
     text = str(raw).strip()
     if not text:
         return None
-    return {"id": str(uuid4()), "text": text}
+    return {"id": str(uuid4()), "text": text, "status": "open", "answer_text": None}
 
 
-def _coerce_question_list(value: Any) -> list[dict[str, str]]:
+def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     for entry in value:
         normalized = _normalize_question(entry)
         if normalized is None:
@@ -115,10 +133,24 @@ def _coerce_question_list(value: Any) -> list[dict[str, str]]:
         if not fragments:
             continue
         if len(fragments) == 1:
-            out.append({"id": normalized["id"], "text": fragments[0]})
+            out.append(
+                {
+                    "id": normalized["id"],
+                    "text": fragments[0],
+                    "status": normalized.get("status", "open"),
+                    "answer_text": normalized.get("answer_text"),
+                }
+            )
             continue
         for idx, fragment in enumerate(fragments, start=1):
-            out.append({"id": f"{normalized['id']}-{idx}", "text": fragment})
+            out.append(
+                {
+                    "id": f"{normalized['id']}-{idx}",
+                    "text": fragment,
+                    "status": normalized.get("status", "open"),
+                    "answer_text": normalized.get("answer_text"),
+                }
+            )
     return out
 
 
@@ -206,8 +238,19 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
             merged["open_questions"] = incoming_questions
         else:
             existing_questions = _coerce_question_list(merged.get("open_questions"))
-            seen = {str(q.get("text") or "").strip().lower() for q in existing_questions}
+            index_by_id: dict[str, int] = {}
+            seen = set()
+            for index, question in enumerate(existing_questions):
+                question_id = str(question.get("id") or "").strip()
+                if question_id:
+                    index_by_id[question_id] = index
+                seen.add(str(question.get("text") or "").strip().lower())
             for question in incoming_questions:
+                question_id = str(question.get("id") or "").strip()
+                if question_id and question_id in index_by_id:
+                    existing_questions[index_by_id[question_id]] = question
+                    seen.add(str(question.get("text") or "").strip().lower())
+                    continue
                 key = str(question.get("text") or "").strip().lower()
                 if key in seen:
                     continue
