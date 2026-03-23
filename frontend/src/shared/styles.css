@@ -268,6 +268,47 @@ select:focus-visible {
   border-left: 3px solid #6b7b6a;
 }
 
+.bubble-markdown > :first-child {
+  margin-top: 0.25rem;
+}
+
+.bubble-markdown p {
+  margin: 0.25rem 0;
+}
+
+.bubble-markdown ul,
+.bubble-markdown ol {
+  margin: 0.3rem 0 0.3rem 1.1rem;
+  padding: 0;
+}
+
+.bubble-markdown li {
+  margin: 0.15rem 0;
+}
+
+.bubble-markdown pre {
+  margin: 0.35rem 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  background: #f4f2ed;
+  overflow-x: auto;
+}
+
+.bubble-markdown code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.bubble-markdown :not(pre) > code {
+  padding: 0.05rem 0.25rem;
+  border: 1px solid #d8d4cc;
+  background: #f5f3ee;
+}
+
+.bubble-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .chat-input-row {
   display: flex;
   gap: 0.35rem;

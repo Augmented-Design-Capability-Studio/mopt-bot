@@ -74,7 +74,7 @@ nano backend/.env
 #
 #   MOPT_HOST=127.0.0.1          # bind locally; Cloudflare Tunnel connects here
 #   MOPT_PORT=8000
-#   MOPT_PUBLIC_URL=https://mopt.howiewang.me   # public URL behind Cloudflare
+#   MOPT_PUBLIC_URL=https://mopt.your-domain.example   # public URL behind Cloudflare
 #   MOPT_CLIENT_SECRET=<strong-secret>
 #   MOPT_RESEARCHER_SECRET=<strong-secret>
 #   MOPT_DEFAULT_GEMINI_MODEL=gemini-3-flash-preview

@@ -21,7 +21,8 @@ Copy-Item backend\.env.example .env
 # MOPT_DEFAULT_GEMINI_MODEL (defaults to gemini-3-flash-preview), etc.
 ```
 
-**Linux / Raspberry Pi** — see `docs/RASPBERRY_PI_SETUP.txt` for `apt`, `venv`, and `pip` commands.
+**Linux / Raspberry Pi** — see `docs/RASPBERRY_PI_SETUP.txt` for `apt`, `venv`, and `pip` commands.  
+**Windows PC** — see `docs/WINDOWS_PC_SETUP.txt` for PowerShell, `venv`, backend run, and Cloudflare Tunnel setup.
 
 ### Run the API
 
