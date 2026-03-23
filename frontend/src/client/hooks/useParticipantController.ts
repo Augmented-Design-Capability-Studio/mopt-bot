@@ -6,14 +6,16 @@ import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 import { type ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
 import { cloneProblemBrief } from "../problemDefinition/summary";
-import { SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
+import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
 import { useParticipantSessionActions } from "./useParticipantSessionActions";
 import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle";
 import { useParticipantSessionSync } from "./useParticipantSessionSync";
 
 export function useParticipantController() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
-  const [participantNumber, setParticipantNumber] = useState("");
+  const [participantNumber, setParticipantNumber] = useState(
+    () => sessionStorage.getItem(PARTICIPANT_NUMBER_KEY) ?? "",
+  );
   const [sessionId, setSessionId] = useState(() => sessionStorage.getItem(SESSION_KEY) ?? "");
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);

@@ -304,6 +304,17 @@ export async function fetchSnapshots(sessionId: string, token: string): Promise<
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchSessionsForParticipant(
+  participantNumber: string,
+  token: string,
+): Promise<Session[]> {
+  const trimmed = participantNumber.trim();
+  if (!trimmed) return [];
+  const params = new URLSearchParams({ participant_number: trimmed });
+  const data = await apiFetch<Session[]>(`/sessions/for-participant?${params}`, token);
+  return Array.isArray(data) ? data : [];
+}
+
 export function displayRunNumber(run: Pick<RunResult, "id" | "run_number">, fallbackIndex?: number): number {
   if (typeof run.run_number === "number" && Number.isFinite(run.run_number) && run.run_number > 0) {
     return run.run_number;

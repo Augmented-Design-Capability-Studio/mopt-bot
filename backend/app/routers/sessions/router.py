@@ -8,7 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import Principal, require_any_study_user, require_client, require_researcher
@@ -66,6 +67,30 @@ def create_session(
     db.commit()
     db.refresh(row)
     return helpers.session_to_out(row)
+
+
+@router.get("/for-participant", response_model=list[SessionOut])
+def list_sessions_for_participant(
+    participant_number: str = Query(..., min_length=1, max_length=64),
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    """List sessions for the given participant number (participant-facing, safe filter)."""
+    cleaned = helpers.clean_participant_number(participant_number)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="participant_number required")
+    lower_val = cleaned.lower()
+    rows = (
+        db.query(StudySession)
+        .filter(
+            StudySession.participant_number.isnot(None),
+            func.lower(StudySession.participant_number) == lower_val,
+        )
+        .order_by(StudySession.updated_at.desc())
+        .limit(30)
+        .all()
+    )
+    return [helpers.session_to_out(r) for r in rows]
 
 
 @router.get("", response_model=list[SessionOut])

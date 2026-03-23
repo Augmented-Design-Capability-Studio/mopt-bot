@@ -3,6 +3,7 @@ import { useCallback, type MutableRefObject } from "react";
 import {
   ApiError,
   apiFetch,
+  fetchSessionsForParticipant,
   sessionPanelToConfigText,
   type ProblemBrief,
   type RunResult,
@@ -11,8 +12,9 @@ import {
 
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import type { RecentSessionRow } from "../lib/participantTypes";
-import { SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
+import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
 import { coerceParticipantMessages } from "../lib/sessionGuards";
+import type { ClientSessionHistoryEntry } from "../lib/sessionHistory";
 import { readSessionHistory, removeSessionHistoryEntry, upsertSessionHistoryFromServer } from "../lib/sessionHistory";
 
 type UseParticipantSessionLifecycleArgs = {
@@ -67,8 +69,12 @@ export function useParticipantSessionLifecycle({
   const login = useCallback(() => {
     sessionStorage.setItem(TOKEN_KEY, token.trim());
     setToken(token.trim());
+    const pn = participantNumber.trim();
+    if (pn) {
+      sessionStorage.setItem(PARTICIPANT_NUMBER_KEY, pn);
+    }
     setError(null);
-  }, [setError, setToken, token]);
+  }, [participantNumber, setError, setToken, token]);
 
   const refreshRecentSessionsList = useCallback(async () => {
     const trimmed = token.trim();
@@ -80,17 +86,17 @@ export function useParticipantSessionLifecycle({
     setError(null);
     try {
       const entries = readSessionHistory();
-      const next: RecentSessionRow[] = [];
+      const idToRow = new Map<string, RecentSessionRow>();
       for (const entry of entries) {
         try {
           const currentSession = await apiFetch<Session>(`/sessions/${entry.id}`, trimmed);
           upsertSessionHistoryFromServer(currentSession);
-          next.push({ id: entry.id, session: currentSession, history: entry });
+          idToRow.set(entry.id, { id: entry.id, session: currentSession, history: entry });
         } catch (error) {
           if (error instanceof ApiError && (error.status === 404 || error.status === 410)) {
             removeSessionHistoryEntry(entry.id);
           } else {
-            next.push({
+            idToRow.set(entry.id, {
               id: entry.id,
               history: entry,
               error: error instanceof Error ? error.message : "Could not load",
@@ -98,11 +104,34 @@ export function useParticipantSessionLifecycle({
           }
         }
       }
+      const pn = participantNumber.trim();
+      if (pn) {
+        const serverSessions = await fetchSessionsForParticipant(pn, trimmed);
+        for (const s of serverSessions) {
+          if (!idToRow.has(s.id)) {
+            upsertSessionHistoryFromServer(s);
+            const entry: ClientSessionHistoryEntry = {
+              id: s.id,
+              created_at: s.created_at,
+              updated_at: s.updated_at,
+              status: s.status,
+              workflow_mode: s.workflow_mode,
+              participant_number: s.participant_number,
+            };
+            idToRow.set(s.id, { id: s.id, session: s, history: entry });
+          }
+        }
+      }
+      const next = Array.from(idToRow.values()).sort((a, b) => {
+        const aAt = a.session?.updated_at ?? a.history?.updated_at ?? "";
+        const bAt = b.session?.updated_at ?? b.history?.updated_at ?? "";
+        return bAt.localeCompare(aAt);
+      });
       setRecentRows(next);
     } finally {
       setRecentBusy(false);
     }
-  }, [setError, setRecentBusy, setRecentRows, token]);
+  }, [participantNumber, setError, setRecentBusy, setRecentRows, token]);
 
   const resumePastSession = useCallback(async (resumeId: string) => {
     const trimmed = token.trim();

@@ -84,7 +84,13 @@ export function LoginGate({
             flexWrap: "wrap",
           }}
         >
-          <button type="button" onClick={() => void onLogin()}>
+          <button
+            type="button"
+            onClick={() => {
+              onLogin();
+              void onRefreshRecentSessions();
+            }}
+          >
             Save token
           </button>
           <button type="button" disabled={busy || !token.trim()} onClick={() => void onStartSession()}>
@@ -94,8 +100,9 @@ export function LoginGate({
         <details style={{ marginTop: "1.25rem" }} className="login-recent-sessions">
           <summary style={{ cursor: "pointer", fontWeight: 600 }}>Past sessions on this browser</summary>
           <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Session ids are stored only on this device (not by IP on the server). You still need the same access token
-            to open them. Anyone with this browser profile can see these entries.
+            Session ids are stored only on this device (not by IP on the server). Enter your participant number and
+            save token to also see sessions from other devices. You still need the same access token to open them.
+            Anyone with this browser profile can see these entries.
           </p>
           <div
             style={{
