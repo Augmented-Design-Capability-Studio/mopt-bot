@@ -66,10 +66,14 @@ export function ClientApp() {
       onSaveProblemBrief={controller.saveProblemBrief}
       onSyncProblemConfig={controller.syncProblemConfig}
       onEnterConfigEdit={controller.enterConfigEdit}
+      onCancelConfigEdit={controller.cancelConfigEdit}
       onLoadConfigFromLastRun={controller.loadConfigFromLastRun}
-      onLoadConfigFromPreviousEdit={controller.loadConfigFromPreviousEdit}
+      onRestoreFromSnapshot={controller.restoreFromSnapshot}
+      onLoadSnapshots={controller.loadSnapshots}
+      snapshots={controller.snapshots}
+      snapshotsLoading={controller.snapshotsLoading}
       canLoadFromLastRun={controller.canLoadFromLastRun}
-      canLoadFromPreviousEdit={controller.canLoadFromPreviousEdit}
+      canLoadFromSnapshot={controller.canLoadFromSnapshot}
       onRunOptimize={controller.runOptimize}
       onRunEvaluateEdited={controller.runEvaluateEdited}
       onCloseModelDialog={controller.closeModelDialog}

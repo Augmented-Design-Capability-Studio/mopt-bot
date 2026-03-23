@@ -288,6 +288,22 @@ export type RunResult = {
   result: RunPayload | null;
 };
 
+export type SnapshotSummary = {
+  id: number;
+  created_at: string;
+  event_type: string;
+  items_count: number;
+  questions_count: number;
+  has_config: boolean;
+  problem_brief: Record<string, unknown> | null;
+  panel_config: Record<string, unknown> | null;
+};
+
+export async function fetchSnapshots(sessionId: string, token: string): Promise<SnapshotSummary[]> {
+  const data = await apiFetch<SnapshotSummary[]>(`/sessions/${sessionId}/snapshots`, token);
+  return Array.isArray(data) ? data : [];
+}
+
 export function displayRunNumber(run: Pick<RunResult, "id" | "run_number">, fallbackIndex?: number): number {
   if (typeof run.run_number === "number" && Number.isFinite(run.run_number) && run.run_number > 0) {
     return run.run_number;

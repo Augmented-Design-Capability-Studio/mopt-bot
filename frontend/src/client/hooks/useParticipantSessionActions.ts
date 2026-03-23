@@ -10,6 +10,7 @@ import {
   type ProblemBriefQuestion,
   type RunResult,
   type Session,
+  type SnapshotSummary,
 } from "@shared/api";
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
@@ -50,6 +51,7 @@ type UseParticipantSessionActionsArgs = {
   syncMessages: () => Promise<void>;
   syncSession: () => Promise<void>;
   startEagerMessagePoll: () => void;
+  refetchSnapshots?: () => void | Promise<void>;
 };
 
 type SaveProblemBriefOptions = {
@@ -88,6 +90,7 @@ export function useParticipantSessionActions({
   syncMessages,
   syncSession,
   startEagerMessagePoll,
+  refetchSnapshots,
 }: UseParticipantSessionActionsArgs) {
   const savingProblemBriefRef = useRef(false);
   const applyPanelConfigFromResponse = useCallback(
@@ -269,6 +272,7 @@ export function useParticipantSessionActions({
           true,
         );
       }
+      void refetchSnapshots?.();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
     } finally {
@@ -279,6 +283,7 @@ export function useParticipantSessionActions({
     invokeModel,
     postContextMessage,
     problemPanelHydrationRef,
+    refetchSnapshots,
     session?.panel_config,
     sessionId,
     setBusy,
@@ -339,6 +344,7 @@ export function useParticipantSessionActions({
           : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
         await postContextMessage(chatMessage, true);
       }
+      void refetchSnapshots?.();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
     } finally {
@@ -350,6 +356,7 @@ export function useParticipantSessionActions({
     postContextMessage,
     problemPanelHydrationRef,
     problemBrief,
+    refetchSnapshots,
     session?.problem_brief,
     sessionId,
     setBusy,
@@ -361,6 +368,93 @@ export function useParticipantSessionActions({
     token,
     problemBrief,
   ]);
+
+  const formatSnapshotTime = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  };
+
+  const restoreFromSnapshot = useCallback(
+    async (snapshot: SnapshotSummary, source: "definition" | "config") => {
+      if (!token || !sessionId || session?.status === "terminated") return;
+      const timeStr = formatSnapshotTime(snapshot.created_at);
+      setBusy(true);
+      try {
+        if (source === "definition") {
+          const brief = snapshot.problem_brief;
+          if (!brief || typeof brief !== "object") {
+            setError("Snapshot has no definition data.");
+            return;
+          }
+          const acknowledgement = `Restored definition from snapshot (${timeStr}).`;
+          const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
+            method: "PATCH",
+            body: JSON.stringify({ problem_brief: brief, acknowledgement }),
+          });
+          setSession(nextSession);
+          problemPanelHydrationRef.current = "follow";
+          setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+          setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+          setEditMode("none");
+          if (invokeModel) {
+            await postContextMessage(
+              `I just restored the problem definition from a snapshot (${timeStr}). Please acknowledge the restored gathered info and assumptions.`,
+              true,
+            );
+          }
+        } else {
+          const panel = snapshot.panel_config;
+          if (!panel || typeof panel !== "object") {
+            setError("Snapshot has no config data.");
+            return;
+          }
+          const acknowledgement = `Restored config from snapshot (${timeStr}).`;
+          const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/panel`, token, {
+            method: "PATCH",
+            body: JSON.stringify({ panel_config: panel, acknowledgement }),
+          });
+          setSession(nextSession);
+          problemPanelHydrationRef.current = "follow";
+          setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+          setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+          setEditMode("none");
+          if (invokeModel) {
+            await postContextMessage(
+              `I just restored the problem configuration from a snapshot (${timeStr}). Please acknowledge the change and briefly explain the expected impact on the solver.`,
+              true,
+            );
+          }
+        }
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Restore failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [
+      invokeModel,
+      postContextMessage,
+      problemPanelHydrationRef,
+      session?.status,
+      sessionId,
+      setBusy,
+      setConfigText,
+      setEditMode,
+      setError,
+      setProblemBrief,
+      setSession,
+      token,
+    ],
+  );
 
   const syncProblemConfig = useCallback(async () => {
     if (!token || !sessionId || !problemBrief) return;
@@ -442,6 +536,7 @@ export function useParticipantSessionActions({
         return next;
       });
       void syncMessages();
+      void refetchSnapshots?.();
       if (invokeModel && run.ok) {
         const violations = (run.result as Record<string, unknown> | null | undefined)?.violations as
           | Record<string, unknown>
@@ -468,6 +563,7 @@ export function useParticipantSessionActions({
     configText,
     invokeModel,
     postContextMessage,
+    refetchSnapshots,
     session?.optimization_allowed,
     sessionId,
     setActiveRun,
@@ -512,12 +608,13 @@ export function useParticipantSessionActions({
         return next;
       });
       void syncMessages();
+      void refetchSnapshots?.();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Evaluate failed");
     } finally {
       setBusy(false);
     }
-  }, [configText, scheduleText, sessionId, setActiveRun, setBusy, setError, setRuns, syncMessages, token]);
+  }, [configText, refetchSnapshots, scheduleText, sessionId, setActiveRun, setBusy, setError, setRuns, syncMessages, token]);
 
   const saveModelSettings = useCallback(async () => {
     if (!token || !sessionId) return;
@@ -556,6 +653,7 @@ export function useParticipantSessionActions({
     saveConfig,
     saveProblemBrief,
     syncProblemConfig,
+    restoreFromSnapshot,
     runOptimize,
     runEvaluateEdited,
     saveModelSettings,

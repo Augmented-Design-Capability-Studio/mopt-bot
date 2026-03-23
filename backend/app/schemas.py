@@ -155,3 +155,16 @@ class ParticipantPanelUpdate(BaseModel):
 class ParticipantProblemBriefUpdate(BaseModel):
     problem_brief: ProblemBrief
     acknowledgement: str | None = Field(default=None, max_length=2000)
+
+
+class SnapshotOut(BaseModel):
+    """Snapshot summary with full brief+panel for restore."""
+
+    id: int
+    created_at: datetime
+    event_type: str
+    items_count: int
+    questions_count: int
+    has_config: bool
+    problem_brief: dict[str, Any] | None = None
+    panel_config: dict[str, Any] | None = None

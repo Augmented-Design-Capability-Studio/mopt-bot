@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.crypto_util import encrypt_secret
 from app.database import get_db
 from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
-from app.models import ChatMessage, OptimizationRun, StudySession
+from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
 from app.schemas import (
     MessageCreate,
@@ -30,6 +30,7 @@ from app.schemas import (
     SessionProcessingState,
     SessionOut,
     SessionPatch,
+    SnapshotOut,
     SolveRunCreate,
     SteerCreate,
 )
@@ -118,6 +119,59 @@ def get_session_researcher(
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return helpers.session_to_out(row)
+
+
+def _snapshot_to_out(snap: SessionSnapshot) -> SnapshotOut:
+    """Build SnapshotOut from a SessionSnapshot row."""
+    brief: dict[str, Any] | None = None
+    panel: dict[str, Any] | None = None
+    items_count = 0
+    questions_count = 0
+    has_config = False
+    if snap.problem_brief_json:
+        try:
+            brief = json.loads(snap.problem_brief_json)
+            items_count = len(brief.get("items") or [])
+            questions_count = len(brief.get("open_questions") or [])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if snap.panel_config_json:
+        try:
+            panel = json.loads(snap.panel_config_json)
+            has_config = bool(panel and panel.get("problem"))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return SnapshotOut(
+        id=snap.id,
+        created_at=snap.created_at,
+        event_type=snap.event_type or "before_run",
+        items_count=items_count,
+        questions_count=questions_count,
+        has_config=has_config,
+        problem_brief=brief,
+        panel_config=panel,
+    )
+
+
+@router.get("/{session_id}/snapshots", response_model=list[SnapshotOut])
+def list_snapshots(
+    session_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_client),
+):
+    """List snapshots for the session (brief+panel history)."""
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status == "deleted":
+        raise HTTPException(status_code=410, detail="Session removed")
+    snaps = (
+        db.query(SessionSnapshot)
+        .filter(SessionSnapshot.session_id == session_id)
+        .order_by(SessionSnapshot.created_at.desc())
+        .all()
+    )
+    return [_snapshot_to_out(s) for s in snaps]
 
 
 @router.patch("/{session_id}", response_model=SessionOut)

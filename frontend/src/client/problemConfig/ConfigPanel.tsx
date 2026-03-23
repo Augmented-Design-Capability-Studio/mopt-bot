@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { ProblemBrief } from "@shared/api";
+import type { ProblemBrief, SnapshotSummary } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
+import { SnapshotDialog } from "./SnapshotDialog";
 
 type ConfigPanelProps = {
   configText: string;
@@ -27,10 +28,14 @@ type ConfigPanelProps = {
   ) => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
+  onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
-  onLoadConfigFromPreviousEdit?: () => void;
+  onRestoreFromSnapshot?: (snapshot: SnapshotSummary, source: "definition" | "config") => void;
+  onLoadSnapshots?: () => void | Promise<void>;
+  snapshots?: SnapshotSummary[];
+  snapshotsLoading?: boolean;
   canLoadFromLastRun?: boolean;
-  canLoadFromPreviousEdit?: boolean;
+  canLoadFromSnapshot?: boolean;
 };
 
 type PanelTab = "definition" | "config" | "raw";
@@ -53,16 +58,21 @@ export function ConfigPanel({
   onSaveProblemBrief,
   onSyncProblemConfig,
   onEnterConfigEdit,
+  onCancelConfigEdit,
   onLoadConfigFromLastRun,
-  onLoadConfigFromPreviousEdit,
+  onRestoreFromSnapshot,
+  onLoadSnapshots,
+  snapshots = [],
+  snapshotsLoading = false,
   canLoadFromLastRun = false,
-  canLoadFromPreviousEdit = false,
+  canLoadFromSnapshot = false,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
   const [loadMenuOpen, setLoadMenuOpen] = useState(false);
+  const [snapshotDialogSource, setSnapshotDialogSource] = useState<"definition" | "config" | null>(null);
   const loadMenuRef = useRef<HTMLDivElement>(null);
 
-  const hasLoadOptions = canLoadFromLastRun || canLoadFromPreviousEdit;
+  const hasLoadOptions = canLoadFromLastRun || canLoadFromSnapshot;
 
   useEffect(() => {
     if (!loadMenuOpen) return;
@@ -74,6 +84,11 @@ export function ConfigPanel({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [loadMenuOpen]);
+
+  const openSnapshotDialog = (source: "definition" | "config") => {
+    void onLoadSnapshots?.();
+    setSnapshotDialogSource(source);
+  };
 
   useEffect(() => {
     if (editMode === "config" && activeTab !== "config") setActiveTab("config");
@@ -196,6 +211,22 @@ export function ConfigPanel({
             <>
               <button
                 type="button"
+                onClick={() => void onSaveProblemBrief()}
+                disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
+                title="Save definition and trigger chat acknowledgement"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => openSnapshotDialog("definition")}
+                disabled={snapshots.length === 0 || sessionTerminated}
+                title="Load definition from a snapshot"
+              >
+                Load
+              </button>
+              <button
+                type="button"
                 onClick={() => void onSyncProblemConfig()}
                 disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
                 title="Debug: rebuild the saved problem config from the saved definition"
@@ -219,13 +250,13 @@ export function ConfigPanel({
               >
                 Edit
               </button>
-              {hasLoadOptions && onLoadConfigFromLastRun && onLoadConfigFromPreviousEdit && (
+              {hasLoadOptions && onLoadConfigFromLastRun && (
                 <div ref={loadMenuRef} style={{ position: "relative" }}>
                   <button
                     type="button"
                     onClick={() => setLoadMenuOpen((o) => !o)}
-                    disabled={sessionTerminated || (!canLoadFromLastRun && !canLoadFromPreviousEdit)}
-                    title="Load config from previous run or edit"
+                    disabled={sessionTerminated || (!canLoadFromLastRun && !canLoadFromSnapshot)}
+                    title="Load config from run or snapshot"
                     aria-expanded={loadMenuOpen}
                     aria-haspopup="menu"
                   >
@@ -268,15 +299,15 @@ export function ConfigPanel({
                       <button
                         type="button"
                         role="menuitem"
-                        disabled={!canLoadFromPreviousEdit || sessionTerminated}
+                        disabled={!canLoadFromSnapshot || sessionTerminated}
                         onClick={() => {
-                          onLoadConfigFromPreviousEdit();
+                          openSnapshotDialog("config");
                           setLoadMenuOpen(false);
                         }}
-                        title="Restore config from the previous manual edit"
+                        title="Restore config from a snapshot"
                         style={{ padding: "0.4rem 0.6rem", textAlign: "left", fontSize: "0.9rem" }}
                       >
-                        From previous edit
+                        Load from snapshot...
                       </button>
                     </div>
                   )}
@@ -288,7 +319,7 @@ export function ConfigPanel({
               <button type="button" onClick={() => void onSaveConfig()} disabled={busy || sessionTerminated}>
                 Save
               </button>
-              <button type="button" onClick={() => onSetEditMode("none")}>
+              <button type="button" onClick={() => (onCancelConfigEdit ? onCancelConfigEdit() : onSetEditMode("none"))}>
                 Cancel
               </button>
             </>
@@ -299,6 +330,19 @@ export function ConfigPanel({
           )}
         </div>
       </div>
+
+      {snapshotDialogSource && onRestoreFromSnapshot && (
+        <SnapshotDialog
+          open={snapshotDialogSource !== null}
+          onClose={() => setSnapshotDialogSource(null)}
+          snapshots={snapshots}
+          loading={snapshotsLoading}
+          sourceTab={snapshotDialogSource}
+          sessionTerminated={sessionTerminated}
+          busy={busy}
+          onRestore={onRestoreFromSnapshot}
+        />
+      )}
     </section>
   );
 }

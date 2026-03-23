@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type Message, type ProblemBrief, type RunResult, type Session } from "@shared/api";
+import { fetchSnapshots, type Message, type ProblemBrief, type RunResult, type Session, type SnapshotSummary } from "@shared/api";
 import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 
 import { type ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
@@ -37,6 +37,8 @@ export function useParticipantController() {
   const [aiPending, setAiPending] = useState(false);
   const [recentRows, setRecentRows] = useState<RecentSessionRow[]>([]);
   const [recentBusy, setRecentBusy] = useState(false);
+  const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const modelDialogWasOpenRef = useRef(false);
@@ -119,6 +121,32 @@ export function useParticipantController() {
     setEditMode("config");
   }, [configText]);
 
+  const cancelConfigEdit = useCallback(() => {
+    setConfigText(configEditSnapshot);
+    setEditMode("none");
+  }, [configEditSnapshot, setConfigText]);
+
+  const loadSnapshots = useCallback(async () => {
+    if (!token || !sessionId || session?.status !== "active") return;
+    setSnapshotsLoading(true);
+    try {
+      const list = await fetchSnapshots(sessionId, token);
+      setSnapshots(list);
+    } catch {
+      setSnapshots([]);
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  }, [token, sessionId, session?.status]);
+
+  useEffect(() => {
+    if (token && sessionId && session?.status === "active") {
+      void loadSnapshots();
+    } else {
+      setSnapshots([]);
+    }
+  }, [token, sessionId, session?.status, loadSnapshots]);
+
   const actions = useParticipantSessionActions({
     token,
     sessionId,
@@ -150,6 +178,7 @@ export function useParticipantController() {
     syncMessages: sync.syncMessages,
     syncSession: sync.syncSession,
     startEagerMessagePoll: sync.startEagerMessagePoll,
+    refetchSnapshots: loadSnapshots,
   });
 
   const loadConfigFromLastRun = useCallback(() => {
@@ -162,14 +191,16 @@ export function useParticipantController() {
     void actions.saveConfig(newConfig);
   }, [runs, setConfigText, actions.saveConfig]);
 
-  const loadConfigFromPreviousEdit = useCallback(() => {
-    if (!configEditSnapshot) return;
-    setConfigText(configEditSnapshot);
-    void actions.saveConfig(configEditSnapshot);
-  }, [configEditSnapshot, setConfigText, actions.saveConfig]);
+  const restoreFromSnapshot = useCallback(
+    (snap: SnapshotSummary, source: "definition" | "config") => {
+      void actions.restoreFromSnapshot(snap, source);
+      void loadSnapshots();
+    },
+    [actions.restoreFromSnapshot, loadSnapshots],
+  );
 
   const canLoadFromLastRun = runs.length > 0 && runs[runs.length - 1]?.request?.problem != null;
-  const canLoadFromPreviousEdit = configEditSnapshot.length > 0;
+  const canLoadFromSnapshot = snapshots.length > 0;
 
   return {
     token,
@@ -226,9 +257,13 @@ export function useParticipantController() {
     forgetRecentSession: lifecycle.forgetRecentSession,
     closeModelDialog: actions.closeModelDialog,
     enterConfigEdit,
+    cancelConfigEdit,
     loadConfigFromLastRun,
-    loadConfigFromPreviousEdit,
+    restoreFromSnapshot,
+    loadSnapshots,
+    snapshots,
+    snapshotsLoading,
     canLoadFromLastRun,
-    canLoadFromPreviousEdit,
+    canLoadFromSnapshot,
   };
 }

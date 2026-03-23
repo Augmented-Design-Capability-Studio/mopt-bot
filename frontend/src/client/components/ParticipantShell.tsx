@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 
-import type { Message, ProblemBrief, RunResult, Session } from "@shared/api";
+import type { Message, ProblemBrief, RunResult, Session, SnapshotSummary } from "@shared/api";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 import { StatusChip } from "@shared/status/StatusChip";
 
@@ -50,10 +50,14 @@ type ParticipantShellProps = {
   onSaveProblemBrief: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
+  onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
-  onLoadConfigFromPreviousEdit?: () => void;
+  onRestoreFromSnapshot?: (snapshot: SnapshotSummary, source: "definition" | "config") => void;
+  onLoadSnapshots?: () => void | Promise<void>;
+  snapshots?: SnapshotSummary[];
+  snapshotsLoading?: boolean;
   canLoadFromLastRun?: boolean;
-  canLoadFromPreviousEdit?: boolean;
+  canLoadFromSnapshot?: boolean;
   onRunOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
   onCloseModelDialog: () => void;
@@ -100,10 +104,14 @@ export function ParticipantShell({
   onSaveProblemBrief,
   onSyncProblemConfig,
   onEnterConfigEdit,
+  onCancelConfigEdit,
   onLoadConfigFromLastRun,
-  onLoadConfigFromPreviousEdit,
+  onRestoreFromSnapshot,
+  onLoadSnapshots,
+  snapshots,
+  snapshotsLoading,
   canLoadFromLastRun,
-  canLoadFromPreviousEdit,
+  canLoadFromSnapshot,
   onRunOptimize,
   onRunEvaluateEdited,
   onCloseModelDialog,
@@ -203,10 +211,14 @@ export function ParticipantShell({
             onSaveProblemBrief={onSaveProblemBrief}
             onSyncProblemConfig={onSyncProblemConfig}
             onEnterConfigEdit={onEnterConfigEdit}
+            onCancelConfigEdit={onCancelConfigEdit}
             onLoadConfigFromLastRun={onLoadConfigFromLastRun}
-            onLoadConfigFromPreviousEdit={onLoadConfigFromPreviousEdit}
+            onRestoreFromSnapshot={onRestoreFromSnapshot}
+            onLoadSnapshots={onLoadSnapshots}
+            snapshots={snapshots}
+            snapshotsLoading={snapshotsLoading}
             canLoadFromLastRun={canLoadFromLastRun}
-            canLoadFromPreviousEdit={canLoadFromPreviousEdit}
+            canLoadFromSnapshot={canLoadFromSnapshot}
           />
         )}
 
