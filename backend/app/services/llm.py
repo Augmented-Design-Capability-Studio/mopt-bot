@@ -15,6 +15,9 @@ from app.prompts.study_chat import (
     STUDY_CHAT_PHASE_CONFIGURATION,
     STUDY_CHAT_PHASE_DISCOVERY,
     STUDY_CHAT_PHASE_STRUCTURING,
+    STUDY_CHAT_RUN_ACK_AGILE,
+    STUDY_CHAT_RUN_ACK_BASE,
+    STUDY_CHAT_RUN_ACK_WATERFALL,
     STUDY_CHAT_STRUCTURED_JSON_RULES,
     STUDY_CHAT_SYSTEM_PROMPT,
     STUDY_CHAT_VISIBLE_REPLY_TASK,
@@ -201,6 +204,11 @@ def _phase_prompt(phase: WorkflowPhase) -> str:
     return STUDY_CHAT_PHASE_DISCOVERY
 
 
+def _run_ack_prompt(workflow_mode: str) -> str:
+    wf_addendum = STUDY_CHAT_RUN_ACK_AGILE if workflow_mode == "agile" else STUDY_CHAT_RUN_ACK_WATERFALL
+    return f"{STUDY_CHAT_RUN_ACK_BASE}\n{wf_addendum}"
+
+
 def resolve_workflow_phase(
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
@@ -299,6 +307,7 @@ def _build_visible_chat_system_instruction(
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -319,6 +328,8 @@ def _build_visible_chat_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    if is_run_acknowledgement:
+        parts.append(_run_ack_prompt(workflow_mode))
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn. Acknowledge cleanup naturally if relevant, but keep the visible "
@@ -347,6 +358,7 @@ def _build_brief_update_system_instruction(
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -367,6 +379,8 @@ def _build_brief_update_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    if is_run_acknowledgement:
+        parts.append(_run_ack_prompt(workflow_mode))
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn. Reorganize gathered facts, assumptions, and open questions "
@@ -400,6 +414,7 @@ def _plain_fallback_reply(
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
 ) -> str:
     system = _build_visible_chat_system_instruction(
         current_problem_brief=current_problem_brief,
@@ -408,6 +423,7 @@ def _plain_fallback_reply(
         recent_runs_summary=recent_runs_summary,
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
     )
     client = genai.Client(api_key=api_key)
     chat = client.chats.create(
@@ -432,6 +448,7 @@ def generate_visible_chat_reply(
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
 ) -> str:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_visible_chat_system_instruction(
@@ -441,6 +458,7 @@ def generate_visible_chat_reply(
         recent_runs_summary=recent_runs_summary,
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
     )
     chat = client.chats.create(
         model=model_name,
@@ -464,6 +482,7 @@ def generate_problem_brief_update(
     recent_runs_summary: list[dict[str, Any]] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
 ) -> ProblemBriefUpdateTurn:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_brief_update_system_instruction(
@@ -473,6 +492,7 @@ def generate_problem_brief_update(
         recent_runs_summary=recent_runs_summary,
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
     )
     history = _history_to_contents(history_lines)
     config = types.GenerateContentConfig(
@@ -516,6 +536,7 @@ def generate_chat_turn(
     current_panel: dict[str, Any] | None = None,
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
 ) -> ChatModelTurn:
     """Compatibility wrapper that now prioritizes the visible assistant reply."""
     try:
@@ -530,6 +551,7 @@ def generate_chat_turn(
             recent_runs_summary=recent_runs_summary,
             researcher_steers=researcher_steers,
             cleanup_mode=cleanup_mode,
+            is_run_acknowledgement=is_run_acknowledgement,
         )
     except Exception as e:
         log.warning("Visible chat failed (%s); using plain fallback", e)
@@ -544,6 +566,7 @@ def generate_chat_turn(
             recent_runs_summary,
             researcher_steers,
             cleanup_mode,
+            is_run_acknowledgement,
         )
     return ChatModelTurn(assistant_message=text, panel_patch=None)
 

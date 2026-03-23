@@ -219,6 +219,49 @@ Your session is running in an **iterative, agile-style** workflow. Encourage qui
 
 
 # ---------------------------------------------------------------------------
+# Run-acknowledgement rules — appended when the user message is an auto-posted
+# run-complete context (e.g. "Run #1 just completed - cost 123..."). Prevents
+# run-result contamination of the problem definition while allowing targeted
+# config refinements.
+# ---------------------------------------------------------------------------
+
+STUDY_CHAT_RUN_ACK_BASE = """
+## Run-result interpretation (strict rules)
+
+This turn was triggered by an optimization run completion. Follow these rules:
+
+- **Do NOT add run-result narrative to the problem brief.** Never add items like
+  "Run 1 achieved cost 123.45", "Run 2 had 5 time-window violations", "cost was X",
+  or any violation counts, metrics summaries, or run-by-run summaries as gathered
+  facts or assumptions. The problem definition must remain about **user-stated goals
+  and constraints**, not run output.
+- **Do NOT use replace_editable_items** for this turn. Preserve the existing problem
+  definition intact.
+- You **may** suggest at most one or two targeted **config-linked** refinements when
+  appropriate (e.g. a single weight, population size, or algorithm param change).
+  Use `problem_brief_patch` with only config-slot items such as:
+  - "Deadline penalty weight is set to 20."
+  - "Population size is set to 150."
+  - "Solver algorithm is PSO."
+  Tie any such change to the user's stated objectives, not to raw run metrics.
+- Discuss results, costs, and violations freely in your **visible reply** only.
+  Compare runs and suggest next steps in chat — that context stays in the
+  conversation, not in the problem brief.
+""".strip()
+
+STUDY_CHAT_RUN_ACK_AGILE = """
+- Agile: you may proactively apply one small config tweak based on run feedback.
+  Frame it as "I've adjusted X based on what we saw — run again when ready."
+""".strip()
+
+STUDY_CHAT_RUN_ACK_WATERFALL = """
+- Waterfall: if you suggest a config change, tie it explicitly to the stated
+  objectives. "Given your priority for on-time delivery, we could try increasing
+  the deadline penalty — I've updated that."
+""".strip()
+
+
+# ---------------------------------------------------------------------------
 # Structured JSON response format rules — appended for every structured turn.
 # ---------------------------------------------------------------------------
 

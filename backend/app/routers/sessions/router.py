@@ -345,6 +345,7 @@ def post_message(
             updated_panel = current
             cleanup_requested = intent.is_definition_cleanup_request(body.content)
             clear_requested = intent.is_definition_clear_request(body.content)
+            is_run_ack = intent.is_run_acknowledgement_message(body.content)
             turn = None
             try:
                 from app.services.llm import generate_chat_turn
@@ -360,6 +361,7 @@ def post_message(
                     current_panel=current,
                     researcher_steers=researcher_steers or None,
                     cleanup_mode=cleanup_requested,
+                    is_run_acknowledgement=is_run_ack,
                 )
                 text = turn.assistant_message
             except Exception:
@@ -439,6 +441,7 @@ def post_message(
                     base_panel=current,
                     cleanup_requested=cleanup_requested,
                     clear_requested=clear_requested,
+                    is_run_acknowledgement=is_run_ack,
                 )
 
     return PostMessagesResponse(
