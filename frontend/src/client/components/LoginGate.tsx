@@ -1,4 +1,5 @@
 import type { RecentSessionRow } from "../lib/participantTypes";
+import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 
 type LoginGateProps = {
   token: string;
@@ -42,6 +43,9 @@ export function LoginGate({
     <div className="app-shell">
       <header className="app-header">
         <span className="app-title">Participant</span>
+        <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+          <BackendConnectionControl />
+        </div>
       </header>
       <div className="login-panel">
         {error && (
