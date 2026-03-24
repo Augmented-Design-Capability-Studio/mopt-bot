@@ -258,7 +258,7 @@ For each candidate position vector, the optimizer calls the evaluator’s object
 ### 3.3 SolverConfig and SolveResult
 
 - **SolverConfig**: JSON-serializable configuration (weights, locked assignments, algorithm, epochs, pop_size, seed).
-- **SolveResult**: `best_cost`, `routes` (list of 5 lists of order indices), `metrics`, `convergence`, `runtime`, `algorithm`.
+- **SolveResult**: `best_cost`, `routes` (list of 5 lists of order indices), `metrics`, `visits` (visits_per_vehicle from final evaluate_solution — used for UI so violations block and timeline agree), `convergence`, `runtime`, `algorithm`.
 
 ---
 

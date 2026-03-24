@@ -432,16 +432,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
             raise TimeoutError("Optimization exceeded time limit") from None
 
     orders = get_orders(seed=None)
-    rng_visits = np.random.RandomState(cfg["random_seed"])
-    _, _, visits_pv = simulate_routes(
-        result.routes,
-        orders,
-        rng_visits,
-        cfg["weights"],
-        driver_preferences=cfg["driver_preferences"],
-        shift_hard_penalty=cfg["shift_hard_penalty"],
-    )
-    visits = _visits_from_evaluator_records(visits_pv)
+    visits = _visits_from_evaluator_records(result.visits)
     route_rows = routes_to_neutral(result.routes)
     vehicle_summaries = _vehicle_summaries_for_schedule(result.routes, orders, visits)
     time_bounds = _time_bounds_for_schedule(vehicle_summaries, visits)

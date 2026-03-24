@@ -58,6 +58,7 @@ class SolveResult:
     best_cost: float
     routes: list[list[int]]
     metrics: dict
+    visits: list[list[Any]]  # visits_per_vehicle from final evaluate_solution
     convergence: list[float]
     runtime: float
     algorithm: str = ""
@@ -242,6 +243,7 @@ class QuickBiteOptimizer:
             best_cost=float(cost),
             routes=routes,
             metrics=metrics,
+            visits=visits,
             convergence=convergence,
             runtime=runtime,
             algorithm=algo,

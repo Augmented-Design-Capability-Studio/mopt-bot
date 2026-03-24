@@ -71,6 +71,7 @@ Do **not** add application routes, study-only hacks, or deployment config **insi
 - Enforce **validation** before calling the solver; return structured errors for invalid or incomplete configs instead of opaque 500s when possible.
 - **Weight aliases:** `backend/app/adapter.py` defines `WEIGHT_ALIASES` mapping human-readable keys (`travel_time`, `fuel_cost`, `deadline_penalty`, `capacity_penalty`, `workload_balance`, `worker_preference`, `priority_penalty`) to the internal `w1`–`w7` keys expected by the solver. `translate_weights()` is called inside `parse_problem_config` so both alias names and `w1`–`w7` keys are accepted; alias names are preferred for all new panel configs and agent-generated patches.
 - **Reproducibility:** document and fix **RNG seeds** (and any time-dependent behavior) so the same configuration yields the same result when that is a study requirement.
+- **Violation consistency:** the adapter uses the optimizer's `visits` from its final `evaluate_solution` (not a re-simulation) so the violation block and timeline per-stop data share the same underlying evaluation. Cost and violations reflect the user's configured objectives.
 - **Timeouts and cancellation:** long runs must not block the process indefinitely; support **request timeouts** and **abort** where the stack allows it.
 
 ### 6.4 Environment & config
