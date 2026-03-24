@@ -71,6 +71,7 @@ def _run_background_derivation(
     cleanup_requested: bool,
     clear_requested: bool,
     is_run_acknowledgement: bool = False,
+    is_answered_open_question: bool = False,
 ) -> None:
     try:
         from app.services.llm import generate_problem_brief_update
@@ -87,6 +88,7 @@ def _run_background_derivation(
             researcher_steers=researcher_steers or None,
             cleanup_mode=cleanup_requested,
             is_run_acknowledgement=is_run_acknowledgement,
+            is_answered_open_question=is_answered_open_question,
         )
         patch_payload: dict[str, Any] | None = None
         if brief_turn.problem_brief_patch:

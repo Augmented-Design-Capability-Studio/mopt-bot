@@ -113,6 +113,26 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
     return {"id": str(uuid4()), "text": text, "status": "open", "answer_text": None}
 
 
+def _preserve_answered_state(
+    incoming: list[dict[str, Any]], base_by_id: dict[str, dict[str, Any]]
+) -> None:
+    """In-place: for questions that exist in base with status answered, keep that state
+    if the incoming question lacks status/answer_text (e.g. from model schema omission)."""
+    for i, q in enumerate(incoming):
+        qid = str(q.get("id", "") or "").strip()
+        base = base_by_id.get(qid) if qid else None
+        if not base or str(base.get("status") or "").strip().lower() != "answered":
+            continue
+        incoming_status = str(q.get("status") or "").strip().lower()
+        incoming_answer = _normalize_question_answer_text(q.get("answer_text"))
+        if incoming_status != "answered" or incoming_answer is None:
+            incoming[i] = {
+                **q,
+                "status": base.get("status", "answered"),
+                "answer_text": base.get("answer_text"),
+            }
+
+
 def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -234,10 +254,13 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
         merged["open_questions"] = []
     elif "open_questions" in patch:
         incoming_questions = _coerce_question_list(patch.get("open_questions"))
+        base_questions_by_id = {str(q.get("id", "")): q for q in merged.get("open_questions") or []}
         if replace_open_questions:
+            _preserve_answered_state(incoming_questions, base_questions_by_id)
             merged["open_questions"] = incoming_questions
         else:
             existing_questions = _coerce_question_list(merged.get("open_questions"))
+            base_by_id = {str(q.get("id", "")): q for q in existing_questions}
             index_by_id: dict[str, int] = {}
             seen = set()
             for index, question in enumerate(existing_questions):
@@ -248,7 +271,9 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
             for question in incoming_questions:
                 question_id = str(question.get("id") or "").strip()
                 if question_id and question_id in index_by_id:
-                    existing_questions[index_by_id[question_id]] = question
+                    to_merge = [dict(question)]
+                    _preserve_answered_state(to_merge, base_by_id)
+                    existing_questions[index_by_id[question_id]] = to_merge[0]
                     seen.add(str(question.get("text") or "").strip().lower())
                     continue
                 key = str(question.get("text") or "").strip().lower()

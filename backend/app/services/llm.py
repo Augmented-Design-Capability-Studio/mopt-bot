@@ -359,6 +359,7 @@ def _build_brief_update_system_instruction(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    is_answered_open_question: bool = False,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -381,6 +382,11 @@ def _build_brief_update_system_instruction(
     ]
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
+    if is_answered_open_question:
+        parts.append(
+            "Answer-save context: To close the answered question, omit it from open_questions "
+            "and set replace_open_questions=true. Do not add gathered items about uploads or status."
+        )
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn. Reorganize gathered facts, assumptions, and open questions "
@@ -483,6 +489,7 @@ def generate_problem_brief_update(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    is_answered_open_question: bool = False,
 ) -> ProblemBriefUpdateTurn:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_brief_update_system_instruction(
@@ -493,6 +500,7 @@ def generate_problem_brief_update(
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
+        is_answered_open_question=is_answered_open_question,
     )
     history = _history_to_contents(history_lines)
     config = types.GenerateContentConfig(
