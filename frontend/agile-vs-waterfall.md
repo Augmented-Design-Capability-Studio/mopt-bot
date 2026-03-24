@@ -160,7 +160,27 @@ Why this helps:
 
 ---
 
-### 9. Different Run History Framing
+### 9. Formulation Style (Prompt-Level) — Implemented
+
+The agent's formulation behavior now differs by workflow (see `study_chat.py`):
+
+**Waterfall formulation:**
+- Elicit before adding: ask "Should I add X?" before adding any objective/constraint.
+- Add at most one per turn; wait for explicit user confirmation.
+- Probe for completeness without adding until user confirms.
+- Propose values, don't assume: "Do you want a moderate weight or stronger?"
+
+**Agile formulation:**
+- Add from clear hints with light confirmation: "Added on-time delivery — run when ready or tweak first."
+- Prefer try-and-adjust: let the run reveal gaps.
+- Focus on next step; avoid long checklists.
+- Still one new item per turn.
+
+**Brevity:** Both workflows enforce short replies (2–3 sentences, one main idea per turn).
+
+---
+
+### 10. Different Run History Framing
 
 Keep the underlying run data the same, but label it differently.
 
@@ -176,7 +196,7 @@ Why this helps:
 
 ---
 
-### 10. Different Reflection Prompts After Runs
+### 11. Different Reflection Prompts After Runs
 
 After each run, show workflow-specific prompts.
 
@@ -196,7 +216,7 @@ Why this helps:
 
 These changes are applied to the system prompt addenda in `study_chat.py` and require no code changes to the frontend or backend logic.
 
-### 11. Differentiated Opening Messages
+### 12. Differentiated Opening Messages
 
 The first assistant turn sets the tone for the entire session. Both conditions currently start from the same blank slate. Add a workflow-specific system instruction for the first turn:
 
@@ -205,19 +225,19 @@ The first assistant turn sets the tone for the entire session. Both conditions c
 
 ---
 
-### 12. Waterfall: Explicit Open-Question Discipline
+### 13. Waterfall: Explicit Open-Question Discipline
 
 Strengthen the waterfall addendum to instruct the AI to always maintain at least 2–3 open questions in the problem brief and to reference them by name before suggesting a run ("We still haven't resolved Q2 about capacity — shall we address that before running?"). This creates a visible, auditable requirement-tracking pattern.
 
 ---
 
-### 13. Agile: Post-Run Diagnosis Protocol
+### 14. Agile: Post-Run Diagnosis Protocol
 
 Add to the agile addendum: *"After every run result, your first sentence must identify the single biggest cost contributor or violation and propose a specific one-parameter change to address it."* This makes the agile AI's behavior structurally different — it always leads with data-driven action rather than reflection.
 
 ---
 
-### 14. Specification-Before-Assumption Rule (Waterfall) vs. Assume-and-Move-On (Agile)
+### 15. Specification-Before-Assumption Rule (Waterfall) vs. Assume-and-Move-On (Agile)
 
 Waterfall: *"Never fill in an assumption until the user has been explicitly asked about it and declined to provide a value. Always prefer asking over assuming."*
 
@@ -227,7 +247,7 @@ This creates a measurable difference in how many `kind: "assumption"` vs `kind: 
 
 ---
 
-### 15. Workflow-Specific Auto-Context Messages After Runs
+### 16. Workflow-Specific Auto-Context Messages After Runs
 
 The frontend already posts a context message after a run asking the model to interpret results. That message can differ by workflow.
 
@@ -248,25 +268,25 @@ Why this helps:
 
 These require moderate-to-significant code changes but produce the strongest condition differentiation.
 
-### 16. Waterfall: Automated Spec-Completion Gate
+### 17. Waterfall: Automated Spec-Completion Gate
 
 Instead of the researcher manually toggling `optimization_allowed`, automate it. Define a minimum-viable-specification threshold — e.g., at least 3 confirmed gathered facts, 0 open questions, and a non-empty goal summary. When the threshold is met, the backend flips `optimization_allowed` to `True` and the UI shows "Specification complete — optimization unlocked." This is mechanically enforceable and loggable.
 
 ---
 
-### 17. Waterfall: Pre-Run Confirmation Dialog
+### 18. Waterfall: Pre-Run Confirmation Dialog
 
 When the user clicks "Run optimization" (once unlocked), show an interstitial that summarizes the current specification and asks "Does this match your intent?" with Confirm/Go Back. This forces a moment of reflection and creates a measurable "specification review" event in the logs. Agile skips this entirely — clicking Run just runs.
 
 ---
 
-### 18. Agile: Post-Run Suggestion Banner
+### 19. Agile: Post-Run Suggestion Banner
 
 After each run completes, show a persistent UI banner in the results panel: *"Biggest issue: [X]. Suggested next step: [Y]. [Apply & Re-run]"*. The banner content can be derived from the violation summary (e.g., "12 time-window violations — try increasing deadline_penalty"). This nudges rapid iteration at the UI level, not just the prompt level. Waterfall doesn't get this banner.
 
 ---
 
-### 19. Waterfall "Ready for First Run" Confirmation
+### 20. Waterfall "Ready for First Run" Confirmation
 
 Instead of only silently gating optimization, add a participant-facing moment where `Waterfall` users explicitly confirm they are ready for the first run after reviewing the checklist.
 
@@ -277,25 +297,25 @@ Why this helps:
 
 ---
 
-### 20. Run Budgets
+### 21. Run Budgets
 
 Give waterfall sessions a limited run budget (e.g., 5 runs). Display a counter: "Runs remaining: 4/5." This mechanically incentivizes careful planning. Agile gets unlimited runs. This is a crisp, justifiable manipulation: waterfall philosophy says "get it right before you build"; a run budget operationalizes that. It also produces a clean log metric (runs used out of budget).
 
 ---
 
-### 21. Mandatory Reflection Step Between Waterfall Runs
+### 22. Mandatory Reflection Step Between Waterfall Runs
 
 After each waterfall run, disable the Run button for 60 seconds (or until the user sends at least one chat message). Display: "Review the results and discuss what to change before running again." This enforces the deliberate-change-between-runs principle. Agile has no such cooldown.
 
 ---
 
-### 22. Different Problem-Brief Seeding
+### 23. Different Problem-Brief Seeding
 
 Start waterfall sessions with a richer set of system-seeded open questions in the definition panel (e.g., "What are the most important objectives?", "Are there hard constraints?", "What algorithm do you prefer?"). This makes the checklist tangible and visible. Agile sessions start with zero open questions — the AI discovers needs through results.
 
 ---
 
-### 23. Waterfall: Specification Sign-Off Events
+### 24. Waterfall: Specification Sign-Off Events
 
 Add a "Mark as complete" button on each definition section (Gathered Info, Assumptions, Open Questions). The user must explicitly sign off on each section before the run unlocks. Each sign-off is logged as a distinct event. Agile has no sign-off — sections are fluid and always editable.
 
@@ -305,19 +325,19 @@ Add a "Mark as complete" button on each definition section (Gathered Info, Assum
 
 These don't change the participant experience but strengthen the analysis and defend the manipulation's validity.
 
-### 24. Condition-Aware Logging
+### 25. Condition-Aware Logging
 
 Tag every logged event (chat turn, brief change, run, panel edit) with the `workflow_mode`. Also log timestamps for all events so you can compute time-to-first-run, inter-run intervals, and time-in-specification-phase.
 
 ---
 
-### 25. AI Compliance Coding
+### 26. AI Compliance Coding
 
 After the study, have a coder (or an LLM) label each AI turn as "compliant" or "non-compliant" with the assigned workflow. Compute a compliance rate per session. Sessions with low compliance can be excluded or analyzed separately. This is the manipulation-check equivalent at the AI-behavior level.
 
 ---
 
-### 26. Post-Task Self-Report
+### 27. Post-Task Self-Report
 
 Ask participants: "Which best describes your approach?" with options like "I tried to specify everything before running" vs. "I ran early and refined iteratively." If participants in the waterfall condition don't select the first option, the manipulation may not have landed.
 
