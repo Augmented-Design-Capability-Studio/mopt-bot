@@ -422,6 +422,13 @@ def post_message(
                 db.commit()
                 db.refresh(row)
                 proc_state = helpers.processing_state(row)
+            elif body.skip_hidden_brief_update:
+                row = db.get(StudySession, session_id) or row
+                helpers.settle_processing_state(row, cancel_revision=True)
+                helpers.touch_session(row)
+                db.commit()
+                db.refresh(row)
+                proc_state = helpers.processing_state(row)
             else:
                 row = db.get(StudySession, session_id) or row
                 revision = helpers.mark_processing_pending(row)

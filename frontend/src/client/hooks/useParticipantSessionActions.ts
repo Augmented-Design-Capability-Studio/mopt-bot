@@ -15,6 +15,7 @@ import {
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { configChangeSummary } from "../problemConfig/configSummary";
+import { DEFINITION_NEW_ROW_PLACEHOLDER } from "../problemDefinition/constants";
 import { cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
@@ -56,6 +57,10 @@ type UseParticipantSessionActionsArgs = {
 
 type SaveProblemBriefOptions = {
   chatNote?: string;
+};
+
+type PostContextMessageOptions = {
+  skipHiddenBriefUpdate?: boolean;
 };
 
 export function useParticipantSessionActions({
@@ -121,7 +126,7 @@ export function useParticipantSessionActions({
   );
 
   const postContextMessage = useCallback(
-    async (content: string, withModel: boolean) => {
+    async (content: string, withModel: boolean, messageOptions?: PostContextMessageOptions) => {
       if (!token || !sessionId || session?.status === "terminated") return;
       const tempId = -Date.now() - Math.random();
       const optimistic: Message = {
@@ -137,7 +142,11 @@ export function useParticipantSessionActions({
       try {
         const raw = await apiFetch<unknown>(`/sessions/${sessionId}/messages`, token, {
           method: "POST",
-          body: JSON.stringify({ content, invoke_model: withModel }),
+          body: JSON.stringify({
+            content,
+            invoke_model: withModel,
+            skip_hidden_brief_update: messageOptions?.skipHiddenBriefUpdate ?? false,
+          }),
         });
         const response = normalizePostMessagesResponse(raw);
         const outgoing = response.messages;
@@ -187,7 +196,11 @@ export function useParticipantSessionActions({
     try {
       const raw = await apiFetch<unknown>(`/sessions/${sessionId}/messages`, token, {
         method: "POST",
-        body: JSON.stringify({ content: text, invoke_model: invokeModel }),
+        body: JSON.stringify({
+          content: text,
+          invoke_model: invokeModel,
+          skip_hidden_brief_update: false,
+        }),
       });
       const response = normalizePostMessagesResponse(raw);
       const outgoing = response.messages;
@@ -270,6 +283,7 @@ export function useParticipantSessionActions({
         await postContextMessage(
           `I just manually updated the problem configuration. Changed fields: ${changedKeys}. Please acknowledge the change and briefly explain the expected impact on the solver.`,
           true,
+          { skipHiddenBriefUpdate: true },
         );
       }
       void refetchSnapshots?.();
@@ -304,7 +318,17 @@ export function useParticipantSessionActions({
       goal_summary: baseBrief.goal_summary.trim(),
       items: baseBrief.items
         .map((item) => ({ ...item, text: item.text.trim() }))
-        .filter((item) => item.kind === "system" || item.text.length > 0),
+        .filter((item) => {
+          if (item.kind === "system") return true;
+          if (item.text.length === 0) return false;
+          if (
+            (item.kind === "gathered" || item.kind === "assumption") &&
+            item.text === DEFINITION_NEW_ROW_PLACEHOLDER
+          ) {
+            return false;
+          }
+          return true;
+        }),
       open_questions: baseBrief.open_questions
         .map((question) => {
           const text = question.text.trim();
@@ -342,7 +366,9 @@ export function useParticipantSessionActions({
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()
           : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
-        await postContextMessage(chatMessage, true);
+        await postContextMessage(chatMessage, true, {
+          skipHiddenBriefUpdate: !options?.chatNote?.trim(),
+        });
       }
       void refetchSnapshots?.();
     } catch (error) {
@@ -409,6 +435,7 @@ export function useParticipantSessionActions({
             await postContextMessage(
               `I just restored the problem definition from a snapshot (${timeStr}). Please acknowledge the restored gathered info and assumptions.`,
               true,
+              { skipHiddenBriefUpdate: true },
             );
           }
         } else {
@@ -431,6 +458,7 @@ export function useParticipantSessionActions({
             await postContextMessage(
               `I just restored the problem configuration from a snapshot (${timeStr}). Please acknowledge the change and briefly explain the expected impact on the solver.`,
               true,
+              { skipHiddenBriefUpdate: true },
             );
           }
         }
@@ -463,7 +491,17 @@ export function useParticipantSessionActions({
       goal_summary: problemBrief.goal_summary.trim(),
       items: problemBrief.items
         .map((item) => ({ ...item, text: item.text.trim() }))
-        .filter((item) => item.kind === "system" || item.text.length > 0),
+        .filter((item) => {
+          if (item.kind === "system") return true;
+          if (item.text.length === 0) return false;
+          if (
+            (item.kind === "gathered" || item.kind === "assumption") &&
+            item.text === DEFINITION_NEW_ROW_PLACEHOLDER
+          ) {
+            return false;
+          }
+          return true;
+        }),
       open_questions: problemBrief.open_questions
         .map((question) => {
           const text = question.text.trim();

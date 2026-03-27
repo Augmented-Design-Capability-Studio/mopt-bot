@@ -338,7 +338,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     surface this before passing the config to the solver.
     """
     ensure_vrptw_on_path()
-    from user_input import DEFAULT_DRIVER_PREFERENCES, SHIFT_HARD_PENALTY, build_weights
+    from user_input import SHIFT_HARD_PENALTY, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
     # Default to explicit-only objective scoring when the field is omitted.
@@ -347,7 +347,8 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
 
     driver_preferences = raw.get("driver_preferences")
     if driver_preferences is None:
-        driver_preferences = list(DEFAULT_DRIVER_PREFERENCES)
+        # Participant-facing runs should reflect only explicitly provided preferences.
+        driver_preferences = []
     if not isinstance(driver_preferences, list):
         raise ValueError("driver_preferences must be a list")
 

@@ -88,6 +88,59 @@ def test_message_response_marks_processing_pending_before_background_finishes(mo
         assert session.json()["processing"]["config_status"] == "pending"
 
 
+def test_skip_hidden_brief_update_skips_background_and_settles_processing(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-skip-hidden-brief-secret")
+    get_settings.cache_clear()
+
+    launched: dict[str, object] = {}
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Acknowledged your manual definition save.",
+            panel_patch=None,
+            problem_brief_patch=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.sessions.derivation.launch_background_derivation",
+        lambda **kwargs: launched.update(kwargs),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-skip-hidden-brief-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={
+                "content": "I just manually updated the problem definition. Summary: goal.",
+                "invoke_model": True,
+                "skip_hidden_brief_update": True,
+            },
+            headers={"Authorization": "Bearer test-client-skip-hidden-brief-secret"},
+        )
+        assert send.status_code == 200
+        body = send.json()
+        assert body["messages"][-1]["content"] == "Acknowledged your manual definition save."
+        assert body["processing"]["brief_status"] == "ready"
+        assert body["processing"]["config_status"] == "idle"
+        assert launched == {}
+
+        session = client.get(
+            f"/sessions/{sid}",
+            headers={"Authorization": "Bearer test-client-skip-hidden-brief-secret"},
+        )
+        assert session.status_code == 200
+        assert session.json()["processing"]["brief_status"] == "ready"
+
+
 def test_steer_messages_hidden_and_forwarded_to_next_model_turn(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-steer-secret")
     monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-steer-secret")

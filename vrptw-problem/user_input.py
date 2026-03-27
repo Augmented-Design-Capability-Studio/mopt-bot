@@ -129,7 +129,7 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
             data = json.load(f)
         only_active = data.get("only_active_terms", False)
         user_weights = data.get("weights", {})
-        driver_prefs = data.get("driver_preferences", DEFAULT_DRIVER_PREFERENCES)
+        driver_prefs = data.get("driver_preferences", [])
         shift_pen = data.get("shift_hard_penalty", SHIFT_HARD_PENALTY)
         locked = _parse_locked_assignments(data.get("locked_assignments", {}))
         weights = build_weights(user_weights, only_active_terms=only_active)
@@ -155,7 +155,7 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
         }
     return {
         "weights": dict(DEFAULT_WEIGHTS),
-        "driver_preferences": list(DEFAULT_DRIVER_PREFERENCES),
+        "driver_preferences": [],
         "shift_hard_penalty": SHIFT_HARD_PENALTY,
         "locked_assignments": {},
         "algorithm": "GA",

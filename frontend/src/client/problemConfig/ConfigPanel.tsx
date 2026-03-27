@@ -40,6 +40,8 @@ type ConfigPanelProps = {
 
 type PanelTab = "definition" | "config" | "raw";
 
+const PROCESSING_UI_UNLOCK_MS = 90_000;
+
 export function ConfigPanel({
   configText,
   problemBrief,
@@ -70,6 +72,8 @@ export function ConfigPanel({
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
   const [loadMenuOpen, setLoadMenuOpen] = useState(false);
   const [snapshotDialogSource, setSnapshotDialogSource] = useState<"definition" | "config" | null>(null);
+  const [forceUnlockProcessingUi, setForceUnlockProcessingUi] = useState(false);
+  const [processingStallWarn, setProcessingStallWarn] = useState(false);
   const loadMenuRef = useRef<HTMLDivElement>(null);
 
   const hasLoadOptions = canLoadFromLastRun || canLoadFromSnapshot;
@@ -100,6 +104,34 @@ export function ConfigPanel({
   const editableDefinition = !sessionTerminated;
   const editableConfig = configEditing && !sessionTerminated;
   const tabLocked = editMode !== "none";
+
+  const backgroundProcessingPending =
+    backgroundBriefPending || backgroundConfigPending || syncingProblemConfig;
+
+  useEffect(() => {
+    if (!backgroundProcessingPending || configEditing) {
+      setForceUnlockProcessingUi(false);
+      setProcessingStallWarn(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setForceUnlockProcessingUi(true);
+      setProcessingStallWarn(true);
+    }, PROCESSING_UI_UNLOCK_MS);
+    return () => window.clearTimeout(timer);
+  }, [backgroundProcessingPending, configEditing]);
+
+  const configOrRawBlockingUi =
+    (activeTab === "config" || activeTab === "raw") &&
+    !configEditing &&
+    backgroundProcessingPending &&
+    !forceUnlockProcessingUi;
+
+  const configSurfaceLocked =
+    (activeTab === "config" || activeTab === "raw") &&
+    backgroundProcessingPending &&
+    !forceUnlockProcessingUi &&
+    !configEditing;
 
   const tabTitle =
     activeTab === "definition"
@@ -173,7 +205,14 @@ export function ConfigPanel({
           </p>
         )}
 
-        <div className="config-panel-scroll">
+        {processingStallWarn && backgroundProcessingPending && !configEditing && (
+          <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+            Background update is taking longer than expected. The config area was unlocked so you can keep working;
+            try refreshing or sync again if something looks stale.
+          </p>
+        )}
+
+        <div className={`config-panel-scroll ${configOrRawBlockingUi ? "config-panel-scroll--shielded" : ""}`}>
           {activeTab === "definition" ? (
             problemBrief ? (
               <>
@@ -204,6 +243,12 @@ export function ConfigPanel({
               placeholder='{"problem_definition": null, "problem_config": null}'
             />
           )}
+          {configOrRawBlockingUi ? (
+            <div className="config-panel-processing-shield" aria-live="polite">
+              <span className="inline-spinner" aria-hidden="true" />
+              <span className="muted">Updating problem config from the latest definition…</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="config-panel-actions">
@@ -246,7 +291,8 @@ export function ConfigPanel({
               <button
                 type="button"
                 onClick={() => (onEnterConfigEdit ? onEnterConfigEdit() : onSetEditMode("config"))}
-                disabled={editMode !== "none" || sessionTerminated}
+                disabled={editMode !== "none" || sessionTerminated || configSurfaceLocked}
+                title={configSurfaceLocked ? "Wait for background config update or use Unlock after delay" : undefined}
               >
                 Edit
               </button>
@@ -255,7 +301,7 @@ export function ConfigPanel({
                   <button
                     type="button"
                     onClick={() => setLoadMenuOpen((o) => !o)}
-                    disabled={sessionTerminated || (!canLoadFromLastRun && !canLoadFromSnapshot)}
+                    disabled={sessionTerminated || configSurfaceLocked || (!canLoadFromLastRun && !canLoadFromSnapshot)}
                     title="Load config from run or snapshot"
                     aria-expanded={loadMenuOpen}
                     aria-haspopup="menu"

@@ -2,6 +2,8 @@ import { useState, type FocusEvent } from "react";
 
 import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
 
+import { DEFINITION_NEW_ROW_PLACEHOLDER } from "./constants";
+
 type DefinitionPanelProps = {
   problemBrief: ProblemBrief;
   editable: boolean;
@@ -21,7 +23,6 @@ type DefinitionSectionProps = {
   sessionTerminated: boolean;
   onAddItem: () => void;
   onSaveItemText: (id: string, text: string) => Promise<void>;
-  onUpdateItem: (id: string, patch: Partial<ProblemBriefItem>) => void;
   onRemoveItem: (id: string) => void;
 };
 
@@ -50,7 +51,6 @@ function DefinitionSection({
   sessionTerminated,
   onAddItem,
   onSaveItemText,
-  onUpdateItem,
   onRemoveItem,
 }: DefinitionSectionProps) {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -63,7 +63,12 @@ function DefinitionSection({
   }
 
   async function saveItem(item: ProblemBriefItem) {
-    const draft = (draftByItemId[item.id] ?? item.text).trim();
+    const draftRaw = draftByItemId[item.id] ?? item.text;
+    const draft = draftRaw.trim();
+    if (draft.length === 0 || draft === DEFINITION_NEW_ROW_PLACEHOLDER) {
+      cancelItem(item);
+      return;
+    }
     setSavingItemId(item.id);
     await onSaveItemText(item.id, draft);
     setSavingItemId(null);
@@ -107,17 +112,15 @@ function DefinitionSection({
       ) : (
         <div className="definition-list">
           {items.map((item) => {
-            const locked = sessionTerminated || !editable || !item.editable;
+            const locked = sessionTerminated || !editable;
             const editing = editingItemId === item.id;
             const saving = savingItemId === item.id;
             const draft = draftByItemId[item.id] ?? item.text;
             return (
               <div key={item.id} className={`definition-item kind-${item.kind} ${editing ? "is-editing" : ""}`}>
                 <div className="definition-item-meta">
-                  <span className={`definition-chip kind-${item.kind}`}>{item.kind}</span>
-                  <span className={`definition-chip status-${item.status}`}>{item.status}</span>
                   <span className="definition-source mono">{item.source}</span>
-                  {(editable && item.editable && !sessionTerminated) ? (
+                  {editable && !sessionTerminated ? (
                     <button
                       type="button"
                       className="definition-icon-btn definition-remove-btn"
@@ -157,31 +160,6 @@ function DefinitionSection({
                     </div>
                   </div>
                 )}
-                {(editable && item.editable && !sessionTerminated && editing) ? (
-                  <div className="definition-item-actions">
-                    <label className="muted">
-                      Type
-                      <select
-                        value={item.kind}
-                        onChange={(e) => onUpdateItem(item.id, { kind: e.target.value as ProblemBriefItem["kind"] })}
-                      >
-                        <option value="gathered">Gathered</option>
-                        <option value="assumption">Assumption</option>
-                      </select>
-                    </label>
-                    <label className="muted">
-                      Status
-                      <select
-                        value={item.status}
-                        onChange={(e) => onUpdateItem(item.id, { status: e.target.value as ProblemBriefItem["status"] })}
-                      >
-                        <option value="active">Active</option>
-                        <option value="confirmed">Confirmed</option>
-                        <option value="rejected">Rejected</option>
-                      </select>
-                    </label>
-                  </div>
-                ) : null}
               </div>
             );
           })}
@@ -214,13 +192,6 @@ export function DefinitionPanel({
     await onPersistInlineEdit(nextBrief, options);
   }
 
-  function updateItem(id: string, patch: Partial<ProblemBriefItem>) {
-    const next = updateItems(problemBrief, (items) =>
-      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-    void persistBrief(next);
-  }
-
   function removeItem(id: string) {
     const next = updateItems(problemBrief, (items) => items.filter((item) => item.id !== id));
     void persistBrief(next);
@@ -231,7 +202,7 @@ export function DefinitionPanel({
       ...items,
       {
         id: makeId(kind),
-        text: "Click to edit",
+        text: DEFINITION_NEW_ROW_PLACEHOLDER,
         kind,
         source: "user",
         status: "active",
@@ -376,7 +347,6 @@ export function DefinitionPanel({
             ),
           );
         }}
-        onUpdateItem={updateItem}
         onRemoveItem={removeItem}
       />
 
@@ -394,7 +364,6 @@ export function DefinitionPanel({
             ),
           );
         }}
-        onUpdateItem={updateItem}
         onRemoveItem={removeItem}
       />
 

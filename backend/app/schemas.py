@@ -75,6 +75,8 @@ class SessionOut(BaseModel):
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=32000)
     invoke_model: bool = False
+    # When true with invoke_model: visible reply only; skip hidden brief derivation / panel resync.
+    skip_hidden_brief_update: bool = False
 
 
 class SteerCreate(BaseModel):
