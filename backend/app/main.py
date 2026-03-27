@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.db_maintenance import ensure_database_shape
 from app.routers import sessions
 
-LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+LOG_FORMAT = "%(asctime)s %(levelname)s: %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
