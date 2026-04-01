@@ -28,6 +28,7 @@ export function ClientApp() {
   return (
     <ParticipantShell
       sessionId={controller.sessionId}
+      participantLabel={controller.participantNumber}
       session={controller.session}
       messages={controller.messages}
       runs={controller.runs}

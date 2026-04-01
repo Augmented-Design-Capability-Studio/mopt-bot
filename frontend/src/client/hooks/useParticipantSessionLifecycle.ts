@@ -40,6 +40,7 @@ type UseParticipantSessionLifecycleArgs = {
   setError: (value: string | null) => void;
   setRecentRows: (value: RecentSessionRow[]) => void;
   setRecentBusy: (value: boolean) => void;
+  setParticipantNumber: (value: string) => void;
 };
 
 export function useParticipantSessionLifecycle({
@@ -65,6 +66,7 @@ export function useParticipantSessionLifecycle({
   setError,
   setRecentRows,
   setRecentBusy,
+  setParticipantNumber,
 }: UseParticipantSessionLifecycleArgs) {
   const login = useCallback(() => {
     sessionStorage.setItem(TOKEN_KEY, token.trim());
@@ -148,6 +150,11 @@ export function useParticipantSessionLifecycle({
       sessionStorage.setItem(TOKEN_KEY, trimmed);
       sessionStorage.setItem(SESSION_KEY, resumeId);
       setSession(nextSession);
+      const resumedPn = (nextSession.participant_number ?? "").trim();
+      if (resumedPn) {
+        sessionStorage.setItem(PARTICIPANT_NUMBER_KEY, resumedPn);
+        setParticipantNumber(resumedPn);
+      }
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
       setProblemBrief(nextSession.problem_brief);
@@ -200,6 +207,7 @@ export function useParticipantSessionLifecycle({
     setSession,
     setSessionId,
     token,
+    setParticipantNumber,
   ]);
 
   const startSession = useCallback(async () => {
@@ -229,6 +237,11 @@ export function useParticipantSessionLifecycle({
       sessionStorage.setItem(TOKEN_KEY, trimmed);
       sessionStorage.setItem(SESSION_KEY, nextSession.id);
       setSession(nextSession);
+      const createdPn = (nextSession.participant_number ?? "").trim() || participantNumber.trim();
+      if (createdPn) {
+        sessionStorage.setItem(PARTICIPANT_NUMBER_KEY, createdPn);
+        setParticipantNumber(createdPn);
+      }
       setMessages([]);
       setLastMsgId(0);
       setRuns([]);
@@ -259,6 +272,7 @@ export function useParticipantSessionLifecycle({
     setSessionId,
     token,
     participantNumber,
+    setParticipantNumber,
   ]);
 
   const leaveSession = useCallback(() => {

@@ -142,8 +142,8 @@ cd backend
 ## Smoke checklist (manual)
 
 1. Researcher token: list sessions, open one, export JSON.
-2. Participant token: **Start session** (no workflow choice; optional participant number), or expand **Past sessions on this browser** to **Resume** a stored session id (same token; local list only — not IP-based). Resume entries show participant number and session start time from server (or last local snapshot). New sessions default to **waterfall** with runs gated until the researcher sets **agile** and/or **Allow optimization runs**. Then: chat, edit/save panel JSON, run optimization (with mealpy installed), see run tab and violations.
-3. Researcher: toggle “allow optimization” and workflow; participant sees gated runs when disabled.
+2. Participant token: **Start session** (no workflow choice; optional participant number), or expand **Past sessions on this browser** to **Resume** a stored session id (same token; local list only — not IP-based). Resume entries show participant number and session start time from server (or last local snapshot). After sign-in, the participant header shows **Participant #…** when the session has a number (from the server), and a subtle bar tint for **Agile** vs **Waterfall**. New sessions default to **waterfall** with optimization disabled until the researcher sets **agile** and/or **Allow optimization runs**. Then: chat, edit/save panel JSON, run optimization (with mealpy installed), see run tab and violations.
+3. Researcher: toggle “allow optimization” and workflow; participant run controls stay disabled until allowed.
 4. Researcher session list: each row shows participant number and start time; in session detail, participant number can be edited and saved.
 5. Researcher session cleanup: the session list supports per-row multi-select, a visible **Select all visible** toggle, and **Delete selected** for batch cleanup.
 6. Researcher run review: each run entry is collapsed by default in the researcher Runs panel; expand to inspect JSON and delete individual runs. Deleting a run asks for confirmation and refreshes from the server so the record stays gone.

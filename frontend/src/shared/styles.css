@@ -84,6 +84,31 @@ select:focus-visible {
   gap: 1rem;
 }
 
+/* Subtle workflow tint (participant header); default bar stays neutral */
+.app-header--wf-agile {
+  background: #d4dce4;
+  border-bottom-color: #9aa8b4;
+}
+
+.app-header--wf-waterfall {
+  background: #ddd8d2;
+  border-bottom-color: #a89e94;
+}
+
+.app-header-title-cluster {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.participant-header-number {
+  font-weight: 600;
+  color: var(--text);
+  opacity: 0.92;
+}
+
 .app-title {
   font-size: 1rem;
   font-weight: 600;

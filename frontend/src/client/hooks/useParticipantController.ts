@@ -129,6 +129,7 @@ export function useParticipantController() {
     setError,
     setRecentRows,
     setRecentBusy,
+    setParticipantNumber,
   });
 
   const enterConfigEdit = useCallback(() => {
@@ -146,6 +147,16 @@ export function useParticipantController() {
   useEffect(() => {
     setDefinitionEditBaseline(null);
   }, [sessionId]);
+
+  useEffect(() => {
+    const p = session?.participant_number?.trim();
+    if (!p) return;
+    setParticipantNumber((prev) => {
+      if (prev === p) return prev;
+      sessionStorage.setItem(PARTICIPANT_NUMBER_KEY, p);
+      return p;
+    });
+  }, [session?.participant_number]);
 
   const loadSnapshots = useCallback(async () => {
     if (!token || !sessionId || session?.status !== "active") return;

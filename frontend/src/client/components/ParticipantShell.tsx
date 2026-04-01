@@ -10,8 +10,20 @@ import { ConfigPanel } from "../problemConfig/ConfigPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
 
+function workflowHeaderClass(mode: string | undefined): string {
+  if (mode === "agile") return "app-header--wf-agile";
+  if (mode === "waterfall") return "app-header--wf-waterfall";
+  return "";
+}
+
+function formatWorkflowModeLabel(mode: string | undefined): string {
+  if (!mode) return "—";
+  return mode.charAt(0).toUpperCase() + mode.slice(1).toLowerCase();
+}
+
 type ParticipantShellProps = {
   sessionId: string;
+  participantLabel: string;
   session: Session | null;
   messages: Message[];
   runs: RunResult[];
@@ -72,6 +84,7 @@ type ParticipantShellProps = {
 
 export function ParticipantShell({
   sessionId,
+  participantLabel,
   session,
   messages,
   runs,
@@ -141,15 +154,28 @@ export function ParticipantShell({
   const backgroundBriefPending = session?.processing?.brief_status === "pending";
   const backgroundConfigPending = session?.processing?.config_status === "pending";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
+  const wfClass = workflowHeaderClass(session?.workflow_mode);
+  const serverPn = (session?.participant_number ?? "").trim();
+  const localPn = participantLabel.trim();
+  const displayParticipant = serverPn || localPn;
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <span className="app-title">Participant</span>
+      <header className={wfClass ? `app-header ${wfClass}` : "app-header"}>
+        <div className="app-header-title-cluster">
+          <span className="app-title">
+            Participant
+            {displayParticipant ? (
+              <span className="participant-header-number" title="Participant number for this session">
+                {" "}
+                #{displayParticipant}
+              </span>
+            ) : null}
+          </span>
+        </div>
         <span className="muted">
-          Session {sessionId.slice(0, 8)}… · {session?.workflow_mode ?? "—"}
+          Session {sessionId.slice(0, 8)}… · {formatWorkflowModeLabel(session?.workflow_mode)}
           {sessionTerminated ? " · ended" : ""}
-          {!session?.optimization_allowed ? " · runs gated" : ""}
         </span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
           <StatusChip
