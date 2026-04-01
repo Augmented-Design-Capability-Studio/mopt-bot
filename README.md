@@ -14,11 +14,20 @@ Install dependencies once (repo root):
 **Windows (PowerShell)**
 
 ```powershell
-.\venv\Scripts\pip.exe install -r vrptw-problem\requirements.txt -r backend\requirements.txt
+.\venv\Scripts\pip.exe install -r requirements.txt
 Copy-Item backend\.env.example .env
 # Edit `.env` (real secrets). `.env.example` is only a template — the server does not read it.
 # Set MOPT_CLIENT_SECRET, MOPT_RESEARCHER_SECRET, MOPT_CORS_ORIGINS, MOPT_HOST, MOPT_PORT,
 # MOPT_DEFAULT_GEMINI_MODEL (defaults to gemini-3-flash-preview), etc.
+```
+
+**Linux / macOS**
+
+```bash
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+cp backend/.env.example .env
+# Edit `.env` with real secrets (same variables as above).
 ```
 
 **Linux / Raspberry Pi** — see `docs/RASPBERRY_PI_SETUP.txt` for `apt`, `venv`, and `pip` commands.  

@@ -1,0 +1,8 @@
+# Full Python stack for this repo (backend API + VRPTW solver + tests + optional viz).
+# From the repository root:
+#   python -m venv venv
+#   ./venv/bin/pip install -r requirements.txt
+#
+# Equivalent to: pip install -r backend/requirements.txt -r vrptw-problem/requirements.txt
+-r backend/requirements.txt
+-r vrptw-problem/requirements.txt

@@ -51,7 +51,7 @@ source venv/bin/activate
 
 # Upgrade pip first, then install solver + API dependencies
 pip install --upgrade pip
-pip install -r vrptw-problem/requirements.txt -r backend/requirements.txt
+pip install -r requirements.txt
 
 # Note: mealpy/numpy wheels may take several minutes to build on Pi.
 # If the install dies with an out-of-memory error, add swap:
@@ -209,5 +209,5 @@ sudo systemctl status mopt-backend
 # - To pull code updates on the Pi:
 #   cd ~/mopt-bot && git pull
 #   source venv/bin/activate
-#   pip install -r vrptw-problem/requirements.txt -r backend/requirements.txt
+#   pip install -r requirements.txt
 #   sudo systemctl restart mopt-backend

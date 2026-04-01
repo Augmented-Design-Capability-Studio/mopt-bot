@@ -1,4 +1,5 @@
-# Backend (use repo root venv; install backend + vrptw-problem deps)
+# Backend API — required for `backend/run_server.py` (needs uvicorn + fastapi).
+# Prefer installing from repo root: `pip install -r requirements.txt` (includes this file).
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 sqlalchemy>=2.0.36
