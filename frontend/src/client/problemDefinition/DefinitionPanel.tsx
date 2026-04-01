@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef } from "react";
+
 import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
 
 import { DEFINITION_NEW_ROW_PLACEHOLDER } from "./constants";
@@ -91,6 +93,7 @@ function DefinitionSection({
           {items.map((item) => (
             <div
               key={item.id}
+              id={`definition-item-${item.id}`}
               className={`definition-item kind-${item.kind} ${isPlaceholderItem(item) ? "definition-item-placeholder-glow" : ""}`}
             >
               <div className="definition-item-meta">
@@ -145,10 +148,20 @@ export function DefinitionPanel({
   onChange,
   onEnsureDefinitionEditing,
 }: DefinitionPanelProps) {
+  const pendingScrollToItemIdRef = useRef<string | null>(null);
   const gatheredItems = problemBrief.items.filter((item) => item.kind === "gathered");
   const assumptionItems = problemBrief.items.filter((item) => item.kind === "assumption");
   const openQuestions = problemBrief.open_questions;
   const openLocked = sessionTerminated || !editable;
+
+  useLayoutEffect(() => {
+    const id = pendingScrollToItemIdRef.current;
+    if (!id) return;
+    pendingScrollToItemIdRef.current = null;
+    requestAnimationFrame(() => {
+      document.getElementById(`definition-item-${id}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, [problemBrief.items]);
 
   function persist(next: ProblemBrief) {
     onChange(next);
@@ -159,11 +172,13 @@ export function DefinitionPanel({
   }
 
   function addItem(kind: "gathered" | "assumption") {
+    const id = makeId(kind);
+    pendingScrollToItemIdRef.current = id;
     persist(
       updateItems(problemBrief, (items) => [
         ...items,
         {
-          id: makeId(kind),
+          id,
           text: DEFINITION_NEW_ROW_PLACEHOLDER,
           kind,
           source: "user",
@@ -213,7 +228,8 @@ export function DefinitionPanel({
         ? row
         : {
             ...row,
-            answer_text: answer.trim() || null,
+            /* Keep spaces while typing; trim only decides answered vs open (whitespace-only stays "open"). */
+            answer_text: answer === "" ? null : answer,
             status: (answer.trim() ? "answered" : "open") as ProblemBriefQuestion["status"],
           },
     );
@@ -318,11 +334,12 @@ export function DefinitionPanel({
                   </div>
                   <div className="definition-question-text">{question.text}</div>
                   {editable ? (
-                    <input
-                      type="text"
+                    <textarea
+                      className="definition-inline-textarea definition-answer-textarea"
                       value={question.answer_text ?? ""}
                       placeholder="Type answer..."
                       disabled={openLocked}
+                      rows={2}
                       onFocus={onEnsureDefinitionEditing}
                       onChange={(e) => updateOpenQuestionAnswer(question.id, e.target.value)}
                     />
@@ -334,7 +351,7 @@ export function DefinitionPanel({
                       disabled={sessionTerminated}
                       onClick={onEnsureDefinitionEditing}
                     >
-                      {question.answer_text?.trim() || "Type answer…"}
+                      {(question.answer_text ?? "").length > 0 ? question.answer_text : "Type answer…"}
                     </button>
                   )}
                 </div>

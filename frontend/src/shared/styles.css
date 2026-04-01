@@ -646,6 +646,71 @@ select:focus-visible {
   width: 100%;
 }
 
+.definition-inline-display:hover:not(:disabled) {
+  background: #f7f7f4;
+  border-color: #9a9a8e;
+}
+
+/*
+ * Problem config: locked state uses button mimics (numbers + selects); edit state uses real controls.
+ * !important beats global `button { background: var(--panel) }` so mimics match Definition fields.
+ */
+.problem-config-blocks .problem-config-input,
+.problem-config-blocks .problem-config-select {
+  margin: 0;
+  box-sizing: border-box;
+  background-color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: inherit;
+}
+
+.problem-config-blocks .problem-config-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.problem-config-blocks .problem-config-input[type="number"]::-webkit-outer-spin-button,
+.problem-config-blocks .problem-config-input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.problem-config-blocks .problem-config-input:hover,
+.problem-config-blocks .problem-config-select:hover {
+  background-color: #f7f7f4;
+  border-color: #9a9a8e;
+}
+
+.problem-config-blocks .problem-config-field-mimic {
+  margin: 0;
+  box-sizing: border-box;
+  display: inline-block;
+  vertical-align: middle;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background-color: #fff !important;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0.25rem 0.45rem;
+  min-height: 1.85rem;
+}
+
+.problem-config-blocks .problem-config-field-mimic:hover {
+  background-color: #f7f7f4 !important;
+  border-color: #9a9a8e !important;
+}
+
+.problem-config-blocks--readonly .driver-pref-details > summary {
+  cursor: pointer;
+}
+
+.problem-config-blocks--readonly .driver-pref-details > summary:hover {
+  color: var(--fg, #222);
+}
+
 .definition-inline-textarea {
   border: 1px solid var(--border);
   background: #fff;
@@ -654,6 +719,12 @@ select:focus-visible {
   resize: vertical;
   font: inherit;
   line-height: 1.35;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.definition-answer-textarea {
+  min-height: 2.5rem;
 }
 
 .definition-item-placeholder-glow {

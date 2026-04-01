@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, type CSSProperties, type ReactNode } from "react";
 
 import {
   ALGORITHM_DESC,
@@ -22,6 +22,85 @@ export type ProblemConfigBlocksProps = {
   /** When not editable, first pointer interaction enters config edit mode */
   onInteractionStart?: () => void;
 };
+
+function workerOptionLabel(vehicleIdx: number): string {
+  const name = WORKER_NAMES[vehicleIdx];
+  return `${vehicleIdx}: ${name}`;
+}
+
+function preferenceConditionLabel(value: string): string {
+  return PREFERENCE_CONDITIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+/** Locked: button mimic (same as Definition read-only). Edit: real number input. */
+function ConfigNumberInput({
+  editable,
+  value,
+  onChange,
+  style,
+  min,
+  max,
+  step,
+}: {
+  editable: boolean;
+  value: number;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  style?: CSSProperties;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  if (!editable) {
+    const label = Number.isNaN(value) ? "—" : String(value);
+    return (
+      <button type="button" className="problem-config-field-mimic" style={style}>
+        {label}
+      </button>
+    );
+  }
+  return (
+    <input
+      type="number"
+      className="problem-config-input"
+      min={min}
+      max={max}
+      step={step}
+      value={Number.isNaN(value) ? "" : value}
+      onChange={onChange}
+      style={style}
+    />
+  );
+}
+
+/** Select elements cannot be read-only; when locked, show a button that matches input fields. */
+function ConfigSelect({
+  editable,
+  value,
+  onChange,
+  displayLabel,
+  style,
+  children,
+}: {
+  editable: boolean;
+  value: string | number;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  displayLabel: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  if (!editable) {
+    return (
+      <button type="button" className="problem-config-field-mimic" style={style}>
+        {displayLabel}
+      </button>
+    );
+  }
+  return (
+    <select className="problem-config-select" value={value} onChange={onChange} style={style}>
+      {children}
+    </select>
+  );
+}
 
 function WeightRow({
   wkey,
@@ -54,12 +133,11 @@ function WeightRow({
         )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
-        <input
-          type="number"
+        <ConfigNumberInput
+          editable={editable}
+          value={problem.weights[wkey] ?? 0}
           min={0}
           step={0.5}
-          value={problem.weights[wkey] ?? 0}
-          disabled={!editable}
           onChange={(e) => {
             const value = parseFloat(e.target.value);
             updateProblem({
@@ -156,6 +234,7 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
 
   return (
     <div
+      className={`problem-config-blocks${editable ? "" : " problem-config-blocks--readonly"}`}
       style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
       onPointerDownCapture={() => {
         if (!editable) onInteractionStart?.();
@@ -190,9 +269,10 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                         borderBottom: "1px solid var(--border)",
                       }}
                     >
-                      <select
+                      <ConfigSelect
+                        editable={editable}
                         value={pref.vehicle_idx}
-                        disabled={!editable}
+                        displayLabel={workerOptionLabel(pref.vehicle_idx)}
                         onChange={(e) =>
                           updatePreferenceAt(index, { ...pref, vehicle_idx: parseInt(e.target.value, 10) })
                         }
@@ -203,10 +283,11 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                             {vi}: {name}
                           </option>
                         ))}
-                      </select>
-                      <select
+                      </ConfigSelect>
+                      <ConfigSelect
+                        editable={editable}
                         value={pref.condition}
-                        disabled={!editable}
+                        displayLabel={preferenceConditionLabel(pref.condition)}
                         onChange={(e) => updatePreferenceAt(index, { ...pref, condition: e.target.value })}
                         style={{ fontSize: "0.8rem", maxWidth: "12rem" }}
                       >
@@ -215,15 +296,14 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                             {o.label}
                           </option>
                         ))}
-                      </select>
+                      </ConfigSelect>
                       <label className="muted" style={{ fontSize: "0.75rem" }}>
                         penalty
-                        <input
-                          type="number"
+                        <ConfigNumberInput
+                          editable={editable}
+                          value={pref.penalty}
                           min={0}
                           step={0.5}
-                          value={pref.penalty}
-                          disabled={!editable}
                           onChange={(e) => {
                             const value = parseFloat(e.target.value);
                             updatePreferenceAt(index, { ...pref, penalty: Number.isNaN(value) ? 0 : value });
@@ -234,12 +314,11 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                       {(pref.condition === "avoid_zone" || pref.condition === "zone_d") && (
                         <label className="muted" style={{ fontSize: "0.75rem" }}>
                           zone 1–5
-                          <input
-                            type="number"
+                          <ConfigNumberInput
+                            editable={editable}
+                            value={pref.zone ?? 4}
                             min={1}
                             max={5}
-                            value={pref.zone ?? 4}
-                            disabled={!editable}
                             onChange={(e) =>
                               updatePreferenceAt(index, { ...pref, zone: parseInt(e.target.value, 10) })
                             }
@@ -248,24 +327,24 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                         </label>
                       )}
                       {(pref.condition === "order_priority" || pref.condition === "express_order") && (
-                        <select
+                        <ConfigSelect
+                          editable={editable}
                           value={pref.order_priority ?? "express"}
-                          disabled={!editable}
+                          displayLabel={pref.order_priority ?? "express"}
                           onChange={(e) => updatePreferenceAt(index, { ...pref, order_priority: e.target.value })}
                           style={{ fontSize: "0.8rem" }}
                         >
                           <option value="express">express</option>
                           <option value="standard">standard</option>
-                        </select>
+                        </ConfigSelect>
                       )}
                       {(pref.condition === "shift_over_limit" || pref.condition === "shift_over_hours") && (
                         <label className="muted" style={{ fontSize: "0.75rem" }}>
                           limit (min)
-                          <input
-                            type="number"
-                            min={1}
+                          <ConfigNumberInput
+                            editable={editable}
                             value={pref.limit_minutes ?? (pref.hours != null ? pref.hours * 60 : 390)}
-                            disabled={!editable}
+                            min={1}
                             onChange={(e) => {
                               const v = parseFloat(e.target.value);
                               updatePreferenceAt(index, {
@@ -308,12 +387,11 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
             {problem.shift_hard_penalty !== null && (
               <FieldRow label="Max shift enforcement (penalty)">
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <input
-                    type="number"
+                  <ConfigNumberInput
+                    editable={editable}
+                    value={problem.shift_hard_penalty}
                     min={0}
                     step={100}
-                    value={problem.shift_hard_penalty}
-                    disabled={!editable}
                     onChange={(e) => {
                       const value = parseFloat(e.target.value);
                       updateProblem({
@@ -338,9 +416,10 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                       <span className="muted" style={{ fontSize: "0.8rem" }}>
                         Task #{taskKey} →
                       </span>
-                      <select
+                      <ConfigSelect
+                        editable={editable}
                         value={workerIdx}
-                        disabled={!editable}
+                        displayLabel={workerOptionLabel(workerIdx)}
                         onChange={(e) => updateLocked(taskKey, parseInt(e.target.value, 10))}
                         style={{ fontSize: "0.8rem" }}
                       >
@@ -349,7 +428,7 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                             {vi}: {name}
                           </option>
                         ))}
-                      </select>
+                      </ConfigSelect>
                       {editable && (
                         <button
                           type="button"
@@ -378,9 +457,10 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
             <div style={{ marginTop: "0.75rem", fontWeight: 600, fontSize: "0.82rem" }}>Search strategy</div>
             {problem.algorithm && (
               <FieldRow label="Algorithm">
-                <select
+                <ConfigSelect
+                  editable={editable}
                   value={problem.algorithm}
-                  disabled={!editable}
+                  displayLabel={problem.algorithm}
                   onChange={(e) => updateProblem({ algorithm: e.target.value })}
                   style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
                 >
@@ -389,7 +469,7 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                       {algorithm}
                     </option>
                   ))}
-                </select>
+                </ConfigSelect>
                 {ALGORITHM_DESC[problem.algorithm] && (
                   <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
                     {ALGORITHM_DESC[problem.algorithm]}
@@ -401,12 +481,11 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
             {problem.epochs !== null && (
               <FieldRow label="Iterations">
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <input
-                    type="number"
+                  <ConfigNumberInput
+                    editable={editable}
+                    value={problem.epochs}
                     min={1}
                     max={50000}
-                    value={problem.epochs}
-                    disabled={!editable}
                     onChange={(e) => {
                       const value = parseInt(e.target.value);
                       updateProblem({ epochs: Number.isNaN(value) ? 1 : Math.max(1, value) });
@@ -422,12 +501,11 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
 
             {problem.pop_size !== null && (
               <FieldRow label="Population / swarm size">
-                <input
-                  type="number"
+                <ConfigNumberInput
+                  editable={editable}
+                  value={problem.pop_size}
                   min={2}
                   max={500}
-                  value={problem.pop_size}
-                  disabled={!editable}
                   onChange={(e) => {
                     const value = parseInt(e.target.value);
                     updateProblem({ pop_size: Number.isNaN(value) ? 2 : Math.max(2, value) });
@@ -440,10 +518,9 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
             {problem.random_seed !== null && (
               <FieldRow label="Random seed">
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <input
-                    type="number"
+                  <ConfigNumberInput
+                    editable={editable}
                     value={problem.random_seed}
-                    disabled={!editable}
                     onChange={(e) => {
                       const value = parseInt(e.target.value);
                       updateProblem({ random_seed: Number.isNaN(value) ? 0 : value });
