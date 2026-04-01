@@ -47,17 +47,22 @@ type ParticipantShellProps = {
   onSendChat: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
   onSaveConfig: () => void | Promise<void>;
-  onSaveProblemBrief: () => void | Promise<void>;
+  onSaveDefinitionEdit: () => void | Promise<void>;
+  onCancelDefinitionEdit: () => void;
+  onEnsureDefinitionEditing: () => void;
+  isDefinitionDirty: boolean;
   onSyncProblemConfig: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
+  onBookmarkSnapshot?: () => void | Promise<void>;
   onRestoreFromSnapshot?: (snapshot: SnapshotSummary, source: "definition" | "config") => void;
   onLoadSnapshots?: () => void | Promise<void>;
   snapshots?: SnapshotSummary[];
   snapshotsLoading?: boolean;
   canLoadFromLastRun?: boolean;
   canLoadFromSnapshot?: boolean;
+  isConfigDirty?: boolean;
   onRunOptimize: () => void | Promise<void>;
   onCancelOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
@@ -102,17 +107,22 @@ export function ParticipantShell({
   onSendChat,
   onSimulateUpload,
   onSaveConfig,
-  onSaveProblemBrief,
+  onSaveDefinitionEdit,
+  onCancelDefinitionEdit,
+  onEnsureDefinitionEditing,
+  isDefinitionDirty,
   onSyncProblemConfig,
   onEnterConfigEdit,
   onCancelConfigEdit,
   onLoadConfigFromLastRun,
+  onBookmarkSnapshot,
   onRestoreFromSnapshot,
   onLoadSnapshots,
   snapshots,
   snapshotsLoading,
   canLoadFromLastRun,
   canLoadFromSnapshot,
+  isConfigDirty,
   onRunOptimize,
   onCancelOptimize,
   onRunEvaluateEdited,
@@ -210,17 +220,22 @@ export function ParticipantShell({
             onProblemBriefChange={onProblemBriefChange}
             onSetEditMode={onSetEditMode}
             onSaveConfig={onSaveConfig}
-            onSaveProblemBrief={onSaveProblemBrief}
+            onSaveDefinitionEdit={onSaveDefinitionEdit}
+            onCancelDefinitionEdit={onCancelDefinitionEdit}
+            onEnsureDefinitionEditing={onEnsureDefinitionEditing}
+            isDefinitionDirty={isDefinitionDirty}
             onSyncProblemConfig={onSyncProblemConfig}
             onEnterConfigEdit={onEnterConfigEdit}
             onCancelConfigEdit={onCancelConfigEdit}
             onLoadConfigFromLastRun={onLoadConfigFromLastRun}
+            onBookmarkSnapshot={onBookmarkSnapshot}
             onRestoreFromSnapshot={onRestoreFromSnapshot}
             onLoadSnapshots={onLoadSnapshots}
             snapshots={snapshots}
             snapshotsLoading={snapshotsLoading}
             canLoadFromLastRun={canLoadFromLastRun}
             canLoadFromSnapshot={canLoadFromSnapshot}
+            isConfigDirty={isConfigDirty}
           />
         )}
 

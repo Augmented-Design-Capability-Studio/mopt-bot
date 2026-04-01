@@ -35,7 +35,7 @@ from app.schemas import (
     SolveRunCreate,
     SteerCreate,
 )
-from app.session_snapshots import EVENT_BEFORE_RUN, EVENT_MANUAL_SAVE, create_snapshot
+from app.session_snapshots import EVENT_BEFORE_RUN, EVENT_BOOKMARK, EVENT_MANUAL_SAVE, create_snapshot
 
 from . import context, derivation, helpers, intent, sync
 
@@ -197,6 +197,24 @@ def list_snapshots(
         .all()
     )
     return [_snapshot_to_out(s) for s in snaps]
+
+
+@router.post("/{session_id}/snapshots", response_model=SnapshotOut, status_code=status.HTTP_201_CREATED)
+def post_session_snapshot_bookmark(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    """Bookmark current saved brief+panel as a snapshot without PATCHing session (no chat message)."""
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+    snap = create_snapshot(db, session_id, EVENT_BOOKMARK)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return _snapshot_to_out(snap)
 
 
 @router.patch("/{session_id}", response_model=SessionOut)

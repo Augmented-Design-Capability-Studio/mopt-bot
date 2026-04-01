@@ -646,6 +646,60 @@ select:focus-visible {
   width: 100%;
 }
 
+.definition-inline-textarea {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.35rem;
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.35;
+}
+
+.definition-item-placeholder-glow {
+  box-shadow: 0 0 0 2px rgba(200, 140, 60, 0.45);
+  border-radius: 2px;
+  animation: definition-placeholder-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .definition-item-placeholder-glow {
+    animation: none;
+  }
+}
+
+@keyframes definition-placeholder-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(200, 140, 60, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(200, 140, 60, 0.55);
+  }
+}
+
+.btn-save-attention {
+  box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.55);
+  animation: btn-save-glow 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-save-attention {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.45);
+  }
+}
+
+@keyframes btn-save-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(46, 120, 200, 0.65);
+  }
+}
+
 .definition-inline-editor {
   display: flex;
   flex-direction: column;

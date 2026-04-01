@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import type { ProblemBrief, SnapshotSummary } from "@shared/api";
 
@@ -22,25 +22,46 @@ type ConfigPanelProps = {
   onProblemBriefChange: (value: ProblemBrief | null) => void;
   onSetEditMode: (mode: EditMode) => void;
   onSaveConfig: () => void | Promise<void>;
-  onSaveProblemBrief: (
-    overrideBrief?: ProblemBrief,
-    options?: { chatNote?: string },
-  ) => void | Promise<void>;
+  onSaveDefinitionEdit: () => void | Promise<void>;
+  onCancelDefinitionEdit: () => void;
+  onEnsureDefinitionEditing: () => void;
+  isDefinitionDirty: boolean;
   onSyncProblemConfig: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
+  onBookmarkSnapshot?: () => void | Promise<void>;
   onRestoreFromSnapshot?: (snapshot: SnapshotSummary, source: "definition" | "config") => void;
   onLoadSnapshots?: () => void | Promise<void>;
   snapshots?: SnapshotSummary[];
   snapshotsLoading?: boolean;
   canLoadFromLastRun?: boolean;
   canLoadFromSnapshot?: boolean;
+  isConfigDirty?: boolean;
 };
 
 type PanelTab = "definition" | "config" | "raw";
 
 const PROCESSING_UI_UNLOCK_MS = 90_000;
+
+const dropUpMenuStyle: CSSProperties = {
+  position: "absolute",
+  bottom: "100%",
+  left: 0,
+  marginBottom: "0.2rem",
+  display: "flex",
+  flexDirection: "column",
+  gap: 0,
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: "2px",
+  boxShadow: "0 -2px 6px rgba(0,0,0,0.12)",
+  minWidth: "100%",
+  overflow: "hidden",
+  zIndex: 10,
+};
+
+const menuItemStyle: CSSProperties = { padding: "0.4rem 0.6rem", textAlign: "left", fontSize: "0.9rem" };
 
 export function ConfigPanel({
   configText,
@@ -57,41 +78,50 @@ export function ConfigPanel({
   onProblemBriefChange,
   onSetEditMode,
   onSaveConfig,
-  onSaveProblemBrief,
+  onSaveDefinitionEdit,
+  onCancelDefinitionEdit,
+  onEnsureDefinitionEditing,
+  isDefinitionDirty,
   onSyncProblemConfig,
   onEnterConfigEdit,
   onCancelConfigEdit,
   onLoadConfigFromLastRun,
+  onBookmarkSnapshot,
   onRestoreFromSnapshot,
   onLoadSnapshots,
   snapshots = [],
   snapshotsLoading = false,
   canLoadFromLastRun = false,
   canLoadFromSnapshot = false,
+  isConfigDirty = false,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
-  const [loadMenuOpen, setLoadMenuOpen] = useState(false);
+  const [defSnapshotMenuOpen, setDefSnapshotMenuOpen] = useState(false);
+  const [configSnapshotMenuOpen, setConfigSnapshotMenuOpen] = useState(false);
   const [snapshotDialogSource, setSnapshotDialogSource] = useState<"definition" | "config" | null>(null);
   const [forceUnlockProcessingUi, setForceUnlockProcessingUi] = useState(false);
   const [processingStallWarn, setProcessingStallWarn] = useState(false);
   const [definitionUnread, setDefinitionUnread] = useState(false);
   const [configUnread, setConfigUnread] = useState(false);
-  const loadMenuRef = useRef<HTMLDivElement>(null);
+  const defSnapshotMenuRef = useRef<HTMLDivElement>(null);
+  const configSnapshotMenuRef = useRef<HTMLDivElement>(null);
   const prevBriefPending = useRef(backgroundBriefPending);
   const prevConfigPending = useRef(backgroundConfigPending);
 
-  const hasLoadOptions = canLoadFromLastRun || canLoadFromSnapshot;
-
   useEffect(() => {
-    if (!loadMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (loadMenuRef.current && !loadMenuRef.current.contains(e.target as Node)) {
-        setLoadMenuOpen(false);
+      const t = e.target as Node;
+      if (defSnapshotMenuOpen && defSnapshotMenuRef.current && !defSnapshotMenuRef.current.contains(t)) {
+        setDefSnapshotMenuOpen(false);
+      }
+      if (configSnapshotMenuOpen && configSnapshotMenuRef.current && !configSnapshotMenuRef.current.contains(t)) {
+        setConfigSnapshotMenuOpen(false);
       }
     };
+    if (!defSnapshotMenuOpen && !configSnapshotMenuOpen) return;
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [loadMenuOpen]);
+  }, [defSnapshotMenuOpen, configSnapshotMenuOpen]);
 
   const openSnapshotDialog = (source: "definition" | "config") => {
     void onLoadSnapshots?.();
@@ -123,9 +153,9 @@ export function ConfigPanel({
     prevConfigPending.current = backgroundConfigPending;
   }, [backgroundConfigPending, activeTab]);
 
-  const definitionEditing = false;
+  const definitionEditing = editMode === "definition";
   const configEditing = editMode === "config";
-  const editableDefinition = !sessionTerminated;
+  const editableDefinition = definitionEditing && !sessionTerminated;
   const editableConfig = configEditing && !sessionTerminated;
   const tabLocked = editMode !== "none";
 
@@ -133,7 +163,7 @@ export function ConfigPanel({
     backgroundBriefPending || backgroundConfigPending || syncingProblemConfig;
 
   useEffect(() => {
-    if (!backgroundProcessingPending || configEditing) {
+    if (!backgroundProcessingPending || configEditing || definitionEditing) {
       setForceUnlockProcessingUi(false);
       setProcessingStallWarn(false);
       return;
@@ -143,7 +173,7 @@ export function ConfigPanel({
       setProcessingStallWarn(true);
     }, PROCESSING_UI_UNLOCK_MS);
     return () => window.clearTimeout(timer);
-  }, [backgroundProcessingPending, configEditing]);
+  }, [backgroundProcessingPending, configEditing, definitionEditing]);
 
   const configOrRawBlockingUi =
     (activeTab === "config" || activeTab === "raw") &&
@@ -191,7 +221,9 @@ export function ConfigPanel({
     <section className={className}>
       <div className="panel-header">
         Problem setup
-        {configEditing && <span className="muted"> - editing {tabTitle.toLowerCase()}</span>}
+        {(configEditing || definitionEditing) && (
+          <span className="muted"> - editing {tabTitle.toLowerCase()}</span>
+        )}
         {!definitionEditing && !configEditing && (backgroundBriefPending || backgroundConfigPending) && (
           <span className="muted" style={{ display: "inline-flex", alignItems: "center", marginLeft: "0.5rem" }}>
             <span className="inline-spinner" aria-hidden="true" />
@@ -251,7 +283,7 @@ export function ConfigPanel({
           </p>
         )}
 
-        {processingStallWarn && backgroundProcessingPending && !configEditing && (
+        {processingStallWarn && backgroundProcessingPending && !configEditing && !definitionEditing && (
           <p className="muted" style={{ margin: "0.35rem 0 0" }}>
             Background update is taking longer than expected. The config area was unlocked so you can keep working;
             try refreshing or sync again if something looks stale.
@@ -261,24 +293,25 @@ export function ConfigPanel({
         <div className={`config-panel-scroll ${configOrRawBlockingUi ? "config-panel-scroll--shielded" : ""}`}>
           {activeTab === "definition" ? (
             problemBrief ? (
-              <>
-                <DefinitionPanel
-                  problemBrief={problemBrief}
-                  editable={editableDefinition}
-                  sessionTerminated={sessionTerminated}
-                  onChange={onProblemBriefChange}
-                  onPersistInlineEdit={onSaveProblemBrief}
-                />
-              </>
+              <DefinitionPanel
+                problemBrief={problemBrief}
+                editable={editableDefinition}
+                sessionTerminated={sessionTerminated}
+                onChange={(b) => onProblemBriefChange(b)}
+                onEnsureDefinitionEditing={onEnsureDefinitionEditing}
+              />
             ) : (
               <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>
                 Loading problem definition...
               </p>
             )
           ) : activeTab === "config" ? (
-            <>
-              <ProblemConfigBlocks configJson={configText} onChange={onConfigTextChange} editable={editableConfig} />
-            </>
+            <ProblemConfigBlocks
+              configJson={configText}
+              onChange={onConfigTextChange}
+              editable={editableConfig}
+              onInteractionStart={onEnterConfigEdit}
+            />
           ) : (
             <textarea
               className="mono config-raw-textarea"
@@ -299,122 +332,152 @@ export function ConfigPanel({
 
         <div className="config-panel-actions">
           {activeTab === "definition" ? (
-            <>
-              <button
-                type="button"
-                onClick={() => void onSaveProblemBrief()}
-                disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
-                title="Save definition and trigger chat acknowledgement"
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                onClick={() => openSnapshotDialog("definition")}
-                disabled={snapshots.length === 0 || sessionTerminated}
-                title="Load definition from a snapshot"
-              >
-                Load
-              </button>
-              <button
-                type="button"
-                onClick={() => void onSyncProblemConfig()}
-                disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
-                title="Debug: rebuild the saved problem config from the saved definition"
-              >
-                {syncingProblemConfig ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-                    <span className="inline-spinner" aria-hidden="true" />
-                    Syncing...
-                  </span>
-                ) : (
-                  "Sync to config"
-                )}
-              </button>
-            </>
-          ) : activeTab === "config" ? !configEditing ? (
-            <>
-              <button
-                type="button"
-                onClick={() => (onEnterConfigEdit ? onEnterConfigEdit() : onSetEditMode("config"))}
-                disabled={editMode !== "none" || sessionTerminated || configSurfaceLocked}
-                title={configSurfaceLocked ? "Wait for background config update or use Unlock after delay" : undefined}
-              >
-                Edit
-              </button>
-              {hasLoadOptions && onLoadConfigFromLastRun && (
-                <div ref={loadMenuRef} style={{ position: "relative" }}>
+            definitionEditing ? (
+              <>
+                <button
+                  type="button"
+                  className={isDefinitionDirty ? "btn-save-attention" : undefined}
+                  onClick={() => void onSaveDefinitionEdit()}
+                  disabled={busy || sessionTerminated || !problemBrief || !isDefinitionDirty}
+                  title="Save definition and notify the assistant"
+                >
+                  Save
+                </button>
+                <button type="button" onClick={onCancelDefinitionEdit} disabled={busy || sessionTerminated}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <div ref={defSnapshotMenuRef} style={{ position: "relative" }}>
                   <button
                     type="button"
-                    onClick={() => setLoadMenuOpen((o) => !o)}
-                    disabled={sessionTerminated || configSurfaceLocked || (!canLoadFromLastRun && !canLoadFromSnapshot)}
-                    title="Load config from run or snapshot"
-                    aria-expanded={loadMenuOpen}
+                    onClick={() => setDefSnapshotMenuOpen((o) => !o)}
+                    disabled={sessionTerminated}
+                    aria-expanded={defSnapshotMenuOpen}
                     aria-haspopup="menu"
                   >
-                    Load config <span aria-hidden="true">{loadMenuOpen ? "▼" : "▲"}</span>
+                    Snapshot <span aria-hidden="true">{defSnapshotMenuOpen ? "▼" : "▲"}</span>
                   </button>
-                  {loadMenuOpen && (
-                    <div
-                      className="config-load-dropup"
-                      role="menu"
-                      style={{
-                        position: "absolute",
-                        bottom: "100%",
-                        left: 0,
-                        marginBottom: "0.2rem",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 0,
-                        background: "var(--bg)",
-                        border: "1px solid var(--border)",
-                        borderRadius: "2px",
-                        boxShadow: "0 -2px 6px rgba(0,0,0,0.12)",
-                        minWidth: "100%",
-                        overflow: "hidden",
-                        zIndex: 10,
-                      }}
-                    >
+                  {defSnapshotMenuOpen && (
+                    <div className="config-load-dropup" role="menu" style={dropUpMenuStyle}>
                       <button
                         type="button"
                         role="menuitem"
-                        disabled={!canLoadFromLastRun || sessionTerminated}
+                        disabled={sessionTerminated || busy || !onBookmarkSnapshot}
                         onClick={() => {
-                          onLoadConfigFromLastRun();
-                          setLoadMenuOpen(false);
+                          void onBookmarkSnapshot?.();
+                          setDefSnapshotMenuOpen(false);
                         }}
-                        title="Restore config from the most recent optimization run"
-                        style={{ padding: "0.4rem 0.6rem", textAlign: "left", fontSize: "0.9rem" }}
+                        style={menuItemStyle}
                       >
-                        From most recent run
+                        Save to snapshot
                       </button>
                       <button
                         type="button"
                         role="menuitem"
                         disabled={!canLoadFromSnapshot || sessionTerminated}
                         onClick={() => {
-                          openSnapshotDialog("config");
-                          setLoadMenuOpen(false);
+                          openSnapshotDialog("definition");
+                          setDefSnapshotMenuOpen(false);
                         }}
-                        title="Restore config from a snapshot"
-                        style={{ padding: "0.4rem 0.6rem", textAlign: "left", fontSize: "0.9rem" }}
+                        style={menuItemStyle}
                       >
-                        Load from snapshot...
+                        Load from snapshot…
                       </button>
                     </div>
                   )}
                 </div>
-              )}
-            </>
-          ) : (
-            <>
-              <button type="button" onClick={() => void onSaveConfig()} disabled={busy || sessionTerminated}>
-                Save
-              </button>
-              <button type="button" onClick={() => (onCancelConfigEdit ? onCancelConfigEdit() : onSetEditMode("none"))}>
-                Cancel
-              </button>
-            </>
+                <button
+                  type="button"
+                  onClick={() => void onSyncProblemConfig()}
+                  disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
+                  title="Rebuild the saved problem config from the saved definition"
+                >
+                  {syncingProblemConfig ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                      <span className="inline-spinner" aria-hidden="true" />
+                      Syncing...
+                    </span>
+                  ) : (
+                    "Sync to config"
+                  )}
+                </button>
+              </>
+            )
+          ) : activeTab === "config" ? (
+            configEditing ? (
+              <>
+                <button
+                  type="button"
+                  className={isConfigDirty ? "btn-save-attention" : undefined}
+                  onClick={() => void onSaveConfig()}
+                  disabled={busy || sessionTerminated || !isConfigDirty}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => (onCancelConfigEdit ? onCancelConfigEdit() : onSetEditMode("none"))}
+                  disabled={busy || sessionTerminated}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <div ref={configSnapshotMenuRef} style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setConfigSnapshotMenuOpen((o) => !o)}
+                  disabled={sessionTerminated || configSurfaceLocked}
+                  title={configSurfaceLocked ? "Wait for background config update" : undefined}
+                  aria-expanded={configSnapshotMenuOpen}
+                  aria-haspopup="menu"
+                >
+                  Snapshot <span aria-hidden="true">{configSnapshotMenuOpen ? "▼" : "▲"}</span>
+                </button>
+                {configSnapshotMenuOpen && (
+                  <div className="config-load-dropup" role="menu" style={dropUpMenuStyle}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={sessionTerminated || busy || !onBookmarkSnapshot}
+                      onClick={() => {
+                        void onBookmarkSnapshot?.();
+                        setConfigSnapshotMenuOpen(false);
+                      }}
+                      style={menuItemStyle}
+                    >
+                      Save to snapshot
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!canLoadFromLastRun || sessionTerminated || configSurfaceLocked}
+                      onClick={() => {
+                        onLoadConfigFromLastRun?.();
+                        setConfigSnapshotMenuOpen(false);
+                      }}
+                      style={menuItemStyle}
+                    >
+                      From most recent run
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!canLoadFromSnapshot || sessionTerminated}
+                      onClick={() => {
+                        openSnapshotDialog("config");
+                        setConfigSnapshotMenuOpen(false);
+                      }}
+                      style={menuItemStyle}
+                    >
+                      Load from snapshot…
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
           ) : (
             <p className="muted" style={{ margin: 0 }}>
               Raw JSON is read-only. Edit the Definition or Problem Config tab to make changes.

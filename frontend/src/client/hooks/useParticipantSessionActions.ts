@@ -16,7 +16,7 @@ import {
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { configChangeSummary } from "../problemConfig/configSummary";
 import { DEFINITION_NEW_ROW_PLACEHOLDER } from "../problemDefinition/constants";
-import { cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
+import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
 
@@ -340,40 +340,11 @@ export function useParticipantSessionActions({
 
   const saveProblemBrief = useCallback(async (overrideBrief?: ProblemBrief, options?: SaveProblemBriefOptions) => {
     const baseBrief = overrideBrief ?? problemBrief;
-    if (!token || !sessionId || !baseBrief) return;
-    if (savingProblemBriefRef.current) return;
-    const cleanedBrief: ProblemBrief = {
-      ...baseBrief,
-      goal_summary: baseBrief.goal_summary.trim(),
-      items: baseBrief.items
-        .map((item) => ({ ...item, text: item.text.trim() }))
-        .filter((item) => {
-          if (item.kind === "system") return true;
-          if (item.text.length === 0) return false;
-          if (
-            (item.kind === "gathered" || item.kind === "assumption") &&
-            item.text === DEFINITION_NEW_ROW_PLACEHOLDER
-          ) {
-            return false;
-          }
-          return true;
-        }),
-      open_questions: baseBrief.open_questions
-        .map((question) => {
-          const text = question.text.trim();
-          const status: ProblemBriefQuestion["status"] = question.status === "answered" ? "answered" : "open";
-          const answerText = (question.answer_text ?? "").trim();
-          return {
-            ...question,
-            text,
-            status,
-            answer_text: status === "answered" ? (answerText || null) : null,
-          };
-        })
-        .filter((question) => question.text.length > 0),
-    };
+    if (!token || !sessionId || !baseBrief) return false;
+    if (savingProblemBriefRef.current) return false;
+    const cleanedBrief = cleanProblemBriefForCompare(baseBrief);
     const previousBrief = session?.problem_brief;
-    if (!previousBrief) return;
+    if (!previousBrief) return false;
     const changedSummary = problemBriefChangeSummary(previousBrief, cleanedBrief);
     const acknowledgement = `Problem definition saved (${changedSummary}).`;
     savingProblemBriefRef.current = true;
@@ -400,8 +371,10 @@ export function useParticipantSessionActions({
         });
       }
       void refetchSnapshots?.();
+      return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
+      return false;
     } finally {
       savingProblemBriefRef.current = false;
       setBusy(false);
@@ -421,7 +394,6 @@ export function useParticipantSessionActions({
     setProblemBrief,
     setSession,
     token,
-    problemBrief,
   ]);
 
   const formatSnapshotTime = (iso: string) => {

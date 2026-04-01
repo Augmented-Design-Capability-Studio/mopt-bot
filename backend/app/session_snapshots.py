@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 KEEP_SNAPSHOTS_PER_SESSION = 10
 EVENT_BEFORE_RUN = "before_run"
 EVENT_MANUAL_SAVE = "manual_save"
+EVENT_BOOKMARK = "bookmark"
 
 
 def create_snapshot(

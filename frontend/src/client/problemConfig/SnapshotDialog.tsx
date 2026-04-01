@@ -66,7 +66,7 @@ export function SnapshotDialog({
         </p>
       ) : snapshots.length === 0 ? (
         <p className="muted" style={{ fontSize: "0.9rem" }}>
-          No snapshots yet. Save the definition or config to create one.
+          No snapshots yet. Use Snapshot → Save to snapshot, or save definition/config after editing.
         </p>
       ) : (
         <ul

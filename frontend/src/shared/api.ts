@@ -311,6 +311,11 @@ export async function fetchSnapshots(sessionId: string, token: string): Promise<
   return Array.isArray(data) ? data : [];
 }
 
+/** Bookmark current server brief+panel as a snapshot (no PATCH, no chat). */
+export async function createSessionSnapshotBookmark(sessionId: string, token: string): Promise<SnapshotSummary> {
+  return apiFetch<SnapshotSummary>(`/sessions/${sessionId}/snapshots`, token, { method: "POST" });
+}
+
 export async function fetchSessionsForParticipant(
   participantNumber: string,
   token: string,

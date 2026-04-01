@@ -19,6 +19,8 @@ export type ProblemConfigBlocksProps = {
   configJson: string;
   onChange: (json: string) => void;
   editable: boolean;
+  /** When not editable, first pointer interaction enters config edit mode */
+  onInteractionStart?: () => void;
 };
 
 function WeightRow({
@@ -78,7 +80,7 @@ function WeightRow({
   );
 }
 
-export function ProblemConfigBlocks({ configJson, onChange, editable }: ProblemConfigBlocksProps) {
+export function ProblemConfigBlocks({ configJson, onChange, editable, onInteractionStart }: ProblemConfigBlocksProps) {
   const { outerRaw, hasProblemKey, problem } = parseProblemConfig(configJson);
 
   const hasWorkerWeight = "worker_preference" in problem.weights;
@@ -153,7 +155,12 @@ export function ProblemConfigBlocks({ configJson, onChange, editable }: ProblemC
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
+      onPointerDownCapture={() => {
+        if (!editable) onInteractionStart?.();
+      }}
+    >
       <BlockSection title="Goal terms">
         {displayWeightKeys.map((key) =>
           key === "worker_preference" ? (

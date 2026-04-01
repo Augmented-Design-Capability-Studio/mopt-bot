@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
-import { fetchSnapshots, type Message, type ProblemBrief, type RunResult, type Session, type SnapshotSummary } from "@shared/api";
+import {
+  createSessionSnapshotBookmark,
+  fetchSnapshots,
+  type Message,
+  type ProblemBrief,
+  type RunResult,
+  type Session,
+  type SnapshotSummary,
+} from "@shared/api";
 import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 
 import { type ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
-import { cloneProblemBrief } from "../problemDefinition/summary";
+import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
 import { useParticipantSessionActions } from "./useParticipantSessionActions";
 import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle";
@@ -43,6 +52,7 @@ export function useParticipantController() {
   const [recentBusy, setRecentBusy] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [definitionEditBaseline, setDefinitionEditBaseline] = useState<ProblemBrief | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const modelDialogWasOpenRef = useRef(false);
@@ -122,14 +132,20 @@ export function useParticipantController() {
   });
 
   const enterConfigEdit = useCallback(() => {
-    setConfigEditSnapshot(configText);
-    setEditMode("config");
+    flushSync(() => {
+      setConfigEditSnapshot(configText);
+      setEditMode("config");
+    });
   }, [configText]);
 
   const cancelConfigEdit = useCallback(() => {
     setConfigText(configEditSnapshot);
     setEditMode("none");
   }, [configEditSnapshot, setConfigText]);
+
+  useEffect(() => {
+    setDefinitionEditBaseline(null);
+  }, [sessionId]);
 
   const loadSnapshots = useCallback(async () => {
     if (!token || !sessionId || session?.status !== "active") return;
@@ -187,6 +203,52 @@ export function useParticipantController() {
     refetchSnapshots: loadSnapshots,
   });
 
+  const ensureDefinitionEditing = useCallback(() => {
+    if (editMode !== "none") return;
+    if (!problemBrief) return;
+    flushSync(() => {
+      setDefinitionEditBaseline(cloneProblemBrief(problemBrief));
+      setEditMode("definition");
+    });
+  }, [editMode, problemBrief, setEditMode]);
+
+  const cancelDefinitionEdit = useCallback(() => {
+    if (definitionEditBaseline) {
+      setProblemBriefState(cloneProblemBrief(definitionEditBaseline));
+    }
+    setDefinitionEditBaseline(null);
+    setEditMode("none");
+  }, [definitionEditBaseline, setProblemBriefState, setEditMode]);
+
+  const saveDefinitionEdit = useCallback(async () => {
+    const ok = await actions.saveProblemBrief();
+    if (ok) setDefinitionEditBaseline(null);
+  }, [actions.saveProblemBrief]);
+
+  const isDefinitionDirty = useMemo(
+    () =>
+      editMode === "definition" &&
+      definitionEditBaseline != null &&
+      problemBrief != null &&
+      isProblemBriefDirtyAfterClean(definitionEditBaseline, problemBrief),
+    [definitionEditBaseline, editMode, problemBrief],
+  );
+
+  const isConfigDirty = useMemo(
+    () => editMode === "config" && configText !== configEditSnapshot,
+    [configEditSnapshot, configText, editMode],
+  );
+
+  const bookmarkSnapshot = useCallback(async () => {
+    if (!token || !sessionId) return;
+    try {
+      await createSessionSnapshotBookmark(sessionId, token);
+      await loadSnapshots();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Snapshot failed");
+    }
+  }, [loadSnapshots, sessionId, setError, token]);
+
   const loadConfigFromLastRun = useCallback(() => {
     const latest = runs[runs.length - 1];
     const problem = latest?.request?.problem;
@@ -199,6 +261,7 @@ export function useParticipantController() {
 
   const restoreFromSnapshot = useCallback(
     (snap: SnapshotSummary, source: "definition" | "config") => {
+      setDefinitionEditBaseline(null);
       void actions.restoreFromSnapshot(snap, source);
       void loadSnapshots();
     },
@@ -265,6 +328,12 @@ export function useParticipantController() {
     closeModelDialog: actions.closeModelDialog,
     enterConfigEdit,
     cancelConfigEdit,
+    ensureDefinitionEditing,
+    cancelDefinitionEdit,
+    saveDefinitionEdit,
+    isDefinitionDirty,
+    isConfigDirty,
+    bookmarkSnapshot,
     loadConfigFromLastRun,
     restoreFromSnapshot,
     loadSnapshots,

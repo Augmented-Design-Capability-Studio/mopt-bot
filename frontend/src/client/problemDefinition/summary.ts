@@ -1,4 +1,6 @@
-import type { ProblemBrief } from "@shared/api";
+import type { ProblemBrief, ProblemBriefQuestion } from "@shared/api";
+
+import { DEFINITION_NEW_ROW_PLACEHOLDER } from "./constants";
 
 export function cloneProblemBrief(brief: ProblemBrief): ProblemBrief {
   return {
@@ -6,6 +8,44 @@ export function cloneProblemBrief(brief: ProblemBrief): ProblemBrief {
     items: brief.items.map((item) => ({ ...item })),
     open_questions: brief.open_questions.map((question) => ({ ...question })),
   };
+}
+
+/** Same cleaning as PATCH /problem-brief (placeholder rows omitted). Used for dirty checks. */
+export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
+  return {
+    ...brief,
+    goal_summary: brief.goal_summary.trim(),
+    items: brief.items
+      .map((item) => ({ ...item, text: item.text.trim() }))
+      .filter((item) => {
+        if (item.kind === "system") return true;
+        if (item.text.length === 0) return false;
+        if (
+          (item.kind === "gathered" || item.kind === "assumption") &&
+          item.text === DEFINITION_NEW_ROW_PLACEHOLDER
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    open_questions: brief.open_questions
+      .map((question) => {
+        const text = question.text.trim();
+        const status: ProblemBriefQuestion["status"] = question.status === "answered" ? "answered" : "open";
+        const answerText = (question.answer_text ?? "").trim();
+        return {
+          ...question,
+          text,
+          status,
+          answer_text: status === "answered" ? (answerText || null) : null,
+        };
+      })
+      .filter((question) => question.text.length > 0),
+  };
+}
+
+export function isProblemBriefDirtyAfterClean(baseline: ProblemBrief, current: ProblemBrief): boolean {
+  return JSON.stringify(cleanProblemBriefForCompare(baseline)) !== JSON.stringify(cleanProblemBriefForCompare(current));
 }
 
 export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemBrief): string {

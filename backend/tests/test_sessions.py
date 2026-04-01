@@ -1715,3 +1715,39 @@ def test_participant_number_round_trip_and_researcher_edit(monkeypatch):
         )
         assert clear.status_code == 200
         assert clear.json()["participant_number"] is None
+
+
+def test_post_snapshot_bookmark_creates_row(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-snapshot-bookmark")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-snapshot-bookmark"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        before = client.get(
+            f"/sessions/{sid}/snapshots",
+            headers={"Authorization": "Bearer test-client-snapshot-bookmark"},
+        )
+        assert before.status_code == 200
+        n_before = len(before.json())
+
+        post = client.post(
+            f"/sessions/{sid}/snapshots",
+            headers={"Authorization": "Bearer test-client-snapshot-bookmark"},
+        )
+        assert post.status_code == 201
+        body = post.json()
+        assert body["event_type"] == "bookmark"
+        assert body["id"] > 0
+
+        after = client.get(
+            f"/sessions/{sid}/snapshots",
+            headers={"Authorization": "Bearer test-client-snapshot-bookmark"},
+        )
+        assert after.status_code == 200
+        assert len(after.json()) == n_before + 1
