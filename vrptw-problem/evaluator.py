@@ -51,12 +51,44 @@ class RouteMetrics:
     total_service_time: float = 0.0
     load: int = 0
     capacity_overflow: int = 0
-    shift_duration_min: float = 0.0
+    shift_duration_minutes: float = 0.0
     tw_violation_min: float = 0.0
     tw_violation_count: int = 0
     express_late_count: int = 0
     driver_penalty: float = 0.0
     visits: list[VisitRecord] = field(default_factory=list)
+
+
+def _rule_shift_limit_minutes(rule: dict) -> float:
+    """Soft shift threshold in minutes (legacy: hours, limit_minutes)."""
+    if "limit_minutes" in rule and rule["limit_minutes"] is not None:
+        return float(rule["limit_minutes"])
+    if "hours" in rule and rule["hours"] is not None:
+        return float(rule["hours"]) * 60.0
+    return 6.5 * 60.0
+
+
+def _normalize_avoid_zone_rule(rule: dict) -> tuple[str, int]:
+    """Return (condition_key, order.zone 1–5 to avoid). Legacy zone_d -> avoid zone 4."""
+    c = rule.get("condition", "")
+    if c == "zone_d":
+        return "avoid_zone", int(rule.get("zone", ZONE_D))
+    if c == "avoid_zone":
+        return "avoid_zone", int(rule.get("zone", ZONE_D))
+    return "", -1
+
+
+def _normalize_order_priority_rule(rule: dict) -> tuple[str, str]:
+    c = rule.get("condition", "")
+    if c == "express_order":
+        return "order_priority", str(rule.get("order_priority", "express"))
+    if c == "order_priority":
+        return "order_priority", str(rule.get("order_priority", "express"))
+    return "", ""
+
+
+def _aggregation(rule: dict) -> str:
+    return str(rule.get("aggregation", "per_stop"))
 
 
 def _apply_driver_penalties_per_visit(
@@ -65,33 +97,65 @@ def _apply_driver_penalties_per_visit(
     is_express: bool,
     driver_preferences: list[dict],
 ) -> float:
-    """Compute driver penalty for a single visit from user-specified rules."""
+    """Per-stop penalties (aggregation per_stop or default)."""
     penalty = 0.0
     for rule in driver_preferences:
         if rule.get("vehicle_idx") != v_idx:
             continue
-        cond = rule.get("condition", "")
-        if cond == "zone_d" and order.zone == ZONE_D:
-            penalty += rule.get("penalty", 0)
-        elif cond == "express_order" and is_express:
-            penalty += rule.get("penalty", 0)
+        if _aggregation(rule) == "once_per_route":
+            continue
+        ak, z = _normalize_avoid_zone_rule(rule)
+        if ak == "avoid_zone" and order.zone == z:
+            penalty += float(rule.get("penalty", 0))
+            continue
+        ok, pr = _normalize_order_priority_rule(rule)
+        if ok == "order_priority" and order.priority == pr:
+            penalty += float(rule.get("penalty", 0))
+    return penalty
+
+
+def _apply_driver_penalties_once_per_route(
+    v_idx: int,
+    order_indices: list[int],
+    orders: list[Order],
+    driver_preferences: list[dict],
+) -> float:
+    """Lump penalties when aggregation is once_per_route."""
+    penalty = 0.0
+    for rule in driver_preferences:
+        if rule.get("vehicle_idx") != v_idx:
+            continue
+        if _aggregation(rule) != "once_per_route":
+            continue
+        p = float(rule.get("penalty", 0))
+        ak, z = _normalize_avoid_zone_rule(rule)
+        if ak == "avoid_zone":
+            if any(orders[o].zone == z for o in order_indices):
+                penalty += p
+            continue
+        ok, pr = _normalize_order_priority_rule(rule)
+        if ok == "order_priority":
+            if any(orders[o].priority == pr for o in order_indices):
+                penalty += p
     return penalty
 
 
 def _apply_driver_penalties_per_route(
     v_idx: int,
-    shift_duration_hours: float,
+    shift_duration_minutes: float,
     driver_preferences: list[dict],
 ) -> float:
-    """Compute driver penalty for a route (e.g., shift_over_hours)."""
+    """Route-level penalties (shift length soft limit)."""
     penalty = 0.0
     for rule in driver_preferences:
         if rule.get("vehicle_idx") != v_idx:
             continue
-        if rule.get("condition") == "shift_over_hours":
-            limit_hours = rule.get("hours", 6.5)
-            if shift_duration_hours > limit_hours:
-                penalty += rule.get("penalty", 0)
+        cond = rule.get("condition", "")
+        if cond not in ("shift_over_hours", "shift_over_limit"):
+            continue
+        limit_min = _rule_shift_limit_minutes(rule)
+        if shift_duration_minutes > limit_min:
+            penalty += float(rule.get("penalty", 0))
     return penalty
 
 
@@ -137,7 +201,7 @@ def simulate_routes(
     shift_durations: list[float] = []
     visits_per_vehicle: list[list[VisitRecord]] = []
 
-    max_shift_min = 8.0 * 60  # 8 hours
+    max_shift_min = 8.0 * 60  # 8 hours in minutes
 
     for v_idx, (vehicle, order_indices) in enumerate(zip(VEHICLES, routes)):
         rm = RouteMetrics()
@@ -156,7 +220,6 @@ def simulate_routes(
                 current_time = float(order.time_window_open)
             current_time += order.service_time
             rm.total_service_time += order.service_time
-            departure = current_time
             load += order.size
 
             tw_viol = max(0, arrival - order.time_window_close)
@@ -189,7 +252,7 @@ def simulate_routes(
                 zone=ZONE_NAMES[order.zone],
                 zone_index=order.zone,
                 arrival_time=arrival,
-                departure_time=departure,
+                departure_time=current_time,
                 window_open=order.time_window_open,
                 window_close=order.time_window_close,
                 is_express=is_express,
@@ -210,11 +273,14 @@ def simulate_routes(
         current_time += tt
         rm.total_travel_time += tt
 
-        rm.shift_duration_min = (current_time - vehicle.shift_start_min) / 60.0  # hours
-        shift_durations.append(rm.shift_duration_min * 60)  # store in minutes for variance
+        rm.shift_duration_minutes = float(current_time - vehicle.shift_start_min)
+        shift_durations.append(rm.shift_duration_minutes)
 
+        rm.driver_penalty += _apply_driver_penalties_once_per_route(
+            v_idx, order_indices, orders, driver_preferences
+        )
         rm.driver_penalty += _apply_driver_penalties_per_route(
-            v_idx, rm.shift_duration_min, driver_preferences
+            v_idx, rm.shift_duration_minutes, driver_preferences
         )
 
         total_travel_time += rm.total_travel_time

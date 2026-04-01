@@ -27,11 +27,7 @@ def test_config_schema_requires_known_driver_preference_fields():
     driver_pref = panel_patch["properties"]["problem"]["properties"]["driver_preferences"]["items"]
 
     assert driver_pref["required"] == ["vehicle_idx", "condition", "penalty"]
-    assert driver_pref["properties"]["condition"]["enum"] == [
-        "zone_d",
-        "express_order",
-        "shift_over_hours",
-    ]
+    assert driver_pref["properties"]["condition"]["type"] == "string"
 
 
 def test_chat_schema_focuses_on_assistant_and_problem_brief_patch():

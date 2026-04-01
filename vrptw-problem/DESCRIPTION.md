@@ -151,11 +151,13 @@ Cost is a weighted sum of:
 | w7 | 100.0 | Express lateness penalty (per late express order) |
 | — | 5000 | Hard penalty per vehicle exceeding 8h shift |
 
-**Driver preference penalties** (soft):
+**Driver preference penalties** (soft, scaled by w6): each rule adds **preference cost units** to a running total (not minutes added to the traffic model). Legacy examples in sample configs:
 
-- Alice: +8 min per Zone D stop
-- Carol: +5 min per express order
-- Dave: +15 min if shift exceeds 6.5h
+- `zone_d` / `avoid_zone`: per-stop or once-per-route cost when a worker serves a zone (order zones 1–5; Westgate = 4).
+- `express_order` / `order_priority`: cost for express or standard stops.
+- `shift_over_hours` / `shift_over_limit`: lump cost when **shift length in minutes** exceeds `limit_minutes` or legacy `hours` (converted to minutes).
+
+Example defaults: Alice avoids zone D, Carol dislikes many express orders, Dave uses a soft shift-length threshold (e.g. 6.5h → `limit_minutes`: 390).
 
 ### 1.7 Constraints
 
@@ -177,7 +179,7 @@ In the 2×2 user study (experts vs novices × agile vs waterfall workflow), part
 | **Hard constraints** | `shift_hard_penalty`, `locked_assignments` | Shift limit (always enforced); locked assignments (order X → vehicle Y) |
 | **Soft constraints** | `weights` + `driver_preferences` | Capacity (w4), time windows (w3), express (w7), workload (w5), driver prefs (w6) |
 | **Locked assignments** | `locked_assignments` | e.g. `{"6": 0}` = order O06 must go with Alice |
-| **Driver preferences** | `driver_preferences` | Rules: zone_d, express_order, shift_over_hours |
+| **Driver preferences** | `driver_preferences` | Rules: `avoid_zone`, `order_priority`, `shift_over_limit` (legacy: `zone_d`, `express_order`, `shift_over_hours`); optional `aggregation`: `per_stop` / `once_per_route` |
 | **Algorithm** | `algorithm` | Optional: GA, PSO, SA, SwarmSA, or ACOR (default GA) |
 | **Algorithm params** | `algorithm_params` | Optional: GA (pc, pm), PSO (c1, c2, w), SA (temp_init, cooling_rate), SwarmSA (max_sub_iter, t0, t1, move_count, mutation_rate, mutation_step_size, mutation_step_size_damp), ACOR (sample_count, intent_factor, zeta) |
 | **Run params** | `epochs`, `pop_size` | Optional solver params |

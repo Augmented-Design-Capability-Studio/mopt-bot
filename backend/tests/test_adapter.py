@@ -20,6 +20,20 @@ def test_parse_invalid_algo():
         parse_problem_config({"algorithm": "INVALID"})
 
 
+def test_parse_driver_preferences_validates_vehicle_idx():
+    with pytest.raises(ValueError, match="vehicle_idx"):
+        parse_problem_config(
+            {
+                "driver_preferences": [{"vehicle_idx": 9, "condition": "zone_d", "penalty": 1}],
+            }
+        )
+
+
+def test_parse_locked_assignments_validates_range():
+    with pytest.raises(ValueError, match="task index"):
+        parse_problem_config({"locked_assignments": {"99": 0}})
+
+
 def test_evaluate_routes_roundtrip():
     routes = [
         list(range(0, 6)),

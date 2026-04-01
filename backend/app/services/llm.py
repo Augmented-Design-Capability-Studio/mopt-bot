@@ -51,9 +51,16 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
         "vehicle_idx": {"type": "integer"},
         "condition": {
             "type": "string",
-            "enum": ["zone_d", "express_order", "shift_over_hours"],
+            "description": (
+                "avoid_zone, order_priority, shift_over_limit; legacy: zone_d, express_order, shift_over_hours"
+            ),
         },
         "penalty": {"type": "number"},
+        "zone": {"type": "integer"},
+        "order_priority": {"type": "string"},
+        "limit_minutes": {"type": "number"},
+        "hours": {"type": "number"},
+        "aggregation": {"type": "string"},
     },
     "required": ["vehicle_idx", "condition", "penalty"],
 }

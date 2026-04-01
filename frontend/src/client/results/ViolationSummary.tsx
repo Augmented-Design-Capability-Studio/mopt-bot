@@ -61,7 +61,7 @@ export function ViolationSummary({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-      {/* ── Active objective cards ── */}
+      {/* ── Active weighted terms (from configured weights) ── */}
       <div className="run-summary-grid">
         {visibleCards.map(({ key, label, card }) => {
           const { value, warn } = card(violations, metrics);

@@ -256,6 +256,8 @@ export type RunMetrics = {
   total_travel_minutes: number;
   fuel_proxy_minutes: number;
   workload_variance: number;
+  /** Raw preference cost units before weighting; same value as driver_preference_penalty. */
+  driver_preference_units?: number;
   driver_preference_penalty: number;
 };
 

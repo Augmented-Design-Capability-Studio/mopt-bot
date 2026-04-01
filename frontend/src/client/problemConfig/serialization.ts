@@ -66,6 +66,9 @@ export function serializeProblemConfig(
   if (problem.random_seed !== null) problemObject.random_seed = problem.random_seed;
   if (problem.shift_hard_penalty !== null) problemObject.shift_hard_penalty = problem.shift_hard_penalty;
 
+  problemObject.driver_preferences = problem.driver_preferences;
+  problemObject.locked_assignments = problem.locked_assignments;
+
   const result = hasProblemKey ? { ...outerRaw, problem: problemObject } : problemObject;
   return JSON.stringify(result, null, 2);
 }

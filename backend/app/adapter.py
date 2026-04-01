@@ -330,6 +330,98 @@ def routes_to_neutral(routes: list[list[int]]) -> list[dict[str, Any]]:
     ]
 
 
+_CONDITIONS = frozenset(
+    {
+        "zone_d",
+        "express_order",
+        "shift_over_hours",
+        "avoid_zone",
+        "order_priority",
+        "shift_over_limit",
+    }
+)
+
+
+def _validate_locked_assignments(raw: Any) -> dict[int, int]:
+    """Task indices 0–29, vehicle indices 0–4; no duplicate tasks."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("locked_assignments must be a JSON object mapping task index to vehicle index")
+    out: dict[int, int] = {}
+    for k, v in raw.items():
+        oi = int(k)
+        vi = int(v)
+        if not 0 <= oi <= 29:
+            raise ValueError(f"locked_assignments: task index {oi} must be between 0 and 29")
+        if not 0 <= vi <= 4:
+            raise ValueError(f"locked_assignments: vehicle index {vi} must be between 0 and 4")
+        if oi in out:
+            raise ValueError(f"locked_assignments: duplicate task index {oi}")
+        out[oi] = vi
+    return out
+
+
+def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
+    """Normalize and validate driver preference rules for the VRPTW evaluator."""
+    out: list[dict[str, Any]] = []
+    for i, rule in enumerate(raw):
+        if not isinstance(rule, dict):
+            raise ValueError(f"driver_preferences[{i}] must be an object")
+        vid = rule.get("vehicle_idx")
+        if vid is None or not (0 <= int(vid) <= 4):
+            raise ValueError(f"driver_preferences[{i}]: vehicle_idx must be an integer 0–4")
+        cond = str(rule.get("condition", "")).strip()
+        if cond not in _CONDITIONS:
+            raise ValueError(
+                f"driver_preferences[{i}]: unknown condition {cond!r}; "
+                f"expected one of: {', '.join(sorted(_CONDITIONS))}"
+            )
+        penalty = float(rule.get("penalty", 0))
+        if penalty < 0:
+            raise ValueError(f"driver_preferences[{i}]: penalty must be >= 0")
+        agg = str(rule.get("aggregation", "per_stop"))
+        if agg not in ("per_stop", "once_per_route"):
+            raise ValueError(
+                f"driver_preferences[{i}]: aggregation must be 'per_stop' or 'once_per_route'"
+            )
+
+        nr: dict[str, Any] = {
+            "vehicle_idx": int(vid),
+            "condition": cond,
+            "penalty": penalty,
+            "aggregation": agg,
+        }
+
+        if cond in ("avoid_zone", "zone_d"):
+            z = rule.get("zone", 4 if cond == "zone_d" else None)
+            if z is None:
+                raise ValueError(f"driver_preferences[{i}]: avoid_zone requires 'zone' (1–5)")
+            zi = int(z)
+            if not 1 <= zi <= 5:
+                raise ValueError(f"driver_preferences[{i}]: zone must be 1–5 (delivery zones A–E)")
+            nr["zone"] = zi
+
+        if cond in ("order_priority", "express_order"):
+            pr = str(rule.get("order_priority", "express"))
+            if pr not in ("express", "standard"):
+                raise ValueError(
+                    f"driver_preferences[{i}]: order_priority must be 'express' or 'standard'"
+                )
+            nr["order_priority"] = pr
+
+        if cond in ("shift_over_hours", "shift_over_limit"):
+            if rule.get("limit_minutes") is not None:
+                nr["limit_minutes"] = float(rule["limit_minutes"])
+            elif rule.get("hours") is not None:
+                nr["limit_minutes"] = float(rule["hours"]) * 60.0
+            else:
+                nr["limit_minutes"] = 6.5 * 60.0
+
+        out.append(nr)
+    return out
+
+
 def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize incoming neutral problem configuration.
 
@@ -345,19 +437,16 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     only_active = bool(raw.get("only_active_terms", True))
     weights = build_weights(weights_raw, only_active_terms=only_active)
 
-    driver_preferences = raw.get("driver_preferences")
-    if driver_preferences is None:
-        # Participant-facing runs should reflect only explicitly provided preferences.
-        driver_preferences = []
-    if not isinstance(driver_preferences, list):
+    driver_preferences_raw = raw.get("driver_preferences")
+    if driver_preferences_raw is None:
+        driver_preferences_raw = []
+    if not isinstance(driver_preferences_raw, list):
         raise ValueError("driver_preferences must be a list")
+    driver_preferences = _validate_driver_preferences(driver_preferences_raw)
 
     shift_hard = float(raw.get("shift_hard_penalty", SHIFT_HARD_PENALTY))
 
-    locked: dict[int, int] = {}
-    la = raw.get("locked_assignments") or {}
-    for k, v in la.items():
-        locked[int(k)] = int(v)
+    locked = _validate_locked_assignments(raw.get("locked_assignments"))
 
     algorithm = str(raw.get("algorithm", "GA")).strip().upper()
     algo_norm = "SwarmSA" if algorithm == "SWARMSA" else algorithm
@@ -439,11 +528,13 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
     time_bounds = _time_bounds_for_schedule(vehicle_summaries, visits)
 
     metrics = result.metrics
+    dp_raw = float(metrics.get("driver_penalty", 0))
     neutral_metrics = {
         "total_travel_minutes": float(metrics.get("travel_time", 0)),
         "fuel_proxy_minutes": float(metrics.get("fuel_cost", 0)),
         "workload_variance": float(metrics.get("workload_variance", 0)),
-        "driver_preference_penalty": float(metrics.get("driver_penalty", 0)),
+        "driver_preference_units": dp_raw,
+        "driver_preference_penalty": dp_raw,
     }
 
     ref_cost = None
@@ -521,11 +612,13 @@ def run_evaluate_routes(
         )
         ref_cost = float(rc)
 
+    dp_raw = float(metrics.get("driver_penalty", 0))
     neutral_metrics = {
         "total_travel_minutes": float(metrics.get("travel_time", 0)),
         "fuel_proxy_minutes": float(metrics.get("fuel_cost", 0)),
         "workload_variance": float(metrics.get("workload_variance", 0)),
-        "driver_preference_penalty": float(metrics.get("driver_penalty", 0)),
+        "driver_preference_units": dp_raw,
+        "driver_preference_penalty": dp_raw,
     }
 
     return {

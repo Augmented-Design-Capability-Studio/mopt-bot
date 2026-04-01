@@ -300,6 +300,11 @@ export function DefinitionPanel({
 
   return (
     <div className="definition-panel">
+      <p className="muted" style={{ fontSize: "0.82rem", marginBottom: "0.85rem", lineHeight: 1.45 }}>
+        Clarify <strong>goals</strong> (what to improve), <strong>soft penalties</strong> (undesirable outcomes with a cost),
+        and <strong>hard constraints</strong> (fixed assignments or non‑negotiable limits). Use the Problem Config tab to
+        translate into solver weights.
+      </p>
       <section className={`definition-section ${editingGoalSummary ? "is-editing" : ""}`}>
         <div className="definition-section-title">Goal Summary</div>
         {!editingGoalSummary ? (

@@ -74,7 +74,11 @@ export function ConfigPanel({
   const [snapshotDialogSource, setSnapshotDialogSource] = useState<"definition" | "config" | null>(null);
   const [forceUnlockProcessingUi, setForceUnlockProcessingUi] = useState(false);
   const [processingStallWarn, setProcessingStallWarn] = useState(false);
+  const [definitionUnread, setDefinitionUnread] = useState(false);
+  const [configUnread, setConfigUnread] = useState(false);
   const loadMenuRef = useRef<HTMLDivElement>(null);
+  const prevBriefPending = useRef(backgroundBriefPending);
+  const prevConfigPending = useRef(backgroundConfigPending);
 
   const hasLoadOptions = canLoadFromLastRun || canLoadFromSnapshot;
 
@@ -95,9 +99,29 @@ export function ConfigPanel({
   };
 
   useEffect(() => {
-    if (editMode === "config" && activeTab !== "config") setActiveTab("config");
-    if (editMode === "definition" && activeTab !== "definition") setActiveTab("definition");
+    if (editMode === "config" && activeTab !== "config") {
+      setActiveTab("config");
+      setConfigUnread(false);
+    }
+    if (editMode === "definition" && activeTab !== "definition") {
+      setActiveTab("definition");
+      setDefinitionUnread(false);
+    }
   }, [activeTab, editMode]);
+
+  useEffect(() => {
+    if (prevBriefPending.current && !backgroundBriefPending && activeTab !== "definition") {
+      setDefinitionUnread(true);
+    }
+    prevBriefPending.current = backgroundBriefPending;
+  }, [backgroundBriefPending, activeTab]);
+
+  useEffect(() => {
+    if (prevConfigPending.current && !backgroundConfigPending && activeTab !== "config") {
+      setConfigUnread(true);
+    }
+    prevConfigPending.current = backgroundConfigPending;
+  }, [backgroundConfigPending, activeTab]);
 
   const definitionEditing = false;
   const configEditing = editMode === "config";
@@ -185,7 +209,18 @@ export function ConfigPanel({
               key={tabId}
               type="button"
               className={`tab ${activeTab === tabId ? "active" : ""}`}
-              onClick={() => setActiveTab(tabId)}
+              aria-label={
+                tabId === "definition" && definitionUnread
+                  ? "Definition (updated)"
+                  : tabId === "config" && configUnread
+                    ? "Problem Config (updated)"
+                    : label
+              }
+              onClick={() => {
+                setActiveTab(tabId);
+                if (tabId === "definition") setDefinitionUnread(false);
+                if (tabId === "config") setConfigUnread(false);
+              }}
               disabled={tabLocked && activeTab !== tabId}
             >
               {label}
@@ -194,6 +229,36 @@ export function ConfigPanel({
               ) : null}
               {tabId === "config" && (backgroundConfigPending || syncingProblemConfig) ? (
                 <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
+              ) : null}
+              {tabId === "definition" && definitionUnread && !backgroundBriefPending ? (
+                <span
+                  title="Updated"
+                  aria-hidden="true"
+                  style={{
+                    display: "inline-block",
+                    width: "0.45rem",
+                    height: "0.45rem",
+                    marginLeft: "0.35rem",
+                    borderRadius: "50%",
+                    background: "#c62828",
+                    verticalAlign: "middle",
+                  }}
+                />
+              ) : null}
+              {tabId === "config" && configUnread && !backgroundConfigPending && !syncingProblemConfig ? (
+                <span
+                  title="Updated"
+                  aria-hidden="true"
+                  style={{
+                    display: "inline-block",
+                    width: "0.45rem",
+                    height: "0.45rem",
+                    marginLeft: "0.35rem",
+                    borderRadius: "50%",
+                    background: "#c62828",
+                    verticalAlign: "middle",
+                  }}
+                />
               ) : null}
             </button>
           ))}

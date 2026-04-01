@@ -102,12 +102,15 @@ def plot_gantt(
         # Row suffix for shift_over_hours
         row_suffix = ""
         if shift_durations and vid < len(shift_durations):
-            sd_h = shift_durations[vid] / 60.0 if shift_durations[vid] > 60 else shift_durations[vid]
+            sd_h = shift_durations[vid] / 60.0  # shift_durations are minutes
             for r in (driver_preferences or []):
-                if r.get("vehicle_idx") == vid and r.get("condition") == "shift_over_hours":
-                    lim = r.get("hours", 6.5)
-                    if sd_h > lim:
-                        row_suffix = f" (>6.5h)"
+                rc = r.get("condition", "")
+                if r.get("vehicle_idx") == vid and rc in (
+                    "shift_over_hours", "shift_over_limit",
+                ):
+                    lim_h = (r.get("limit_minutes") or (r.get("hours", 6.5) * 60)) / 60.0
+                    if sd_h > lim_h:
+                        row_suffix = f" (>{lim_h:.1f}h)"
                     break
 
         for v in visits:

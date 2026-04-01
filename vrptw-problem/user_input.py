@@ -23,10 +23,9 @@ DEFAULT_WEIGHTS = {
     "w7": 100.0,    # per express order late
 }
 
-# Driver preference rules: condition types are fixed, values are user-configurable
-# - zone_d: add penalty per Zone D stop for this vehicle
-# - express_order: add penalty per express order for this vehicle
-# - shift_over_hours: add penalty if shift exceeds given hours
+# Driver preference rules (preference cost units before w6; not travel-time minutes):
+# Legacy: zone_d, express_order, shift_over_hours
+# General: avoid_zone + zone (1–5), order_priority, shift_over_limit + limit_minutes
 DEFAULT_DRIVER_PREFERENCES = [
     {"vehicle_idx": 0, "condition": "zone_d", "penalty": 8},
     {"vehicle_idx": 2, "condition": "express_order", "penalty": 5},

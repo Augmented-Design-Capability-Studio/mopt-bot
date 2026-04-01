@@ -25,9 +25,9 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
       "Penalizes unequal shift lengths across workers. Higher values produce a fairer distribution of work.",
   },
   worker_preference: {
-    label: "Worker Preferences",
+    label: "Strength of preference penalties",
     description:
-      "Penalizes assigning workers to tasks or conditions they prefer to avoid. Higher values respect preferences more strongly.",
+      "Scales the sum of per-rule preference cost units below. Does not add time to the traffic model.",
   },
   priority_penalty: {
     label: "Priority Order Deadlines",
@@ -35,6 +35,12 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
       "Penalizes late delivery of express or high-priority tasks. Higher values protect critical deadlines.",
   },
 };
+
+/** Weight keys shown under “Goal terms” (routing / efficiency). */
+const WEIGHT_GOAL_KEYS = ["travel_time", "fuel_cost", "workload_balance"] as const;
+
+/** Weight keys shown under “Soft penalties” (violations / lateness), excluding worker_preference. */
+const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty"] as const;
 
 const ALGORITHM_DESC: Record<string, string> = {
   GA: "Genetic Algorithm - evolves a population of candidate solutions through selection, crossover, and mutation.",
@@ -46,9 +52,32 @@ const ALGORITHM_DESC: Record<string, string> = {
 };
 
 const CONDITION_LABEL: Record<string, string> = {
-  zone_d: "trips through a specific congested zone",
-  express_order: "priority/express order assignments",
-  shift_over_hours: "shifts exceeding a comfortable length",
+  zone_d: "avoid zone D (Westgate) stops",
+  avoid_zone: "avoid a delivery zone (set zone 1–5)",
+  express_order: "avoid express / priority orders",
+  order_priority: "avoid a priority class (express or standard)",
+  shift_over_hours: "soft limit on shift length",
+  shift_over_limit: "soft limit on shift length (use limit_minutes or hours)",
 };
 
-export { ALGORITHM_DESC, CONDITION_LABEL, WEIGHT_INFO };
+/** Worker index → display name for the QuickBite scenario. */
+const WORKER_NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve"] as const;
+
+const PREFERENCE_CONDITIONS = [
+  { value: "zone_d", label: "Avoid zone D (legacy)" },
+  { value: "avoid_zone", label: "Avoid zone (specify 1–5)" },
+  { value: "express_order", label: "Avoid express orders (legacy)" },
+  { value: "order_priority", label: "Avoid order priority class" },
+  { value: "shift_over_hours", label: "Soft shift length (legacy hours)" },
+  { value: "shift_over_limit", label: "Soft shift length (limit_minutes)" },
+] as const;
+
+export {
+  ALGORITHM_DESC,
+  CONDITION_LABEL,
+  PREFERENCE_CONDITIONS,
+  WEIGHT_GOAL_KEYS,
+  WEIGHT_INFO,
+  WEIGHT_SOFT_PENALTY_KEYS,
+  WORKER_NAMES,
+};

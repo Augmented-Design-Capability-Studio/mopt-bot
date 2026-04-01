@@ -105,8 +105,13 @@ All available fields under `"problem"`:
   - `"priority_penalty"` — penalty per priority task delivered late
 - `"only_active_terms"`: boolean — when true, weight terms not explicitly set are zeroed
   so only the user's stated priorities count. Use when the user says "only care about X".
-- `"driver_preferences"`: list of soft preference rules per worker:
-  `[{"vehicle_idx": 0–4, "condition": "zone_d"|"express_order"|"shift_over_hours", "penalty": number}]`
+- `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
+  - **Worker names → index** (when the scenario names workers): Alice → 0, Bob → 1, Carol → 2, Dave → 3, Eve → 4.
+  - **`avoid_zone`** (or legacy **`zone_d`**): soft dislike of delivery stops in a zone; set `"zone": 1–5` matching order zones (1=A … 4=D Westgate … 5=E Northgate). Depot/matrix index 0 is not an order zone.
+  - **`order_priority`** (or legacy **`express_order`**): set `"order_priority": "express"` or `"standard"`.
+  - **`shift_over_limit`** (or legacy **`shift_over_hours`**): soft dislike of long shifts; set `"limit_minutes"` (e.g. 390 for 6.5h) or legacy `"hours": 6.5` (adapter converts to minutes).
+  - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
+  - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
 - `"shift_hard_penalty"`: numeric penalty per worker exceeding maximum shift duration.
 - `"locked_assignments"`: object mapping task index (string) to vehicle index (int),
   e.g. `{"6": 0}` forces task 6 onto vehicle 0.
@@ -446,12 +451,17 @@ Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
 - For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, shift_hard_penalty,
-  only_active_terms), derive from the brief for this turn.
+  driver_preferences, locked_assignments, only_active_terms), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
   "travel_time", "fuel_cost", "deadline_penalty", "capacity_penalty",
   "workload_balance", "worker_preference", "priority_penalty".
 - If "weights" is emitted, include only terms justified by the brief.
+- When the brief names worker-specific soft preferences, emit "driver_preferences" with
+  vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
+  shift_over_limit (or legacy zone_d, express_order, shift_over_hours); include "limit_minutes" or
+  "hours" for Dave-style long-shift discomfort when stated (e.g. 6.5h → "limit_minutes": 390).
+  Include "worker_preference" in weights when driver_preferences is nonempty.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - Keep output compact and valid JSON.
 """.strip()

@@ -104,7 +104,7 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
           f"{m.get('tw_violation_min', 0):.1f} min total")
     print(f"  Capacity Overflow : {m.get('capacity_overflow', 0)} units")
     print(f"  Workload Variance : {m.get('workload_variance', 0):.1f}")
-    print(f"  Driver Penalties  : {m.get('driver_penalty', 0):.1f} min")
+    print(f"  Driver Penalties  : {m.get('driver_penalty', 0):.1f} pref. units")
     print(f"  Express Lateness  : {m.get('express_late_count', 0)} orders")
     print("\n  --- Route Summary ---")
 

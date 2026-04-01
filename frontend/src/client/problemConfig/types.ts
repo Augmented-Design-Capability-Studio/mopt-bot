@@ -1,4 +1,14 @@
-export type DriverPref = { vehicle_idx: number; condition: string; penalty: number };
+/** One soft preference rule; optional fields depend on condition (backend validates). */
+export type DriverPref = {
+  vehicle_idx: number;
+  condition: string;
+  penalty: number;
+  zone?: number;
+  order_priority?: string;
+  limit_minutes?: number;
+  hours?: number;
+  aggregation?: string;
+};
 
 export type ProblemBlock = {
   weights: Record<string, number>;

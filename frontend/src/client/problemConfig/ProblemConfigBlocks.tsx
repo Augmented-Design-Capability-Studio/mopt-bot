@@ -1,7 +1,15 @@
-import { ALGORITHM_DESC, CONDITION_LABEL, WEIGHT_INFO } from "./metadata";
+import {
+  ALGORITHM_DESC,
+  CONDITION_LABEL,
+  PREFERENCE_CONDITIONS,
+  WEIGHT_GOAL_KEYS,
+  WEIGHT_INFO,
+  WEIGHT_SOFT_PENALTY_KEYS,
+  WORKER_NAMES,
+} from "./metadata";
 import { BlockSection, FieldRow } from "./layout";
 import { parseProblemConfig, serializeProblemConfig } from "./serialization";
-import type { ProblemBlock } from "./types";
+import type { DriverPref, ProblemBlock } from "./types";
 
 /**
  * Renders the solver configuration as structured natural-language blocks with
@@ -13,20 +21,81 @@ export type ProblemConfigBlocksProps = {
   editable: boolean;
 };
 
-export function ProblemConfigBlocks({
-  configJson,
-  onChange,
+function WeightRow({
+  wkey,
+  problem,
   editable,
-}: ProblemConfigBlocksProps) {
+  updateProblem,
+}: {
+  wkey: string;
+  problem: ProblemBlock;
+  editable: boolean;
+  updateProblem: (patch: Partial<ProblemBlock>) => void;
+}) {
+  const info = WEIGHT_INFO[wkey];
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "0.6rem",
+        padding: "0.4rem 0",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{info?.label ?? wkey}</div>
+        {info && (
+          <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
+            {info.description}
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
+        <input
+          type="number"
+          min={0}
+          step={0.5}
+          value={problem.weights[wkey] ?? 0}
+          disabled={!editable}
+          onChange={(e) => {
+            const value = parseFloat(e.target.value);
+            updateProblem({
+              weights: { ...problem.weights, [wkey]: Number.isNaN(value) ? 0 : value },
+            });
+          }}
+          style={{
+            width: "5.5rem",
+            textAlign: "right",
+            fontFamily: "monospace",
+          }}
+        />
+        <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>
+          weight
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function ProblemConfigBlocks({ configJson, onChange, editable }: ProblemConfigBlocksProps) {
   const { outerRaw, hasProblemKey, problem } = parseProblemConfig(configJson);
 
-  const weightKeys = Object.keys(problem.weights);
-  const hasObjectives = weightKeys.length > 0;
-  const hasSearch = problem.algorithm !== "" || problem.epochs !== null || problem.pop_size !== null;
-  const hasConstraints =
-    Object.keys(problem.locked_assignments).length > 0 ||
-    problem.driver_preferences.length > 0 ||
-    problem.shift_hard_penalty !== null;
+  const goalKeys = WEIGHT_GOAL_KEYS.filter((k) => k in problem.weights);
+  const softKeys = WEIGHT_SOFT_PENALTY_KEYS.filter((k) => k in problem.weights);
+  const hasWorkerWeight = "worker_preference" in problem.weights;
+  const showWorkerBlock =
+    hasWorkerWeight || problem.driver_preferences.length > 0;
+  const wpStrength = problem.weights.worker_preference ?? 0;
+
+  const hasSearch =
+    problem.algorithm !== "" || problem.epochs !== null || problem.pop_size !== null;
+  const hasHardStructural =
+    Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
+
+  const hasObjectives = goalKeys.length > 0 || softKeys.length > 0 || showWorkerBlock;
+
+  const hasConstraints = hasHardStructural;
 
   if (!hasObjectives && !hasSearch && !hasConstraints) {
     return (
@@ -38,70 +107,231 @@ export function ProblemConfigBlocks({
   }
 
   function updateProblem(patch: Partial<ProblemBlock>) {
-    // Keep every form row working against one typed problem object before it is
-    // written back to JSON.
     const nextProblem: ProblemBlock = { ...problem, ...patch };
     onChange(serializeProblemConfig(outerRaw, hasProblemKey, nextProblem));
   }
 
+  function updatePreferenceAt(index: number, pref: DriverPref) {
+    const next = [...problem.driver_preferences];
+    next[index] = pref;
+    updateProblem({ driver_preferences: next });
+  }
+
+  function removePreference(index: number) {
+    updateProblem({
+      driver_preferences: problem.driver_preferences.filter((_, i) => i !== index),
+    });
+  }
+
+  function addPreference() {
+    const w = { ...problem.weights };
+    if (w.worker_preference === undefined) w.worker_preference = 1;
+    updateProblem({
+      weights: w,
+      driver_preferences: [
+        ...problem.driver_preferences,
+        { vehicle_idx: 0, condition: "zone_d", penalty: 1 },
+      ],
+    });
+  }
+
+  function updateLocked(taskKey: string, worker: number | "") {
+    const next = { ...problem.locked_assignments };
+    if (worker === "") {
+      delete next[taskKey];
+    } else {
+      next[taskKey] = worker;
+    }
+    updateProblem({ locked_assignments: next });
+  }
+
+  function addLockedRow() {
+    const used = new Set(Object.keys(problem.locked_assignments).map((k) => parseInt(k, 10)));
+    let t = 0;
+    while (used.has(t) && t < 30) t += 1;
+    if (t >= 30) return;
+    updateLocked(String(t), 0);
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      {hasObjectives && (
-        <BlockSection title="Optimization Objectives">
-          {weightKeys.map((key) => {
-            const info = WEIGHT_INFO[key];
-            return (
-              <div
-                key={key}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "0.6rem",
-                  padding: "0.4rem 0",
-                  borderBottom: "1px solid var(--border)",
+      {goalKeys.length > 0 && (
+        <BlockSection title="Goal terms (routing & efficiency)">
+          {goalKeys.map((key) => (
+            <WeightRow key={key} wkey={key} problem={problem} editable={editable} updateProblem={updateProblem} />
+          ))}
+        </BlockSection>
+      )}
+
+      {softKeys.length > 0 && (
+        <BlockSection title="Soft penalties (violations & lateness)">
+          {softKeys.map((key) => (
+            <WeightRow key={key} wkey={key} problem={problem} editable={editable} updateProblem={updateProblem} />
+          ))}
+        </BlockSection>
+      )}
+
+      {showWorkerBlock && (
+        <BlockSection title="Worker preferences (soft)">
+          <p className="muted" style={{ fontSize: "0.75rem", marginTop: 0 }}>
+            One global weight scales the sum of per-rule preference cost units (not minutes of travel time). Add rules
+            below; multiple workers can share the same condition (e.g. two people avoiding the same zone).
+          </p>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "0.6rem",
+              padding: "0.4rem 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>
+                {WEIGHT_INFO.worker_preference?.label ?? "Preference strength"}
+              </div>
+              <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
+                {WEIGHT_INFO.worker_preference?.description}
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={wpStrength}
+                disabled={!editable}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value);
+                  updateProblem({
+                    weights: {
+                      ...problem.weights,
+                      worker_preference: Number.isNaN(value) ? 0 : value,
+                    },
+                  });
                 }}
+                style={{ width: "5.5rem", textAlign: "right", fontFamily: "monospace" }}
+              />
+              <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>
+                weight
+              </span>
+            </div>
+          </div>
+
+          {problem.driver_preferences.map((pref, index) => (
+            <div
+              key={index}
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.35rem",
+                alignItems: "center",
+                padding: "0.35rem 0",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <select
+                value={pref.vehicle_idx}
+                disabled={!editable}
+                onChange={(e) =>
+                  updatePreferenceAt(index, { ...pref, vehicle_idx: parseInt(e.target.value, 10) })
+                }
+                style={{ fontSize: "0.8rem" }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{info?.label ?? key}</div>
-                  {info && (
-                    <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
-                      {info.description}
-                    </div>
-                  )}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-end",
-                    flexShrink: 0,
+                {WORKER_NAMES.map((name, vi) => (
+                  <option key={name} value={vi}>
+                    {vi}: {name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={pref.condition}
+                disabled={!editable}
+                onChange={(e) => updatePreferenceAt(index, { ...pref, condition: e.target.value })}
+                style={{ fontSize: "0.8rem", maxWidth: "12rem" }}
+              >
+                {PREFERENCE_CONDITIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <label className="muted" style={{ fontSize: "0.75rem" }}>
+                penalty
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={pref.penalty}
+                  disabled={!editable}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    updatePreferenceAt(index, { ...pref, penalty: Number.isNaN(value) ? 0 : value });
                   }}
-                >
+                  style={{ width: "4rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
+                />
+              </label>
+              {(pref.condition === "avoid_zone" || pref.condition === "zone_d") && (
+                <label className="muted" style={{ fontSize: "0.75rem" }}>
+                  zone 1–5
                   <input
                     type="number"
-                    min={0}
-                    step={0.5}
-                    value={problem.weights[key]}
+                    min={1}
+                    max={5}
+                    value={pref.zone ?? 4}
                     disabled={!editable}
-                    onChange={(e) => {
-                      const value = parseFloat(e.target.value);
-                      updateProblem({
-                        weights: { ...problem.weights, [key]: Number.isNaN(value) ? 0 : value },
-                      });
-                    }}
-                    style={{
-                      width: "5.5rem",
-                      textAlign: "right",
-                      fontFamily: "monospace",
-                    }}
+                    onChange={(e) =>
+                      updatePreferenceAt(index, { ...pref, zone: parseInt(e.target.value, 10) })
+                    }
+                    style={{ width: "3rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
                   />
-                  <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>
-                    weight
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+                </label>
+              )}
+              {(pref.condition === "order_priority" || pref.condition === "express_order") && (
+                <select
+                  value={pref.order_priority ?? "express"}
+                  disabled={!editable}
+                  onChange={(e) => updatePreferenceAt(index, { ...pref, order_priority: e.target.value })}
+                  style={{ fontSize: "0.8rem" }}
+                >
+                  <option value="express">express</option>
+                  <option value="standard">standard</option>
+                </select>
+              )}
+              {(pref.condition === "shift_over_limit" || pref.condition === "shift_over_hours") && (
+                <>
+                  <label className="muted" style={{ fontSize: "0.75rem" }}>
+                    limit (min)
+                    <input
+                      type="number"
+                      min={1}
+                      value={pref.limit_minutes ?? (pref.hours != null ? pref.hours * 60 : 390)}
+                      disabled={!editable}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        updatePreferenceAt(index, {
+                          ...pref,
+                          limit_minutes: Number.isNaN(v) ? 390 : v,
+                          hours: undefined,
+                        });
+                      }}
+                      style={{ width: "4.5rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
+                    />
+                  </label>
+                </>
+              )}
+              {editable && (
+                <button type="button" className="muted" style={{ fontSize: "0.75rem" }} onClick={() => removePreference(index)}>
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
+          {editable && (
+            <button type="button" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }} onClick={addPreference}>
+              + Add preference rule
+            </button>
+          )}
         </BlockSection>
       )}
 
@@ -191,41 +421,71 @@ export function ProblemConfigBlocks({
       )}
 
       {hasConstraints && (
-        <BlockSection title="Constraints & Preferences">
+        <BlockSection title="Hard / structural constraints">
           {problem.shift_hard_penalty !== null && (
-            <FieldRow label="Shift limit enforcement">
-              <span className="muted" style={{ fontSize: "0.8rem" }}>
-                Workers who exceed their maximum shift length incur a penalty of{" "}
-                <strong style={{ fontFamily: "monospace" }}>{problem.shift_hard_penalty.toLocaleString()}</strong> cost
-                units - strongly discouraging overtime.
-              </span>
+            <FieldRow label="Max shift enforcement (penalty)">
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                <input
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={problem.shift_hard_penalty}
+                  disabled={!editable}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    updateProblem({
+                      shift_hard_penalty: Number.isNaN(value) ? 0 : value,
+                    });
+                  }}
+                  style={{ width: "8rem", fontFamily: "monospace" }}
+                />
+                <span className="muted" style={{ fontSize: "0.75rem" }}>
+                  Large cost units applied per worker when a shift exceeds the platform maximum — strongly discourages
+                  overtime.
+                </span>
+              </div>
             </FieldRow>
           )}
 
           {Object.keys(problem.locked_assignments).length > 0 && (
-            <FieldRow label="Fixed task assignments">
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-                {Object.entries(problem.locked_assignments).map(([orderIdx, workerIdx]) => (
-                  <span key={orderIdx} className="muted" style={{ fontSize: "0.8rem" }}>
-                    Task #{orderIdx} must be handled by Worker {workerIdx}
-                  </span>
+            <FieldRow label="Fixed task → worker assignments">
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {Object.entries(problem.locked_assignments).map(([taskKey, workerIdx]) => (
+                  <div key={taskKey} style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
+                    <span className="muted" style={{ fontSize: "0.8rem" }}>
+                      Task #{taskKey} →
+                    </span>
+                    <select
+                      value={workerIdx}
+                      disabled={!editable}
+                      onChange={(e) => updateLocked(taskKey, parseInt(e.target.value, 10))}
+                      style={{ fontSize: "0.8rem" }}
+                    >
+                      {WORKER_NAMES.map((name, vi) => (
+                        <option key={name} value={vi}>
+                          {vi}: {name}
+                        </option>
+                      ))}
+                    </select>
+                    {editable && (
+                      <button
+                        type="button"
+                        className="muted"
+                        style={{ fontSize: "0.75rem" }}
+                        onClick={() => updateLocked(taskKey, "")}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </FieldRow>
           )}
-
-          {problem.driver_preferences.length > 0 && (
-            <FieldRow label="Worker preferences (soft)">
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-                {problem.driver_preferences.map((pref, index) => (
-                  <span key={index} className="muted" style={{ fontSize: "0.8rem" }}>
-                    Worker {pref.vehicle_idx}: prefers to avoid {CONDITION_LABEL[pref.condition] ?? pref.condition}
-                    {" - "}
-                    <span style={{ fontFamily: "monospace" }}>+{pref.penalty}</span> penalty per occurrence
-                  </span>
-                ))}
-              </div>
-            </FieldRow>
+          {editable && Object.keys(problem.locked_assignments).length < 30 && (
+            <button type="button" style={{ fontSize: "0.8rem" }} onClick={addLockedRow}>
+              + Add locked assignment
+            </button>
           )}
         </BlockSection>
       )}
