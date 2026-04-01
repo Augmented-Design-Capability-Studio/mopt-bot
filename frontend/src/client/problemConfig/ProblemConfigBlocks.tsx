@@ -296,6 +296,76 @@ export function ProblemConfigBlocks({ configJson, onChange, editable }: ProblemC
           ),
         )}
 
+        {hasHardStructural && (
+          <>
+            {problem.shift_hard_penalty !== null && (
+              <FieldRow label="Max shift enforcement (penalty)">
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={problem.shift_hard_penalty}
+                    disabled={!editable}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value);
+                      updateProblem({
+                        shift_hard_penalty: Number.isNaN(value) ? 0 : value,
+                      });
+                    }}
+                    style={{ width: "8rem", fontFamily: "monospace" }}
+                  />
+                  <span className="muted" style={{ fontSize: "0.75rem" }}>
+                    Large cost units applied per worker when a shift exceeds the platform maximum — strongly discourages
+                    overtime.
+                  </span>
+                </div>
+              </FieldRow>
+            )}
+
+            {Object.keys(problem.locked_assignments).length > 0 && (
+              <FieldRow label="Fixed task → worker assignments">
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                  {Object.entries(problem.locked_assignments).map(([taskKey, workerIdx]) => (
+                    <div key={taskKey} style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
+                      <span className="muted" style={{ fontSize: "0.8rem" }}>
+                        Task #{taskKey} →
+                      </span>
+                      <select
+                        value={workerIdx}
+                        disabled={!editable}
+                        onChange={(e) => updateLocked(taskKey, parseInt(e.target.value, 10))}
+                        style={{ fontSize: "0.8rem" }}
+                      >
+                        {WORKER_NAMES.map((name, vi) => (
+                          <option key={name} value={vi}>
+                            {vi}: {name}
+                          </option>
+                        ))}
+                      </select>
+                      {editable && (
+                        <button
+                          type="button"
+                          className="muted"
+                          style={{ fontSize: "0.75rem" }}
+                          onClick={() => updateLocked(taskKey, "")}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </FieldRow>
+            )}
+            {editable && Object.keys(problem.locked_assignments).length < 30 && (
+              <button type="button" style={{ fontSize: "0.8rem" }} onClick={addLockedRow}>
+                + Add locked assignment
+              </button>
+            )}
+          </>
+        )}
+
         {hasSearch && (
           <>
             <div style={{ marginTop: "0.75rem", fontWeight: 600, fontSize: "0.82rem" }}>Search strategy</div>
@@ -378,79 +448,6 @@ export function ProblemConfigBlocks({ configJson, onChange, editable }: ProblemC
                   </span>
                 </div>
               </FieldRow>
-            )}
-          </>
-        )}
-
-        {hasHardStructural && (
-          <>
-            <div style={{ marginTop: "0.75rem", fontWeight: 600, fontSize: "0.82rem" }}>
-              Hard / structural constraints
-            </div>
-            {problem.shift_hard_penalty !== null && (
-              <FieldRow label="Max shift enforcement (penalty)">
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <input
-                    type="number"
-                    min={0}
-                    step={100}
-                    value={problem.shift_hard_penalty}
-                    disabled={!editable}
-                    onChange={(e) => {
-                      const value = parseFloat(e.target.value);
-                      updateProblem({
-                        shift_hard_penalty: Number.isNaN(value) ? 0 : value,
-                      });
-                    }}
-                    style={{ width: "8rem", fontFamily: "monospace" }}
-                  />
-                  <span className="muted" style={{ fontSize: "0.75rem" }}>
-                    Large cost units applied per worker when a shift exceeds the platform maximum — strongly discourages
-                    overtime.
-                  </span>
-                </div>
-              </FieldRow>
-            )}
-
-            {Object.keys(problem.locked_assignments).length > 0 && (
-              <FieldRow label="Fixed task → worker assignments">
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                  {Object.entries(problem.locked_assignments).map(([taskKey, workerIdx]) => (
-                    <div key={taskKey} style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
-                      <span className="muted" style={{ fontSize: "0.8rem" }}>
-                        Task #{taskKey} →
-                      </span>
-                      <select
-                        value={workerIdx}
-                        disabled={!editable}
-                        onChange={(e) => updateLocked(taskKey, parseInt(e.target.value, 10))}
-                        style={{ fontSize: "0.8rem" }}
-                      >
-                        {WORKER_NAMES.map((name, vi) => (
-                          <option key={name} value={vi}>
-                            {vi}: {name}
-                          </option>
-                        ))}
-                      </select>
-                      {editable && (
-                        <button
-                          type="button"
-                          className="muted"
-                          style={{ fontSize: "0.75rem" }}
-                          onClick={() => updateLocked(taskKey, "")}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </FieldRow>
-            )}
-            {editable && Object.keys(problem.locked_assignments).length < 30 && (
-              <button type="button" style={{ fontSize: "0.8rem" }} onClick={addLockedRow}>
-                + Add locked assignment
-              </button>
             )}
           </>
         )}
