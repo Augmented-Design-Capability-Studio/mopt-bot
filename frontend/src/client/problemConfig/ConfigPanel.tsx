@@ -208,7 +208,12 @@ export function ConfigPanel({
             <button
               key={tabId}
               type="button"
-              className={`tab ${activeTab === tabId ? "active" : ""}`}
+              className={`tab ${activeTab === tabId ? "active" : ""} ${
+                (tabId === "definition" && definitionUnread && !backgroundBriefPending) ||
+                (tabId === "config" && configUnread && !backgroundConfigPending && !syncingProblemConfig)
+                  ? "tab-has-update"
+                  : ""
+              }`}
               aria-label={
                 tabId === "definition" && definitionUnread
                   ? "Definition (updated)"
@@ -231,34 +236,10 @@ export function ConfigPanel({
                 <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
               ) : null}
               {tabId === "definition" && definitionUnread && !backgroundBriefPending ? (
-                <span
-                  title="Updated"
-                  aria-hidden="true"
-                  style={{
-                    display: "inline-block",
-                    width: "0.45rem",
-                    height: "0.45rem",
-                    marginLeft: "0.35rem",
-                    borderRadius: "50%",
-                    background: "#c62828",
-                    verticalAlign: "middle",
-                  }}
-                />
+                <span title="Updated" aria-hidden="true" className="tab-update-dot" />
               ) : null}
               {tabId === "config" && configUnread && !backgroundConfigPending && !syncingProblemConfig ? (
-                <span
-                  title="Updated"
-                  aria-hidden="true"
-                  style={{
-                    display: "inline-block",
-                    width: "0.45rem",
-                    height: "0.45rem",
-                    marginLeft: "0.35rem",
-                    borderRadius: "50%",
-                    background: "#c62828",
-                    verticalAlign: "middle",
-                  }}
-                />
+                <span title="Updated" aria-hidden="true" className="tab-update-dot" />
               ) : null}
             </button>
           ))}

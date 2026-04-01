@@ -7,6 +7,22 @@ const TRACKABLE: {
   card: (v: RunViolations, m: RunMetrics) => { value: string; warn: boolean };
 }[] = [
   {
+    key: "travel_time",
+    label: "Travel Time",
+    card: (_, m) => ({
+      value: `${m.total_travel_minutes.toFixed(1)} min total`,
+      warn: false,
+    }),
+  },
+  {
+    key: "fuel_cost",
+    label: "Fuel & Operating",
+    card: (_, m) => ({
+      value: `${m.fuel_proxy_minutes.toFixed(1)} min (proxy)`,
+      warn: false,
+    }),
+  },
+  {
     key: "deadline_penalty",
     label: "On-Time Delivery",
     card: (v) => ({
@@ -38,7 +54,61 @@ const TRACKABLE: {
       warn: m.workload_variance > 5,
     }),
   },
+  {
+    key: "worker_preference",
+    label: "Driver Preferences",
+    card: (_, m) => {
+      const u = m.driver_preference_penalty ?? m.driver_preference_units ?? 0;
+      return {
+        value: `${Number(u).toFixed(1)} preference units`,
+        warn: Number(u) > 0,
+      };
+    },
+  },
 ];
+
+function weightedContributionLine(
+  key: string,
+  runWeights: Record<string, unknown>,
+  metrics: RunMetrics,
+  violations: RunViolations,
+): string | null {
+  const w = Number(runWeights[key]);
+  if (!Number.isFinite(w)) return null;
+  switch (key) {
+    case "travel_time": {
+      const c = w * metrics.total_travel_minutes;
+      return `+${c.toFixed(2)} to cost (${w}×${metrics.total_travel_minutes.toFixed(1)} travel min)`;
+    }
+    case "fuel_cost": {
+      const c = w * metrics.fuel_proxy_minutes;
+      return `+${c.toFixed(2)} to cost (${w}×${metrics.fuel_proxy_minutes.toFixed(1)} fuel proxy min)`;
+    }
+    case "deadline_penalty": {
+      const c = w * violations.time_window_minutes_over;
+      return `+${c.toFixed(2)} to cost (${w}×${violations.time_window_minutes_over.toFixed(1)} min late)`;
+    }
+    case "capacity_penalty": {
+      const c = w * violations.capacity_units_over;
+      return `+${c.toFixed(2)} to cost (${w}×${violations.capacity_units_over} units)`;
+    }
+    case "workload_balance": {
+      const c = w * metrics.workload_variance;
+      return `+${c.toFixed(2)} to cost (${w}×${metrics.workload_variance.toFixed(2)} variance)`;
+    }
+    case "worker_preference": {
+      const u = metrics.driver_preference_penalty ?? metrics.driver_preference_units ?? 0;
+      const c = w * Number(u);
+      return `+${c.toFixed(2)} to cost (${w}×${Number(u).toFixed(1)} pref units)`;
+    }
+    case "priority_penalty": {
+      const c = w * violations.priority_deadline_misses;
+      return `+${c.toFixed(2)} to cost (${w}×${violations.priority_deadline_misses} misses)`;
+    }
+    default:
+      return null;
+  }
+}
 
 type ViolationSummaryProps = {
   violations: RunViolations;
@@ -47,6 +117,8 @@ type ViolationSummaryProps = {
   runtimeSeconds: number;
   /** Keys from `problem.weights` that the participant has explicitly configured. */
   activeWeightKeys: string[];
+  /** Raw weight map from the run request (alias keys). */
+  runWeights: Record<string, unknown>;
 };
 
 export function ViolationSummary({
@@ -55,33 +127,44 @@ export function ViolationSummary({
   referenceCost,
   runtimeSeconds,
   activeWeightKeys,
+  runWeights,
 }: ViolationSummaryProps) {
   const active = new Set(activeWeightKeys);
   const visibleCards = TRACKABLE.filter((t) => active.has(t.key));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-      {/* ── Active weighted terms (from configured weights) ── */}
       <div className="run-summary-grid">
         {visibleCards.map(({ key, label, card }) => {
           const { value, warn } = card(violations, metrics);
+          const contrib = weightedContributionLine(key, runWeights, metrics, violations);
           return (
-            <div
-              key={key}
-              className={`run-summary-card${warn ? " warn" : ""}`}
-            >
+            <div key={key} className={`run-summary-card${warn ? " warn" : ""}`}>
               <div className="muted">{label}</div>
               <div className="mono">{value}</div>
+              {contrib ? (
+                <div className="mono muted" style={{ fontSize: "0.72rem", marginTop: "0.15rem" }}>
+                  {contrib}
+                </div>
+              ) : null}
             </div>
           );
         })}
 
-        {/* Cost / runtime always shown */}
+        {violations.shift_limit_penalty > 0 ? (
+          <div className={`run-summary-card${violations.shift_limit_penalty > 0 ? " warn" : ""}`}>
+            <div className="muted">Shift limit (hard)</div>
+            <div className="mono">{violations.shift_limit_penalty.toFixed(1)} penalty units</div>
+            <div className="mono muted" style={{ fontSize: "0.72rem", marginTop: "0.15rem" }}>
+              +{violations.shift_limit_penalty.toFixed(2)} to total cost (hard shift penalties)
+            </div>
+          </div>
+        ) : null}
+
         <div className="run-summary-card">
           <div className="muted">Cost · runtime</div>
           <div className="mono">
-            {referenceCost != null ? referenceCost.toFixed(2) : "—"} ·{" "}
-            {runtimeSeconds.toFixed(1)}s
+            {referenceCost != null ? referenceCost.toFixed(2) : "—"} · {runtimeSeconds.toFixed(1)}s
           </div>
         </div>
       </div>

@@ -75,6 +75,7 @@ export function ClientApp() {
       canLoadFromLastRun={controller.canLoadFromLastRun}
       canLoadFromSnapshot={controller.canLoadFromSnapshot}
       onRunOptimize={controller.runOptimize}
+      onCancelOptimize={controller.cancelOptimize}
       onRunEvaluateEdited={controller.runEvaluateEdited}
       onCloseModelDialog={controller.closeModelDialog}
       onSaveModelSettings={controller.saveModelSettings}

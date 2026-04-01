@@ -16,11 +16,19 @@ function isExpressStop(stop: RunScheduleStop): boolean {
   return stop.priority_express ?? stop.priority_urgent ?? false;
 }
 
+function stopPreferenceHit(stop: RunScheduleStop): boolean {
+  if (stop.preference_conflict === true) return true;
+  const u = stop.preference_penalty_units;
+  return u != null && u > 0;
+}
+
 type RunTimelineProps = {
   schedule: RunSchedule;
+  /** When true, show driver-preference legend and highlight stops with per-visit preference cost. */
+  schedulePreferencesActive?: boolean;
 };
 
-export function RunTimeline({ schedule }: RunTimelineProps) {
+export function RunTimeline({ schedule, schedulePreferencesActive = false }: RunTimelineProps) {
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
   const stopsByVehicle = useMemo(() => {
@@ -60,7 +68,8 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
           (stop) =>
             stop.time_window_conflict ||
             stop.capacity_conflict ||
-            stop.priority_deadline_missed,
+            stop.priority_deadline_missed ||
+            stopPreferenceHit(stop),
         ) ?? allStops[0];
       setSelectedStopId(
         `${firstInteresting.vehicle_index}:${firstInteresting.task_index ?? firstInteresting.task_id}`,
@@ -96,6 +105,12 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
           <span className="timeline-legend-swatch capacity" />
           Capacity overflow
         </span>
+        {schedulePreferencesActive ? (
+          <span className="timeline-legend-item">
+            <span className="timeline-legend-swatch preference" />
+            Preference penalty (stop)
+          </span>
+        ) : null}
       </div>
       <div className="run-timeline-axis">
         <div className="run-timeline-label-spacer" />
@@ -133,6 +148,7 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
                     selectedStop != null &&
                     selectedStop.vehicle_index === stop.vehicle_index &&
                     selectedStop.task_id === stop.task_id;
+                  const prefHit = schedulePreferencesActive && stopPreferenceHit(stop);
                   return (
                     <button
                       key={`${stop.vehicle_index}:${stop.task_id}`}
@@ -142,6 +158,7 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
                         stop.time_window_conflict ? "violation-tw" : "",
                         stop.capacity_conflict ? "violation-capacity" : "",
                         isExpressStop(stop) ? "express" : "",
+                        prefHit ? "violation-preference" : "",
                         selected ? "selected" : "",
                       ]
                         .filter(Boolean)
@@ -199,6 +216,9 @@ export function RunTimeline({ schedule }: RunTimelineProps) {
                   selectedStop.priority_deadline_missed ? "express miss" : "",
                   selectedStop.capacity_conflict
                     ? `${selectedStop.capacity_overflow_after_stop} over capacity`
+                    : "",
+                  schedulePreferencesActive && stopPreferenceHit(selectedStop)
+                    ? `preference +${(selectedStop.preference_penalty_units ?? 0).toFixed(1)} units`
                     : "",
                 ]
                   .filter(Boolean)

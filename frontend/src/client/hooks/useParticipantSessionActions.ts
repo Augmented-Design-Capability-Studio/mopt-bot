@@ -680,6 +680,19 @@ export function useParticipantSessionActions({
     }
   }, [modelKey, modelName, sessionId, setBusy, setError, setModelKey, setSession, setShowModelDialog, syncSession, token]);
 
+
+  const cancelOptimize = useCallback(async () => {
+    if (!token || !sessionId) return;
+    setError(null);
+    try {
+      await apiFetch<{ signalled: boolean }>(`/sessions/${sessionId}/runs/cancel`, token, {
+        method: "POST",
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Cancel failed");
+    }
+  }, [sessionId, setError, token]);
+
   const closeModelDialog = useCallback(() => {
     setShowModelDialog(false);
     void syncSession();
@@ -694,6 +707,7 @@ export function useParticipantSessionActions({
     restoreFromSnapshot,
     runOptimize,
     runEvaluateEdited,
+    cancelOptimize,
     saveModelSettings,
     closeModelDialog,
   };

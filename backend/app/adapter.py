@@ -15,6 +15,9 @@ from typing import Any
 
 import numpy as np
 
+class RunCancelled(Exception):
+    """Optimization stopped early (user cancel); distinct from timeout."""
+
 _VRPTW_ROOT = Path(__file__).resolve().parents[2] / "vrptw-problem"
 
 # Human-readable alias names shown in the participant panel and used by the agent.
@@ -259,6 +262,12 @@ def _visits_from_evaluator_records(visits_per_vehicle: list) -> list[dict[str, A
                     "capacity_conflict": bool(
                         getattr(rec, "capacity_overflow_after_stop", 0) > 0
                     ),
+                    "preference_penalty_units": float(
+                        getattr(rec, "preference_penalty_units", 0) or 0
+                    ),
+                    "preference_conflict": bool(
+                        float(getattr(rec, "preference_penalty_units", 0) or 0) > 0
+                    ),
                 }
             )
     return out
@@ -493,11 +502,11 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_optimize(cfg: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
+def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | None = None) -> dict[str, Any]:
     ensure_vrptw_on_path()
     from evaluator import simulate_routes
     from orders import get_orders
-    from optimizer import QuickBiteOptimizer
+    from optimizer import OptimizationCancelled, QuickBiteOptimizer
 
     def _work():
         opt = QuickBiteOptimizer(
@@ -512,6 +521,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
             params=cfg["algorithm_params"],
             epochs=cfg["epochs"],
             pop_size=cfg["pop_size"],
+            cancel_event=cancel_event,
         )
 
     with ThreadPoolExecutor(max_workers=1) as ex:
@@ -520,6 +530,8 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
             result = fut.result(timeout=timeout_sec)
         except FuturesTimeout:
             raise TimeoutError("Optimization exceeded time limit") from None
+        except OptimizationCancelled:
+            raise RunCancelled() from None
 
     orders = get_orders(seed=None)
     visits = _visits_from_evaluator_records(result.visits)
@@ -638,7 +650,7 @@ def run_evaluate_routes(
     }
 
 
-def solve_request_to_result(body: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
+def solve_request_to_result(body: dict[str, Any], timeout_sec: float, cancel_event: Any | None = None) -> dict[str, Any]:
     cfg = parse_problem_config(body.get("problem") or body)
     # Pop warnings before passing cfg to the solver (solver ignores unknown keys anyway,
     # but this keeps cfg clean and makes warning propagation explicit).
@@ -651,7 +663,7 @@ def solve_request_to_result(body: dict[str, Any], timeout_sec: float) -> dict[st
         routes = [[int(x) for x in row] for row in routes]
         result = run_evaluate_routes(routes, cfg)
     else:
-        result = run_optimize(cfg, timeout_sec)
+        result = run_optimize(cfg, timeout_sec, cancel_event=cancel_event)
     if weight_warnings:
         result["weight_warnings"] = weight_warnings
     return result

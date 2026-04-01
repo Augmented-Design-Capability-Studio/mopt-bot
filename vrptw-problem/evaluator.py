@@ -42,6 +42,7 @@ class VisitRecord:
     load_after_stop: int
     capacity_limit: int
     capacity_overflow_after_stop: int
+    preference_penalty_units: float = 0.0
 
 
 @dataclass
@@ -238,9 +239,10 @@ def simulate_routes(
             overflow = max(0, load - vehicle.capacity)
             rm.capacity_overflow = max(rm.capacity_overflow, overflow)
 
-            rm.driver_penalty += _apply_driver_penalties_per_visit(
+            pv = _apply_driver_penalties_per_visit(
                 v_idx, order, is_express, driver_preferences
             )
+            rm.driver_penalty += pv
 
             wait_minutes = max(0.0, float(order.time_window_open) - arrival)
 
@@ -265,6 +267,7 @@ def simulate_routes(
                 load_after_stop=load,
                 capacity_limit=vehicle.capacity,
                 capacity_overflow_after_stop=overflow,
+                preference_penalty_units=pv,
             ))
             current_zone = order.zone
 

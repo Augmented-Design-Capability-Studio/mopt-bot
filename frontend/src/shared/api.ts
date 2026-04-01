@@ -220,6 +220,9 @@ export type RunScheduleStop = {
   capacity_limit: number;
   capacity_overflow_after_stop: number;
   capacity_conflict: boolean;
+  /** Per-stop driver preference cost units (per_visit rules only). */
+  preference_penalty_units?: number;
+  preference_conflict?: boolean;
 };
 
 export type RunVehicleSummary = {

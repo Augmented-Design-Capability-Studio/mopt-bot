@@ -4,6 +4,7 @@ MEALpy-based QuickBite optimizer.
 Wraps GA, PSO, SA, SwarmSA, and ACOR algorithms for VRPTW solving.
 """
 
+import threading
 import time
 import numpy as np
 from dataclasses import dataclass, field
@@ -20,6 +21,11 @@ from encoder import decode_solution, VECTOR_LEN, encode_random_solution
 from evaluator import evaluate_solution
 from user_input import DEFAULT_WEIGHTS, load_user_input
 from vehicles import VEHICLES
+
+
+
+class OptimizationCancelled(Exception):
+    """Raised when solve is stopped early (cooperative cancel)."""
 
 
 @dataclass
@@ -143,6 +149,7 @@ class QuickBiteOptimizer:
         epochs: int = 500,
         pop_size: int = 100,
         termination: Optional[dict] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> SolveResult:
         """
         Run the optimization.
@@ -154,6 +161,7 @@ class QuickBiteOptimizer:
             pop_size: Population size (ignored for SA).
             termination: Optional mealpy termination dict, e.g. {"max_time": 60}
                 or {"max_fe": 100000}. Overrides epoch limit when set.
+            cancel_event: When set, checked before each objective evaluation; if set, raises OptimizationCancelled.
 
         Returns:
             SolveResult with best_cost, routes, metrics, convergence, runtime.
@@ -175,6 +183,8 @@ class QuickBiteOptimizer:
         shift_penalty = self.shift_hard_penalty
 
         def obj_func(solution: np.ndarray) -> float:
+            if cancel_event is not None and cancel_event.is_set():
+                raise OptimizationCancelled()
             cost, _, _ = evaluate_solution(
                 np.asarray(solution),
                 orders,

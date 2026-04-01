@@ -475,6 +475,21 @@ def post_steer(
     return MessageOut.model_validate(m)
 
 
+@router.post("/{session_id}/runs/cancel")
+def post_cancel_optimization_run(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    """Signal an in-flight optimize (same session) to stop early; no-op if none running."""
+    from app.solve_cancel import request_cancel
+
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"signalled": request_cancel(session_id)}
+
+
 @router.post("/{session_id}/runs", response_model=RunOut)
 def post_run(
     session_id: str,
@@ -482,7 +497,8 @@ def post_run(
     db: Session = Depends(get_db),
     _: Principal = Depends(require_client),
 ):
-    from app.adapter import solve_request_to_result
+    from app.adapter import RunCancelled, solve_request_to_result
+    from app.solve_cancel import clear_cancel_event, register_cancel_event
 
     row = db.get(StudySession, session_id)
     if row is None:
@@ -514,9 +530,10 @@ def post_run(
 
     create_snapshot(db, session_id, EVENT_BEFORE_RUN)
 
+    cancel_ev = register_cancel_event(session_id) if str(body.type).lower() == "optimize" else None
     try:
         timeout = get_settings().solve_timeout_sec
-        result = solve_request_to_result(payload, timeout)
+        result = solve_request_to_result(payload, timeout, cancel_event=cancel_ev)
         run_row.ok = True
         run_row.cost = float(result["cost"])
         run_row.reference_cost = (
@@ -524,6 +541,8 @@ def post_run(
         )
         run_row.result_json = json.dumps(result)
         run_row.error_message = None
+    except RunCancelled:
+        run_row.error_message = "Optimization cancelled"
     except TimeoutError:
         run_row.error_message = "Optimization timed out"
     except ValueError as e:
@@ -532,6 +551,9 @@ def post_run(
         run_row.error_message = "Solver dependencies missing on server"
     except Exception:
         run_row.error_message = "Optimization failed"
+    finally:
+        if cancel_ev is not None:
+            clear_cancel_event(session_id)
 
     row.updated_at = datetime.now(timezone.utc)
     db.commit()

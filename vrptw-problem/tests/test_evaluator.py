@@ -65,3 +65,18 @@ def test_shift_over_limit_minutes():
     ]
     _, m, _ = simulate_routes(_default_routes(), orders, rng, weights, driver_preferences=prefs)
     assert m["driver_penalty"] >= 100.0
+
+
+def test_visit_records_preference_penalty_units_per_stop():
+    """Per-visit preference units appear on stops when avoid_zone fires (any vehicle/route)."""
+    orders = get_orders(seed=None)
+    rng = np.random.RandomState(3)
+    weights = {f"w{i}": 0.0 for i in range(1, 8)}
+    weights["w6"] = 1.0
+    prefs = [
+        {"vehicle_idx": 0, "condition": "avoid_zone", "zone": 4, "penalty": 2.5},
+        {"vehicle_idx": 1, "condition": "avoid_zone", "zone": 4, "penalty": 2.5},
+    ]
+    _, _, visits = simulate_routes(_default_routes(), orders, rng, weights, driver_preferences=prefs)
+    hits = [v for route in visits for v in route if getattr(v, "preference_penalty_units", 0) > 0]
+    assert len(hits) >= 1

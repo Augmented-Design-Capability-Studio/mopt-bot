@@ -25,9 +25,8 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
       "Penalizes unequal shift lengths across workers. Higher values produce a fairer distribution of work.",
   },
   worker_preference: {
-    label: "Strength of preference penalties",
-    description:
-      "Scales the sum of per-rule preference cost units below. Does not add time to the traffic model.",
+    label: "Driver Preferences",
+    description: "Weight on preference-rule cost units (per rules below).",
   },
   priority_penalty: {
     label: "Priority Order Deadlines",
@@ -41,6 +40,13 @@ const WEIGHT_GOAL_KEYS = ["travel_time", "fuel_cost", "workload_balance"] as con
 
 /** Weight keys shown under “Soft penalties” (violations / lateness), excluding worker_preference. */
 const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty"] as const;
+
+/** Single panel order: routing, soft violations, then driver preference weight + rules. */
+const WEIGHT_DISPLAY_ORDER = [
+  ...WEIGHT_GOAL_KEYS,
+  ...WEIGHT_SOFT_PENALTY_KEYS,
+  "worker_preference",
+] as const;
 
 const ALGORITHM_DESC: Record<string, string> = {
   GA: "Genetic Algorithm - evolves a population of candidate solutions through selection, crossover, and mutation.",
@@ -74,6 +80,7 @@ const PREFERENCE_CONDITIONS = [
 
 export {
   ALGORITHM_DESC,
+  WEIGHT_DISPLAY_ORDER,
   CONDITION_LABEL,
   PREFERENCE_CONDITIONS,
   WEIGHT_GOAL_KEYS,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { displayRunNumber, type RunResult, type Session } from "@shared/api";
 
@@ -22,6 +22,7 @@ type ResultsPanelProps = {
   onScheduleTextChange: (value: string) => void;
   onSetEditMode: (mode: EditMode) => void;
   onRunOptimize: () => void | Promise<void>;
+  onCancelOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
 };
 
@@ -40,10 +41,14 @@ export function ResultsPanel({
   onScheduleTextChange,
   onSetEditMode,
   onRunOptimize,
+  onCancelOptimize,
   onRunEvaluateEdited,
 }: ResultsPanelProps) {
   const [showRaw, setShowRaw] = useState(false);
   const [vizTab, setVizTab] = useState<"schedule" | "convergence">("schedule");
+  const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
+  const prevRunsLenRef = useRef<number | null>(null);
+
   const currentResult = currentRun?.result ?? null;
   const runProblem = (currentRun?.request?.problem ?? {}) as Record<string, unknown>;
   const runWeights =
@@ -66,9 +71,35 @@ export function ResultsPanel({
   const convergence = currentResult?.convergence ?? [];
   const runActiveWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
 
+  const driverPrefs = Array.isArray(runProblem.driver_preferences) ? runProblem.driver_preferences : [];
+  const wpw = Number(runWeights.worker_preference);
+  const schedulePreferencesActive =
+    driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
+
   useEffect(() => {
     setVizTab("schedule");
   }, [activeRun]);
+
+  useEffect(() => {
+    const n = runs.length;
+    if (prevRunsLenRef.current === null) {
+      prevRunsLenRef.current = n;
+      return;
+    }
+    if (n > prevRunsLenRef.current && n > 0) {
+      const latest = n - 1;
+      if (activeRun !== latest) {
+        setUnreadRunIndex(latest);
+      }
+    }
+    prevRunsLenRef.current = n;
+  }, [runs.length, activeRun]);
+
+  useEffect(() => {
+    if (unreadRunIndex !== null && activeRun === unreadRunIndex) {
+      setUnreadRunIndex(null);
+    }
+  }, [activeRun, unreadRunIndex]);
 
   return (
     <section className={className}>
@@ -78,16 +109,20 @@ export function ResultsPanel({
       </div>
       <div className="panel-body">
         <div className="tabs">
-          {runs.map((run, index) => (
-            <button
-              key={run.id}
-              type="button"
-              className={`tab ${index === activeRun ? "active" : ""}`}
-              onClick={() => onSetActiveRun(index)}
-            >
-              Run #{displayRunNumber(run, index)} {run.ok ? "" : "✗"}
-            </button>
-          ))}
+          {runs.map((run, index) => {
+            const unreadHere = unreadRunIndex === index && index !== activeRun;
+            return (
+              <button
+                key={run.id}
+                type="button"
+                className={`tab ${index === activeRun ? "active" : ""} ${unreadHere ? "tab-has-update" : ""}`}
+                onClick={() => onSetActiveRun(index)}
+              >
+                Run #{displayRunNumber(run, index)} {run.ok ? "" : "✗"}
+                {unreadHere ? <span title="New results" aria-hidden="true" className="tab-update-dot" /> : null}
+              </button>
+            );
+          })}
           {optimizing && (
             <button
               type="button"
@@ -166,6 +201,7 @@ export function ResultsPanel({
               referenceCost={currentRun?.reference_cost ?? null}
               runtimeSeconds={currentResult.runtime_seconds}
               activeWeightKeys={runActiveWeightKeys}
+              runWeights={runWeights}
             />
             {convergence.length > 0 && (
               <div className="tabs" style={{ marginTop: "0.6rem" }}>
@@ -188,7 +224,10 @@ export function ResultsPanel({
             {vizTab === "convergence" && convergence.length > 0 ? (
               <ConvergencePlot convergence={convergence} referenceCost={currentRun?.reference_cost} />
             ) : (
-              <RunTimeline schedule={currentResult.schedule} />
+              <RunTimeline
+                schedule={currentResult.schedule}
+                schedulePreferencesActive={schedulePreferencesActive}
+              />
             )}
           </div>
         ) : (
@@ -232,6 +271,14 @@ export function ResultsPanel({
             onClick={() => void onRunOptimize()}
           >
             Run optimization
+          </button>
+          <button
+            type="button"
+            disabled={!optimizing || sessionTerminated}
+            onClick={() => void onCancelOptimize()}
+            title="Ask the server to stop the current optimization early"
+          >
+            Cancel run
           </button>
           {editMode !== "results" ? (
             <button

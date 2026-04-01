@@ -6,9 +6,8 @@ Use this document as the source of truth for implementers and for pasting into C
 
 ## 1. Non-negotiables
 
-- **`vrptw-problem/` is read-only reference.** Do not edit, move, or refactor files inside it. All new application code lives outside that directory (e.g. `backend/`, `frontend/`).
+- **`vrptw-problem/`** is primarily **reference** for the domain solver. Prefer integrating via `backend/app/adapter.py`. Changes inside `vrptw-problem/` (e.g. cooperative cancel hooks, richer visit records) require **explicit maintainer approval**; do not refactor it casually.
 - **Integration** is by **importing** or **calling** the existing Python API from `backend/` (e.g. a thin adapter module). Do not fork or duplicate solver logic under `backend/` unless the human maintainer explicitly approves; prefer importing the package as-is.
-- If a change inside `vrptw-problem/` is unavoidable, **stop** and ask the maintainer first; do not patch it as part of app work.
 - **Documentation:** Changes to **workflow**, **architecture**, or **repo layout** should include concise updates to **this file** and **`README.md`** (see Cursor rule `docs-sync`).
 
 ---
@@ -72,8 +71,8 @@ Do **not** add application routes, study-only hacks, or deployment config **insi
 - **Weight aliases:** `backend/app/adapter.py` defines `WEIGHT_ALIASES` mapping human-readable keys (`travel_time`, `fuel_cost`, `deadline_penalty`, `capacity_penalty`, `workload_balance`, `worker_preference`, `priority_penalty`) to the internal `w1`–`w7` keys expected by the solver. `translate_weights()` is called inside `parse_problem_config` so both alias names and `w1`–`w7` keys are accepted; alias names are preferred for all new panel configs and agent-generated patches.
 - **Driver preference semantics:** participant-facing solve/evaluate flows treat `driver_preferences` as explicit-only input. If omitted, default to an empty list (no implicit driver-trait penalties). `parse_problem_config` validates each rule (`vehicle_idx` 0–4, known `condition`, nonnegative `penalty`, optional `zone` / `order_priority` / `limit_minutes` / `aggregation` / legacy `hours`). **`locked_assignments`** must map task indices **0–29** to vehicles **0–4** with no duplicate tasks. Run metrics expose **`driver_preference_units`** (alias `driver_preference_penalty`) as raw preference cost units before w6 — not minutes of travel time.
 - **Reproducibility:** document and fix **RNG seeds** (and any time-dependent behavior) so the same configuration yields the same result when that is a study requirement.
-- **Violation consistency:** the adapter uses the optimizer's `visits` from its final `evaluate_solution` (not a re-simulation) so the violation block and timeline per-stop data share the same underlying evaluation. Cost and violations reflect the user's configured objectives.
-- **Timeouts and cancellation:** long runs must not block the process indefinitely; support **request timeouts** and **abort** where the stack allows it.
+- **Violation consistency:** the adapter uses the optimizer's `visits` from its final `evaluate_solution` (not a re-simulation) so the violation block and timeline per-stop data share the same underlying evaluation. Cost and violations reflect the user's configured objectives. Visit payloads may include **`preference_penalty_units`** / **`preference_conflict`** for per-stop driver-preference cost (per-visit rules only).
+- **Timeouts and cancellation:** long runs use a server timeout (`solve_timeout_sec`). **Cooperative cancel:** while `POST /sessions/{id}/runs` (optimize) is executing, `POST /sessions/{id}/runs/cancel` sets a per-session flag; the MEALpy objective checks it and stops early (`OptimizationCancelled` → stored run with “Optimization cancelled”). The participant **Cancel run** button triggers that endpoint.
 
 ### 6.4 Environment & config
 

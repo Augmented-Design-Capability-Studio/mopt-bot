@@ -439,6 +439,66 @@ select:focus-visible {
   border-color: var(--accent-dim);
 }
 
+/* Salient “tab has unread updates” affordance (Problem setup + Results run tabs) */
+.tab.tab-has-update {
+  animation: tab-update-ring 2s ease-in-out infinite;
+}
+
+@keyframes tab-update-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(198, 40, 40, 0);
+  }
+  45% {
+    box-shadow:
+      0 0 0 2px rgba(198, 40, 40, 0.35),
+      0 0 10px 2px rgba(198, 40, 40, 0.2);
+  }
+}
+
+.tab-update-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-left: 0.35rem;
+  border-radius: 50%;
+  background: #c62828;
+  vertical-align: middle;
+  box-shadow:
+    0 0 0 2px rgba(198, 40, 40, 0.35),
+    0 0 8px 3px rgba(198, 40, 40, 0.45);
+  animation: tab-update-dot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tab-update-dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow:
+      0 0 0 2px rgba(198, 40, 40, 0.3),
+      0 0 6px 2px rgba(198, 40, 40, 0.35);
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.95;
+    box-shadow:
+      0 0 0 4px rgba(198, 40, 40, 0.25),
+      0 0 12px 4px rgba(198, 40, 40, 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab.tab-has-update {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.3);
+  }
+
+  .tab-update-dot {
+    animation: none;
+  }
+}
+
 .definition-panel {
   display: flex;
   flex-direction: column;
@@ -699,6 +759,11 @@ select:focus-visible {
   background: linear-gradient(to top, #b54734 45%, #8094a8 45%);
 }
 
+.timeline-legend-swatch.preference {
+  border: 1px dashed #4a148c;
+  background: #e1bee7;
+}
+
 .run-timeline-axis,
 .run-timeline-row {
   display: grid;
@@ -765,6 +830,11 @@ select:focus-visible {
 
 .run-stop-bar.violation-capacity {
   box-shadow: inset 0 -0.45rem 0 #b54734;
+}
+
+.run-stop-bar.violation-preference {
+  border: 2px dashed #6a1b9a;
+  box-shadow: 0 0 0 1px rgba(106, 27, 154, 0.25);
 }
 
 .run-stop-bar.selected {

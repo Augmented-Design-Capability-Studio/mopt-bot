@@ -253,6 +253,7 @@ export function useParticipantController() {
     saveProblemBrief: actions.saveProblemBrief,
     syncProblemConfig: actions.syncProblemConfig,
     runOptimize: actions.runOptimize,
+    cancelOptimize: actions.cancelOptimize,
     runEvaluateEdited: actions.runEvaluateEdited,
     saveModelSettings: actions.saveModelSettings,
     leaveSession: lifecycle.leaveSession,

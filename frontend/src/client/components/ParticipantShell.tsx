@@ -59,6 +59,7 @@ type ParticipantShellProps = {
   canLoadFromLastRun?: boolean;
   canLoadFromSnapshot?: boolean;
   onRunOptimize: () => void | Promise<void>;
+  onCancelOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
   onCloseModelDialog: () => void;
   onSaveModelSettings: () => void | Promise<void>;
@@ -113,6 +114,7 @@ export function ParticipantShell({
   canLoadFromLastRun,
   canLoadFromSnapshot,
   onRunOptimize,
+  onCancelOptimize,
   onRunEvaluateEdited,
   onCloseModelDialog,
   onSaveModelSettings,
@@ -238,6 +240,7 @@ export function ParticipantShell({
             onScheduleTextChange={onScheduleTextChange}
             onSetEditMode={onSetEditMode}
             onRunOptimize={onRunOptimize}
+            onCancelOptimize={onCancelOptimize}
             onRunEvaluateEdited={onRunEvaluateEdited}
           />
         )}
