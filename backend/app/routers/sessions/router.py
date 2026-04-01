@@ -475,12 +475,7 @@ def post_steer(
     return MessageOut.model_validate(m)
 
 
-@router.post("/{session_id}/runs/cancel")
-def post_cancel_optimization_run(
-    session_id: str,
-    db: Session = Depends(get_db),
-    _: Principal = Depends(require_client),
-):
+def _post_optimization_cancel(session_id: str, db: Session) -> dict[str, bool]:
     """Signal an in-flight optimize (same session) to stop early; no-op if none running."""
     from app.solve_cancel import request_cancel
 
@@ -488,6 +483,25 @@ def post_cancel_optimization_run(
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"signalled": request_cancel(session_id)}
+
+
+@router.post("/{session_id}/runs/cancel")
+def post_cancel_optimization_runs_cancel(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    return _post_optimization_cancel(session_id, db)
+
+
+@router.post("/{session_id}/optimization/cancel")
+def post_cancel_optimization_alt_path(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    """Same as POST .../runs/cancel; alternate path for proxies that mishandle `/runs/cancel`."""
+    return _post_optimization_cancel(session_id, db)
 
 
 @router.post("/{session_id}/runs", response_model=RunOut)

@@ -68,6 +68,7 @@ export function ResultsPanel({
         ? currentResult.algorithm
         : null;
   const hasResult = currentResult !== null;
+  const showOptimizeProgress = optimizing || Boolean(currentRun?.clientPending);
   const convergence = currentResult?.convergence ?? [];
   const runActiveWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
 
@@ -113,32 +114,24 @@ export function ResultsPanel({
             const unreadHere = unreadRunIndex === index && index !== activeRun;
             return (
               <button
-                key={run.id}
+                key={run.clientPending ? `pending-${run.id}` : run.id}
                 type="button"
                 className={`tab ${index === activeRun ? "active" : ""} ${unreadHere ? "tab-has-update" : ""}`}
                 onClick={() => onSetActiveRun(index)}
               >
+                {run.clientPending ? (
+                  <span className="chat-spinner" style={{ width: "0.7rem", height: "0.7rem", borderWidth: "2px" }} />
+                ) : null}
                 Run #{displayRunNumber(run, index)} {run.ok ? "" : "✗"}
                 {unreadHere ? <span title="New results" aria-hidden="true" className="tab-update-dot" /> : null}
               </button>
             );
           })}
-          {optimizing && (
-            <button
-              type="button"
-              className="tab active"
-              disabled
-              style={{ display: "flex", alignItems: "center", gap: "0.35rem", opacity: 1 }}
-            >
-              <span className="chat-spinner" style={{ width: "0.7rem", height: "0.7rem", borderWidth: "2px" }} />
-              Running...
-            </button>
-          )}
         </div>
 
-        {optimizing && <div className="opt-progress-bar" />}
+        {showOptimizeProgress ? <div className="opt-progress-bar" /> : null}
 
-        {currentRun && !optimizing && (
+        {currentRun && !showOptimizeProgress && (
           <div
             className="mono muted"
             style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}
@@ -166,7 +159,7 @@ export function ResultsPanel({
             spellCheck={false}
             placeholder="Edit schedule JSON for this run."
           />
-        ) : optimizing ? (
+        ) : showOptimizeProgress ? (
           <div className="muted" style={{ fontSize: "0.85rem", paddingTop: "0.25rem" }}>
             Optimization in progress - the solver is searching for a good solution...
           </div>
@@ -274,7 +267,7 @@ export function ResultsPanel({
           </button>
           <button
             type="button"
-            disabled={!optimizing || sessionTerminated}
+            disabled={!showOptimizeProgress || sessionTerminated}
             onClick={() => void onCancelOptimize()}
             title="Ask the server to stop the current optimization early"
           >

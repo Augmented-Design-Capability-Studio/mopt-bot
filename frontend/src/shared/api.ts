@@ -291,6 +291,8 @@ export type RunResult = {
     routes?: number[][];
   } | null;
   result: RunPayload | null;
+  /** Client-only: placeholder row while POST /runs (optimize) is in flight */
+  clientPending?: boolean;
 };
 
 export type SnapshotSummary = {

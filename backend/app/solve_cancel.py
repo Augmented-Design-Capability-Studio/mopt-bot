@@ -1,4 +1,4 @@
-"""Cooperative cancellation for in-session optimization (see post_run + POST .../runs/cancel)."""
+"""Cooperative cancellation for in-session optimization (see post_run + POST .../runs/cancel or .../optimization/cancel)."""
 
 from __future__ import annotations
 

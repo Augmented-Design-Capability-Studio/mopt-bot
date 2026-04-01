@@ -74,6 +74,7 @@ You can still use Uvicorn directly if you prefer:
 - Default URL: `http://127.0.0.1:8000` (or your chosen port)
 - Health: `GET /health`
 - Auth: `Authorization: Bearer <MOPT_CLIENT_SECRET>` (participant) or `<MOPT_RESEARCHER_SECRET>` (researcher)
+- **Cancel in-flight optimize:** `POST /sessions/{id}/runs/cancel` or `POST /sessions/{id}/optimization/cancel` (equivalent). The participant app uses **`/optimization/cancel`** to avoid some proxy/preflight issues with paths under `/runs/`.
 
 Install **mealpy** (via `vrptw-problem/requirements.txt`) or optimization runs return a clear error.
 

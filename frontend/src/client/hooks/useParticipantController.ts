@@ -32,6 +32,8 @@ export function useParticipantController() {
   const [busy, setBusy] = useState(false);
   const [syncingProblemConfig, setSyncingProblemConfig] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
+  const optimizingRef = useRef(false);
+  optimizingRef.current = optimizing;
   const [error, setError] = useState<string | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [modelKey, setModelKey] = useState("");
@@ -70,6 +72,7 @@ export function useParticipantController() {
     authed,
     lastMsgId,
     activeRun,
+    optimizingRef,
     runs,
     session,
     showModelDialog,
@@ -173,6 +176,7 @@ export function useParticipantController() {
     setBusy,
     setSyncingProblemConfig,
     setOptimizing,
+    optimizingRef,
     setError,
     setShowModelDialog,
     setModelKey,

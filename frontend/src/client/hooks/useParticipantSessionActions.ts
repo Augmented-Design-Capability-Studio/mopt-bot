@@ -20,6 +20,33 @@ import { cloneProblemBrief, problemBriefChangeSummary } from "../problemDefiniti
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
 
+function maxCommittedRunNumber(existing: RunResult[]): number {
+  let max = 0;
+  for (const r of existing) {
+    if (r.clientPending) continue;
+    const n =
+      typeof r.run_number === "number" && Number.isFinite(r.run_number) && r.run_number > 0 ? r.run_number : 0;
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+function makeOptimisticOptimizeRun(problem: Record<string, unknown>, existing: RunResult[]): RunResult {
+  return {
+    id: -Math.abs(Date.now()),
+    run_number: maxCommittedRunNumber(existing) + 1,
+    created_at: new Date().toISOString(),
+    run_type: "optimize",
+    ok: false,
+    cost: null,
+    reference_cost: null,
+    error_message: null,
+    request: { type: "optimize", problem },
+    result: null,
+    clientPending: true,
+  };
+}
+
 type UseParticipantSessionActionsArgs = {
   token: string;
   participantNumber?: string;
@@ -45,6 +72,7 @@ type UseParticipantSessionActionsArgs = {
   setBusy: (value: boolean) => void;
   setSyncingProblemConfig: (value: boolean) => void;
   setOptimizing: (value: boolean) => void;
+  optimizingRef: MutableRefObject<boolean>;
   setError: (value: string | null) => void;
   setShowModelDialog: (value: boolean) => void;
   setModelKey: (value: string) => void;
@@ -88,6 +116,7 @@ export function useParticipantSessionActions({
   setBusy,
   setSyncingProblemConfig,
   setOptimizing,
+  optimizingRef,
   setError,
   setShowModelDialog,
   setModelKey,
@@ -560,17 +589,31 @@ export function useParticipantSessionActions({
       return;
     }
     const problem = (panel.problem ?? panel) as Record<string, unknown>;
+    optimizingRef.current = true;
     setBusy(true);
     setOptimizing(true);
     setError(null);
+    setRuns((current) => {
+      const base = current.filter((r) => !r.clientPending);
+      const pending = makeOptimisticOptimizeRun(problem, base);
+      const next = [...base, pending];
+      setActiveRun(next.length - 1);
+      return next;
+    });
     try {
       const run = await apiFetch<RunResult>(`/sessions/${sessionId}/runs`, token, {
         method: "POST",
         body: JSON.stringify({ type: "optimize", problem }),
       });
       setRuns((current) => {
-        const next = [...current, run];
-        setActiveRun(next.length - 1);
+        const idx = current.findIndex((r) => r.clientPending);
+        if (idx < 0) {
+          const next = [...current, run];
+          setActiveRun(next.length - 1);
+          return next;
+        }
+        const next = [...current];
+        next[idx] = run;
         return next;
       });
       void syncMessages();
@@ -592,14 +635,21 @@ export function useParticipantSessionActions({
         );
       }
     } catch (error) {
+      setRuns((current) => {
+        const filtered = current.filter((r) => !r.clientPending);
+        setActiveRun((ar) => (filtered.length === 0 ? 0 : Math.min(ar, filtered.length - 1)));
+        return filtered;
+      });
       setError(error instanceof Error ? error.message : "Run failed");
     } finally {
+      optimizingRef.current = false;
       setBusy(false);
       setOptimizing(false);
     }
   }, [
     configText,
     invokeModel,
+    optimizingRef,
     postContextMessage,
     refetchSnapshots,
     session?.optimization_allowed,
@@ -685,7 +735,7 @@ export function useParticipantSessionActions({
     if (!token || !sessionId) return;
     setError(null);
     try {
-      await apiFetch<{ signalled: boolean }>(`/sessions/${sessionId}/runs/cancel`, token, {
+      await apiFetch<{ signalled: boolean }>(`/sessions/${sessionId}/optimization/cancel`, token, {
         method: "POST",
       });
     } catch (error) {

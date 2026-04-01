@@ -26,6 +26,8 @@ type UseParticipantSessionSyncArgs = {
   authed: boolean;
   lastMsgId: number;
   activeRun: number;
+  /** When true, periodic run list sync is skipped (avoids ghost tabs during optimize). */
+  optimizingRef: MutableRefObject<boolean>;
   runs: RunResult[];
   session: Session | null;
   showModelDialog: boolean;
@@ -55,6 +57,7 @@ export function useParticipantSessionSync({
   authed,
   lastMsgId,
   activeRun,
+  optimizingRef,
   runs,
   session,
   showModelDialog,
@@ -207,6 +210,7 @@ export function useParticipantSessionSync({
 
   const syncRuns = useCallback(async () => {
     if (!token || !sessionId) return;
+    if (optimizingRef.current) return;
     const requestedId = sessionId;
     try {
       const list = await apiFetch<unknown>(`/sessions/${requestedId}/runs`, token);
@@ -230,7 +234,7 @@ export function useParticipantSessionSync({
         );
       }
     }
-  }, [invalidateRemovedSession, sessionId, sessionIdRef, setActiveRun, setRuns, token]);
+  }, [invalidateRemovedSession, optimizingRef, sessionId, sessionIdRef, setActiveRun, setRuns, token]);
 
   useEffect(() => {
     if (!authed) return;
