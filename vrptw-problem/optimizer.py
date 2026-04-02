@@ -150,6 +150,8 @@ class QuickBiteOptimizer:
         pop_size: int = 100,
         termination: Optional[dict] = None,
         cancel_event: Optional[threading.Event] = None,
+        mode: str = "single",
+        n_workers: Optional[int] = None,
     ) -> SolveResult:
         """
         Run the optimization.
@@ -162,6 +164,8 @@ class QuickBiteOptimizer:
             termination: Optional mealpy termination dict, e.g. {"max_time": 60}
                 or {"max_fe": 100000}. Overrides epoch limit when set.
             cancel_event: When set, checked before each objective evaluation; if set, raises OptimizationCancelled.
+            mode: mealpy execution mode: single, swarm, thread, or process (see mealpy Optimizer.solve).
+            n_workers: Worker count for thread/process modes; omit to use mealpy default (recommended for thread).
 
         Returns:
             SolveResult with best_cost, routes, metrics, convergence, runtime.
@@ -222,9 +226,11 @@ class QuickBiteOptimizer:
         else:
             raise ValueError(f"Unknown algorithm: {algorithm}. Use GA, PSO, SA, SwarmSA, or ACOR.")
 
-        solve_kw = {"seed": self.seed}
+        solve_kw: dict[str, Any] = {"seed": self.seed, "mode": mode}
         if termination is not None:
             solve_kw["termination"] = termination
+        if n_workers is not None:
+            solve_kw["n_workers"] = n_workers
         best = model.solve(problem, **solve_kw)
         runtime = time.perf_counter() - t0
 
