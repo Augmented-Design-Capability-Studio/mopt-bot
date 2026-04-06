@@ -207,15 +207,21 @@ select:focus-visible {
   gap: 0.35rem;
 }
 
+/* Wrapper establishes a non-scrolling positioning context so the processing shield
+   covers the visible panel; the inner div scrolls independently underneath. */
+.config-panel-scroll-wrapper {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .config-panel-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding-right: 0.1rem;
-}
-
-.config-panel-scroll--shielded {
-  position: relative;
 }
 
 .config-panel-processing-shield {
@@ -230,7 +236,8 @@ select:focus-visible {
   padding: 1rem;
   text-align: center;
   background: color-mix(in srgb, var(--panel) 82%, transparent);
-  pointer-events: auto;
+  /* Let wheel / trackpad / scrollbar reach `.config-panel-scroll` beneath; overlay stays fixed. */
+  pointer-events: none;
 }
 
 .config-panel-actions {

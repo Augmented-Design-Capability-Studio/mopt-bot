@@ -290,38 +290,40 @@ export function ConfigPanel({
           </p>
         )}
 
-        <div className={`config-panel-scroll ${configOrRawBlockingUi ? "config-panel-scroll--shielded" : ""}`}>
-          {activeTab === "definition" ? (
-            problemBrief ? (
-              <DefinitionPanel
-                problemBrief={problemBrief}
-                editable={editableDefinition}
-                sessionTerminated={sessionTerminated}
-                onChange={(b) => onProblemBriefChange(b)}
-                onEnsureDefinitionEditing={onEnsureDefinitionEditing}
+        <div className="config-panel-scroll-wrapper">
+          <div className="config-panel-scroll">
+            {activeTab === "definition" ? (
+              problemBrief ? (
+                <DefinitionPanel
+                  problemBrief={problemBrief}
+                  editable={editableDefinition}
+                  sessionTerminated={sessionTerminated}
+                  onChange={(b) => onProblemBriefChange(b)}
+                  onEnsureDefinitionEditing={onEnsureDefinitionEditing}
+                />
+              ) : (
+                <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>
+                  Loading problem definition...
+                </p>
+              )
+            ) : activeTab === "config" ? (
+              <ProblemConfigBlocks
+                configJson={configText}
+                onChange={onConfigTextChange}
+                editable={editableConfig}
+                onInteractionStart={onEnterConfigEdit}
               />
             ) : (
-              <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>
-                Loading problem definition...
-              </p>
-            )
-          ) : activeTab === "config" ? (
-            <ProblemConfigBlocks
-              configJson={configText}
-              onChange={onConfigTextChange}
-              editable={editableConfig}
-              onInteractionStart={onEnterConfigEdit}
-            />
-          ) : (
-            <textarea
-              className="mono config-raw-textarea"
-              value={rawJsonText}
-              readOnly
-              disabled={false}
-              spellCheck={false}
-              placeholder='{"problem_definition": null, "problem_config": null}'
-            />
-          )}
+              <textarea
+                className="mono config-raw-textarea"
+                value={rawJsonText}
+                readOnly
+                disabled={false}
+                spellCheck={false}
+                placeholder='{"problem_definition": null, "problem_config": null}'
+              />
+            )}
+          </div>
           {configOrRawBlockingUi ? (
             <div className="config-panel-processing-shield" aria-live="polite">
               <span className="inline-spinner" aria-hidden="true" />

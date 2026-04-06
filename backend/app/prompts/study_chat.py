@@ -51,6 +51,12 @@ Once the user provides problem details, map their language into two layers:
 Update the brief whenever the user reveals new requirements, corrects assumptions, or
 asks you to reason about what has been gathered so far.
 
+**Open questions vs gathered facts:** Use `open_questions` only for clarifications that are
+still outstanding. Never encode a resolved answer inside an open-question string (for example
+do not append `(Answered: …)` to question text). When the user answers a question—in chat or
+in the definition panel—record the substance as a `gathered` item and remove that question
+from `open_questions` (when replacing the list, set `replace_open_questions=true`).
+
 Once the user provides problem details, map their language to solver configuration.
 **Only surface a configuration field or constraint when the user mentions something that
 maps to it.** Do not dump the full list of options upfront. Discover together.
@@ -76,7 +82,7 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | overtime, shift limits, max hours, long shifts | `shift_hard_penalty` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
 | algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` |
-| speed/budget, how long to run, iterations | `epochs`, `pop_size` |
+| speed/budget, how long to run, iterations, stop when flat | `epochs` (max), `early_stop` / `early_stop_patience` / `early_stop_epsilon`, `pop_size` |
 
 Hard constraints (always enforced — only mention when the user asks):
 - Every task is served exactly once (enforced by the encoding).
@@ -123,7 +129,10 @@ All available fields under `"problem"`:
   - SwarmSA: `{"max_sub_iter": 10, "t0": 1.0, "t1": 0.01, "move_count": 5,
     "mutation_rate": 0.1, "mutation_step_size": 0.1, "mutation_step_size_damp": 0.99}`
   - ACOR: `{"sample_count": 25, "intent_factor": 0.5, "zeta": 1.0}`
-- `"epochs"`: number of search iterations (typical: 50–1000).
+- `"epochs"`: **maximum** search iterations (ceiling). By default the solver also **stops early** when the best cost stops improving beyond a small threshold for several epochs in a row (MEALpy early stopping); runs often finish before this cap.
+- `"early_stop"`: optional boolean (default `true`). Set `false` to run the full `epochs` every time (fixed budget, reproducible length).
+- `"early_stop_patience"`: optional int (default 20) — consecutive epochs without meaningful best-cost improvement before early stop.
+- `"early_stop_epsilon"`: optional positive float (default `1e-4`) — minimum absolute change in best fitness between epochs to count as improvement.
 - `"pop_size"`: population/swarm size (typical: 20–150).
 - `"random_seed"`: integer seed for reproducibility.
 - `"hard_constraints"`: list of constraint names, e.g. `["shift_limit", "locked_assignments"]`.
@@ -321,6 +330,9 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   reorganization of gathered/assumption rows.
 - `"replace_open_questions"`: boolean. Set true when `problem_brief_patch.open_questions`
   should replace the existing open-question set.
+- **Open questions must stay truly open.** Do not add entries that restate an answer the user
+  already gave (no `(Answered: …)` or similar in `open_questions[].text`). Put resolved Q&A in
+  `items` as `kind: "gathered"` instead, and omit closed questions from `open_questions`.
 - `"cleanup_mode"`: boolean. Mirror whether this turn is a cleanup/reorganize turn.
 - When you emit `problem_brief_patch.items`, actively consolidate overlap:
   - mark redundant or directly contradicted existing facts with `"status": "rejected"`.
@@ -412,6 +424,10 @@ Rules:
 - Cleanup requests must be holistic: set `cleanup_mode=true`, `replace_editable_items=true`,
   and emit a coherent editable snapshot when the user asks to clean up, consolidate,
   deduplicate, reorganize, or clear definition content.
+- When the user answers a previously open question, add the substance under
+  `problem_brief_patch.items` as `kind: "gathered"` and drop that question from
+  `open_questions` (use `replace_open_questions=true` when you emit a full replacement list).
+  Never use `(Answered: …)` suffixes in open-question text.
 """.strip()
 
 STUDY_CHAT_PHASE_DISCOVERY = """

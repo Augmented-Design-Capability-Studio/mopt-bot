@@ -439,6 +439,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     surface this before passing the config to the solver.
     """
     ensure_vrptw_on_path()
+    from optimizer import EARLY_STOP_DEFAULT_EPSILON, EARLY_STOP_DEFAULT_PATIENCE
     from user_input import SHIFT_HARD_PENALTY, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
@@ -486,6 +487,26 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
             only_active_terms=raw.get("reference_only_active_terms", False),
         )
 
+    early_stop = raw.get("early_stop", True)
+    if not isinstance(early_stop, bool):
+        raise ValueError("early_stop must be a boolean")
+
+    es_patience_raw = raw.get("early_stop_patience")
+    if es_patience_raw is None:
+        early_stop_patience = EARLY_STOP_DEFAULT_PATIENCE
+    else:
+        early_stop_patience = int(es_patience_raw)
+        if early_stop_patience < 1 or early_stop_patience > 5000:
+            raise ValueError("early_stop_patience must be between 1 and 5000")
+
+    es_eps_raw = raw.get("early_stop_epsilon")
+    if es_eps_raw is None:
+        early_stop_epsilon = EARLY_STOP_DEFAULT_EPSILON
+    else:
+        early_stop_epsilon = float(es_eps_raw)
+        if early_stop_epsilon <= 0:
+            raise ValueError("early_stop_epsilon must be > 0")
+
     return {
         "weights": weights,
         "driver_preferences": driver_preferences,
@@ -496,6 +517,9 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         "epochs": epochs,
         "pop_size": pop_size,
         "random_seed": random_seed,
+        "early_stop": early_stop,
+        "early_stop_patience": early_stop_patience,
+        "early_stop_epsilon": early_stop_epsilon,
         "reference_weights": ref_weights,
         # Callers must pop this before passing cfg to the solver.
         "weight_warnings": weight_warnings,
@@ -521,6 +545,9 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             params=cfg["algorithm_params"],
             epochs=cfg["epochs"],
             pop_size=cfg["pop_size"],
+            early_stop=cfg["early_stop"],
+            early_stop_patience=cfg["early_stop_patience"],
+            early_stop_epsilon=cfg["early_stop_epsilon"],
             cancel_event=cancel_event,
         )
 

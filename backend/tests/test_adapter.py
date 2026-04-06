@@ -8,6 +8,37 @@ def test_parse_defaults():
     assert cfg["algorithm"] == "GA"
     assert cfg["epochs"] == 500
     assert "w1" in cfg["weights"]
+    assert cfg["early_stop"] is True
+    assert cfg["early_stop_patience"] == 20
+    assert cfg["early_stop_epsilon"] == 1e-4
+
+
+def test_parse_early_stop_disabled():
+    cfg = parse_problem_config({"early_stop": False})
+    assert cfg["early_stop"] is False
+
+
+def test_parse_early_stop_custom():
+    cfg = parse_problem_config({"early_stop_patience": 40, "early_stop_epsilon": 0.5})
+    assert cfg["early_stop_patience"] == 40
+    assert cfg["early_stop_epsilon"] == 0.5
+
+
+def test_parse_early_stop_patience_bounds():
+    with pytest.raises(ValueError, match="early_stop_patience"):
+        parse_problem_config({"early_stop_patience": 0})
+    with pytest.raises(ValueError, match="early_stop_patience"):
+        parse_problem_config({"early_stop_patience": 6000})
+
+
+def test_parse_early_stop_epsilon_positive():
+    with pytest.raises(ValueError, match="early_stop_epsilon"):
+        parse_problem_config({"early_stop_epsilon": 0})
+
+
+def test_parse_early_stop_must_be_boolean():
+    with pytest.raises(ValueError, match="early_stop must be a boolean"):
+        parse_problem_config({"early_stop": "yes"})
 
 
 def test_parse_swarmsa_alias():

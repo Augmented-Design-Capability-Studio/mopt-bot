@@ -391,8 +391,9 @@ def _build_brief_update_system_instruction(
         parts.append(_run_ack_prompt(workflow_mode))
     if is_answered_open_question:
         parts.append(
-            "Answer-save context: To close the answered question, omit it from open_questions "
-            "and set replace_open_questions=true. Do not add gathered items about uploads or status."
+            "Answer-save context: Record the resolved Q&A as a gathered fact (kind gathered), "
+            "omit that question from open_questions, and set replace_open_questions=true. "
+            "Do not add gathered items that only describe uploads or session status."
         )
     if cleanup_mode:
         parts.append(

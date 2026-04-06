@@ -3,6 +3,7 @@ import { Fragment, type CSSProperties, type ReactNode } from "react";
 import {
   ALGORITHM_DESC,
   PREFERENCE_CONDITIONS,
+  SHIFT_HARD_PENALTY_INFO,
   WEIGHT_DISPLAY_ORDER,
   WEIGHT_INFO,
   WORKER_NAMES,
@@ -102,6 +103,71 @@ function ConfigSelect({
   );
 }
 
+/** Same row chrome as weight terms (bold title, muted description, value + caption). */
+function GoalTermRow({
+  label,
+  description,
+  editable,
+  value,
+  min,
+  max,
+  step,
+  valueCaption,
+  onChange,
+  inputStyle,
+}: {
+  label: string;
+  description?: string;
+  editable: boolean;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  valueCaption: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  inputStyle?: CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "0.6rem",
+        padding: "0.4rem 0",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{label}</div>
+        {description ? (
+          <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
+            {description}
+          </div>
+        ) : null}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
+        <ConfigNumberInput
+          editable={editable}
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          onChange={onChange}
+          style={{
+            width: "5.5rem",
+            textAlign: "right",
+            fontFamily: "monospace",
+            ...inputStyle,
+          }}
+        />
+        <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>
+          {valueCaption}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function WeightRow({
   wkey,
   problem,
@@ -115,46 +181,21 @@ function WeightRow({
 }) {
   const info = WEIGHT_INFO[wkey];
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "0.6rem",
-        padding: "0.4rem 0",
-        borderBottom: "1px solid var(--border)",
+    <GoalTermRow
+      label={info?.label ?? wkey}
+      description={info?.description}
+      editable={editable}
+      value={problem.weights[wkey] ?? 0}
+      min={0}
+      step={0.5}
+      valueCaption="weight"
+      onChange={(e) => {
+        const value = parseFloat(e.target.value);
+        updateProblem({
+          weights: { ...problem.weights, [wkey]: Number.isNaN(value) ? 0 : value },
+        });
       }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{info?.label ?? wkey}</div>
-        {info && (
-          <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
-            {info.description}
-          </div>
-        )}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
-        <ConfigNumberInput
-          editable={editable}
-          value={problem.weights[wkey] ?? 0}
-          min={0}
-          step={0.5}
-          onChange={(e) => {
-            const value = parseFloat(e.target.value);
-            updateProblem({
-              weights: { ...problem.weights, [wkey]: Number.isNaN(value) ? 0 : value },
-            });
-          }}
-          style={{
-            width: "5.5rem",
-            textAlign: "right",
-            fontFamily: "monospace",
-          }}
-        />
-        <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>
-          weight
-        </span>
-      </div>
-    </div>
+    />
   );
 }
 
@@ -170,7 +211,12 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
   });
 
   const hasSearch =
-    problem.algorithm !== "" || problem.epochs !== null || problem.pop_size !== null;
+    problem.algorithm !== "" ||
+    problem.epochs !== null ||
+    problem.pop_size !== null ||
+    problem.early_stop === false ||
+    problem.early_stop_patience !== null ||
+    problem.early_stop_epsilon !== null;
   const hasHardStructural =
     Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
 
@@ -385,27 +431,21 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
         {hasHardStructural && (
           <>
             {problem.shift_hard_penalty !== null && (
-              <FieldRow label="Max shift enforcement (penalty)">
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <ConfigNumberInput
-                    editable={editable}
-                    value={problem.shift_hard_penalty}
-                    min={0}
-                    step={100}
-                    onChange={(e) => {
-                      const value = parseFloat(e.target.value);
-                      updateProblem({
-                        shift_hard_penalty: Number.isNaN(value) ? 0 : value,
-                      });
-                    }}
-                    style={{ width: "8rem", fontFamily: "monospace" }}
-                  />
-                  <span className="muted" style={{ fontSize: "0.75rem" }}>
-                    Large cost units applied per worker when a shift exceeds the platform maximum — strongly discourages
-                    overtime.
-                  </span>
-                </div>
-              </FieldRow>
+              <GoalTermRow
+                label={SHIFT_HARD_PENALTY_INFO.label}
+                description={SHIFT_HARD_PENALTY_INFO.description}
+                editable={editable}
+                value={problem.shift_hard_penalty}
+                min={0}
+                step={100}
+                valueCaption="penalty"
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value);
+                  updateProblem({
+                    shift_hard_penalty: Number.isNaN(value) ? 0 : value,
+                  });
+                }}
+              />
             )}
 
             {Object.keys(problem.locked_assignments).length > 0 && (
@@ -479,24 +519,98 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
             )}
 
             {problem.epochs !== null && (
-              <FieldRow label="Iterations">
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <ConfigNumberInput
-                    editable={editable}
-                    value={problem.epochs}
-                    min={1}
-                    max={50000}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value);
-                      updateProblem({ epochs: Number.isNaN(value) ? 1 : Math.max(1, value) });
-                    }}
-                    style={{ width: "6rem", fontFamily: "monospace" }}
-                  />
-                  <span className="muted" style={{ fontSize: "0.75rem" }}>
-                    {problem.epochs < 100 ? "quick (may not fully converge)" : problem.epochs < 500 ? "moderate" : "thorough"}
-                  </span>
+              <FieldRow label="Max iterations">
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <ConfigNumberInput
+                      editable={editable}
+                      value={problem.epochs}
+                      min={1}
+                      max={50000}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value);
+                        updateProblem({ epochs: Number.isNaN(value) ? 1 : Math.max(1, value) });
+                      }}
+                      style={{ width: "6rem", fontFamily: "monospace" }}
+                    />
+                    <span className="muted" style={{ fontSize: "0.75rem" }}>
+                      {problem.epochs < 100 ? "quick (may not fully converge)" : problem.epochs < 500 ? "moderate" : "thorough"}
+                    </span>
+                  </div>
+                  {problem.early_stop && (
+                    <span className="muted" style={{ fontSize: "0.72rem" }}>
+                      Ceiling only — search may stop earlier if the best score stops improving.
+                    </span>
+                  )}
                 </div>
               </FieldRow>
+            )}
+
+            {(problem.algorithm || problem.epochs !== null) && (
+              <FieldRow label="Stop early on plateau">
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                  <ConfigSelect
+                    editable={editable}
+                    value={problem.early_stop ? "1" : "0"}
+                    displayLabel={problem.early_stop ? "Yes" : "No (run all iterations)"}
+                    onChange={(e) => updateProblem({ early_stop: e.target.value === "1" })}
+                    style={{ fontFamily: "monospace", fontSize: "0.85rem", maxWidth: "16rem" }}
+                  >
+                    <option value="1">Yes</option>
+                    <option value="0">No (run all iterations)</option>
+                  </ConfigSelect>
+                  {problem.early_stop && (
+                    <span className="muted" style={{ fontSize: "0.72rem" }}>
+                      Ends when the best cost barely changes for several epochs in a row (defaults apply if fields below are empty).
+                    </span>
+                  )}
+                </div>
+              </FieldRow>
+            )}
+
+            {problem.early_stop && (problem.algorithm || problem.epochs !== null) && (
+              <>
+                <FieldRow label="Plateau patience (epochs)">
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <ConfigNumberInput
+                      editable={editable}
+                      value={problem.early_stop_patience ?? NaN}
+                      min={1}
+                      max={5000}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10);
+                        updateProblem({
+                          early_stop_patience: Number.isNaN(value) ? null : Math.max(1, Math.min(5000, value)),
+                        });
+                      }}
+                      style={{ width: "6rem", fontFamily: "monospace" }}
+                    />
+                    <span className="muted" style={{ fontSize: "0.75rem" }}>
+                      default 20
+                    </span>
+                  </div>
+                </FieldRow>
+                <FieldRow label="Min score improvement">
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <ConfigNumberInput
+                      editable={editable}
+                      value={problem.early_stop_epsilon ?? NaN}
+                      min={0}
+                      step={0.0001}
+                      onChange={(e) => {
+                        const value = parseFloat(e.target.value);
+                        updateProblem({
+                          early_stop_epsilon: Number.isNaN(value) || value <= 0 ? null : value,
+                        });
+                      }}
+                      style={{ width: "8rem", fontFamily: "monospace" }}
+                    />
+                    <span className="muted" style={{ fontSize: "0.75rem" }}>
+                      default 1e-4
+                    </span>
+                  </div>
+                </FieldRow>
+              </>
             )}
 
             {problem.pop_size !== null && (

@@ -282,7 +282,7 @@ def test_problem_brief_open_questions_are_split(monkeypatch):
         ]
 
 
-def test_problem_brief_open_question_answer_fields_round_trip(monkeypatch):
+def test_problem_brief_answered_open_question_promoted_to_gathered(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-open-question-answer-roundtrip-secret")
     get_settings.cache_clear()
 
@@ -317,12 +317,16 @@ def test_problem_brief_open_question_answer_fields_round_trip(monkeypatch):
             headers={"Authorization": "Bearer test-client-open-question-answer-roundtrip-secret"},
         )
         assert patch.status_code == 200
-        questions = patch.json()["problem_brief"]["open_questions"]
-        assert questions[0]["id"] == "oq-answered"
-        assert questions[0]["status"] == "answered"
-        assert questions[0]["answer_text"] == "Cap overtime at 30 minutes per shift."
-        assert questions[1]["status"] == "open"
-        assert questions[1]["answer_text"] is None
+        brief = patch.json()["problem_brief"]
+        questions = brief["open_questions"]
+        assert len(questions) == 1
+        assert questions[0]["text"] == "Which deliveries are highest priority?"
+        assert questions[0]["status"] == "open"
+        assert questions[0]["answer_text"] is None
+        gathered_texts = [item["text"] for item in brief["items"] if item["kind"] == "gathered"]
+        assert any(
+            "overtime cap" in t.lower() and "30 minutes" in t.lower() for t in gathered_texts
+        )
 
 
 def test_waterfall_can_infer_first_panel_from_complete_problem_brief(monkeypatch):
@@ -873,7 +877,6 @@ def test_partial_problem_brief_patch_preserves_answered_open_question_state(monk
             panel_patch=None,
             problem_brief_patch={
                 "open_questions": [
-                    "What overtime cap should we enforce?",
                     "Should any vehicle assignments remain fixed?",
                 ]
             },
@@ -910,6 +913,12 @@ def test_partial_problem_brief_patch_preserves_answered_open_question_state(monk
             headers={"Authorization": "Bearer test-client-partial-open-question-merge-secret"},
         )
         assert patch.status_code == 200
+        patched = patch.json()["problem_brief"]
+        assert patched["open_questions"] == []
+        gathered_texts = [item["text"] for item in patched["items"] if item["kind"] == "gathered"]
+        assert any(
+            "overtime cap" in t.lower() and "30 minutes" in t.lower() for t in gathered_texts
+        )
 
         send = client.post(
             f"/sessions/{sid}/messages",
@@ -918,10 +927,14 @@ def test_partial_problem_brief_patch_preserves_answered_open_question_state(monk
         )
         assert send.status_code == 200
         questions = send.json()["problem_brief"]["open_questions"]
-        overtime = next(q for q in questions if q["text"] == "What overtime cap should we enforce?")
-        assert overtime["status"] == "answered"
-        assert overtime["answer_text"] == "Cap overtime at 30 minutes per shift."
+        assert not any(q["text"] == "What overtime cap should we enforce?" for q in questions)
         assert any(q["text"] == "Should any vehicle assignments remain fixed?" for q in questions)
+        gathered_after = [
+            item["text"] for item in send.json()["problem_brief"]["items"] if item["kind"] == "gathered"
+        ]
+        assert any(
+            "overtime cap" in t.lower() and "30 minutes" in t.lower() for t in gathered_after
+        )
 
 
 def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeypatch):
@@ -1424,11 +1437,12 @@ def test_replace_open_questions_round_trips_answer_fields(monkeypatch):
             headers={"Authorization": "Bearer test-client-replace-open-question-answer-secret"},
         )
         assert send.status_code == 200
-        questions = send.json()["problem_brief"]["open_questions"]
-        assert len(questions) == 1
-        assert questions[0]["id"] == "oq-new"
-        assert questions[0]["status"] == "answered"
-        assert questions[0]["answer_text"] == "Target 95% on-time deliveries."
+        brief = send.json()["problem_brief"]
+        assert brief["open_questions"] == []
+        gathered_texts = [item["text"] for item in brief["items"] if item["kind"] == "gathered"]
+        assert any(
+            "service level" in t.lower() and "95%" in t and "on-time" in t.lower() for t in gathered_texts
+        )
 
 
 def test_visible_assistant_reply_strips_hidden_patch_json(monkeypatch):

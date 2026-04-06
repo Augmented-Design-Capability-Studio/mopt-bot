@@ -28,6 +28,12 @@ class OptimizationCancelled(Exception):
     """Raised when solve is stopped early (cooperative cancel)."""
 
 
+# Default early stopping (MEALpy ES): stop after this many epochs with negligible best-cost change.
+EARLY_STOP_DEFAULT_PATIENCE = 20
+# Absolute improvement threshold on best fitness between epochs (MEALpy History.get_global_repeated_times).
+EARLY_STOP_DEFAULT_EPSILON = 1e-4
+
+
 @dataclass
 class SolverConfig:
     """
@@ -43,10 +49,13 @@ class SolverConfig:
     random_seed: int = 42
     epochs: int = 500
     pop_size: int = 100
+    early_stop: bool = True
+    early_stop_patience: Optional[int] = None
+    early_stop_epsilon: Optional[float] = None
 
     def to_dict(self) -> dict:
         """Return JSON-serializable dict."""
-        return {
+        d: dict[str, Any] = {
             "weights": {k: float(v) for k, v in self.weights.items()},
             "locked_assignments": {int(k): int(v) for k, v in self.locked_assignments.items()},
             "algorithm": str(self.algorithm),
@@ -54,7 +63,13 @@ class SolverConfig:
             "random_seed": int(self.random_seed),
             "epochs": int(self.epochs),
             "pop_size": int(self.pop_size),
+            "early_stop": bool(self.early_stop),
         }
+        if self.early_stop_patience is not None:
+            d["early_stop_patience"] = int(self.early_stop_patience)
+        if self.early_stop_epsilon is not None:
+            d["early_stop_epsilon"] = float(self.early_stop_epsilon)
+        return d
 
 
 @dataclass
@@ -149,6 +164,9 @@ class QuickBiteOptimizer:
         epochs: int = 500,
         pop_size: int = 100,
         termination: Optional[dict] = None,
+        early_stop: bool = True,
+        early_stop_patience: Optional[int] = None,
+        early_stop_epsilon: Optional[float] = None,
         cancel_event: Optional[threading.Event] = None,
         mode: str = "single",
         n_workers: Optional[int] = None,
@@ -159,10 +177,15 @@ class QuickBiteOptimizer:
         Args:
             algorithm: One of "GA", "PSO", "SA", "SwarmSA", "ACOR".
             params: Optional algorithm-specific hyperparameters.
-            epochs: Number of epochs (used when termination is None).
+            epochs: Maximum epochs (MG cap). With default early stopping, the run may end sooner.
             pop_size: Population size (ignored for SA).
             termination: Optional mealpy termination dict, e.g. {"max_time": 60}
-                or {"max_fe": 100000}. Overrides epoch limit when set.
+                or {"max_fe": 100000}. If set, it is passed through unchanged; early_stop* args are ignored.
+            early_stop: When True and termination is None, pass MEALpy termination with max_epoch,
+                max_early_stop, and epsilon (plateau detection). When False, use fixed epoch count only.
+            early_stop_patience: Maps to termination max_early_stop; None uses EARLY_STOP_DEFAULT_PATIENCE.
+            early_stop_epsilon: Minimum absolute best-fitness change to reset the plateau counter; None uses
+                EARLY_STOP_DEFAULT_EPSILON.
             cancel_event: When set, checked before each objective evaluation; if set, raises OptimizationCancelled.
             mode: mealpy execution mode: single, swarm, thread, or process (see mealpy Optimizer.solve).
             n_workers: Worker count for thread/process modes; omit to use mealpy default (recommended for thread).
@@ -226,9 +249,19 @@ class QuickBiteOptimizer:
         else:
             raise ValueError(f"Unknown algorithm: {algorithm}. Use GA, PSO, SA, SwarmSA, or ACOR.")
 
+        effective_termination: Optional[dict] = termination
+        if termination is None and early_stop:
+            pat = early_stop_patience if early_stop_patience is not None else EARLY_STOP_DEFAULT_PATIENCE
+            eps = early_stop_epsilon if early_stop_epsilon is not None else EARLY_STOP_DEFAULT_EPSILON
+            effective_termination = {
+                "max_epoch": epochs,
+                "max_early_stop": int(pat),
+                "epsilon": float(eps),
+            }
+
         solve_kw: dict[str, Any] = {"seed": self.seed, "mode": mode}
-        if termination is not None:
-            solve_kw["termination"] = termination
+        if effective_termination is not None:
+            solve_kw["termination"] = effective_termination
         if n_workers is not None:
             solve_kw["n_workers"] = n_workers
         best = model.solve(problem, **solve_kw)

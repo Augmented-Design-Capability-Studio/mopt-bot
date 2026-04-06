@@ -7,7 +7,6 @@ import {
   sessionPanelToConfigText,
   type Message,
   type ProblemBrief,
-  type ProblemBriefQuestion,
   type RunResult,
   type Session,
   type SnapshotSummary,
@@ -15,7 +14,6 @@ import {
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { configChangeSummary } from "../problemConfig/configSummary";
-import { DEFINITION_NEW_ROW_PLACEHOLDER } from "../problemDefinition/constants";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
@@ -487,36 +485,7 @@ export function useParticipantSessionActions({
 
   const syncProblemConfig = useCallback(async () => {
     if (!token || !sessionId || !problemBrief) return;
-    const cleanedBrief: ProblemBrief = {
-      ...problemBrief,
-      goal_summary: problemBrief.goal_summary.trim(),
-      items: problemBrief.items
-        .map((item) => ({ ...item, text: item.text.trim() }))
-        .filter((item) => {
-          if (item.kind === "system") return true;
-          if (item.text.length === 0) return false;
-          if (
-            (item.kind === "gathered" || item.kind === "assumption") &&
-            item.text === DEFINITION_NEW_ROW_PLACEHOLDER
-          ) {
-            return false;
-          }
-          return true;
-        }),
-      open_questions: problemBrief.open_questions
-        .map((question) => {
-          const text = question.text.trim();
-          const status: ProblemBriefQuestion["status"] = question.status === "answered" ? "answered" : "open";
-          const answerText = (question.answer_text ?? "").trim();
-          return {
-            ...question,
-            text,
-            status,
-            answer_text: status === "answered" ? (answerText || null) : null,
-          };
-        })
-        .filter((question) => question.text.length > 0),
-    };
+    const cleanedBrief = cleanProblemBriefForCompare(problemBrief);
     setBusy(true);
     setSyncingProblemConfig(true);
     setError(null);

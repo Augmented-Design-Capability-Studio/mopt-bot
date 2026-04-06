@@ -62,3 +62,25 @@ def test_ga_thread_mode_completes() -> None:
     result = opt.solve("GA", mode="thread", **FAST_SOLVE_KW)
     assert math.isfinite(result.best_cost)
     assert len(result.routes) == N_VEHICLES
+
+
+def test_default_early_stop_can_exit_before_epoch_cap() -> None:
+    """Plateau termination should stop before max_epoch when best fitness barely changes."""
+    opt = QuickBiteOptimizer(seed=42)
+    result = opt.solve(
+        "GA",
+        epochs=400,
+        pop_size=20,
+        mode="single",
+        early_stop=True,
+        early_stop_patience=2,
+        early_stop_epsilon=1e30,
+    )
+    assert len(result.convergence) <= 400
+    assert len(result.convergence) < 400
+
+
+def test_early_stop_disabled_uses_full_epoch_count() -> None:
+    opt = QuickBiteOptimizer(seed=42)
+    result = opt.solve("GA", epochs=12, pop_size=20, mode="single", early_stop=False)
+    assert len(result.convergence) == 12

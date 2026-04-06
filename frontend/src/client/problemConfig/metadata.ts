@@ -48,6 +48,13 @@ const WEIGHT_DISPLAY_ORDER = [
   "worker_preference",
 ] as const;
 
+/** Same typography as `WEIGHT_INFO` rows — hard shift cap is not a weight key but sits with goal terms. */
+const SHIFT_HARD_PENALTY_INFO = {
+  label: "Max Shift Enforcement",
+  description:
+    "Large cost units applied per worker when a shift exceeds the platform maximum — strongly discourages overtime.",
+} as const;
+
 const ALGORITHM_DESC: Record<string, string> = {
   GA: "Genetic Algorithm - evolves a population of candidate solutions through selection, crossover, and mutation.",
   PSO: "Particle Swarm - a swarm of candidates converge collaboratively toward promising search regions.",
@@ -80,6 +87,7 @@ const PREFERENCE_CONDITIONS = [
 
 export {
   ALGORITHM_DESC,
+  SHIFT_HARD_PENALTY_INFO,
   WEIGHT_DISPLAY_ORDER,
   CONDITION_LABEL,
   PREFERENCE_CONDITIONS,

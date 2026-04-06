@@ -41,6 +41,12 @@ _WEIGHT_SLOT_MARKERS: dict[str, tuple[str, ...]] = {
     "priority_penalty": ("priority-order deadlines", "priority deadline", "priority order"),
 }
 
+# Model sometimes emits fake "open questions" like "Cap shifts? (Answered: 8h)." — fold into gathered instead.
+_ANSWERED_SUFFIX_IN_OPQ_RE = re.compile(
+    r"^(?P<q>.+?)\s*\(\s*answered\s*:\s*(?P<a>.+?)\)\s*\.?\s*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def _system_item(item_id: str, text: str) -> dict[str, Any]:
     return {
@@ -146,7 +152,9 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
             line = _clean_question_fragment(raw_line)
             if not line:
                 continue
-            for part in re.split(r"(?<=[?!])\s+", line):
+            # Do not split before a parenthesis (e.g. "Shift cap? (Answered: 8h).") — keeps
+            # merge-time sanitization of fake answered questions reliable.
+            for part in re.split(r"(?<=[?!])\s+(?!\()", line):
                 cleaned = _clean_question_fragment(part)
                 if cleaned:
                     fragments.append(cleaned)
@@ -172,6 +180,88 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
                 }
             )
     return out
+
+
+def _gathered_text_key(text: Any) -> str:
+    return str(text or "").strip().lower()
+
+
+def _promote_answered_open_questions_to_gathered(
+    items: list[dict[str, Any]], questions: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Answered questions with non-empty answer_text become gathered rows; removed from open_questions."""
+    seen = {
+        _gathered_text_key(i.get("text"))
+        for i in items
+        if isinstance(i, dict) and str(i.get("kind") or "").strip().lower() == "gathered"
+    }
+    new_items = list(items)
+    kept_q: list[dict[str, Any]] = []
+    for q in questions:
+        st = str(q.get("status") or "").strip().lower()
+        at = str(q.get("answer_text") or "").strip()
+        if st != "answered" or not at:
+            kept_q.append(q)
+            continue
+        qtext = str(q.get("text") or "").strip()
+        combined = f"{qtext} — {at}"
+        key = _gathered_text_key(combined)
+        if key not in seen:
+            seen.add(key)
+            qid = str(q.get("id") or uuid4())
+            new_items.append(
+                {
+                    "id": f"gathered-oq-{qid}",
+                    "text": combined,
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            )
+    return new_items, kept_q
+
+
+def _split_pseudo_answered_open_questions(
+    questions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Strip '(Answered: …)' suffix questions into gathered rows; return (gathered, questions_kept)."""
+    gathered_out: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for q in questions:
+        text = str(q.get("text") or "").strip()
+        m = _ANSWERED_SUFFIX_IN_OPQ_RE.match(text)
+        if not m:
+            kept.append(q)
+            continue
+        q_part = m.group("q").strip()
+        a_part = m.group("a").strip()
+        combined = f"{q_part} — {a_part}" if q_part else a_part
+        qid = str(q.get("id") or uuid4())
+        gathered_out.append(
+            {
+                "id": f"gathered-oq-{qid}",
+                "text": combined,
+                "kind": "gathered",
+                "source": "user",
+                "status": "confirmed",
+                "editable": True,
+            }
+        )
+    return gathered_out, kept
+
+
+def _merge_gathered_deduped(items: list[dict[str, Any]], additions: list[dict[str, Any]]) -> None:
+    seen = {
+        _gathered_text_key(i.get("text"))
+        for i in items
+        if isinstance(i, dict) and str(i.get("kind") or "").strip().lower() == "gathered"
+    }
+    for g in additions:
+        key = _gathered_text_key(g.get("text"))
+        if key not in seen:
+            seen.add(key)
+            items.append(g)
 
 
 def _normalize_item(raw: Any) -> dict[str, Any] | None:
@@ -229,10 +319,13 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
 
     normalized_items.extend(system_items.values())
     normalized_items = _reconcile_problem_brief_items(normalized_items)
+    questions = _coerce_question_list(raw.get("open_questions"))
+    promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
+    promoted_items = _reconcile_problem_brief_items(promoted_items)
     return {
         "goal_summary": goal_summary,
-        "items": normalized_items,
-        "open_questions": _coerce_question_list(raw.get("open_questions")),
+        "items": promoted_items,
+        "open_questions": questions,
         "solver_scope": solver_scope,
         "backend_template": backend_template,
     }
@@ -254,6 +347,9 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
         merged["open_questions"] = []
     elif "open_questions" in patch:
         incoming_questions = _coerce_question_list(patch.get("open_questions"))
+        extra_gathered, incoming_questions = _split_pseudo_answered_open_questions(incoming_questions)
+        if extra_gathered:
+            _merge_gathered_deduped(merged["items"], extra_gathered)
         base_questions_by_id = {str(q.get("id", "")): q for q in merged.get("open_questions") or []}
         if replace_open_questions:
             _preserve_answered_state(incoming_questions, base_questions_by_id)

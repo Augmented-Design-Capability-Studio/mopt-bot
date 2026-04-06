@@ -1,6 +1,44 @@
-import type { ProblemBrief, ProblemBriefQuestion } from "@shared/api";
+import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
 
 import { DEFINITION_NEW_ROW_PLACEHOLDER } from "./constants";
+
+function gatheredTextDedupKey(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+/** Move answered open questions (with non-empty answer) into gathered items; drop from open_questions. */
+export function promoteAnsweredOpenQuestionsToGathered(brief: ProblemBrief): ProblemBrief {
+  const seenGathered = new Set(
+    brief.items.filter((i) => i.kind === "gathered").map((i) => gatheredTextDedupKey(i.text)),
+  );
+  const items: ProblemBriefItem[] = [...brief.items];
+  const open_questions: ProblemBriefQuestion[] = [];
+
+  for (const question of brief.open_questions) {
+    const answerText = (question.answer_text ?? "").trim();
+    const isAnswered = question.status === "answered" && answerText.length > 0;
+    if (!isAnswered) {
+      open_questions.push(question);
+      continue;
+    }
+    const qText = question.text.trim();
+    const combined = `${qText} — ${answerText}`;
+    const key = gatheredTextDedupKey(combined);
+    if (!seenGathered.has(key)) {
+      seenGathered.add(key);
+      items.push({
+        id: `gathered-oq-${question.id}`,
+        text: combined,
+        kind: "gathered",
+        source: "user",
+        status: "confirmed",
+        editable: true,
+      });
+    }
+  }
+
+  return { ...brief, items, open_questions };
+}
 
 export function cloneProblemBrief(brief: ProblemBrief): ProblemBrief {
   return {
@@ -12,7 +50,7 @@ export function cloneProblemBrief(brief: ProblemBrief): ProblemBrief {
 
 /** Same cleaning as PATCH /problem-brief (placeholder rows omitted). Used for dirty checks. */
 export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
-  return {
+  const trimmed: ProblemBrief = {
     ...brief,
     goal_summary: brief.goal_summary.trim(),
     items: brief.items
@@ -42,6 +80,7 @@ export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
       })
       .filter((question) => question.text.length > 0),
   };
+  return promoteAnsweredOpenQuestionsToGathered(trimmed);
 }
 
 export function isProblemBriefDirtyAfterClean(baseline: ProblemBrief, current: ProblemBrief): boolean {
