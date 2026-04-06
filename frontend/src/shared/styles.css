@@ -84,15 +84,13 @@ select:focus-visible {
   gap: 1rem;
 }
 
-/* Subtle workflow tint (participant header); default bar stays neutral */
+/* Discreet workflow cue: thin top accent only (participant header); bar stays neutral */
 .app-header--wf-agile {
-  background: #d4dce4;
-  border-bottom-color: #9aa8b4;
+  border-top: 3px solid #9aa8b4;
 }
 
 .app-header--wf-waterfall {
-  background: #ddd8d2;
-  border-bottom-color: #a89e94;
+  border-top: 3px solid #a89e94;
 }
 
 .app-header-title-cluster {

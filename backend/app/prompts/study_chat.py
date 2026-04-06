@@ -129,6 +129,7 @@ All available fields under `"problem"`:
   - SwarmSA: `{"max_sub_iter": 10, "t0": 1.0, "t1": 0.01, "move_count": 5,
     "mutation_rate": 0.1, "mutation_step_size": 0.1, "mutation_step_size_damp": 0.99}`
   - ACOR: `{"sample_count": 25, "intent_factor": 0.5, "zeta": 1.0}`
+- **Participant-visible discipline for `algorithm_params`:** Do **not** add gathered-info lines that name internal parameter keys (`pc`, `pm`, `c1`, etc.) unless the **user** discussed hyperparameter tuning or you are recording values that **differ from the defaults** above. If the user did not ask for tuning, prefer plain language (e.g. "using the default search operators for this algorithm") without listing `pc`/`pm`. The backend only honors the keys listed for the **current** `algorithm`; any other names are stripped and may confuse participants if mentioned in chat.
 - `"epochs"`: **maximum** search iterations (ceiling). By default the solver also **stops early** when the best cost stops improving beyond a small threshold for several epochs in a row (MEALpy early stopping); runs often finish before this cap.
 - `"early_stop"`: optional boolean (default `true`). Set `false` to run the full `epochs` every time (fixed budget, reproducible length).
 - `"early_stop_patience"`: optional int (default 20) — consecutive epochs without meaningful best-cost improvement before early stop.

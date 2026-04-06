@@ -10,6 +10,8 @@ import difflib
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from copy import deepcopy
+
+from app.algorithm_catalog import filter_algorithm_params
 from pathlib import Path
 from typing import Any
 
@@ -172,26 +174,52 @@ def translate_weights_strict(
     return out, warnings
 
 
+def _sanitize_algorithm_params_on_problem(problem: dict[str, Any]) -> list[str]:
+    from app.algorithm_catalog import canonical_algorithm_stored, filter_algorithm_params
+
+    ap_raw = problem.get("algorithm_params")
+    if ap_raw is None:
+        return []
+    if not isinstance(ap_raw, dict):
+        problem.pop("algorithm_params", None)
+        return ["Removed malformed `problem.algorithm_params`; expected an object."]
+    algo = canonical_algorithm_stored(problem.get("algorithm"))
+    if algo is None:
+        problem.pop("algorithm_params", None)
+        return ["Removed algorithm_params: `problem.algorithm` must be GA, PSO, SA, SwarmSA, or ACOR."]
+    filtered, w = filter_algorithm_params(algo, ap_raw)
+    if filtered:
+        problem["algorithm_params"] = filtered
+    else:
+        problem.pop("algorithm_params", None)
+    return w
+
+
 def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """
     Translate/sanitize weight keys inside panel_config['problem']['weights'] in-place
     (on a deep copy). Returns (sanitized_panel_config, warnings).
-    Harmless when no 'problem.weights' key exists.
+    Also drops unknown `algorithm_params` keys for the selected algorithm.
+    Harmless when no 'problem' key exists.
     """
     cfg = deepcopy(panel_config)
     problem = cfg.get("problem")
     if not isinstance(problem, dict):
         return cfg, []
+    warnings: list[str] = []
+
     weights_raw = problem.get("weights")
     if weights_raw is None:
         problem.pop("weights", None)
-        return cfg, []
-    if not isinstance(weights_raw, dict):
+    elif not isinstance(weights_raw, dict):
         problem.pop("weights", None)
-        return cfg, ["Ignored malformed `problem.weights`; expected an object."]
-    translated, warnings = translate_weights_strict(weights_raw)
-    # Convert wN keys back to alias names so the panel stays human-readable.
-    problem["weights"] = {WEIGHT_ALIAS_REVERSE.get(k, k): v for k, v in translated.items()}
+        warnings.append("Ignored malformed `problem.weights`; expected an object.")
+    else:
+        translated, w = translate_weights_strict(weights_raw)
+        problem["weights"] = {WEIGHT_ALIAS_REVERSE.get(k, k): v for k, v in translated.items()}
+        warnings.extend(w)
+
+    warnings.extend(_sanitize_algorithm_params_on_problem(problem))
     return cfg, warnings
 
 
@@ -472,9 +500,12 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("pop_size must be between 2 and 500")
 
     random_seed = int(raw.get("random_seed", 42))
-    algorithm_params = raw.get("algorithm_params")
-    if algorithm_params is not None and not isinstance(algorithm_params, dict):
+    algorithm_params_raw = raw.get("algorithm_params")
+    if algorithm_params_raw is not None and not isinstance(algorithm_params_raw, dict):
         raise ValueError("algorithm_params must be an object or null")
+
+    algorithm_params_filtered, ap_warnings = filter_algorithm_params(algo_norm, algorithm_params_raw)
+    weight_warnings.extend(ap_warnings)
 
     ref_weights = raw.get("reference_weights")
     if ref_weights is not None:
@@ -513,7 +544,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         "shift_hard_penalty": shift_hard,
         "locked_assignments": locked,
         "algorithm": algo_norm,
-        "algorithm_params": algorithm_params,
+        "algorithm_params": algorithm_params_filtered,
         "epochs": epochs,
         "pop_size": pop_size,
         "random_seed": random_seed,

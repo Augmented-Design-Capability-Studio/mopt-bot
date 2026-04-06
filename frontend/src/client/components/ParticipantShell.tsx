@@ -10,15 +10,10 @@ import { ConfigPanel } from "../problemConfig/ConfigPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
 
-function workflowHeaderClass(mode: string | undefined): string {
+function workflowAccentClass(mode: string | undefined): string {
   if (mode === "agile") return "app-header--wf-agile";
   if (mode === "waterfall") return "app-header--wf-waterfall";
   return "";
-}
-
-function formatWorkflowModeLabel(mode: string | undefined): string {
-  if (!mode) return "—";
-  return mode.charAt(0).toUpperCase() + mode.slice(1).toLowerCase();
 }
 
 type ParticipantShellProps = {
@@ -154,14 +149,14 @@ export function ParticipantShell({
   const backgroundBriefPending = session?.processing?.brief_status === "pending";
   const backgroundConfigPending = session?.processing?.config_status === "pending";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
-  const wfClass = workflowHeaderClass(session?.workflow_mode);
+  const accentClass = workflowAccentClass(session?.workflow_mode);
   const serverPn = (session?.participant_number ?? "").trim();
   const localPn = participantLabel.trim();
   const displayParticipant = serverPn || localPn;
 
   return (
     <div className="app-shell">
-      <header className={wfClass ? `app-header ${wfClass}` : "app-header"}>
+      <header className={accentClass ? `app-header ${accentClass}` : "app-header"}>
         <div className="app-header-title-cluster">
           <span className="app-title">
             Participant
@@ -174,8 +169,7 @@ export function ParticipantShell({
           </span>
         </div>
         <span className="muted">
-          Session {sessionId.slice(0, 8)}… · {formatWorkflowModeLabel(session?.workflow_mode)}
-          {sessionTerminated ? " · ended" : ""}
+          Session {sessionId.slice(0, 8)}…{sessionTerminated ? " · ended" : ""}
         </span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
           <StatusChip

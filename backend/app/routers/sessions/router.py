@@ -471,6 +471,10 @@ def post_message(
                     is_answered_open_question=is_answer_save,
                 )
 
+    if proc_state is None:
+        row = db.get(StudySession, session_id) or row
+        proc_state = helpers.processing_state(row)
+
     return PostMessagesResponse(
         messages=out,
         panel_config=updated_panel,

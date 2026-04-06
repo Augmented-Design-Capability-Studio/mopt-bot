@@ -1,3 +1,4 @@
+import { parseAlgorithmParamsFromInner, serializeAlgorithmParams } from "./algorithmCatalog";
 import type { ProblemBlock } from "./types";
 
 type ParsedProblemConfig = {
@@ -29,13 +30,16 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
   const earlyStop =
     typeof inner.early_stop === "boolean" ? inner.early_stop : true;
 
+  const algorithmStr = typeof inner.algorithm === "string" ? inner.algorithm : "";
+
   return {
     outerRaw,
     hasProblemKey,
     problem: {
       weights,
       only_active_terms: typeof inner.only_active_terms === "boolean" ? inner.only_active_terms : true,
-      algorithm: typeof inner.algorithm === "string" ? inner.algorithm : "",
+      algorithm: algorithmStr,
+      algorithm_params: parseAlgorithmParamsFromInner(inner, algorithmStr),
       epochs: typeof inner.epochs === "number" ? inner.epochs : null,
       early_stop: earlyStop,
       early_stop_patience: typeof inner.early_stop_patience === "number" ? inner.early_stop_patience : null,
@@ -85,6 +89,10 @@ export function serializeProblemConfig(
 
   problemObject.driver_preferences = problem.driver_preferences;
   problemObject.locked_assignments = problem.locked_assignments;
+
+  const serializedAp = serializeAlgorithmParams(problem.algorithm, problem.algorithm_params);
+  if (serializedAp) problemObject.algorithm_params = serializedAp;
+  else delete problemObject.algorithm_params;
 
   const result = hasProblemKey ? { ...outerRaw, problem: problemObject } : problemObject;
   return JSON.stringify(result, null, 2);

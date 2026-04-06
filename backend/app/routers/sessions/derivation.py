@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
-from app.problem_brief import merge_problem_brief_patch
+from app.problem_brief import merge_problem_brief_patch, normalize_problem_brief
 
 from . import helpers, sync
 
@@ -125,11 +125,18 @@ def _run_background_derivation(
             db.commit()
             db.refresh(row)
 
+            # If the hidden brief pass made no effective change, skip the config LLM and use
+            # heuristic derivation only (same stability as sync when the brief is unchanged).
+            brief_unchanged = json.dumps(
+                normalize_problem_brief(effective_problem_brief), sort_keys=True, default=str
+            ) == json.dumps(normalize_problem_brief(base_problem_brief), sort_keys=True, default=str)
+            config_api_key = None if brief_unchanged else api_key
+
             sync.sync_panel_from_problem_brief(
                 row,
                 db,
                 effective_problem_brief,
-                api_key=api_key,
+                api_key=config_api_key,
                 model_name=model_name,
                 workflow_mode=workflow_mode,
                 recent_runs_summary=recent_runs_summary,

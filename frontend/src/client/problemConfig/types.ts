@@ -14,6 +14,8 @@ export type ProblemBlock = {
   weights: Record<string, number>;
   only_active_terms: boolean;
   algorithm: string;
+  /** Current algorithm’s hyperparameters (defaults merged from JSON). */
+  algorithm_params: Record<string, number>;
   epochs: number | null;
   /** Default true when omitted from JSON. */
   early_stop: boolean;

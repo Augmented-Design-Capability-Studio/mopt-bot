@@ -91,3 +91,40 @@ def test_sanitize_panel_weights_drops_malformed_weights():
     panel, warnings = sanitize_panel_weights({"problem": {"weights": "{", "epochs": 500}})
     assert "weights" not in panel["problem"]
     assert warnings == ["Ignored malformed `problem.weights`; expected an object."]
+
+
+def test_parse_problem_config_filters_algorithm_params():
+    cfg = parse_problem_config(
+        {
+            "algorithm": "GA",
+            "algorithm_params": {"pc": 0.85, "w": 9, "pm": 0.05},
+        }
+    )
+    assert cfg["algorithm_params"] == {"pc": 0.85, "pm": 0.05}
+    assert any("w" in msg.lower() for msg in cfg["weight_warnings"])
+
+
+def test_sanitize_panel_weights_strips_algorithm_params_foreign_keys():
+    panel, warnings = sanitize_panel_weights(
+        {
+            "problem": {
+                "algorithm": "PSO",
+                "algorithm_params": {"pc": 0.9, "c1": 1.5, "c2": 2.0, "w": 0.4},
+            },
+        }
+    )
+    assert panel["problem"]["algorithm_params"] == {"c1": 1.5, "c2": 2.0, "w": 0.4}
+    assert any("pc" in w.lower() for w in warnings)
+
+
+def test_sanitize_panel_weights_removes_params_when_algorithm_invalid():
+    panel, warnings = sanitize_panel_weights(
+        {
+            "problem": {
+                "algorithm": "NOT_AN_ALGO",
+                "algorithm_params": {"pc": 0.9},
+            },
+        }
+    )
+    assert "algorithm_params" not in panel["problem"]
+    assert warnings

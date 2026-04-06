@@ -22,6 +22,14 @@ def test_config_schema_constrains_problem_weights_to_object():
     }
 
 
+def test_config_schema_algorithm_params_has_bounded_properties():
+    panel_patch = CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA
+    ap = panel_patch["properties"]["problem"]["properties"]["algorithm_params"]
+    assert ap.get("additionalProperties") is False
+    assert "pc" in ap["properties"]
+    assert "mutation_step_size_damp" in ap["properties"]
+
+
 def test_config_schema_requires_known_driver_preference_fields():
     panel_patch = CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA
     driver_pref = panel_patch["properties"]["problem"]["properties"]["driver_preferences"]["items"]

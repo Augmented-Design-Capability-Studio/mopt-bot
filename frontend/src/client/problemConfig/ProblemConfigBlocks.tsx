@@ -1,6 +1,11 @@
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 
 import {
+  ALLOWED_ALGORITHM_PARAMS,
+  ALGORITHM_PARAM_FIELD_META,
+  defaultParamsForAlgorithm,
+} from "./algorithmCatalog";
+import {
   ALGORITHM_DESC,
   PREFERENCE_CONDITIONS,
   SHIFT_HARD_PENALTY_INFO,
@@ -232,7 +237,16 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
   }
 
   function updateProblem(patch: Partial<ProblemBlock>) {
-    const nextProblem: ProblemBlock = { ...problem, ...patch };
+    let algorithm_params = problem.algorithm_params;
+    if (patch.algorithm !== undefined && patch.algorithm !== problem.algorithm) {
+      algorithm_params =
+        patch.algorithm_params !== undefined
+          ? patch.algorithm_params
+          : defaultParamsForAlgorithm(patch.algorithm);
+    } else if (patch.algorithm_params !== undefined) {
+      algorithm_params = { ...problem.algorithm_params, ...patch.algorithm_params };
+    }
+    const nextProblem: ProblemBlock = { ...problem, ...patch, algorithm_params };
     onChange(serializeProblemConfig(outerRaw, hasProblemKey, nextProblem));
   }
 
@@ -501,7 +515,13 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                   editable={editable}
                   value={problem.algorithm}
                   displayLabel={problem.algorithm}
-                  onChange={(e) => updateProblem({ algorithm: e.target.value })}
+                  onChange={(e) => {
+                    const nextAlgo = e.target.value;
+                    updateProblem({
+                      algorithm: nextAlgo,
+                      algorithm_params: defaultParamsForAlgorithm(nextAlgo),
+                    });
+                  }}
                   style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
                 >
                   {["GA", "PSO", "SA", "SwarmSA", "ACOR"].map((algorithm) => (
@@ -517,6 +537,43 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                 )}
               </FieldRow>
             )}
+
+            {problem.algorithm &&
+              (ALLOWED_ALGORITHM_PARAMS[problem.algorithm] ?? []).map((paramKey) => {
+                const meta = ALGORITHM_PARAM_FIELD_META[problem.algorithm]?.[paramKey];
+                const value = problem.algorithm_params[paramKey];
+                const safe =
+                  typeof value === "number" && Number.isFinite(value) ? value : (meta?.min ?? 0);
+                return (
+                  <FieldRow key={paramKey} label={meta?.label ?? paramKey}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                      <ConfigNumberInput
+                        editable={editable}
+                        value={safe}
+                        min={meta?.min}
+                        max={meta?.max}
+                        step={meta?.step ?? 0.01}
+                        onChange={(e) => {
+                          const n = parseFloat(e.target.value);
+                          const nextVal = Number.isNaN(n) ? safe : n;
+                          updateProblem({
+                            algorithm_params: {
+                              ...problem.algorithm_params,
+                              [paramKey]: nextVal,
+                            },
+                          });
+                        }}
+                        style={{ width: "7rem", fontFamily: "monospace", fontSize: "0.85rem" }}
+                      />
+                      {meta?.description ? (
+                        <span className="muted" style={{ fontSize: "0.72rem" }}>
+                          {meta.description}
+                        </span>
+                      ) : null}
+                    </div>
+                  </FieldRow>
+                );
+              })}
 
             {problem.epochs !== null && (
               <FieldRow label="Max iterations">

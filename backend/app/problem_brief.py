@@ -602,10 +602,22 @@ def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
             )
         )
 
+    from app.algorithm_catalog import (
+        allowed_param_keys,
+        canonical_algorithm_stored,
+        param_value_is_default,
+    )
+
     algorithm_params = problem.get("algorithm_params")
-    if isinstance(algorithm_params, dict):
+    algo_key = canonical_algorithm_stored(algorithm) if algorithm else None
+    allowed_ap = allowed_param_keys(algo_key) if algo_key else frozenset()
+    if isinstance(algorithm_params, dict) and allowed_ap:
         for key in sorted(algorithm_params):
+            if key not in allowed_ap:
+                continue
             value = algorithm_params.get(key)
+            if algo_key and param_value_is_default(algo_key, key, value):
+                continue
             if isinstance(value, bool):
                 rendered = "true" if value else "false"
             elif isinstance(value, (int, float)):

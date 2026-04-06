@@ -141,6 +141,44 @@ def test_skip_hidden_brief_update_skips_background_and_settles_processing(monkey
         assert session.json()["processing"]["brief_status"] == "ready"
 
 
+def test_post_message_without_model_returns_current_processing_state(monkeypatch):
+    """invoke_model false must still return processing so the client can clear stale pending UI."""
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-no-model-proc-secret")
+    get_settings.cache_clear()
+
+    from app.database import SessionLocal
+    from app.models import StudySession
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-no-model-proc-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        with SessionLocal() as db:
+            row = db.get(StudySession, sid)
+            assert row is not None
+            row.brief_status = "pending"
+            row.config_status = "pending"
+            row.processing_revision = 5
+            db.commit()
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "User note only", "invoke_model": False},
+            headers={"Authorization": "Bearer test-client-no-model-proc-secret"},
+        )
+        assert send.status_code == 200
+        body = send.json()
+        assert body["processing"] is not None
+        assert body["processing"]["brief_status"] == "pending"
+        assert body["processing"]["config_status"] == "pending"
+        assert body["processing"]["processing_revision"] == 5
+
+
 def test_steer_messages_hidden_and_forwarded_to_next_model_turn(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-steer-secret")
     monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-steer-secret")

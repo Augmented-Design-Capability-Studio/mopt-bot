@@ -19,6 +19,8 @@ const RUN_POLL_MS = 8000;
 const SESSION_POLL_MS = 15000;
 const EAGER_POLL_INTERVAL_MS = 2000;
 const EAGER_POLL_DURATION_MS = 10000;
+/** Session GET while definition/config derivation is pending (faster than SESSION_POLL_MS). */
+const PROCESSING_PENDING_SESSION_POLL_MS = 2500;
 
 type UseParticipantSessionSyncArgs = {
   token: string;
@@ -269,6 +271,23 @@ export function useParticipantSessionSync({
     }, SESSION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [authed, syncSession]);
+
+  useEffect(() => {
+    if (!authed) return;
+    const pending =
+      session?.processing?.brief_status === "pending" || session?.processing?.config_status === "pending";
+    if (!pending) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void syncSession();
+    }, PROCESSING_PENDING_SESSION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    authed,
+    session?.processing?.brief_status,
+    session?.processing?.config_status,
+    syncSession,
+  ]);
 
   useEffect(() => {
     if (!authed) {
