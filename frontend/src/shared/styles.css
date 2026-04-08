@@ -196,6 +196,11 @@ select:focus-visible {
   background: #e2dfd8;
 }
 
+.panel-editing-indicator {
+  color: var(--focus);
+  font-weight: 700;
+}
+
 .panel-body {
   flex: 1;
   min-height: 0;
@@ -693,9 +698,13 @@ select:focus-visible {
  * !important beats global `button { background: var(--panel) }` so mimics match Definition fields.
  */
 .problem-config-blocks .problem-config-input,
-.problem-config-blocks .problem-config-select {
+.problem-config-blocks .problem-config-select,
+.problem-config-blocks .problem-config-field-mimic {
   margin: 0;
   box-sizing: border-box;
+  padding: 0.2rem 0.4rem;
+  min-height: 1.65rem;
+  line-height: 1.2;
   background-color: #fff;
   border: 1px solid var(--border);
   border-radius: 2px;
@@ -720,8 +729,6 @@ select:focus-visible {
 }
 
 .problem-config-blocks .problem-config-field-mimic {
-  margin: 0;
-  box-sizing: border-box;
   display: inline-block;
   vertical-align: middle;
   cursor: pointer;
@@ -729,10 +736,6 @@ select:focus-visible {
   color: inherit;
   text-align: left;
   background-color: #fff !important;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  padding: 0.25rem 0.45rem;
-  min-height: 1.85rem;
 }
 
 .problem-config-blocks .problem-config-field-mimic:hover {

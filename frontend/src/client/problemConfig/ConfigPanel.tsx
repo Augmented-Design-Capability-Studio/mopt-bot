@@ -222,7 +222,7 @@ export function ConfigPanel({
       <div className="panel-header">
         Problem setup
         {(configEditing || definitionEditing) && (
-          <span className="muted"> - editing {tabTitle.toLowerCase()}</span>
+          <span className="panel-editing-indicator"> - Editing...</span>
         )}
         {!definitionEditing && !configEditing && (backgroundBriefPending || backgroundConfigPending) && (
           <span className="muted" style={{ display: "inline-flex", alignItems: "center", marginLeft: "0.5rem" }}>
