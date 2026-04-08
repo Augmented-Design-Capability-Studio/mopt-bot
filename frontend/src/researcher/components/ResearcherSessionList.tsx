@@ -1,4 +1,5 @@
 import type { Session } from "@shared/api";
+import { parseServerDate } from "@shared/dateTime";
 
 type ResearcherSessionListProps = {
   sessions: Session[];
@@ -22,7 +23,7 @@ export function ResearcherSessionList({
   busy,
 }: ResearcherSessionListProps) {
   function formatStart(value: string): string {
-    const parsed = new Date(value);
+    const parsed = parseServerDate(value);
     if (Number.isNaN(parsed.getTime())) return "Unknown start";
     return parsed.toLocaleString();
   }

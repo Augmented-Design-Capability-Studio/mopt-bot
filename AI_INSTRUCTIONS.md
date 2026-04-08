@@ -127,7 +127,7 @@ The **researcher** UI has a **left panel** for session list and management. Sele
 - The researcher session list should support selecting multiple visible sessions and deleting them in one confirmed batch operation for fast test-session cleanup.
 - **Terminate session:** the participant **keeps read access** to GET session, messages, and runs so they can review history; **writes** (chat, uploads, panel saves, runs, model key save) are rejected by the API. The client **greys out** chat and actions and shows an **info banner** with **Start new session** while leaving panels readable.
 - **Researcher messages** in chat are **invisible** to the participant; only the researcher sees their own steering messages.
-- The researcher sets **Agile vs Waterfall** mode for the agent driving that session and may **push** the canonical mediocre sparse starter problem JSON to the participant session when the study design calls for it.
+- The researcher sets **Agile vs Waterfall** mode for the agent driving that session and may **push** the canonical mediocre sparse starter problem JSON to the participant session when the study design calls for it. In researcher session detail, the selected session panel should show a clear workflow accent (cool for agile, warm for waterfall) that updates immediately on mode changes.
 - The researcher session detail should keep the **participant model/API key chip** and the **backend chip** in the controls area immediately above chat, not in the top header.
 - The researcher Runs view should list each run as a collapsed entry by default, with actions to inspect details and delete individual runs without removing the entire session. Run deletion should require an explicit confirmation and remain deleted after refresh or reselection.
 

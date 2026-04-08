@@ -1,9 +1,10 @@
 import type { SnapshotSummary } from "@shared/api";
 import { DialogShell } from "@shared/components/DialogShell";
+import { parseServerDate } from "@shared/dateTime";
 
 function formatSnapshotTime(iso: string): string {
   try {
-    const d = new Date(iso);
+    const d = parseServerDate(iso);
     return d.toLocaleString(undefined, {
       month: "short",
       day: "numeric",

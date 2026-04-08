@@ -1,7 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+
+def serialize_utc_datetime(value: datetime) -> str:
+    """Emit API datetimes as explicit UTC (Z) for stable client parsing."""
+    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return normalized.isoformat().replace("+00:00", "Z")
 
 
 class SessionCreate(BaseModel):
@@ -71,6 +77,10 @@ class SessionOut(BaseModel):
     gemini_model: str | None
     gemini_key_configured: bool = False
 
+    @field_serializer("created_at", "updated_at")
+    def _serialize_datetimes(self, value: datetime) -> str:
+        return serialize_utc_datetime(value)
+
 
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=32000)
@@ -92,6 +102,10 @@ class MessageOut(BaseModel):
     content: str
     visible_to_participant: bool
     kind: str
+
+    @field_serializer("created_at")
+    def _serialize_created_at(self, value: datetime) -> str:
+        return serialize_utc_datetime(value)
 
 
 class ChatModelTurn(BaseModel):
@@ -143,6 +157,10 @@ class RunOut(BaseModel):
     request: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
 
+    @field_serializer("created_at")
+    def _serialize_created_at(self, value: datetime) -> str:
+        return serialize_utc_datetime(value)
+
 
 class ModelSettingsBody(BaseModel):
     gemini_api_key: str | None = None
@@ -170,3 +188,7 @@ class SnapshotOut(BaseModel):
     has_config: bool
     problem_brief: dict[str, Any] | None = None
     panel_config: dict[str, Any] | None = None
+
+    @field_serializer("created_at")
+    def _serialize_created_at(self, value: datetime) -> str:
+        return serialize_utc_datetime(value)

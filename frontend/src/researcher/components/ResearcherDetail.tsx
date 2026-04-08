@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
 import { ChatPanel } from "@shared/chat/ChatPanel";
+import { parseServerDate } from "@shared/dateTime";
 import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 import { StatusChip } from "@shared/status/StatusChip";
@@ -72,8 +73,16 @@ export function ResearcherDetail({
     setParticipantNumberDraft(detail?.participant_number ?? "");
   }, [detail?.id, detail?.participant_number]);
 
+  const workflowClass =
+    detail?.workflow_mode === "agile"
+      ? "detail--wf-agile"
+      : detail?.workflow_mode === "waterfall"
+        ? "detail--wf-waterfall"
+        : "";
+  const participantNumberChanged = participantNumberDraft !== (detail?.participant_number ?? "");
+
   return (
-    <main className="detail">
+    <main className={workflowClass ? `detail ${workflowClass}` : "detail"}>
       {!savedToken.trim() && (
         <p className="muted">
           Paste <code>MOPT_RESEARCHER_SECRET</code> from your server <code>.env</code>, then click Save token.
@@ -96,57 +105,72 @@ export function ResearcherDetail({
             </button>
           </div>
 
-          <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-            <label className="muted">
+          <div className="researcher-controls-grid">
+            <label className="muted researcher-control-group">
               Workflow
               <select
                 value={detail.workflow_mode}
                 onChange={(e) => void onPatchSession({ workflow_mode: e.target.value })}
-                style={{ display: "block", marginTop: "0.2rem" }}
+                className="researcher-workflow-select"
               >
                 <option value="agile">agile</option>
                 <option value="waterfall">waterfall</option>
               </select>
             </label>
-            <label className="muted">
+
+            <label className="muted researcher-control-group">
               Participant number
-              <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.2rem" }}>
+              <div style={{ display: "flex", gap: "0.35rem" }}>
                 <input
                   type="text"
                   value={participantNumberDraft}
                   disabled={busy}
                   onChange={(e) => setParticipantNumberDraft(e.target.value)}
                   placeholder="e.g. 007"
+                  className="researcher-control-input"
                 />
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !participantNumberChanged}
+                  className={
+                    participantNumberChanged
+                      ? "researcher-save-button researcher-save-button--dirty"
+                      : "researcher-save-button"
+                  }
                   onClick={() => void onPatchSession({ participant_number: participantNumberDraft })}
                 >
                   Save
                 </button>
               </div>
             </label>
-            <label className="muted">
-              <input
-                type="checkbox"
-                checked={detail.optimization_allowed}
-                onChange={(e) => void onPatchSession({ optimization_allowed: e.target.checked })}
-              />{" "}
-              Allow optimization runs
-            </label>
-            <button type="button" disabled={busy} onClick={() => void onPushParticipantStarterPanel()}>
-              Push starter problem config
-            </button>
-            <label className="muted">
-              <input
-                type="checkbox"
-                checked={getOnlyActiveTerms(detail.panel_config)}
-                disabled={busy}
-                onChange={(e) => void onSetOnlyActiveTerms(e.target.checked)}
-              />{" "}
-              Only score explicitly listed objectives
-            </label>
+
+            <div className="muted researcher-control-group">
+              <span>More actions & settings</span>
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
+                <button type="button" disabled={busy} onClick={() => void onPushParticipantStarterPanel()}>
+                  Push starter problem config
+                </button>
+                <div className="researcher-toggle-column">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={detail.optimization_allowed}
+                      onChange={(e) => void onPatchSession({ optimization_allowed: e.target.checked })}
+                    />{" "}
+                    Allow optimization runs
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={getOnlyActiveTerms(detail.panel_config)}
+                      disabled={busy}
+                      onChange={(e) => void onSetOnlyActiveTerms(e.target.checked)}
+                    />{" "}
+                    Only score explicitly listed objectives
+                  </label>
+                </div>
+              </div>
+            </div>
           </div>
 
           <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
@@ -177,7 +201,13 @@ export function ResearcherDetail({
               messages={
                 <MessageBubbleList
                   messages={messages}
-                  getBubbleClassName={() => "bubble assistant"}
+                  getBubbleClassName={(message) => {
+                    if (message.role === "user") return "bubble user";
+                    if (message.role === "researcher" || !message.visible_to_participant) {
+                      return "bubble researcher-hidden";
+                    }
+                    return "bubble assistant";
+                  }}
                   renderHeading={(message) => (
                     <strong>
                       {message.role}
@@ -226,7 +256,7 @@ export function ResearcherDetail({
                   <details key={run.id}>
                     <summary className="mono" style={{ cursor: "pointer" }}>
                       Run #{displayRunNumber(run)} · {run.run_type} · {run.ok ? "ok" : "error"} · cost {run.cost ?? "-"} ·{" "}
-                      {new Date(run.created_at).toLocaleString()}
+                      {parseServerDate(run.created_at).toLocaleString()}
                     </summary>
                     <div style={{ marginTop: "0.35rem" }}>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.35rem" }}>

@@ -324,11 +324,18 @@ select:focus-visible {
 }
 
 .bubble.user {
-  border-left: 3px solid var(--accent);
+  border-left: 4px solid #4f6f90;
+  background: #f1f6fb;
 }
 
 .bubble.assistant {
-  border-left: 3px solid #6b7b6a;
+  border-left: 4px solid #5f8168;
+  background: #eef6ef;
+}
+
+.bubble.researcher-hidden {
+  border-left: 4px solid #9b6ea8;
+  background: #f6eef9;
 }
 
 .bubble-markdown > :first-child {
@@ -1062,6 +1069,60 @@ select:focus-visible {
   flex-direction: column;
   gap: 0.5rem;
   min-height: 0;
+}
+
+/* Researcher workflow accent is intentionally stronger than participant cue. */
+.detail--wf-agile {
+  background:
+    linear-gradient(90deg, rgba(154, 168, 180, 0.34), rgba(154, 168, 180, 0.08) 16%, transparent 45%),
+    var(--panel);
+  border-left: 8px solid #8fa3b7;
+}
+
+.detail--wf-waterfall {
+  background:
+    linear-gradient(90deg, rgba(168, 158, 148, 0.36), rgba(168, 158, 148, 0.1) 16%, transparent 45%),
+    var(--panel);
+  border-left: 8px solid #9f9184;
+}
+
+.researcher-control-input {
+  min-height: 2.1rem;
+}
+
+.researcher-controls-grid {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.researcher-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.researcher-workflow-select {
+  min-height: 2.1rem;
+  padding: 0.3rem 0.45rem;
+  font-weight: 600;
+}
+
+.researcher-save-button {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.researcher-save-button--dirty {
+  font-weight: 600;
+}
+
+.researcher-toggle-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  justify-content: center;
 }
 
 .dialog-backdrop {

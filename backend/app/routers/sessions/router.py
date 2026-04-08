@@ -34,6 +34,7 @@ from app.schemas import (
     SnapshotOut,
     SolveRunCreate,
     SteerCreate,
+    serialize_utc_datetime,
 )
 from app.session_snapshots import EVENT_BEFORE_RUN, EVENT_BOOKMARK, EVENT_MANUAL_SAVE, create_snapshot
 
@@ -857,8 +858,8 @@ def export_session(
     return {
         "session": {
             "id": row.id,
-            "created_at": row.created_at.isoformat(),
-            "updated_at": row.updated_at.isoformat(),
+            "created_at": serialize_utc_datetime(row.created_at),
+            "updated_at": serialize_utc_datetime(row.updated_at),
             "workflow_mode": row.workflow_mode,
             "participant_number": row.participant_number,
             "status": row.status,
@@ -870,7 +871,7 @@ def export_session(
         "messages": [
             {
                 "id": m.id,
-                "created_at": m.created_at.isoformat(),
+                "created_at": serialize_utc_datetime(m.created_at),
                 "role": m.role,
                 "content": m.content,
                 "visible_to_participant": m.visible_to_participant,
@@ -882,7 +883,7 @@ def export_session(
             {
                 "id": r.id,
                 "run_number": helpers.run_number(r),
-                "created_at": r.created_at.isoformat(),
+                "created_at": serialize_utc_datetime(r.created_at),
                 "run_type": r.run_type,
                 "ok": r.ok,
                 "cost": r.cost,

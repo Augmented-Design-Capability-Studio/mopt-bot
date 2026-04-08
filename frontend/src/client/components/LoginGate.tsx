@@ -1,5 +1,6 @@
 import type { RecentSessionRow } from "../lib/participantTypes";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
+import { parseServerDate } from "@shared/dateTime";
 
 type LoginGateProps = {
   token: string;
@@ -34,7 +35,7 @@ export function LoginGate({
 }: LoginGateProps) {
   function formatStartTime(value?: string): string {
     if (!value) return "Start time unknown";
-    const parsed = new Date(value);
+    const parsed = parseServerDate(value);
     if (Number.isNaN(parsed.getTime())) return "Start time unknown";
     return `Started ${parsed.toLocaleString()}`;
   }

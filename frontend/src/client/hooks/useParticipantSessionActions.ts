@@ -11,6 +11,7 @@ import {
   type Session,
   type SnapshotSummary,
 } from "@shared/api";
+import { parseServerDate } from "@shared/dateTime";
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { configChangeSummary } from "../problemConfig/configSummary";
@@ -396,7 +397,7 @@ export function useParticipantSessionActions({
 
   const formatSnapshotTime = (iso: string) => {
     try {
-      const d = new Date(iso);
+      const d = parseServerDate(iso);
       return d.toLocaleString(undefined, {
         month: "short",
         day: "numeric",
