@@ -17,6 +17,7 @@ def test_create_session_returns_null_panel_config(monkeypatch):
         )
         assert r.status_code == 200
         data = r.json()
+        assert data.get("optimization_allowed") is False
         assert data.get("panel_config") is None
         assert data["problem_brief"]["solver_scope"] == "general_metaheuristic_translation"
         assert any(item["kind"] == "system" for item in data["problem_brief"]["items"])

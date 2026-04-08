@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
-import { displayRunNumber, type RunResult, type Session } from "@shared/api";
+import { displayRunNumber, type ProblemBrief, type RunResult, type Session } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
+import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { ConvergencePlot } from "./ConvergencePlot";
 import { RunTimeline } from "./RunTimeline";
 import { ViolationSummary } from "./ViolationSummary";
@@ -16,6 +17,8 @@ type ResultsPanelProps = {
   busy: boolean;
   optimizing: boolean;
   session: Session | null;
+  configText: string;
+  problemBrief: ProblemBrief | null;
   sessionTerminated: boolean;
   className: string;
   onSetActiveRun: (index: number) => void;
@@ -35,6 +38,8 @@ export function ResultsPanel({
   busy,
   optimizing,
   session,
+  configText,
+  problemBrief,
   sessionTerminated,
   className,
   onSetActiveRun,
@@ -44,6 +49,8 @@ export function ResultsPanel({
   onCancelOptimize,
   onRunEvaluateEdited,
 }: ResultsPanelProps) {
+  const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief);
+  const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief);
   const [showRaw, setShowRaw] = useState(false);
   const [vizTab, setVizTab] = useState<"schedule" | "convergence">("schedule");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
@@ -260,7 +267,12 @@ export function ResultsPanel({
           <button
             type="button"
             className="btn-primary"
-            disabled={busy || !session?.optimization_allowed || editMode !== "none" || sessionTerminated}
+            disabled={busy || !canRunOptimization || editMode !== "none" || sessionTerminated}
+            title={
+              !canRunOptimization && !sessionTerminated && editMode === "none"
+                ? runDisabledHint || "Cannot run optimization yet."
+                : undefined
+            }
             onClick={() => void onRunOptimize()}
           >
             Run optimization

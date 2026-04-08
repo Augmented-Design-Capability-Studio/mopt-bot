@@ -181,7 +181,8 @@ select:focus-visible {
 }
 
 .panel-locked {
-  opacity: 0.45;
+  opacity: 0.28;
+  filter: brightness(0.82) saturate(0.9);
   pointer-events: none;
 }
 
@@ -686,6 +687,7 @@ select:focus-visible {
   padding: 0.35rem;
   min-height: 2.2rem;
   width: 100%;
+  position: relative;
 }
 
 .definition-inline-display:hover:not(:disabled) {
@@ -709,6 +711,11 @@ select:focus-visible {
   border: 1px solid var(--border);
   border-radius: 2px;
   color: inherit;
+}
+
+.problem-config-blocks .problem-config-select,
+.problem-config-blocks .problem-config-field-mimic--select {
+  min-width: 7.25rem;
 }
 
 .problem-config-blocks .problem-config-input[type="number"] {
@@ -736,6 +743,11 @@ select:focus-visible {
   color: inherit;
   text-align: left;
   background-color: #fff !important;
+  position: relative;
+}
+
+.problem-config-blocks .problem-config-field-mimic--select {
+  padding-right: 1.3rem;
 }
 
 .problem-config-blocks .problem-config-field-mimic:hover {
@@ -756,7 +768,9 @@ select:focus-visible {
   background: #fff;
   padding: 0.35rem;
   width: 100%;
-  resize: vertical;
+  min-height: 2.2rem;
+  resize: none;
+  overflow: hidden;
   font: inherit;
   line-height: 1.35;
   white-space: pre-wrap;
@@ -764,7 +778,104 @@ select:focus-visible {
 }
 
 .definition-answer-textarea {
-  min-height: 2.5rem;
+  min-height: 2.2rem;
+}
+
+.definition-delete-marker {
+  height: 0.3rem;
+  margin: 0.15rem 0 0.25rem;
+  border-radius: 999px;
+  /* Align with .definition-remove-btn (#b94a4a) */
+  background: linear-gradient(90deg, rgba(185, 74, 74, 0.25), rgba(185, 74, 74, 0.85), rgba(185, 74, 74, 0.25));
+  box-shadow: 0 0 10px rgba(185, 74, 74, 0.5);
+  animation: definition-delete-marker-fade 1650ms ease-out forwards;
+}
+
+@keyframes definition-delete-marker-fade {
+  from {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  to {
+    opacity: 0;
+    transform: scaleX(0.92);
+  }
+}
+
+.definition-item-external-flash {
+  animation: definition-item-external-flash-pulse 2.25s ease-out forwards;
+}
+
+.definition-item-external-flash--new {
+  animation-name: definition-item-external-flash-pulse-new;
+}
+
+.definition-item-external-flash--upd {
+  animation-name: definition-item-external-flash-pulse-upd;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .definition-item-external-flash {
+    animation: none;
+    outline: 1px solid rgba(46, 120, 200, 0.45);
+  }
+}
+
+@keyframes definition-item-external-flash-pulse {
+  0% {
+    box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 120, 200, 0);
+  }
+}
+
+@keyframes definition-item-external-flash-pulse-new {
+  0% {
+    box-shadow: 0 0 0 2px rgba(80, 160, 90, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(80, 160, 90, 0);
+  }
+}
+
+@keyframes definition-item-external-flash-pulse-upd {
+  0% {
+    box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 120, 200, 0);
+  }
+}
+
+.config-panel-waterfall-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 4px;
+  border: 1px solid rgba(200, 140, 60, 0.55);
+  background: rgba(255, 230, 190, 0.35);
+  box-shadow: 0 0 14px rgba(220, 160, 60, 0.28);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.config-panel-waterfall-alert-jump {
+  margin-left: auto;
+  font: inherit;
+  border: none;
+  background: transparent;
+  color: var(--link, #1a5a96);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.config-panel-waterfall-alert-jump:hover {
+  color: var(--fg, #222);
 }
 
 .definition-item-placeholder-glow {

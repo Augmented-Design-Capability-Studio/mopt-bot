@@ -13,6 +13,10 @@ import {
 import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 
 import { type ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
+import {
+  computeCanRunOptimization,
+  intrinsicOptimizationReadyAgile,
+} from "../lib/optimizationGate";
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
 import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
@@ -179,6 +183,8 @@ export function useParticipantController() {
     }
   }, [token, sessionId, session?.status, loadSnapshots]);
 
+  const agileAutorunStorageKey = sessionId ? `mopt-agile-autorun-dispatched:${sessionId}` : "";
+
   const actions = useParticipantSessionActions({
     token,
     sessionId,
@@ -213,6 +219,33 @@ export function useParticipantController() {
     startEagerMessagePoll: sync.startEagerMessagePoll,
     refetchSnapshots: loadSnapshots,
   });
+
+  useEffect(() => {
+    if (session?.workflow_mode !== "agile" || session.status !== "active") return;
+    if (!agileAutorunStorageKey) return;
+    if (busy || optimizing) return;
+    if (editMode !== "none") return;
+    if (!intrinsicOptimizationReadyAgile(configText)) return;
+    if (!computeCanRunOptimization(session, configText, problemBrief)) return;
+    const hasCommittedOptimize = runs.some((r) => !r.clientPending && r.run_type === "optimize");
+    if (hasCommittedOptimize) return;
+    try {
+      if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(agileAutorunStorageKey)) return;
+    } catch {
+      /* private mode */
+    }
+    void actions.runOptimize({ agileAutorunStorageKey });
+  }, [
+    actions.runOptimize,
+    agileAutorunStorageKey,
+    busy,
+    configText,
+    editMode,
+    optimizing,
+    problemBrief,
+    runs,
+    session,
+  ]);
 
   const ensureDefinitionEditing = useCallback(() => {
     if (editMode !== "none") return;

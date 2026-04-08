@@ -283,8 +283,9 @@ This turn was triggered by an optimization run completion. Follow these rules:
   or any violation counts, metrics summaries, or run-by-run summaries as gathered
   facts or assumptions. The problem definition must remain about **user-stated goals
   and constraints**, not run output.
-- **Do NOT use replace_editable_items** for this turn. Preserve the existing problem
-  definition intact.
+- **Do NOT use replace_editable_items** for this turn. Preserve existing rows, but you
+  **may merge-append** new brief rows (see workflow addendum) using `problem_brief_patch`
+  without replacing the full list.
 - You **may** suggest at most one or two targeted **config-linked** refinements when
   appropriate (e.g. a single weight, population size, or algorithm param change).
   Use `problem_brief_patch` with only config-slot items such as:
@@ -298,14 +299,22 @@ This turn was triggered by an optimization run completion. Follow these rules:
 """.strip()
 
 STUDY_CHAT_RUN_ACK_AGILE = """
-- Agile: you may proactively apply one small config tweak based on run feedback.
+- **Agile (post-run focus):** After a run, lean on **`kind: "assumption"`** rows (merge-append)
+  to capture modeling choices or working hypotheses suggested by the dialogue — not raw
+  run metrics. You may keep or lightly extend **open questions**; they do not all need to
+  resolve immediately.
+- You may proactively apply one small config tweak based on run feedback.
   Frame it as "I've adjusted X based on what we saw — run again when ready."
 """.strip()
 
 STUDY_CHAT_RUN_ACK_WATERFALL = """
-- Waterfall: if you suggest a config change, tie it explicitly to the stated
-  objectives. "Given your priority for on-time delivery, we could try increasing
-  the deadline penalty — I've updated that."
+- **Waterfall (post-run focus):** After a run, lean on **new or updated `open_questions`**
+  (merge-append; avoid `replace_open_questions` unless you intentionally replace the whole
+  list). Prefer clarifications over new **assumption** rows unless the participant asked
+  for an assumption explicitly.
+- If you suggest a config change, tie it explicitly to the stated objectives. "Given your
+  priority for on-time delivery, we could try increasing the deadline penalty — I've
+  updated that."
 """.strip()
 
 

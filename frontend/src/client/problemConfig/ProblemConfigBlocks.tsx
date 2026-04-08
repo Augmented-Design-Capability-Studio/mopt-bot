@@ -1,4 +1,4 @@
-import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useRef, type CSSProperties, type ReactNode } from "react";
 
 import {
   ALLOWED_ALGORITHM_PARAMS,
@@ -16,6 +16,7 @@ import {
 import { BlockSection, FieldRow } from "./layout";
 import { parseProblemConfig, serializeProblemConfig } from "./serialization";
 import type { DriverPref, ProblemBlock } from "./types";
+import { useLockedEditFocus } from "../lib/useLockedEditFocus";
 
 /**
  * Renders the solver configuration as structured natural-language blocks with
@@ -59,7 +60,7 @@ function ConfigNumberInput({
   if (!editable) {
     const label = Number.isNaN(value) ? "—" : String(value);
     return (
-      <button type="button" className="problem-config-field-mimic" style={style}>
+      <button type="button" className="problem-config-field-mimic" title="Edit..." style={style}>
         {label}
       </button>
     );
@@ -96,7 +97,12 @@ function ConfigSelect({
 }) {
   if (!editable) {
     return (
-      <button type="button" className="problem-config-field-mimic" style={style}>
+      <button
+        type="button"
+        className="problem-config-field-mimic problem-config-field-mimic--select"
+        title="Edit..."
+        style={style}
+      >
         {displayLabel}
       </button>
     );
@@ -205,6 +211,12 @@ function WeightRow({
 }
 
 export function ProblemConfigBlocks({ configJson, onChange, editable, onInteractionStart }: ProblemConfigBlocksProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { markLockedInteraction } = useLockedEditFocus({
+    rootRef,
+    editable,
+    focusSelector: ".problem-config-input, .problem-config-select",
+  });
   const { outerRaw, hasProblemKey, problem } = parseProblemConfig(configJson);
 
   const hasWorkerWeight = "worker_preference" in problem.weights;
@@ -294,10 +306,14 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
 
   return (
     <div
+      ref={rootRef}
       className={`problem-config-blocks${editable ? "" : " problem-config-blocks--readonly"}`}
       style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
       onPointerDownCapture={() => {
-        if (!editable) onInteractionStart?.();
+        if (!editable) {
+          markLockedInteraction();
+          onInteractionStart?.();
+        }
       }}
     >
       <BlockSection title="Goal terms">
@@ -498,7 +514,7 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                 </div>
               </FieldRow>
             )}
-            {editable && Object.keys(problem.locked_assignments).length < 30 && (
+            {editable && showWorkerBlock && Object.keys(problem.locked_assignments).length < 30 && (
               <button type="button" style={{ fontSize: "0.8rem" }} onClick={addLockedRow}>
                 + Add locked assignment
               </button>

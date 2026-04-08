@@ -110,7 +110,14 @@ export function ResearcherDetail({
               Workflow
               <select
                 value={detail.workflow_mode}
-                onChange={(e) => void onPatchSession({ workflow_mode: e.target.value })}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  void onPatchSession(
+                    v === "agile"
+                      ? { workflow_mode: v, optimization_allowed: true }
+                      : { workflow_mode: v, optimization_allowed: false },
+                  );
+                }}
                 className="researcher-workflow-select"
               >
                 <option value="agile">agile</option>
@@ -157,7 +164,7 @@ export function ResearcherDetail({
                       checked={detail.optimization_allowed}
                       onChange={(e) => void onPatchSession({ optimization_allowed: e.target.checked })}
                     />{" "}
-                    Allow optimization runs
+                    Allow optimization runs (researcher override; participants can also run when readiness rules pass)
                   </label>
                   <label>
                     <input

@@ -18,6 +18,7 @@ from app.crypto_util import encrypt_secret
 from app.database import get_db
 from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
+from app.optimization_gate import can_run_optimization
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
 from app.schemas import (
     MessageCreate,
@@ -50,7 +51,6 @@ def create_session(
     db: Session = Depends(get_db),
     _: Principal = Depends(require_client),
 ):
-    opt_allowed = body.workflow_mode == "agile"
     row = StudySession(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
@@ -62,7 +62,7 @@ def create_session(
         brief_status="ready",
         config_status="idle",
         processing_error=None,
-        optimization_allowed=opt_allowed,
+        optimization_allowed=False,
     )
     db.add(row)
     db.commit()
@@ -542,10 +542,22 @@ def post_run(
         raise HTTPException(status_code=404, detail="Session not found")
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
-    if not row.optimization_allowed:
+    panel_obj: dict[str, Any] | None = None
+    if row.panel_config_json:
+        try:
+            parsed = json.loads(row.panel_config_json)
+            panel_obj = parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            panel_obj = None
+    try:
+        brief_obj = json.loads(row.problem_brief_json) if row.problem_brief_json else default_problem_brief()
+    except json.JSONDecodeError:
+        brief_obj = default_problem_brief()
+
+    if not can_run_optimization(row.workflow_mode, row.optimization_allowed, panel_obj, brief_obj):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Optimization is not enabled for this session yet",
+            detail="Optimization is not allowed until intrinsic readiness is met or the researcher enables runs",
         )
 
     payload = {

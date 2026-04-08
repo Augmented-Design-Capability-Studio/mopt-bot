@@ -14,6 +14,7 @@ import {
 import { parseServerDate } from "@shared/dateTime";
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
+import { computeCanRunOptimization } from "../lib/optimizationGate";
 import { configChangeSummary } from "../problemConfig/configSummary";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
@@ -521,14 +522,23 @@ export function useParticipantSessionActions({
     token,
   ]);
 
-  const runOptimize = useCallback(async () => {
-    if (!token || !sessionId || !session?.optimization_allowed) return;
+  const runOptimize = useCallback(
+    async (options?: { agileAutorunStorageKey?: string }): Promise<void> => {
+    if (!token || !sessionId || !computeCanRunOptimization(session, configText, problemBrief)) return;
     let panel: Record<string, unknown>;
     try {
       panel = JSON.parse(configText) as Record<string, unknown>;
     } catch {
       setError("Fix configuration JSON before running.");
       return;
+    }
+    const agileKey = options?.agileAutorunStorageKey;
+    if (agileKey && typeof sessionStorage !== "undefined") {
+      try {
+        sessionStorage.setItem(agileKey, "1");
+      } catch {
+        /* private mode */
+      }
     }
     const problem = (panel.problem ?? panel) as Record<string, unknown>;
     optimizingRef.current = true;
@@ -588,13 +598,15 @@ export function useParticipantSessionActions({
       setBusy(false);
       setOptimizing(false);
     }
-  }, [
+    },
+    [
     configText,
     invokeModel,
     optimizingRef,
     postContextMessage,
     refetchSnapshots,
-    session?.optimization_allowed,
+    problemBrief,
+    session,
     sessionId,
     setActiveRun,
     setBusy,
@@ -603,7 +615,8 @@ export function useParticipantSessionActions({
     setRuns,
     syncMessages,
     token,
-  ]);
+    ],
+  );
 
   const runEvaluateEdited = useCallback(async () => {
     if (!token || !sessionId) return;

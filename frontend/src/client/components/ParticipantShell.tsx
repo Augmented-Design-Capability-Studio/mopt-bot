@@ -236,6 +236,7 @@ export function ParticipantShell({
             backgroundConfigPending={backgroundConfigPending}
             backgroundProcessingError={backgroundProcessingError}
             sessionTerminated={sessionTerminated}
+            session={session}
             onConfigTextChange={onConfigTextChange}
             onProblemBriefChange={onProblemBriefChange}
             onSetEditMode={onSetEditMode}
@@ -270,6 +271,8 @@ export function ParticipantShell({
             busy={busy}
             optimizing={optimizing}
             session={session}
+            configText={configText}
+            problemBrief={problemBrief}
             sessionTerminated={sessionTerminated}
             onSetActiveRun={onSetActiveRun}
             onScheduleTextChange={onScheduleTextChange}

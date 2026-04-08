@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import type { ProblemBrief, SnapshotSummary } from "@shared/api";
+import type { ProblemBrief, Session, SnapshotSummary } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
+import { intrinsicOptimizationReadyWaterfall } from "../lib/optimizationGate";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 import { SnapshotDialog } from "./SnapshotDialog";
@@ -17,6 +18,8 @@ type ConfigPanelProps = {
   backgroundConfigPending: boolean;
   backgroundProcessingError?: string | null;
   sessionTerminated: boolean;
+  /** Used for workflow-specific definition UI and waterfall run reminders. */
+  session: Session | null;
   className: string;
   onConfigTextChange: (value: string) => void;
   onProblemBriefChange: (value: ProblemBrief | null) => void;
@@ -73,6 +76,7 @@ export function ConfigPanel({
   backgroundConfigPending,
   backgroundProcessingError,
   sessionTerminated,
+  session,
   className,
   onConfigTextChange,
   onProblemBriefChange,
@@ -187,12 +191,6 @@ export function ConfigPanel({
     !forceUnlockProcessingUi &&
     !configEditing;
 
-  const tabTitle =
-    activeTab === "definition"
-      ? "Definition"
-      : activeTab === "config"
-        ? "Problem Config"
-        : "Raw JSON";
   const rawJsonText = useMemo(() => {
     const trimmedConfig = configText.trim();
     let parsedConfig: unknown = {};
@@ -217,6 +215,22 @@ export function ConfigPanel({
     );
   }, [configText, problemBrief]);
 
+  const waterfallIntrinsicBlocked = useMemo(() => {
+    if (!session || session.workflow_mode !== "waterfall" || session.optimization_allowed) return false;
+    if (!problemBrief) return false;
+    return !intrinsicOptimizationReadyWaterfall(problemBrief);
+  }, [problemBrief, session]);
+
+  const waterfallBannerMessage = useMemo(() => {
+    if (!waterfallIntrinsicBlocked || !problemBrief) return null;
+    if (problemBrief.open_questions.some((q) => q.status === "open")) {
+      return "Answer all open questions before optimization can run.";
+    }
+    return "Clarify the goal or gathered facts (and resolve any open questions) before optimization can run.";
+  }, [problemBrief, waterfallIntrinsicBlocked]);
+
+  const definitionSaveShield = definitionEditing && busy;
+
   return (
     <section className={className}>
       <div className="panel-header">
@@ -231,6 +245,25 @@ export function ConfigPanel({
         )}
       </div>
       <div className="panel-body">
+        {waterfallBannerMessage ? (
+          <div className="config-panel-waterfall-alert" role="status">
+            <span>{waterfallBannerMessage}</span>
+            {problemBrief?.open_questions.some((q) => q.status === "open") ? (
+              <button
+                type="button"
+                className="config-panel-waterfall-alert-jump"
+                onClick={() =>
+                  document.getElementById("definition-open-questions")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                  })
+                }
+              >
+                Scroll to open questions
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="tabs">
           {([
             ["definition", "Definition"],
@@ -298,6 +331,7 @@ export function ConfigPanel({
                   problemBrief={problemBrief}
                   editable={editableDefinition}
                   sessionTerminated={sessionTerminated}
+                  workflowMode={session?.workflow_mode ?? null}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}
                 />
@@ -324,10 +358,14 @@ export function ConfigPanel({
               />
             )}
           </div>
-          {configOrRawBlockingUi ? (
+          {definitionSaveShield || configOrRawBlockingUi ? (
             <div className="config-panel-processing-shield" aria-live="polite">
               <span className="inline-spinner" aria-hidden="true" />
-              <span className="muted">Updating problem config from the latest definition…</span>
+              <span className="muted">
+                {definitionSaveShield
+                  ? "Saving problem definition…"
+                  : "Updating problem config from the latest definition…"}
+              </span>
             </div>
           ) : null}
         </div>
