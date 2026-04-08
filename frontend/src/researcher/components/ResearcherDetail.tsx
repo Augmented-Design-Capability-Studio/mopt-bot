@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
 import { ChatPanel } from "@shared/chat/ChatPanel";
@@ -81,6 +81,12 @@ export function ResearcherDetail({
         : "";
   const participantNumberChanged = participantNumberDraft !== (detail?.participant_number ?? "");
 
+  /** Stored researcher permit — participant mutations re-sync `optimization_allowed` from intrinsic readiness. */
+  const runButtonPermitOn = useMemo(() => {
+    if (!detail) return false;
+    return !detail.optimization_runs_blocked_by_researcher && detail.optimization_allowed;
+  }, [detail]);
+
   return (
     <main className={workflowClass ? `detail ${workflowClass}` : "detail"}>
       {!savedToken.trim() && (
@@ -110,14 +116,7 @@ export function ResearcherDetail({
               Workflow
               <select
                 value={detail.workflow_mode}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  void onPatchSession(
-                    v === "agile"
-                      ? { workflow_mode: v, optimization_allowed: true }
-                      : { workflow_mode: v, optimization_allowed: false },
-                  );
-                }}
+                onChange={(e) => void onPatchSession({ workflow_mode: e.target.value })}
                 className="researcher-workflow-select"
               >
                 <option value="agile">agile</option>
@@ -158,13 +157,36 @@ export function ResearcherDetail({
                   Push starter problem config
                 </button>
                 <div className="researcher-toggle-column">
-                  <label>
+                  <label title="Sets the stored run permit on the session. Uncheck to block runs. Participant definition/chat updates re-align the permit with intrinsic readiness (waterfall open questions, etc.); check again to override until the next participant update.">
                     <input
                       type="checkbox"
-                      checked={detail.optimization_allowed}
-                      onChange={(e) => void onPatchSession({ optimization_allowed: e.target.checked })}
+                      checked={runButtonPermitOn}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        if (on) {
+                          const hasOpenQuestions =
+                            detail.workflow_mode === "waterfall" &&
+                            detail.problem_brief.open_questions.some((q) => q.status === "open");
+                          if (
+                            hasOpenQuestions &&
+                            !window.confirm(
+                              "This session still has open questions in the problem definition. Enable the Run button anyway? The participant will be able to run optimization before those questions are answered.",
+                            )
+                          ) {
+                            return;
+                          }
+                        }
+                        void onPatchSession(
+                          on
+                            ? {
+                                optimization_runs_blocked_by_researcher: false,
+                                optimization_allowed: true,
+                              }
+                            : { optimization_runs_blocked_by_researcher: true },
+                        );
+                      }}
                     />{" "}
-                    Allow optimization runs (researcher override; participants can also run when readiness rules pass)
+                    {"'Run' button available."}
                   </label>
                   <label>
                     <input

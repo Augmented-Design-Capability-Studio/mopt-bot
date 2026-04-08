@@ -16,6 +16,7 @@ import { parseServerDate } from "@shared/dateTime";
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { computeCanRunOptimization } from "../lib/optimizationGate";
 import { configChangeSummary } from "../problemConfig/configSummary";
+import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
@@ -204,6 +205,10 @@ export function useParticipantSessionActions({
       token,
     ],
   );
+
+  const requestDefinitionCleanup = useCallback(async () => {
+    await postContextMessage(DEFINITION_CLEANUP_CHAT_MESSAGE, invokeModel);
+  }, [invokeModel, postContextMessage]);
 
   const sendChat = useCallback(async () => {
     const text = (chatInputRef.current ?? "").trim();
@@ -705,6 +710,7 @@ export function useParticipantSessionActions({
 
   return {
     sendChat,
+    requestDefinitionCleanup,
     simulateUpload,
     saveConfig,
     saveProblemBrief,

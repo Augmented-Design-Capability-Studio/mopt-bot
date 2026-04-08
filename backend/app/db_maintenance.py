@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine
-from app.models import OptimizationRun
+from app.models import OptimizationRun, StudySession
+from app.problem_brief import normalize_problem_brief
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +18,9 @@ def ensure_database_shape() -> None:
     _ensure_sessions_problem_brief_column()
     _ensure_sessions_participant_number_column()
     _ensure_sessions_processing_columns()
+    _ensure_sessions_optimization_runs_blocked_column()
+    _ensure_sessions_optimization_gate_engaged_column()
+    _backfill_optimization_gate_engaged()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
 
@@ -67,6 +72,77 @@ def _ensure_sessions_processing_columns() -> None:
             conn.execute(text(sql))
     for _, column_name in statements:
         log.info("Added %s column", column_name)
+
+
+def _ensure_sessions_optimization_runs_blocked_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "optimization_runs_blocked_by_researcher" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE sessions ADD COLUMN optimization_runs_blocked_by_researcher BOOLEAN NOT NULL DEFAULT 0"
+            )
+        )
+    log.info("Added sessions.optimization_runs_blocked_by_researcher column")
+
+
+def _ensure_sessions_optimization_gate_engaged_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "optimization_gate_engaged" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE sessions ADD COLUMN optimization_gate_engaged BOOLEAN NOT NULL DEFAULT 0")
+        )
+    log.info("Added sessions.optimization_gate_engaged column")
+
+
+def _backfill_optimization_gate_engaged() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions") or not inspector.has_table("messages"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "optimization_gate_engaged" not in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE sessions SET optimization_gate_engaged = 1
+                WHERE optimization_gate_engaged = 0
+                AND EXISTS (
+                    SELECT 1 FROM messages
+                    WHERE messages.session_id = sessions.id
+                    AND messages.role = 'user'
+                    AND messages.visible_to_participant = 1
+                )
+                """
+            )
+        )
+    with Session(engine) as db:
+        rows = db.query(StudySession).filter(StudySession.optimization_gate_engaged.is_(False)).all()
+        dirty = False
+        for row in rows:
+            if not row.problem_brief_json:
+                continue
+            try:
+                brief = normalize_problem_brief(json.loads(row.problem_brief_json))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            oq = brief.get("open_questions") or []
+            if any(isinstance(q, dict) for q in oq):
+                row.optimization_gate_engaged = True
+                dirty = True
+        if dirty:
+            db.commit()
+            log.info("Backfilled optimization_gate_engaged from problem brief open_questions")
 
 
 def _ensure_runs_session_index_column() -> None:

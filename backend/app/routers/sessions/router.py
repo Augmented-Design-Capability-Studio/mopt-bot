@@ -118,6 +118,9 @@ def push_participant_starter_panel(
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+    if helpers.sync_optimization_allowed_after_participant_mutation(row):
+        db.commit()
+        db.refresh(row)
     return helpers.session_to_out(row)
 
 
@@ -238,6 +241,8 @@ def patch_session(
         row.problem_brief_json = json.dumps(normalize_problem_brief(body.problem_brief))
     if body.optimization_allowed is not None:
         row.optimization_allowed = body.optimization_allowed
+    if body.optimization_runs_blocked_by_researcher is not None:
+        row.optimization_runs_blocked_by_researcher = body.optimization_runs_blocked_by_researcher
     if body.gemini_model is not None:
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
@@ -411,10 +416,6 @@ def post_message(
                         patch_payload["replace_open_questions"] = True
                     elif turn.replace_open_questions:
                         patch_payload["replace_open_questions"] = True
-                    elif "open_questions" in patch_payload and (
-                        cleanup_requested or turn.cleanup_mode
-                    ):
-                        patch_payload["replace_open_questions"] = True
                     merged_brief = merge_problem_brief_patch(current_problem_brief, patch_payload)
                     if merged_brief != current_problem_brief:
                         row = db.get(StudySession, session_id) or row
@@ -471,6 +472,11 @@ def post_message(
                     is_run_acknowledgement=is_run_ack,
                     is_answered_open_question=is_answer_save,
                 )
+
+    row = db.get(StudySession, session_id)
+    if row is not None and helpers.sync_optimization_allowed_after_participant_mutation(row):
+        db.commit()
+        db.refresh(row)
 
     if proc_state is None:
         row = db.get(StudySession, session_id) or row
@@ -554,10 +560,17 @@ def post_run(
     except json.JSONDecodeError:
         brief_obj = default_problem_brief()
 
-    if not can_run_optimization(row.workflow_mode, row.optimization_allowed, panel_obj, brief_obj):
+    if not can_run_optimization(
+        row.workflow_mode,
+        row.optimization_allowed,
+        row.optimization_runs_blocked_by_researcher,
+        panel_obj,
+        brief_obj,
+        optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Optimization is not allowed until intrinsic readiness is met or the researcher enables runs",
+            detail="Optimization is not allowed (researcher block, or intrinsic readiness not met and no permit)",
         )
 
     payload = {
@@ -744,6 +757,10 @@ def patch_participant_panel(
     db.commit()
     db.refresh(row)
 
+    if helpers.sync_optimization_allowed_after_participant_mutation(row):
+        db.commit()
+        db.refresh(row)
+
     create_snapshot(db, session_id, EVENT_MANUAL_SAVE)
 
     ack_parts = []
@@ -792,6 +809,10 @@ def patch_participant_problem_brief(
     db.commit()
     db.refresh(row)
 
+    if helpers.sync_optimization_allowed_after_participant_mutation(row):
+        db.commit()
+        db.refresh(row)
+
     create_snapshot(db, session_id, EVENT_MANUAL_SAVE)
 
     if body.acknowledgement:
@@ -835,6 +856,9 @@ def sync_panel_from_problem_brief_route(
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+    if helpers.sync_optimization_allowed_after_participant_mutation(row):
+        db.commit()
+        db.refresh(row)
     return helpers.session_to_out(row)
 
 
@@ -878,6 +902,8 @@ def export_session(
             "panel_config": helpers.panel_dict(row),
             "problem_brief": helpers.problem_brief_dict(row),
             "optimization_allowed": row.optimization_allowed,
+            "optimization_runs_blocked_by_researcher": row.optimization_runs_blocked_by_researcher,
+            "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
         },
         "messages": [

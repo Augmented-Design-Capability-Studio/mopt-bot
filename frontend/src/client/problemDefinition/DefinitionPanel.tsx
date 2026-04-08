@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type MouseEvent,
-} from "react";
+import { Fragment, useCallback, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 
 import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
 

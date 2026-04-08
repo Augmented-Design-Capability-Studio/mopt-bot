@@ -186,6 +186,32 @@ def _gathered_text_key(text: Any) -> str:
     return str(text or "").strip().lower()
 
 
+def _sentence_start(s: str) -> str:
+    s = s.strip()
+    if not s:
+        return s
+    return s[0].upper() + s[1:] if len(s) > 1 else s.upper()
+
+
+def _ensure_terminator(s: str) -> str:
+    t = s.strip()
+    if not t:
+        return t
+    if t[-1] not in ".!?":
+        t += "."
+    return _sentence_start(t)
+
+
+def _format_answered_open_question_gathered(question: str, answer: str) -> str:
+    """Turn a resolved Q&A into one gathered line: literal question — answer (then normalized punctuation)."""
+    a = (answer or "").strip()
+    if not a:
+        return ""
+    q = (question or "").strip()
+    combined = f"{q} — {a}" if q else a
+    return _ensure_terminator(combined)
+
+
 def _promote_answered_open_questions_to_gathered(
     items: list[dict[str, Any]], questions: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -204,7 +230,7 @@ def _promote_answered_open_questions_to_gathered(
             kept_q.append(q)
             continue
         qtext = str(q.get("text") or "").strip()
-        combined = f"{qtext} — {at}"
+        combined = _format_answered_open_question_gathered(qtext, at)
         key = _gathered_text_key(combined)
         if key not in seen:
             seen.add(key)
@@ -236,7 +262,7 @@ def _split_pseudo_answered_open_questions(
             continue
         q_part = m.group("q").strip()
         a_part = m.group("a").strip()
-        combined = f"{q_part} — {a_part}" if q_part else a_part
+        combined = _format_answered_open_question_gathered(q_part, a_part) if q_part else _ensure_terminator(a_part)
         qid = str(q.get("id") or uuid4())
         gathered_out.append(
             {
@@ -343,9 +369,9 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
 
     if "goal_summary" in patch:
         merged["goal_summary"] = str(patch.get("goal_summary") or "").strip()
-    if replace_open_questions and "open_questions" not in patch:
-        merged["open_questions"] = []
-    elif "open_questions" in patch:
+    # If the model sets replace_open_questions but omits open_questions (common on cleanup
+    # turns that only replace items), keep the existing list — do not wipe it.
+    if "open_questions" in patch:
         incoming_questions = _coerce_question_list(patch.get("open_questions"))
         extra_gathered, incoming_questions = _split_pseudo_answered_open_questions(incoming_questions)
         if extra_gathered:

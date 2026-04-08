@@ -27,7 +27,7 @@ def _inner_problem_from_panel(panel_config: dict[str, Any] | None) -> dict[str, 
 
 
 def intrinsic_optimization_ready_agile(panel_config: dict[str, Any] | None) -> bool:
-    """True when the problem config has meaningful solver content (objective / search / structure)."""
+    """At least one goal-term weight (display sense) and a non-empty algorithm on saved config."""
     inner = _inner_problem_from_panel(panel_config)
     if not inner:
         return False
@@ -49,61 +49,54 @@ def intrinsic_optimization_ready_agile(panel_config: dict[str, Any] | None) -> b
         display_weight_keys.append(key)
 
     algo = str(inner.get("algorithm") or "").strip()
-    epochs = inner.get("epochs")
-    pop_size = inner.get("pop_size")
-    early_stop = inner.get("early_stop")
-    esp = inner.get("early_stop_patience")
-    ese = inner.get("early_stop_epsilon")
-    has_search = bool(algo) or isinstance(epochs, (int, float)) or isinstance(pop_size, (int, float)) or early_stop is False or isinstance(esp, (int, float)) or isinstance(ese, (int, float))
-
-    locked = inner.get("locked_assignments")
-    locked_ok = isinstance(locked, dict) and len(locked) > 0
-    shp = inner.get("shift_hard_penalty")
-    has_hard_structural = locked_ok or isinstance(shp, (int, float))
-
-    return bool(display_weight_keys) or has_search or has_hard_structural
+    return bool(display_weight_keys) and bool(algo)
 
 
-def _waterfall_clarification_milestone_met(brief: dict[str, Any]) -> bool:
-    goal = str(brief.get("goal_summary") or "").strip()
-    if goal:
-        return True
-    for item in brief.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("kind") or "").strip().lower() != "system":
-            return True
-    return False
-
-
-def intrinsic_optimization_ready_waterfall(normalized_brief: dict[str, Any]) -> bool:
-    """No open questions; if the list is empty, require a clarification milestone."""
+def intrinsic_optimization_ready_waterfall(
+    normalized_brief: dict[str, Any],
+    optimization_gate_engaged: bool,
+) -> bool:
+    """Waterfall: session must be past cold start; no open questions (list may be empty or all answered)."""
+    if not optimization_gate_engaged:
+        return False
     questions_raw = normalized_brief.get("open_questions") or []
     questions: list[dict[str, Any]] = [q for q in questions_raw if isinstance(q, dict)]
     for q in questions:
         if _normalize_question_status(q.get("status")) == "open":
             return False
-    if len(questions) == 0:
-        return _waterfall_clarification_milestone_met(normalized_brief)
     return True
 
 
-def intrinsic_optimization_ready(workflow_mode: str, panel_config: dict[str, Any] | None, problem_brief: Any) -> bool:
+def intrinsic_optimization_ready(
+    workflow_mode: str,
+    panel_config: dict[str, Any] | None,
+    problem_brief: Any,
+    optimization_gate_engaged: bool = False,
+) -> bool:
     brief = normalize_problem_brief(problem_brief)
     mode = str(workflow_mode or "").strip().lower()
     if mode == "agile":
         return intrinsic_optimization_ready_agile(panel_config)
     if mode == "waterfall":
-        return intrinsic_optimization_ready_waterfall(brief)
+        return intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged)
     return False
 
 
 def can_run_optimization(
     workflow_mode: str,
     optimization_allowed: bool,
+    optimization_runs_blocked_by_researcher: bool,
     panel_config: dict[str, Any] | None,
     problem_brief: Any,
+    optimization_gate_engaged: bool = False,
 ) -> bool:
+    if optimization_runs_blocked_by_researcher:
+        return False
     if optimization_allowed:
         return True
-    return intrinsic_optimization_ready(workflow_mode, panel_config, problem_brief)
+    return intrinsic_optimization_ready(
+        workflow_mode,
+        panel_config,
+        problem_brief,
+        optimization_gate_engaged=optimization_gate_engaged,
+    )

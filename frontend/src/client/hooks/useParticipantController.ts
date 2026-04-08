@@ -359,6 +359,7 @@ export function useParticipantController() {
     resumePastSession: lifecycle.resumePastSession,
     startSession: lifecycle.startSession,
     sendChat: actions.sendChat,
+    requestDefinitionCleanup: actions.requestDefinitionCleanup,
     simulateUpload: actions.simulateUpload,
     saveConfig: actions.saveConfig,
     saveProblemBrief: actions.saveProblemBrief,

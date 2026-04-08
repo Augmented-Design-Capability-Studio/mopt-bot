@@ -316,10 +316,11 @@ def _build_structured_system_instruction(
     ]
     if cleanup_mode:
         parts.append(
-            "Cleanup mode is active for this turn. Reorganize gathered facts, assumptions, and open questions "
-            "holistically. If you return problem_brief_patch.items, return a coherent full editable snapshot and "
-            "set replace_editable_items=true. If you return problem_brief_patch.open_questions, set "
-            "replace_open_questions=true."
+            "Cleanup mode is active for this turn. Reorganize gathered facts and assumptions holistically. "
+            "If you return problem_brief_patch.items, return a coherent full editable snapshot and "
+            "set replace_editable_items=true. Preserve existing open questions unless you intentionally "
+            "emit a full replacement list under problem_brief_patch.open_questions with "
+            "replace_open_questions=true (omit open_questions from the patch to leave them unchanged)."
         )
     if recent_runs_summary:
         runs_blob = json.dumps(recent_runs_summary, indent=2, ensure_ascii=False)
@@ -431,10 +432,11 @@ def _build_brief_update_system_instruction(
         )
     if cleanup_mode:
         parts.append(
-            "Cleanup mode is active for this turn. Reorganize gathered facts, assumptions, and open questions "
-            "holistically. If you return problem_brief_patch.items, return a coherent full editable snapshot and "
-            "set replace_editable_items=true. If you return problem_brief_patch.open_questions, set "
-            "replace_open_questions=true."
+            "Cleanup mode is active for this turn. Reorganize gathered facts and assumptions holistically. "
+            "If you return problem_brief_patch.items, return a coherent full editable snapshot and "
+            "set replace_editable_items=true. Preserve existing open questions unless you intentionally "
+            "emit a full replacement list under problem_brief_patch.open_questions with "
+            "replace_open_questions=true (omit open_questions from the patch to leave them unchanged)."
         )
     if recent_runs_summary:
         parts.append("Recent run results (for hidden brief-update context):")

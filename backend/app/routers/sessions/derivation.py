@@ -38,6 +38,8 @@ def append_message(
     s = db.get(StudySession, session_id)
     if s:
         s.updated_at = datetime.now(timezone.utc)
+        if role == "user" and visible:
+            s.optimization_gate_engaged = True
     db.commit()
     db.refresh(m)
     return m
@@ -108,8 +110,6 @@ def _run_background_derivation(
                 patch_payload["replace_open_questions"] = True
             elif brief_turn.replace_open_questions:
                 patch_payload["replace_open_questions"] = True
-            elif "open_questions" in patch_payload and (cleanup_requested or brief_turn.cleanup_mode):
-                patch_payload["replace_open_questions"] = True
             effective_problem_brief = merge_problem_brief_patch(base_problem_brief, patch_payload)
 
         with SessionLocal() as db:
@@ -150,6 +150,7 @@ def _run_background_derivation(
             row.config_status = helpers.desired_config_status(row)
             row.processing_error = None
             helpers.touch_session(row)
+            helpers.sync_optimization_allowed_after_participant_mutation(row)
             db.commit()
     except Exception:
         log.exception("Background derivation failed for session %s", session_id)

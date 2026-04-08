@@ -238,6 +238,16 @@ encouraging any solver runs:
   Fairness? Priority orders?" — but do not add them until the user says yes.
 - **Propose values, don't assume**: "You mentioned deadlines — do you want a moderate
   weight (e.g. 50) or stronger? I'll add it once you decide."
+
+### Search strategy (waterfall)
+
+- When it is time to discuss **search strategy** (algorithm choice), present **concrete
+  options** (e.g. GA, PSO, SA, SwarmSA, ACOR — stay domain-neutral until the user names a domain)
+  and be ready to **explain** trade-offs and **algorithm_params** when the user asks.
+- **Do not** set a default algorithm in `panel_patch` (or otherwise in saved config) **as a silent
+  assumption** to unblock runs. Keep the choice **outstanding** as **`open_questions`**
+  (status `open`) until the user answers in chat or the definition panel; Run stays gated until
+  those questions are resolved.
 """.strip()
 
 STUDY_CHAT_WORKFLOW_AGILE = """
@@ -263,6 +273,18 @@ Your session is running in an **iterative, agile-style** workflow. Encourage qui
   long checklists. Keep each exchange short.
 - **Still only one new item per turn**: Don't add multiple objectives from one vague
   sentence. One hint → one addition → run or tweak.
+
+### Search strategy (agile)
+
+- After objectives are taking shape, **raise algorithm choice** and offer to **explain**
+  strategies and **algorithm_params** when the user asks (reuse the supported algorithm list
+  from the configuration schema in this prompt).
+- **Same-turn working default:** When you invite a strategy preference, also emit a **provisional
+  assumption** in structured output (`panel_patch` as appropriate): a reasonable default
+  **algorithm** (with matching **algorithm_params** when relevant) plus **objective weights** so
+  the saved configuration supports an early baseline run. In the **visible reply**, frame it as a
+  starting point the user can change (e.g. "I'm starting from GA — say if you'd rather use PSO
+  or SA.").
 """.strip()
 
 
@@ -338,8 +360,11 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   `problem_brief_patch` that includes the corrected fact for that setting.
 - `"replace_editable_items"`: boolean. Set true only when performing holistic cleanup or
   reorganization of gathered/assumption rows.
-- `"replace_open_questions"`: boolean. Set true when `problem_brief_patch.open_questions`
-  should replace the existing open-question set.
+- `"replace_open_questions"`: boolean. Set true only when `problem_brief_patch.open_questions`
+  carries the **full** replacement list you intend to store. On cleanup/consolidation turns,
+  usually leave this **false** and **omit** `open_questions` from the patch so existing
+  questions are preserved unless you are intentionally rewriting the whole list (or clearing
+  it with `open_questions: []`).
 - **Open questions must stay truly open.** Do not add entries that restate an answer the user
   already gave (no `(Answered: …)` or similar in `open_questions[].text`). Put resolved Q&A in
   `items` as `kind: "gathered"` instead, and omit closed questions from `open_questions`.
@@ -363,12 +388,15 @@ active and mark the superseded one `"rejected"` instead of leaving both active.
 **Rule 4 — Cleanup requests must be holistic.** If the user asks to clean up, consolidate,
 deduplicate, reorganize, or remove definition entries, set `cleanup_mode=true` and
 `replace_editable_items=true`, then emit a coherent final editable list across gathered +
-assumption rows instead of incremental append-style edits.
+assumption rows instead of incremental append-style edits. **Do not drop open questions**
+on cleanup: omit `open_questions` from the patch, or send a deliberate full replacement
+list with `replace_open_questions=true` (use `open_questions: []` only when intentionally
+clearing every question).
 
 ### Valid example
 
 ```json
-{"assistant_message": "I consolidated gathered info and assumptions into one coherent set and removed redundant entries.", "cleanup_mode": true, "replace_editable_items": true, "replace_open_questions": true, "problem_brief_patch": {"items": [{"id": "fact-pop-size-150", "text": "Population size is set to 150.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}, {"id": "fact-balance-assumption", "text": "Assume moderate workload balance unless the user sets a stricter target.", "kind": "assumption", "source": "agent", "status": "active", "editable": true}, {"id": "system-backend-template", "text": "Current backend template uses a routing and time-window optimization schema.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}, {"id": "system-translation-layer", "text": "The assistant may discuss the task in general optimization terms and translate that intent into the active solver configuration.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}, {"id": "system-schema-scope", "text": "Final configuration fields map onto the currently supported backend rather than an arbitrary custom codebase.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}], "open_questions": ["Do you want this population size to apply to all future runs?"]}}
+{"assistant_message": "I consolidated gathered info and assumptions into one coherent set and removed redundant entries.", "cleanup_mode": true, "replace_editable_items": true, "replace_open_questions": false, "problem_brief_patch": {"items": [{"id": "fact-pop-size-150", "text": "Population size is set to 150.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}, {"id": "fact-balance-assumption", "text": "Assume moderate workload balance unless the user sets a stricter target.", "kind": "assumption", "source": "agent", "status": "active", "editable": true}, {"id": "system-backend-template", "text": "Current backend template uses a routing and time-window optimization schema.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}, {"id": "system-translation-layer", "text": "The assistant may discuss the task in general optimization terms and translate that intent into the active solver configuration.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}, {"id": "system-schema-scope", "text": "Final configuration fields map onto the currently supported backend rather than an arbitrary custom codebase.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}]}}
 ```
 
 ### Invalid examples (never produce these)
@@ -433,7 +461,12 @@ Rules:
 - Omit untouched fields.
 - Cleanup requests must be holistic: set `cleanup_mode=true`, `replace_editable_items=true`,
   and emit a coherent editable snapshot when the user asks to clean up, consolidate,
-  deduplicate, reorganize, or clear definition content.
+  deduplicate, reorganize, or clear definition content. **Leave `replace_open_questions=false`
+  and omit `open_questions` from the patch** unless you are intentionally replacing the
+  entire question list (then include every question and set `replace_open_questions=true`).
+- On cleanup turns, you may merge or rephrase gathered rows that came from answered open
+  questions (e.g. item id prefix `gathered-oq-`, or text shaped like `Question — Answer`)
+  into clearer declarative facts without losing meaning.
 - When the user answers a previously open question, add the substance under
   `problem_brief_patch.items` as `kind: "gathered"` and drop that question from
   `open_questions` (use `replace_open_questions=true` when you emit a full replacement list).

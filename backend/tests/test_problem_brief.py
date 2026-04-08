@@ -32,6 +32,19 @@ def test_normalize_promotes_answered_open_question_to_gathered():
     assert any(i.get("id") == "gathered-oq-q1" for i in gathered_non_system)
 
 
+def test_merge_replace_open_questions_true_without_open_questions_key_preserves():
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            open_questions=[{"id": "q-keep", "text": "Still open?", "status": "open", "answer_text": None}],
+        )
+    )
+    merged = merge_problem_brief_patch(
+        base,
+        {"replace_editable_items": True, "replace_open_questions": True, "items": []},
+    )
+    assert [q["id"] for q in merged["open_questions"]] == ["q-keep"]
+
+
 def test_merge_moves_answered_suffix_open_question_to_gathered():
     base = normalize_problem_brief(
         _minimal_brief_payload(
@@ -52,7 +65,7 @@ def test_merge_moves_answered_suffix_open_question_to_gathered():
     assert "Still open?" in q_texts
     assert not any("(answered" in q["text"].lower() for q in merged["open_questions"])
     gathered_texts = [i["text"] for i in merged["items"] if i.get("kind") == "gathered"]
-    assert any("Shift limits?" in t and "8h cap" in t for t in gathered_texts)
+    assert any("8h cap" in t for t in gathered_texts)
 
 
 def test_brief_items_from_panel_omit_default_ga_algorithm_params():

@@ -62,6 +62,7 @@ export function ClientApp() {
       onLeaveSession={controller.leaveSession}
       onStartSession={controller.startSession}
       onSendChat={controller.sendChat}
+      onRequestDefinitionCleanup={controller.requestDefinitionCleanup}
       onSimulateUpload={controller.simulateUpload}
       onSaveConfig={controller.saveConfig}
       onSaveDefinitionEdit={controller.saveDefinitionEdit}

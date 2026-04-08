@@ -3,7 +3,7 @@ import type { ProblemBrief, Session } from "@shared/api";
 import { WEIGHT_DISPLAY_ORDER } from "../problemConfig/metadata";
 import { parseProblemConfig } from "../problemConfig/serialization";
 
-/** Matches backend `optimization_gate.intrinsic_optimization_ready_agile`. */
+/** Matches backend `optimization_gate.intrinsic_optimization_ready_agile`: ≥1 goal weight + algorithm. */
 export function intrinsicOptimizationReadyAgile(configText: string): boolean {
   const { problem } = parseProblemConfig(configText);
   const weights = problem.weights;
@@ -15,32 +15,18 @@ export function intrinsicOptimizationReadyAgile(configText: string): boolean {
     return true;
   });
 
-  const hasSearch =
-    problem.algorithm !== "" ||
-    problem.epochs !== null ||
-    problem.pop_size !== null ||
-    problem.early_stop === false ||
-    problem.early_stop_patience !== null ||
-    problem.early_stop_epsilon !== null;
-  const hasHardStructural =
-    Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
-
-  return displayWeightKeys.length > 0 || hasSearch || hasHardStructural;
+  const algo = (problem.algorithm ?? "").trim();
+  return displayWeightKeys.length > 0 && algo.length > 0;
 }
 
-function waterfallClarificationMilestoneMet(brief: ProblemBrief): boolean {
-  if (brief.goal_summary.trim() !== "") return true;
-  return brief.items.some((item) => item.kind !== "system");
-}
-
-/** Matches backend `intrinsic_optimization_ready_waterfall`. */
-export function intrinsicOptimizationReadyWaterfall(brief: ProblemBrief): boolean {
-  const questions = brief.open_questions;
-  for (const q of questions) {
+/** Matches backend `optimization_gate.intrinsic_optimization_ready_waterfall`. */
+export function intrinsicOptimizationReadyWaterfall(
+  brief: ProblemBrief,
+  optimizationGateEngaged: boolean,
+): boolean {
+  if (!optimizationGateEngaged) return false;
+  for (const q of brief.open_questions) {
     if (q.status === "open") return false;
-  }
-  if (questions.length === 0) {
-    return waterfallClarificationMilestoneMet(brief);
   }
   return true;
 }
@@ -49,20 +35,21 @@ export function intrinsicOptimizationReady(
   workflowMode: string | undefined,
   configText: string,
   problemBrief: ProblemBrief | null,
+  optimizationGateEngaged: boolean,
 ): boolean {
   const mode = (workflowMode ?? "").toLowerCase();
   if (mode === "agile") {
     return intrinsicOptimizationReadyAgile(configText);
   }
   if (mode === "waterfall" && problemBrief) {
-    return intrinsicOptimizationReadyWaterfall(problemBrief);
+    return intrinsicOptimizationReadyWaterfall(problemBrief, optimizationGateEngaged);
   }
   return false;
 }
 
 /**
- * Participant may run optimization when the researcher enabled override OR intrinsic rules pass.
- * Mirrors backend `can_run_optimization`.
+ * Participant may run optimization when not blocked by the researcher and either
+ * the stored permit or intrinsic rules apply. Mirrors backend `can_run_optimization`.
  */
 export function computeCanRunOptimization(
   session: Session | null,
@@ -70,8 +57,14 @@ export function computeCanRunOptimization(
   problemBrief: ProblemBrief | null,
 ): boolean {
   if (!session) return false;
+  if (session.optimization_runs_blocked_by_researcher) return false;
   if (session.optimization_allowed) return true;
-  return intrinsicOptimizationReady(session.workflow_mode, configText, problemBrief);
+  return intrinsicOptimizationReady(
+    session.workflow_mode,
+    configText,
+    problemBrief,
+    session.optimization_gate_engaged ?? false,
+  );
 }
 
 /** User-facing hint when Run is disabled (intrinsic gate only; session/terminated handled elsewhere). */
@@ -82,17 +75,23 @@ export function runOptimizationDisabledHint(
 ): string {
   if (!session) return "";
   if (computeCanRunOptimization(session, configText, problemBrief)) return "";
+  if (session.optimization_runs_blocked_by_researcher) {
+    return "The researcher has disabled the Run button for this session.";
+  }
   if (session.optimization_allowed) return "";
 
   const mode = (session.workflow_mode ?? "").toLowerCase();
   if (mode === "agile") {
-    return "Add at least one objective term or solver setting in Problem Config, or ask the researcher to enable runs.";
+    return "Add at least one objective term and choose a search algorithm in Problem Config, or ask the researcher to enable runs.";
   }
   if (mode === "waterfall") {
+    if (!session.optimization_gate_engaged) {
+      return "Send a chat message or wait until open questions appear in the Definition tab before optimization can run.";
+    }
     if (problemBrief?.open_questions.some((q) => q.status === "open")) {
       return "Answer all open questions in the Definition tab, or ask the researcher to enable runs.";
     }
-    return "Finish clarifying the problem (goal or gathered facts) and resolve open questions, or ask the researcher to enable runs.";
+    return "Resolve open questions in the Definition tab, or ask the researcher to enable runs.";
   }
   return "Optimization is not available yet.";
 }

@@ -521,10 +521,10 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
             )}
           </>
         )}
+      </BlockSection>
 
-        {hasSearch && (
-          <>
-            <div style={{ marginTop: "0.75rem", fontWeight: 600, fontSize: "0.82rem" }}>Search strategy</div>
+      {hasSearch ? (
+        <BlockSection title="Search strategy">
             {problem.algorithm && (
               <FieldRow label="Algorithm">
                 <ConfigSelect
@@ -720,9 +720,8 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
                 </div>
               </FieldRow>
             )}
-          </>
-        )}
-      </BlockSection>
+        </BlockSection>
+      ) : null}
     </div>
   );
 }

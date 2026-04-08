@@ -72,6 +72,46 @@ def mark_processing_pending(row: StudySession) -> int:
     return row.processing_revision
 
 
+def maybe_mark_optimization_gate_engaged_from_brief(row: StudySession, brief: dict) -> bool:
+    """Set ``optimization_gate_engaged`` when the brief lists at least one open-question object."""
+    if row.optimization_gate_engaged:
+        return False
+    oq = brief.get("open_questions") or []
+    if any(isinstance(q, dict) for q in oq):
+        row.optimization_gate_engaged = True
+        return True
+    return False
+
+
+def sync_optimization_allowed_after_participant_mutation(row: StudySession) -> bool:
+    """Set `optimization_allowed` from intrinsic readiness after participant-side changes (not researcher PATCH).
+
+    Keeps the stored permit aligned with ``intrinsic_optimization_ready`` so the participant Run
+    button, researcher checkbox, and ``GET /sessions/:id`` stay consistent after definition saves,
+    panel saves, chat (including turns that only enqueue background derivation), and derivation.
+
+    A researcher's explicit PATCH may temporarily set ``optimization_allowed`` ahead of intrinsic
+    readiness (e.g. waterfall with open questions after confirm); the next participant message or
+    definition/panel update recomputes this flag from the current brief and panel.
+    """
+    from app.optimization_gate import intrinsic_optimization_ready
+
+    panel = panel_dict(row)
+    brief = problem_brief_dict(row)
+    changed = False
+    if maybe_mark_optimization_gate_engaged_from_brief(row, brief):
+        changed = True
+    engaged = bool(getattr(row, "optimization_gate_engaged", False))
+    want = intrinsic_optimization_ready(row.workflow_mode, panel, brief, optimization_gate_engaged=engaged)
+    if row.optimization_allowed != want:
+        row.optimization_allowed = want
+        changed = True
+    if changed:
+        touch_session(row)
+        return True
+    return False
+
+
 def session_to_out(row: StudySession) -> SessionOut:
     return SessionOut(
         id=row.id,
@@ -84,6 +124,8 @@ def session_to_out(row: StudySession) -> SessionOut:
         problem_brief=problem_brief_dict(row),
         processing=processing_state(row),
         optimization_allowed=row.optimization_allowed,
+        optimization_runs_blocked_by_researcher=row.optimization_runs_blocked_by_researcher,
+        optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
         gemini_model=row.gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),
     )

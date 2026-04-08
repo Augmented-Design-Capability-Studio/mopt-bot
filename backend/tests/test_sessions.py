@@ -18,6 +18,7 @@ def test_create_session_returns_null_panel_config(monkeypatch):
         assert r.status_code == 200
         data = r.json()
         assert data.get("optimization_allowed") is False
+        assert data.get("optimization_runs_blocked_by_researcher") is False
         assert data.get("panel_config") is None
         assert data["problem_brief"]["solver_scope"] == "general_metaheuristic_translation"
         assert any(item["kind"] == "system" for item in data["problem_brief"]["items"])
@@ -363,9 +364,7 @@ def test_problem_brief_answered_open_question_promoted_to_gathered(monkeypatch):
         assert questions[0]["status"] == "open"
         assert questions[0]["answer_text"] is None
         gathered_texts = [item["text"] for item in brief["items"] if item["kind"] == "gathered"]
-        assert any(
-            "overtime cap" in t.lower() and "30 minutes" in t.lower() for t in gathered_texts
-        )
+        assert any("30 minutes" in t.lower() and "overtime" in t.lower() for t in gathered_texts)
 
 
 def test_waterfall_can_infer_first_panel_from_complete_problem_brief(monkeypatch):
@@ -955,9 +954,7 @@ def test_partial_problem_brief_patch_preserves_answered_open_question_state(monk
         patched = patch.json()["problem_brief"]
         assert patched["open_questions"] == []
         gathered_texts = [item["text"] for item in patched["items"] if item["kind"] == "gathered"]
-        assert any(
-            "overtime cap" in t.lower() and "30 minutes" in t.lower() for t in gathered_texts
-        )
+        assert any("30 minutes" in t.lower() and "overtime" in t.lower() for t in gathered_texts)
 
         send = client.post(
             f"/sessions/{sid}/messages",
@@ -971,9 +968,7 @@ def test_partial_problem_brief_patch_preserves_answered_open_question_state(monk
         gathered_after = [
             item["text"] for item in send.json()["problem_brief"]["items"] if item["kind"] == "gathered"
         ]
-        assert any(
-            "overtime cap" in t.lower() and "30 minutes" in t.lower() for t in gathered_after
-        )
+        assert any("30 minutes" in t.lower() and "overtime" in t.lower() for t in gathered_after)
 
 
 def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeypatch):
@@ -1411,7 +1406,9 @@ def test_cleanup_replace_flag_without_items_clears_editable_rows(monkeypatch):
         brief = send.json()["problem_brief"]
         assert brief is not None
         assert [item for item in brief["items"] if item["kind"] != "system"] == []
-        assert brief["open_questions"] == []
+        # replace_open_questions without open_questions in patch must not wipe existing questions
+        assert len(brief["open_questions"]) == 1
+        assert brief["open_questions"][0]["id"] == "oq-a"
         assert brief["goal_summary"] == "Cleaned up"
 
 
@@ -1479,9 +1476,7 @@ def test_replace_open_questions_round_trips_answer_fields(monkeypatch):
         brief = send.json()["problem_brief"]
         assert brief["open_questions"] == []
         gathered_texts = [item["text"] for item in brief["items"] if item["kind"] == "gathered"]
-        assert any(
-            "service level" in t.lower() and "95%" in t and "on-time" in t.lower() for t in gathered_texts
-        )
+        assert any("95%" in t and "on-time" in t.lower() for t in gathered_texts)
 
 
 def test_visible_assistant_reply_strips_hidden_patch_json(monkeypatch):

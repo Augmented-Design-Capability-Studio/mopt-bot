@@ -6,6 +6,28 @@ function gatheredTextDedupKey(text: string): string {
   return text.trim().toLowerCase();
 }
 
+function sentenceStart(s: string): string {
+  const t = s.trim();
+  if (!t) return t;
+  return t.length > 1 ? t[0].toUpperCase() + t.slice(1) : t.toUpperCase();
+}
+
+function ensureTerminator(s: string): string {
+  let t = s.trim();
+  if (!t) return t;
+  if (!".!?".includes(t[t.length - 1])) t += ".";
+  return sentenceStart(t);
+}
+
+/** Mirrors backend `problem_brief._format_answered_open_question_gathered` for PATCH parity. */
+function formatPromotedOqGathered(question: string, answer: string): string {
+  const a = (answer ?? "").trim();
+  if (!a) return "";
+  const q = (question ?? "").trim();
+  const combined = q ? `${q} — ${a}` : a;
+  return ensureTerminator(combined);
+}
+
 /** Move answered open questions (with non-empty answer) into gathered items; drop from open_questions. */
 export function promoteAnsweredOpenQuestionsToGathered(brief: ProblemBrief): ProblemBrief {
   const seenGathered = new Set(
@@ -22,7 +44,7 @@ export function promoteAnsweredOpenQuestionsToGathered(brief: ProblemBrief): Pro
       continue;
     }
     const qText = question.text.trim();
-    const combined = `${qText} — ${answerText}`;
+    const combined = formatPromotedOqGathered(qText, answerText);
     const key = gatheredTextDedupKey(combined);
     if (!seenGathered.has(key)) {
       seenGathered.add(key);

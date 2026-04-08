@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { ProblemBrief, Session, SnapshotSummary } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
-import { intrinsicOptimizationReadyWaterfall } from "../lib/optimizationGate";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 import { SnapshotDialog } from "./SnapshotDialog";
@@ -12,6 +11,7 @@ type ConfigPanelProps = {
   configText: string;
   problemBrief: ProblemBrief | null;
   editMode: EditMode;
+  invokeModel: boolean;
   busy: boolean;
   syncingProblemConfig: boolean;
   backgroundBriefPending: boolean;
@@ -29,6 +29,7 @@ type ConfigPanelProps = {
   onCancelDefinitionEdit: () => void;
   onEnsureDefinitionEditing: () => void;
   isDefinitionDirty: boolean;
+  onRequestDefinitionCleanup: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
@@ -70,6 +71,7 @@ export function ConfigPanel({
   configText,
   problemBrief,
   editMode,
+  invokeModel,
   busy,
   syncingProblemConfig,
   backgroundBriefPending,
@@ -86,6 +88,7 @@ export function ConfigPanel({
   onCancelDefinitionEdit,
   onEnsureDefinitionEditing,
   isDefinitionDirty,
+  onRequestDefinitionCleanup,
   onSyncProblemConfig,
   onEnterConfigEdit,
   onCancelConfigEdit,
@@ -101,6 +104,7 @@ export function ConfigPanel({
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
   const [defSnapshotMenuOpen, setDefSnapshotMenuOpen] = useState(false);
+  const [defMoreMenuOpen, setDefMoreMenuOpen] = useState(false);
   const [configSnapshotMenuOpen, setConfigSnapshotMenuOpen] = useState(false);
   const [snapshotDialogSource, setSnapshotDialogSource] = useState<"definition" | "config" | null>(null);
   const [forceUnlockProcessingUi, setForceUnlockProcessingUi] = useState(false);
@@ -108,6 +112,7 @@ export function ConfigPanel({
   const [definitionUnread, setDefinitionUnread] = useState(false);
   const [configUnread, setConfigUnread] = useState(false);
   const defSnapshotMenuRef = useRef<HTMLDivElement>(null);
+  const defMoreMenuRef = useRef<HTMLDivElement>(null);
   const configSnapshotMenuRef = useRef<HTMLDivElement>(null);
   const prevBriefPending = useRef(backgroundBriefPending);
   const prevConfigPending = useRef(backgroundConfigPending);
@@ -121,11 +126,14 @@ export function ConfigPanel({
       if (configSnapshotMenuOpen && configSnapshotMenuRef.current && !configSnapshotMenuRef.current.contains(t)) {
         setConfigSnapshotMenuOpen(false);
       }
+      if (defMoreMenuOpen && defMoreMenuRef.current && !defMoreMenuRef.current.contains(t)) {
+        setDefMoreMenuOpen(false);
+      }
     };
-    if (!defSnapshotMenuOpen && !configSnapshotMenuOpen) return;
+    if (!defSnapshotMenuOpen && !configSnapshotMenuOpen && !defMoreMenuOpen) return;
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [defSnapshotMenuOpen, configSnapshotMenuOpen]);
+  }, [defSnapshotMenuOpen, configSnapshotMenuOpen, defMoreMenuOpen]);
 
   const openSnapshotDialog = (source: "definition" | "config") => {
     void onLoadSnapshots?.();
@@ -156,6 +164,15 @@ export function ConfigPanel({
     }
     prevConfigPending.current = backgroundConfigPending;
   }, [backgroundConfigPending, activeTab]);
+
+  const definitionCleanupEnabled = !sessionTerminated && !busy && invokeModel;
+  const definitionCleanupDisabledTitle = sessionTerminated
+    ? "Session has ended."
+    : busy
+      ? "Wait for the current action to finish."
+      : !invokeModel
+        ? "Turn on Ask model (requires API key) to clean up with the assistant."
+        : undefined;
 
   const definitionEditing = editMode === "definition";
   const configEditing = editMode === "config";
@@ -215,19 +232,20 @@ export function ConfigPanel({
     );
   }, [configText, problemBrief]);
 
-  const waterfallIntrinsicBlocked = useMemo(() => {
-    if (!session || session.workflow_mode !== "waterfall" || session.optimization_allowed) return false;
-    if (!problemBrief) return false;
-    return !intrinsicOptimizationReadyWaterfall(problemBrief);
+  /** Waterfall: show even when researcher permit allows runs (optimization_allowed). */
+  const waterfallOpenQuestionsAlert = useMemo(() => {
+    if (!session || session.workflow_mode !== "waterfall" || !problemBrief) return null;
+    if (!problemBrief.open_questions.some((q) => q.status === "open")) return null;
+    return "Answer all open questions before optimization can run.";
   }, [problemBrief, session]);
 
-  const waterfallBannerMessage = useMemo(() => {
-    if (!waterfallIntrinsicBlocked || !problemBrief) return null;
-    if (problemBrief.open_questions.some((q) => q.status === "open")) {
-      return "Answer all open questions before optimization can run.";
-    }
-    return "Clarify the goal or gathered facts (and resolve any open questions) before optimization can run.";
-  }, [problemBrief, waterfallIntrinsicBlocked]);
+  /** Waterfall: cold start before first chat or any open questions in the brief. */
+  const waterfallClarifyAlert = useMemo(() => {
+    if (!session || session.workflow_mode !== "waterfall" || !problemBrief) return null;
+    if (session.optimization_gate_engaged) return null;
+    if (session.optimization_allowed) return null;
+    return "Start in chat (or wait until open questions appear in the definition) before optimization can run.";
+  }, [problemBrief, session]);
 
   const definitionSaveShield = definitionEditing && busy;
 
@@ -245,23 +263,26 @@ export function ConfigPanel({
         )}
       </div>
       <div className="panel-body">
-        {waterfallBannerMessage ? (
+        {waterfallOpenQuestionsAlert ? (
           <div className="config-panel-waterfall-alert" role="status">
-            <span>{waterfallBannerMessage}</span>
-            {problemBrief?.open_questions.some((q) => q.status === "open") ? (
-              <button
-                type="button"
-                className="config-panel-waterfall-alert-jump"
-                onClick={() =>
-                  document.getElementById("definition-open-questions")?.scrollIntoView({
-                    behavior: "smooth",
-                    block: "nearest",
-                  })
-                }
-              >
-                Scroll to open questions
-              </button>
-            ) : null}
+            <span>{waterfallOpenQuestionsAlert}</span>
+            <button
+              type="button"
+              className="config-panel-waterfall-alert-jump"
+              onClick={() =>
+                document.getElementById("definition-open-questions")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "nearest",
+                })
+              }
+            >
+              Scroll to open questions
+            </button>
+          </div>
+        ) : null}
+        {waterfallClarifyAlert ? (
+          <div className="config-panel-waterfall-alert" role="status">
+            <span>{waterfallClarifyAlert}</span>
           </div>
         ) : null}
         <div className="tabs">
@@ -443,6 +464,40 @@ export function ConfigPanel({
                     "Sync to config"
                   )}
                 </button>
+                <div ref={defMoreMenuRef} style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    onClick={() => setDefMoreMenuOpen((o) => !o)}
+                    disabled={sessionTerminated}
+                    aria-expanded={defMoreMenuOpen}
+                    aria-haspopup="menu"
+                    aria-label="More definition actions"
+                    title="More definition actions"
+                  >
+                    ⋯ <span aria-hidden="true">{defMoreMenuOpen ? "▼" : "▲"}</span>
+                  </button>
+                  {defMoreMenuOpen ? (
+                    <div className="config-load-dropup" role="menu" style={dropUpMenuStyle}>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!definitionCleanupEnabled}
+                        title={
+                          definitionCleanupEnabled
+                            ? "Ask the assistant to consolidate and deduplicate this definition."
+                            : definitionCleanupDisabledTitle
+                        }
+                        onClick={() => {
+                          setDefMoreMenuOpen(false);
+                          void onRequestDefinitionCleanup();
+                        }}
+                        style={menuItemStyle}
+                      >
+                        Clean up definition
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </>
             )
           ) : activeTab === "config" ? (

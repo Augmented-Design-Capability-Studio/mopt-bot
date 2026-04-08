@@ -52,6 +52,7 @@ type ParticipantShellProps = {
   onLeaveSession: () => void;
   onStartSession: () => void | Promise<void>;
   onSendChat: () => void | Promise<void>;
+  onRequestDefinitionCleanup: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
   onSaveConfig: () => void | Promise<void>;
   onSaveDefinitionEdit: () => void | Promise<void>;
@@ -113,6 +114,7 @@ export function ParticipantShell({
   onLeaveSession,
   onStartSession,
   onSendChat,
+  onRequestDefinitionCleanup,
   onSimulateUpload,
   onSaveConfig,
   onSaveDefinitionEdit,
@@ -230,6 +232,7 @@ export function ParticipantShell({
             configText={configText}
             problemBrief={problemBrief}
             editMode={editMode}
+            invokeModel={invokeModel}
             busy={busy}
             syncingProblemConfig={syncingProblemConfig}
             backgroundBriefPending={backgroundBriefPending}
@@ -245,6 +248,7 @@ export function ParticipantShell({
             onCancelDefinitionEdit={onCancelDefinitionEdit}
             onEnsureDefinitionEditing={onEnsureDefinitionEditing}
             isDefinitionDirty={isDefinitionDirty}
+            onRequestDefinitionCleanup={onRequestDefinitionCleanup}
             onSyncProblemConfig={onSyncProblemConfig}
             onEnterConfigEdit={onEnterConfigEdit}
             onCancelConfigEdit={onCancelConfigEdit}
