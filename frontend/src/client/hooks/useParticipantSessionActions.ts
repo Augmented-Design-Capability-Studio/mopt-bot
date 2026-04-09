@@ -376,6 +376,7 @@ export function useParticipantSessionActions({
         });
       }
       void refetchSnapshots?.();
+      await syncSession();
       return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
@@ -398,6 +399,7 @@ export function useParticipantSessionActions({
     setError,
     setProblemBrief,
     setSession,
+    syncSession,
     token,
   ]);
 

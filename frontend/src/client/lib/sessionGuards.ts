@@ -14,7 +14,20 @@ export function isAbortError(error: unknown): boolean {
 /** Drop out-of-order GET /sessions/:id snapshots. */
 export function isOlderSessionSnapshot(incoming: Session, previous: Session | null): boolean {
   if (!previous || previous.id !== incoming.id) return false;
-  return Date.parse(incoming.updated_at) < Date.parse(previous.updated_at);
+  const incomingTime = Date.parse(incoming.updated_at);
+  const previousTime = Date.parse(previous.updated_at);
+  if (Number.isNaN(incomingTime) || Number.isNaN(previousTime)) return false;
+  if (incomingTime < previousTime) {
+    const hadPending =
+      previous.processing?.brief_status === "pending" || previous.processing?.config_status === "pending";
+    const incomingSettled =
+      Boolean(incoming.processing) &&
+      incoming.processing.brief_status !== "pending" &&
+      incoming.processing.config_status !== "pending";
+    if (hadPending && incomingSettled) return false;
+    return true;
+  }
+  return false;
 }
 
 export function coerceParticipantMessages(list: unknown): Message[] {
