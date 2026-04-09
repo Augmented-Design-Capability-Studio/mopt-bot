@@ -24,7 +24,7 @@ from app.prompts.study_chat import (
     STUDY_CHAT_WORKFLOW_AGILE,
     STUDY_CHAT_WORKFLOW_WATERFALL,
 )
-from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn
+from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn, RunTriggerIntentTurn
 
 log = logging.getLogger(__name__)
 
@@ -215,6 +215,18 @@ BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "replace_open_questions": {"type": "boolean"},
         "cleanup_mode": {"type": "boolean"},
     },
+}
+
+RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "RunTriggerIntentTurn",
+    "type": "object",
+    "properties": {
+        "should_trigger_run": {"type": "boolean"},
+        "intent_type": {"type": "string", "enum": ["none", "affirm_invite", "direct_request"]},
+        "confidence": {"type": "number"},
+        "rationale": {"type": "string"},
+    },
+    "required": ["should_trigger_run", "intent_type"],
 }
 
 WorkflowPhase = Literal["discovery", "structuring", "configuration"]
@@ -621,6 +633,66 @@ def generate_chat_turn(
             is_run_acknowledgement,
         )
     return ChatModelTurn(assistant_message=text, panel_patch=None)
+
+
+def classify_run_trigger_intent(
+    user_text: str,
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    workflow_mode: str = "waterfall",
+) -> RunTriggerIntentTurn:
+    """
+    Classify whether the latest participant message should trigger optimization.
+    This is intent-only; router-level gate checks remain authoritative.
+    """
+    client = genai.Client(api_key=api_key)
+    system_instruction = "\n\n".join(
+        [
+            "You classify whether the participant is asking to start optimization now.",
+            _workflow_prompt(workflow_mode),
+            (
+                "Return JSON only. Set should_trigger_run=true only when the user clearly intends to start a run now, "
+                "either by direct request (e.g., asking to run/start optimize) or by affirmative response to a recent "
+                "assistant invitation to run. If intent is ambiguous, return should_trigger_run=false."
+            ),
+            (
+                "Set intent_type to one of: "
+                "none (no clear run intent), affirm_invite (affirmative reply to run invitation), "
+                "direct_request (explicit request to run now)."
+            ),
+        ]
+    )
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA,
+    )
+    try:
+        chat = client.chats.create(
+            model=model_name,
+            config=config,
+            history=_history_to_contents(history_lines),
+        )
+        resp = chat.send_message(user_text)
+        raw = resp.text
+        if resp.parsed is not None:
+            if isinstance(resp.parsed, RunTriggerIntentTurn):
+                turn = resp.parsed
+            elif isinstance(resp.parsed, dict):
+                turn = RunTriggerIntentTurn.model_validate(resp.parsed)
+            else:
+                turn = RunTriggerIntentTurn()
+        else:
+            turn = RunTriggerIntentTurn.model_validate_json(raw or "{}")
+        if not turn.should_trigger_run:
+            return turn
+        if turn.intent_type == "none":
+            return RunTriggerIntentTurn(should_trigger_run=False, intent_type="none", confidence=turn.confidence)
+        return turn
+    except Exception as e:
+        log.warning("Run-trigger intent classification failed (%s); defaulting to no-trigger", e)
+        return RunTriggerIntentTurn()
 
 
 def generate_config_from_brief(

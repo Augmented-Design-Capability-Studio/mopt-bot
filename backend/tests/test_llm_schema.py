@@ -1,6 +1,7 @@
 from app.services.llm import (
     CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
+    RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA,
     _build_structured_system_instruction,
 )
 
@@ -42,6 +43,16 @@ def test_chat_schema_focuses_on_assistant_and_problem_brief_patch():
     assert "assistant_message" in CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA["properties"]
     assert "problem_brief_patch" in CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA["properties"]
     assert "panel_patch" not in CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA["properties"]
+
+
+def test_run_trigger_intent_schema_has_expected_fields():
+    assert RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA["properties"]["should_trigger_run"]["type"] == "boolean"
+    assert RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA["properties"]["intent_type"]["enum"] == [
+        "none",
+        "affirm_invite",
+        "direct_request",
+    ]
+    assert "should_trigger_run" in RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA["required"]
 
 
 def test_system_instruction_includes_hidden_researcher_steering_block():

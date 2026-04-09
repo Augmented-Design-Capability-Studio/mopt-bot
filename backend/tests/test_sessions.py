@@ -1,8 +1,9 @@
 from fastapi.testclient import TestClient
+import importlib
 
 from app.config import get_settings
 from app.main import create_app
-from app.schemas import ChatModelTurn
+from app.schemas import ChatModelTurn, RunTriggerIntentTurn
 
 
 def test_create_session_returns_null_panel_config(monkeypatch):
@@ -88,6 +89,138 @@ def test_message_response_marks_processing_pending_before_background_finishes(mo
         assert session.status_code == 200
         assert session.json()["processing"]["brief_status"] == "pending"
         assert session.json()["processing"]["config_status"] == "pending"
+
+
+def test_direct_run_request_triggers_autorun_when_gate_open(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-autorun-open-secret")
+    get_settings.cache_clear()
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Yes, we can run now.",
+            panel_patch=None,
+            problem_brief_patch=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.classify_run_trigger_intent",
+        lambda *args, **kwargs: RunTriggerIntentTurn(
+            should_trigger_run=True,
+            intent_type="direct_request",
+            confidence=0.95,
+            rationale="User directly asked to run optimization now.",
+        ),
+    )
+
+    def fake_post_run(session_id, body, db, _principal):
+        captured["session_id"] = session_id
+        captured["problem"] = body.problem
+        return None
+
+    router_module = importlib.import_module("app.routers.sessions.router")
+    monkeypatch.setattr(router_module, "post_run", fake_post_run)
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "agile"},
+            headers={"Authorization": "Bearer test-client-chat-autorun-open-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/panel",
+            json={"panel_config": {"problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}}},
+            headers={"Authorization": "Bearer test-client-chat-autorun-open-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Can we run now?", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-chat-autorun-open-secret"},
+        )
+        assert send.status_code == 200
+        assert captured["session_id"] == sid
+        assert captured["problem"] == {"weights": {"travel_time": 1}, "algorithm": "GA"}
+
+
+def test_direct_run_request_with_closed_gate_returns_guidance(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-autorun-closed-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Acknowledged.",
+            panel_patch=None,
+            problem_brief_patch=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.classify_run_trigger_intent",
+        lambda *args, **kwargs: RunTriggerIntentTurn(
+            should_trigger_run=True,
+            intent_type="direct_request",
+            confidence=0.93,
+            rationale="User asked to start a run.",
+        ),
+    )
+    called = {"ran": False}
+
+    def fake_post_run(*args, **kwargs):
+        called["ran"] = True
+        return None
+
+    router_module = importlib.import_module("app.routers.sessions.router")
+    monkeypatch.setattr(router_module, "post_run", fake_post_run)
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "waterfall"},
+            headers={"Authorization": "Bearer test-client-chat-autorun-closed-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch_brief = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Need one unresolved clarification.",
+                    "items": [],
+                    "open_questions": [
+                        {
+                            "id": "oq-block",
+                            "text": "Do we allow overtime?",
+                            "status": "open",
+                            "answer_text": None,
+                        }
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-chat-autorun-closed-secret"},
+        )
+        assert patch_brief.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Please run optimization now.", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-chat-autorun-closed-secret"},
+        )
+        assert send.status_code == 200
+        messages = send.json()["messages"]
+        assert messages[-1]["role"] == "assistant"
+        assert "start a run" in messages[-1]["content"].lower()
+        assert called["ran"] is False
 
 
 def test_skip_hidden_brief_update_skips_background_and_settles_processing(monkeypatch):

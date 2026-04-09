@@ -219,6 +219,7 @@ export function useParticipantSessionSync({
       if (sessionIdRef.current !== requestedId) return;
       if (!Array.isArray(list)) return;
       const nextRuns = list as RunResult[];
+      const hasNewRun = nextRuns.length > runs.length;
       setRuns((previous) => {
         if (nextRuns.length !== previous.length) return nextRuns;
         const changed = nextRuns.some((run, index) => run.id !== previous[index]?.id || run.ok !== previous[index]?.ok);
@@ -226,6 +227,7 @@ export function useParticipantSessionSync({
       });
       setActiveRun((previous) => {
         if (nextRuns.length === 0) return 0;
+        if (hasNewRun) return nextRuns.length - 1;
         return previous >= nextRuns.length ? nextRuns.length - 1 : previous;
       });
     } catch (error) {
@@ -236,7 +238,7 @@ export function useParticipantSessionSync({
         );
       }
     }
-  }, [invalidateRemovedSession, optimizingRef, sessionId, sessionIdRef, setActiveRun, setRuns, token]);
+  }, [invalidateRemovedSession, optimizingRef, runs.length, sessionId, sessionIdRef, setActiveRun, setRuns, token]);
 
   useEffect(() => {
     if (!authed) return;

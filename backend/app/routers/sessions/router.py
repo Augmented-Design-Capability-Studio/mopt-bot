@@ -45,6 +45,25 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 log = logging.getLogger(__name__)
 
 
+def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any]) -> str:
+    mode = str(row.workflow_mode or "").strip().lower()
+    if bool(row.optimization_runs_blocked_by_researcher):
+        return "I can run optimization once the researcher re-enables runs for this session."
+    if mode == "agile":
+        return (
+            "I can start a run once the configuration includes at least one objective weight "
+            "and a selected search algorithm."
+        )
+    if mode == "waterfall":
+        if not bool(getattr(row, "optimization_gate_engaged", False)):
+            return "I can start a run after we engage the optimization gate in chat."
+        open_questions = brief_obj.get("open_questions") or []
+        if any(isinstance(q, dict) and str(q.get("status") or "").strip().lower() == "open" for q in open_questions):
+            return "I can start a run after all open questions in the Definition tab are answered."
+        return "I can start a run once run prerequisites are satisfied."
+    return "I can start a run once run prerequisites are satisfied."
+
+
 @router.post("", response_model=SessionOut)
 def create_session(
     body: SessionCreate,
@@ -394,6 +413,19 @@ def post_message(
             text = intent.sanitize_visible_assistant_reply(text)
             am = derivation.append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
+            run_intent = None
+            try:
+                from app.services.llm import classify_run_trigger_intent
+
+                run_intent = classify_run_trigger_intent(
+                    user_text=body.content,
+                    history_lines=hist,
+                    api_key=key,
+                    model_name=model,
+                    workflow_mode=row.workflow_mode,
+                )
+            except Exception:
+                log.exception("Run-trigger intent classification failed for session %s", session_id)
             if turn and (
                 turn.problem_brief_patch is not None
                 or turn.replace_editable_items
@@ -472,6 +504,62 @@ def post_message(
                     is_run_acknowledgement=is_run_ack,
                     is_answered_open_question=is_answer_save,
                 )
+
+            row = db.get(StudySession, session_id) or row
+            panel_obj: dict[str, Any] | None = None
+            if row.panel_config_json:
+                try:
+                    parsed_panel = json.loads(row.panel_config_json)
+                    panel_obj = parsed_panel if isinstance(parsed_panel, dict) else None
+                except json.JSONDecodeError:
+                    panel_obj = None
+            try:
+                brief_obj = json.loads(row.problem_brief_json) if row.problem_brief_json else default_problem_brief()
+            except json.JSONDecodeError:
+                brief_obj = default_problem_brief()
+            can_run_now = can_run_optimization(
+                row.workflow_mode,
+                row.optimization_allowed,
+                row.optimization_runs_blocked_by_researcher,
+                panel_obj,
+                brief_obj,
+                optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+            )
+            if (
+                run_intent is not None
+                and run_intent.should_trigger_run
+                and run_intent.intent_type in {"affirm_invite", "direct_request"}
+            ):
+                if can_run_now:
+                    has_recent_run_reply = (
+                        db.query(ChatMessage)
+                        .filter(
+                            ChatMessage.session_id == session_id,
+                            ChatMessage.kind == "run",
+                            ChatMessage.id > am.id,
+                        )
+                        .first()
+                        is not None
+                    )
+                    if not has_recent_run_reply:
+                        try:
+                            problem_payload = (
+                                panel_obj.get("problem")
+                                if isinstance(panel_obj, dict) and isinstance(panel_obj.get("problem"), dict)
+                                else (panel_obj or {})
+                            )
+                            post_run(
+                                session_id,
+                                SolveRunCreate(type="optimize", problem=problem_payload),
+                                db,
+                                None,
+                            )
+                        except HTTPException:
+                            log.info("Auto-run trigger skipped due to run endpoint guard for session %s", session_id)
+                elif run_intent.intent_type == "direct_request":
+                    blocked_msg = _run_gate_blocked_message(row, brief_obj)
+                    bm = derivation.append_message(db, session_id, "assistant", blocked_msg, True)
+                    out.append(MessageOut.model_validate(bm))
 
     row = db.get(StudySession, session_id)
     if row is not None and helpers.sync_optimization_allowed_after_participant_mutation(row):

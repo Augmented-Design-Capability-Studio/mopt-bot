@@ -124,6 +124,15 @@ class ChatModelTurn(BaseModel):
     cleanup_mode: bool = False
 
 
+class RunTriggerIntentTurn(BaseModel):
+    """Structured intent classification for chat-triggered optimization runs."""
+
+    should_trigger_run: bool = False
+    intent_type: Literal["none", "affirm_invite", "direct_request"] = "none"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = ""
+
+
 class ProblemBriefUpdateTurn(BaseModel):
     """Structured hidden Gemini reply for brief extraction/update only."""
 
