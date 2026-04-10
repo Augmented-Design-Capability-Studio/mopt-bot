@@ -9,7 +9,7 @@ import {
   type Session,
   type TestProblemMeta,
 } from "@shared/api";
-import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
+import { useGeminiConfig } from "@shared/geminiModelSuggestions";
 
 import { getOnlyActiveTerms } from "../lib/sessionConfig";
 
@@ -29,7 +29,8 @@ export function useResearcherController() {
   const [runs, setRuns] = useState<RunResult[]>([]);
   const [steerText, setSteerText] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
-  const [geminiModel, setGeminiModel] = useState(DEFAULT_SUGGESTED_GEMINI_MODEL);
+  const { defaultModel: defaultGeminiModel } = useGeminiConfig();
+  const [geminiModel, setGeminiModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pushKeySuccess, setPushKeySuccess] = useState<string | null>(null);
@@ -119,8 +120,8 @@ export function useResearcherController() {
 
   useEffect(() => {
     if (!detail) return;
-    setGeminiModel(detail.gemini_model?.trim() || DEFAULT_SUGGESTED_GEMINI_MODEL);
-  }, [detail?.id]);
+    setGeminiModel(detail.gemini_model?.trim() || defaultGeminiModel);
+  }, [detail?.id, defaultGeminiModel]);
 
   function saveToken() {
     const trimmed = tokenInput.trim();

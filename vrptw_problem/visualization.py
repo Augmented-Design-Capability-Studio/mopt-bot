@@ -8,10 +8,10 @@ Optional: show locked assignments, driver preference indicators, shift-over mark
 from pathlib import Path
 from typing import Optional, Any
 
-from reporter import get_gantt_data
-from traffic_api import ZONE_NAMES
-from vehicles import VEHICLES
-from orders import get_orders, Order
+from vrptw_problem.reporter import get_gantt_data
+from vrptw_problem.traffic_api import ZONE_NAMES
+from vrptw_problem.vehicles import VEHICLES
+from vrptw_problem.orders import get_orders, Order
 
 # Fake 2D coordinates for zones (Depot center, A–E roughly by travel time)
 ZONE_COORDS = {

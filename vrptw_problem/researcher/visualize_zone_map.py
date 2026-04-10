@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from traffic_api import ZONE_NAMES
+from vrptw_problem.traffic_api import ZONE_NAMES
 
 
 # Layout: depot central, zones as neighborhoods (irregular, map-like)

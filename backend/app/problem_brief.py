@@ -317,8 +317,10 @@ def _atomize_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str, 
             continue
         text = str(item.get("text") or "").strip()
         item_id = str(item.get("id") or "")
+        source = str(item.get("source") or "").strip().lower()
         # Promoted answered open questions: single logical row (Question — Answer); do not split on commas/and.
-        if item_id.startswith("gathered-oq-") or "\u2014" in text:
+        # Upload notifications: single programmatic entry; do not shred into smaller pieces.
+        if item_id.startswith("gathered-oq-") or "\u2014" in text or source == "upload":
             out.append(item)
             continue
         chunks = _split_compound_item_text(text)

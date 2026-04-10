@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import OptimizationRun, StudySession
 from app.problem_brief import default_problem_brief, normalize_problem_brief
 from app.schemas import RunOut, SessionOut, SessionProcessingState
+from app.config import get_settings
 
 
 def clean_participant_number(value: str | None) -> str | None:
@@ -136,7 +137,7 @@ def session_to_out(row: StudySession) -> SessionOut:
         optimization_allowed=row.optimization_allowed,
         optimization_runs_blocked_by_researcher=row.optimization_runs_blocked_by_researcher,
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
-        gemini_model=row.gemini_model,
+        gemini_model=row.gemini_model or get_settings().default_gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),
     )
 

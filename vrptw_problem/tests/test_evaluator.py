@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from evaluator import simulate_routes
-from orders import get_orders
+from vrptw_problem.evaluator import simulate_routes
+from vrptw_problem.orders import get_orders
 
 
 def _default_routes():

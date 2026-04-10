@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip("mealpy")
 
-from optimizer import QuickBiteOptimizer
+from vrptw_problem.optimizer import QuickBiteOptimizer
 
 # Tight caps: fast everywhere; population must stay large enough for mealpy GA tournament logic.
 FAST_SOLVE_KW = {

@@ -13,8 +13,8 @@ from pathlib import Path
 _VRPTW_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_VRPTW_ROOT))
 
-from optimizer import QuickBiteOptimizer
-from user_input import (
+from vrptw_problem.optimizer import QuickBiteOptimizer
+from vrptw_problem.user_input import (
     DEFAULT_WEIGHTS,
     DEFAULT_DRIVER_PREFERENCES,
     SHIFT_HARD_PENALTY,

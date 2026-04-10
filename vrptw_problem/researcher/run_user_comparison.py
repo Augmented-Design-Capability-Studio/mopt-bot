@@ -18,15 +18,15 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _VRPTW_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_VRPTW_ROOT))
 
-from optimizer import QuickBiteOptimizer
-from user_input import load_user_input
+from vrptw_problem.optimizer import QuickBiteOptimizer
+from vrptw_problem.user_input import load_user_input
 from researcher.official_evaluator import (
     full_official_evaluation,
     print_official_report,
     print_cost_breakdown_comparison,
 )
 from researcher.comparison_viz import save_comparison_figures
-from orders import get_orders
+from vrptw_problem.orders import get_orders
 
 DATA_DIR = _VRPTW_ROOT / "data"
 OUTPUT_DIR = _SCRIPT_DIR / "output"

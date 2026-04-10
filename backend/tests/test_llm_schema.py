@@ -1,4 +1,4 @@
-from app.problems.gemini_schemas import knapsack_panel_patch_response_json_schema
+from app.problems.registry import get_study_port
 from app.services.llm import (
     CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
@@ -45,7 +45,7 @@ def test_config_schema_requires_known_driver_preference_fields():
 
 
 def test_knapsack_config_schema_weights():
-    schema = knapsack_panel_patch_response_json_schema()
+    schema = get_study_port("knapsack").panel_patch_response_json_schema()
     weights = schema["properties"]["problem"]["properties"]["weights"]
     assert weights.get("additionalProperties") is False
     assert set(weights["properties"]) == {"value_emphasis", "capacity_overflow", "selection_sparsity"}

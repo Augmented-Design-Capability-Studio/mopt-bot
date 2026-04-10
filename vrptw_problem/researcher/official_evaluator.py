@@ -11,14 +11,14 @@ Used for research: compare how well different users did under the same problem.
 import numpy as np
 from typing import Any, Optional
 
-from evaluator import simulate_routes
-from orders import Order, get_orders
-from user_input import (
+from vrptw_problem.evaluator import simulate_routes
+from vrptw_problem.orders import Order, get_orders
+from vrptw_problem.user_input import (
     DEFAULT_WEIGHTS,
     DEFAULT_DRIVER_PREFERENCES,
     SHIFT_HARD_PENALTY,
 )
-from vehicles import VEHICLES
+from vrptw_problem.vehicles import VEHICLES
 
 MAX_SHIFT_MIN = 8.0 * 60  # 8 hours
 N_ORDERS = 30

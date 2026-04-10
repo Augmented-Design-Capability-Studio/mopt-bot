@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from orders import get_orders, print_order_table
-from optimizer import QuickBiteOptimizer
-from reporter import print_report
-from evaluator import VEHICLES
+from vrptw_problem.orders import get_orders, print_order_table
+from vrptw_problem.optimizer import QuickBiteOptimizer
+from vrptw_problem.reporter import print_report
+from vrptw_problem.evaluator import VEHICLES
 
 
 def main() -> None:

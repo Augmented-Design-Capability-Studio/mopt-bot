@@ -13,10 +13,10 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional
 
-from traffic_api import get_travel_time, ZONE_DEPOT, ZONE_D, ZONE_NAMES
-from encoder import decode_solution
-from orders import Order
-from vehicles import VEHICLES
+from vrptw_problem.traffic_api import get_travel_time, ZONE_DEPOT, ZONE_D, ZONE_NAMES
+from vrptw_problem.encoder import decode_solution
+from vrptw_problem.orders import Order
+from vrptw_problem.vehicles import VEHICLES
 
 
 @dataclass

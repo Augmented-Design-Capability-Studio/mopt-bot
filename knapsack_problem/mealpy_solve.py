@@ -13,8 +13,8 @@ try:
 except ImportError:
     FloatVar = GA = PSO = SA = ACOR = None
 
-from evaluator import build_knapsack_weights, evaluate_selection
-from instance import Item
+from knapsack_problem.evaluator import build_knapsack_weights, evaluate_selection
+from knapsack_problem.instance import Item
 
 EARLY_STOP_DEFAULT_PATIENCE = 20
 EARLY_STOP_DEFAULT_EPSILON = 1e-4

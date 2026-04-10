@@ -8,9 +8,9 @@ for side-by-side / stacked comparison.
 from pathlib import Path
 from typing import Optional
 
-from reporter import get_gantt_data
-from visualization import plot_gantt, plot_route_map, save_result_figures
-from orders import get_orders
+from vrptw_problem.reporter import get_gantt_data
+from vrptw_problem.visualization import plot_gantt, plot_route_map, save_result_figures
+from vrptw_problem.orders import get_orders
 
 
 def save_comparison_figures(

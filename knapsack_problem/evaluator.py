@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from instance import Item
+from knapsack_problem.instance import Item
 
 WEIGHT_KEYS = ("value_emphasis", "capacity_overflow", "selection_sparsity")
 

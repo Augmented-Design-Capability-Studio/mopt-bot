@@ -1,9 +1,7 @@
-import {
-  DEFAULT_SUGGESTED_GEMINI_MODEL,
-  GEMINI_MODEL_DATALIST_ID,
-  GeminiModelDatalist,
-} from "@shared/geminiModelSuggestions";
+import { useGeminiConfig } from "@shared/geminiModelSuggestions";
 import { DialogShell } from "@shared/components/DialogShell";
+
+const CUSTOM_VALUE = "__custom__";
 
 type ResearcherModelKeyDialogProps = {
   open: boolean;
@@ -30,6 +28,19 @@ export function ResearcherModelKeyDialog({
   onClose,
   onPush,
 }: ResearcherModelKeyDialogProps) {
+  const { suggestions } = useGeminiConfig();
+  const isKnown = suggestions.length > 0 && suggestions.includes(geminiModel);
+  const selectValue = isKnown ? geminiModel : (geminiModel ? CUSTOM_VALUE : (suggestions[0] ?? CUSTOM_VALUE));
+
+  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const v = e.target.value;
+    if (v === CUSTOM_VALUE) {
+      onGeminiModelChange("");
+    } else {
+      onGeminiModelChange(v);
+    }
+  }
+
   return (
     <DialogShell
       open={open}
@@ -55,7 +66,6 @@ export function ResearcherModelKeyDialog({
           {pushKeySuccess}
         </p>
       ) : null}
-      <GeminiModelDatalist />
       <label className="muted" style={{ display: "block", marginTop: "0.75rem" }}>
         Gemini API key
         <input
@@ -68,14 +78,27 @@ export function ResearcherModelKeyDialog({
       </label>
       <label className="muted" style={{ display: "block", marginTop: "0.6rem" }}>
         Gemini model id
-        <input
-          value={geminiModel}
-          onChange={(e) => onGeminiModelChange(e.target.value)}
-          list={GEMINI_MODEL_DATALIST_ID}
-          placeholder={DEFAULT_SUGGESTED_GEMINI_MODEL}
-          autoComplete="off"
-          style={{ width: "100%", marginTop: "0.2rem" }}
-        />
+        {suggestions.length > 0 ? (
+          <select
+            style={{ width: "100%", marginTop: "0.2rem" }}
+            value={selectValue}
+            onChange={handleSelectChange}
+          >
+            {suggestions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+            <option value={CUSTOM_VALUE}>Custom (type below)…</option>
+          </select>
+        ) : null}
+        {(!isKnown || suggestions.length === 0) && (
+          <input
+            value={geminiModel}
+            onChange={(e) => onGeminiModelChange(e.target.value)}
+            placeholder="e.g. gemini-3.1-flash-lite-preview"
+            autoComplete="off"
+            style={{ width: "100%", marginTop: "0.3rem" }}
+          />
+        )}
       </label>
     </DialogShell>
   );

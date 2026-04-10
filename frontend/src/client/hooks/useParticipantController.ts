@@ -12,7 +12,7 @@ import {
   type SnapshotSummary,
   type TestProblemMeta,
 } from "@shared/api";
-import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
+import { useGeminiConfig } from "@shared/geminiModelSuggestions";
 
 import { type ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import {
@@ -55,7 +55,8 @@ export function useParticipantController() {
   const [error, setError] = useState<string | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [modelKey, setModelKey] = useState("");
-  const [modelName, setModelName] = useState(DEFAULT_SUGGESTED_GEMINI_MODEL);
+  const { defaultModel: defaultGeminiModel } = useGeminiConfig();
+  const [modelName, setModelName] = useState("");
   const [aiPending, setAiPending] = useState(false);
   const [recentRows, setRecentRows] = useState<RecentSessionRow[]>([]);
   const [recentBusy, setRecentBusy] = useState(false);

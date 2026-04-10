@@ -11,7 +11,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
-from traffic_api import ZONE_NAMES
+from vrptw_problem.traffic_api import ZONE_NAMES
 
 
 # Default path for serialized orders (relative to package root)

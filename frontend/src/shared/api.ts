@@ -67,6 +67,29 @@ export async function fetchTestProblemsMeta(): Promise<TestProblemMeta[]> {
   return Array.isArray(list) ? list : [];
 }
 
+export type PublicConfig = {
+  default_gemini_model: string;
+  gemini_model_suggestions: string[];
+};
+
+/** Fetch server-driven UI config (no auth required). Falls back gracefully. */
+export async function fetchPublicConfig(): Promise<PublicConfig> {
+  const url = buildApiUrl("/meta/config");
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      default_gemini_model: typeof data.default_gemini_model === "string" ? data.default_gemini_model : "",
+      gemini_model_suggestions: Array.isArray(data.gemini_model_suggestions) ? data.gemini_model_suggestions : [],
+    };
+  } catch {
+    // Fallback: return empty so UI stays functional even if backend is unreachable
+    return { default_gemini_model: "", gemini_model_suggestions: [] };
+  }
+}
+
+
 export type WeightDefinitionMeta = {
   key: string;
   label: string;

@@ -30,7 +30,7 @@ def knapsack_path_first():
 
 
 def test_get_items_deterministic(knapsack_path_first):
-    from instance import get_items
+    from knapsack_problem.instance import get_items
 
     a, ca = get_items(42)
     b, cb = get_items(42)
@@ -43,7 +43,7 @@ def test_mealpy_ga_smoke(knapsack_path_first):
     pytest.importorskip("mealpy")
     import importlib.util
 
-    from instance import get_items
+    from knapsack_problem.instance import get_items
 
     path = ROOT / "mealpy_solve.py"
     spec = importlib.util.spec_from_file_location("_knapsack_mealpy_solve_testonly", path)

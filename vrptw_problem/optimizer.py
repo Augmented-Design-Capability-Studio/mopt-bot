@@ -16,11 +16,11 @@ try:
 except ImportError:
     FloatVar = GA = PSO = SA = ACOR = None
 
-from orders import get_orders, print_order_table
-from encoder import decode_solution, VECTOR_LEN, encode_random_solution
-from evaluator import evaluate_solution
-from user_input import DEFAULT_WEIGHTS, load_user_input
-from vehicles import VEHICLES
+from vrptw_problem.orders import get_orders, print_order_table
+from vrptw_problem.encoder import decode_solution, VECTOR_LEN, encode_random_solution
+from vrptw_problem.evaluator import evaluate_solution
+from vrptw_problem.user_input import DEFAULT_WEIGHTS, load_user_input
+from vrptw_problem.vehicles import VEHICLES
 
 
 

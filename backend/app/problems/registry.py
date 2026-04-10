@@ -64,10 +64,10 @@ def _register_from_manifest_root(reg: dict[str, Any], root: Path) -> None:
         log.warning("%s missing string port_module", manifest)
         return
 
-    root_s = str(root.resolve())
+    repo_s = str(root.resolve().parent)
     inserted = False
-    if root_s not in sys.path:
-        sys.path.insert(0, root_s)
+    if repo_s not in sys.path:
+        sys.path.insert(0, repo_s)
         inserted = True
     try:
         mod = importlib.import_module(mod_name)
@@ -79,12 +79,6 @@ def _register_from_manifest_root(reg: dict[str, Any], root: Path) -> None:
         reg[pid] = port
     except Exception:
         log.exception("Failed to load study port from %s", manifest)
-    finally:
-        if inserted:
-            try:
-                sys.path.remove(root_s)
-            except ValueError:
-                pass
 
 
 def register_study_ports() -> dict[str, Any]:

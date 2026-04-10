@@ -4,11 +4,11 @@ Formatted reporting and Gantt data for QuickBite optimization results.
 
 import numpy as np
 
-from optimizer import SolveResult
-from evaluator import VEHICLES, simulate_routes
-from orders import get_orders
-from traffic_api import ZONE_NAMES
-from user_input import load_user_input
+from vrptw_problem.optimizer import SolveResult
+from vrptw_problem.evaluator import VEHICLES, simulate_routes
+from vrptw_problem.orders import get_orders
+from vrptw_problem.traffic_api import ZONE_NAMES
+from vrptw_problem.user_input import load_user_input
 
 
 def _get_sim_config(result: SolveResult) -> tuple[dict, list, float]:
