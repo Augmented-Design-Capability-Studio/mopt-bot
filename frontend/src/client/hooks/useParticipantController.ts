@@ -20,6 +20,8 @@ import {
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
 import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
+import { DEFAULT_PARTICIPANT_OPS_STATE } from "../lib/participantOps";
+import { parseFilenamesFromSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 import { useParticipantSessionActions } from "./useParticipantSessionActions";
 import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle";
 import { useParticipantSessionSync } from "./useParticipantSessionSync";
@@ -44,6 +46,7 @@ export function useParticipantController() {
   const [configEditSnapshot, setConfigEditSnapshot] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncingProblemConfig, setSyncingProblemConfig] = useState(false);
+  const [participantOps, setParticipantOps] = useState(DEFAULT_PARTICIPANT_OPS_STATE);
   const [optimizing, setOptimizing] = useState(false);
   const optimizingRef = useRef(false);
   optimizingRef.current = optimizing;
@@ -59,6 +62,8 @@ export function useParticipantController() {
   const [definitionEditBaseline, setDefinitionEditBaseline] = useState<ProblemBrief | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const [simulatedUploadChips, setSimulatedUploadChips] = useState<string[]>([]);
+  const processedUploadMessageIdsRef = useRef<Set<number>>(new Set());
   const modelDialogWasOpenRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   const problemPanelHydrationRef = useRef<ProblemPanelHydration>("follow");
@@ -150,7 +155,30 @@ export function useParticipantController() {
 
   useEffect(() => {
     setDefinitionEditBaseline(null);
+    setParticipantOps(DEFAULT_PARTICIPANT_OPS_STATE);
+    setSimulatedUploadChips([]);
+    processedUploadMessageIdsRef.current = new Set();
   }, [sessionId]);
+
+  useEffect(() => {
+    for (const m of messages) {
+      if (m.role !== "user" || processedUploadMessageIdsRef.current.has(m.id)) continue;
+      const names = parseFilenamesFromSimulatedUploadMessage(m.content);
+      if (!names?.length) continue;
+      processedUploadMessageIdsRef.current.add(m.id);
+      setSimulatedUploadChips((prev) => {
+        const next = [...prev];
+        for (const n of names) {
+          if (!next.includes(n)) next.push(n);
+        }
+        return next;
+      });
+    }
+  }, [messages]);
+
+  const removeSimulatedUploadChip = useCallback((fileName: string) => {
+    setSimulatedUploadChips((prev) => prev.filter((n) => n !== fileName));
+  }, []);
 
   useEffect(() => {
     const p = session?.participant_number?.trim();
@@ -214,6 +242,7 @@ export function useParticipantController() {
     setShowModelDialog,
     setModelKey,
     setAiPending,
+    setParticipantOps,
     syncMessages: sync.syncMessages,
     syncSession: sync.syncSession,
     startEagerMessagePoll: sync.startEagerMessagePoll,
@@ -314,6 +343,7 @@ export function useParticipantController() {
 
   const canLoadFromLastRun = runs.length > 0 && runs[runs.length - 1]?.request?.problem != null;
   const canLoadFromSnapshot = snapshots.length > 0;
+  const chatBusy = participantOps.sendingChat;
 
   return {
     token,
@@ -331,7 +361,9 @@ export function useParticipantController() {
     scheduleText,
     editMode,
     busy,
+    chatBusy,
     syncingProblemConfig,
+    participantOps,
     optimizing,
     error,
     showModelDialog,
@@ -342,6 +374,8 @@ export function useParticipantController() {
     recentBusy,
     authed,
     fileRef,
+    simulatedUploadChips,
+    onRemoveSimulatedUploadChip: removeSimulatedUploadChip,
     setToken,
     setParticipantNumber,
     setActiveRun,

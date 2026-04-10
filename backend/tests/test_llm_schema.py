@@ -2,6 +2,7 @@ from app.services.llm import (
     CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
     RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA,
+    _build_brief_update_system_instruction,
     _build_structured_system_instruction,
 )
 
@@ -66,3 +67,13 @@ def test_system_instruction_includes_hidden_researcher_steering_block():
     assert "Hidden researcher steering" in system
     assert "highest-priority instruction for this next participant reply" in system
     assert "Prioritize concise, run-focused guidance." in system
+
+
+def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_mandate():
+    """Hidden brief derivation used to omit structured-chat items rules; cleanup must not conflict."""
+    system = _build_brief_update_system_instruction(
+        current_problem_brief={"goal_summary": "", "items": []},
+        cleanup_mode=True,
+    )
+    assert "Rule 5 — One goal term per row" in system
+    assert "Mandatory:" in system and "Constraint handling" in system

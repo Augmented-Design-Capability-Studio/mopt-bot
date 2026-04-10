@@ -28,6 +28,7 @@ type ResearcherDetailProps = {
   onPatchSession: (patch: Record<string, unknown>) => Promise<boolean>;
   onSetOnlyActiveTerms: (enabled: boolean) => void | Promise<void>;
   onPushParticipantStarterPanel: () => void | Promise<void>;
+  onPushDummyParticipantUpload: () => void | Promise<void>;
   onPushGeminiKey: () => void | Promise<void>;
   onExportJson: () => void | Promise<void>;
   onTerminate: () => void | Promise<void>;
@@ -55,6 +56,7 @@ export function ResearcherDetail({
   onPatchSession,
   onSetOnlyActiveTerms,
   onPushParticipantStarterPanel,
+  onPushDummyParticipantUpload,
   onPushGeminiKey,
   onExportJson,
   onTerminate,
@@ -155,6 +157,9 @@ export function ResearcherDetail({
               <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
                 <button type="button" disabled={busy} onClick={() => void onPushParticipantStarterPanel()}>
                   Push starter problem config
+                </button>
+                <button type="button" disabled={busy} onClick={() => void onPushDummyParticipantUpload()}>
+                  Push dummy files
                 </button>
                 <div className="researcher-toggle-column">
                   <label title="Sets the stored run permit on the session. Uncheck to block runs. Participant definition/chat updates re-align the permit with intrinsic readiness (waterfall open questions, etc.); check again to override until the next participant update.">

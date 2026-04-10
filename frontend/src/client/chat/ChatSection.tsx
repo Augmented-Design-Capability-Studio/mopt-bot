@@ -11,15 +11,17 @@ type ChatSectionProps = {
   aiPending: boolean;
   invokeModel: boolean;
   editMode: EditMode;
-  busy: boolean;
+  chatBusy: boolean;
   chatLocked: boolean;
   chatInput: string;
   chatAttentionKey?: string | number;
   fileRef: RefObject<HTMLInputElement>;
+  simulatedUploadChips: string[];
   onInvokeModelChange: (value: boolean) => void;
   onChatInputChange: (value: string) => void;
   onSendChat: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
+  onRemoveSimulatedUploadChip: (fileName: string) => void;
 };
 
 export function ChatSection({
@@ -27,15 +29,17 @@ export function ChatSection({
   aiPending,
   invokeModel,
   editMode,
-  busy,
+  chatBusy,
   chatLocked,
   chatInput,
   chatAttentionKey,
   fileRef,
+  simulatedUploadChips,
   onInvokeModelChange,
   onChatInputChange,
   onSendChat,
   onSimulateUpload,
+  onRemoveSimulatedUploadChip,
 }: ChatSectionProps) {
   const scrollTriggerKey = `${messages.length}-${messages[messages.length - 1]?.id ?? ""}-${aiPending}`;
   return (
@@ -60,7 +64,7 @@ export function ChatSection({
         </details>
       }
       footer={
-        <div>
+        <div className="chat-upload-footer">
           <input
             ref={fileRef}
             type="file"
@@ -80,14 +84,30 @@ export function ChatSection({
           >
             Upload file(s)...
           </button>
+          <div className="chat-upload-chips" aria-label="Simulated uploads">
+            {simulatedUploadChips.map((name) => (
+              <span key={name} className="chat-upload-chip" title={name}>
+                <span className="chat-upload-chip-name">{name}</span>
+                <button
+                  type="button"
+                  className="chat-upload-chip-remove"
+                  aria-label={`Remove ${name} from upload list`}
+                  disabled={editMode !== "none" || chatLocked}
+                  onClick={() => onRemoveSimulatedUploadChip(name)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
         </div>
       }
       composer={{
         value: chatInput,
         onChange: onChatInputChange,
         onSend: onSendChat,
-        sendDisabled: busy || editMode !== "none" || chatLocked,
-        textareaDisabled: busy || editMode !== "none" || chatLocked,
+        sendDisabled: chatBusy || editMode !== "none" || chatLocked,
+        textareaDisabled: chatBusy || editMode !== "none" || chatLocked,
         sendLabel: "Send",
         placeholder: "Message... (Enter to send, Shift+Enter for newline)",
         inputRowClassName: chatLocked ? "chat-input-locked" : undefined,

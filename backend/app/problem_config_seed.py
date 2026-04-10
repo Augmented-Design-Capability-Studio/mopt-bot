@@ -33,6 +33,7 @@ _NEGATION_TERMS = (
 _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "travel_time": (
         re.compile(r"\btravel time\b", re.IGNORECASE),
+        re.compile(r"\btravel[_\s-]?time\b", re.IGNORECASE),
         re.compile(r"\broute(?:ing)?\b", re.IGNORECASE),
         re.compile(r"\bdistance\b", re.IGNORECASE),
         re.compile(r"\btransit\b", re.IGNORECASE),
@@ -55,11 +56,13 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\boverload\b", re.IGNORECASE),
         re.compile(r"\bload limit\b", re.IGNORECASE),
         re.compile(r"\bvehicle capacity\b", re.IGNORECASE),
+        re.compile(r"\bcapacity[_\s-]?violation\b", re.IGNORECASE),
     ),
     "workload_balance": (
         re.compile(r"\bbalanced workload\b", re.IGNORECASE),
         re.compile(r"\bbalance(?:d)? workload\b", re.IGNORECASE),
         re.compile(r"\bworkload balance\b", re.IGNORECASE),
+        re.compile(r"\bworkload[_\s-]?balance\b", re.IGNORECASE),
         re.compile(r"\bfair(?:ness)?\b", re.IGNORECASE),
         re.compile(r"\bequitab(?:le|ility)\b", re.IGNORECASE),
     ),
@@ -76,6 +79,7 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bvip\b", re.IGNORECASE),
         re.compile(r"\bsla\b", re.IGNORECASE),
         re.compile(r"\burgent\b", re.IGNORECASE),
+        re.compile(r"\bpriority[_\s-]?deadline\b", re.IGNORECASE),
     ),
     "shift_hard_penalty": (
         re.compile(r"\bshift duration\b", re.IGNORECASE),
@@ -84,6 +88,7 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bmaximum shift\b", re.IGNORECASE),
         re.compile(r"\bmax hours\b", re.IGNORECASE),
         re.compile(r"\bovertime\b", re.IGNORECASE),
+        re.compile(r"\bshift[_\s-]?hard[_\s-]?penalty\b", re.IGNORECASE),
     ),
 }
 _EXPLICIT_VALUE_RE = re.compile(
@@ -95,12 +100,14 @@ _EXPLICIT_VALUE_RE = re.compile(
     r"equals?|"
     r"at|"
     r"to|"
+    r"weight|"
     r"weight(?:ed)? to|"
     r"weight(?:ed)? at|"
     r"target(?:ed)? at|"
     r"target(?:ed)? of|"
     r"target of|"
     r"penalty of|"
+    r"penalty|"
     r"penalty is|"
     r"use"
     r")\s+(\d+(?:\.\d+)?)\b",
@@ -114,9 +121,6 @@ _ALGORITHM_PARAM_RE = re.compile(
 
 def _brief_entries(problem_brief: dict[str, Any]) -> list[str]:
     entries: list[str] = []
-    goal = str(problem_brief.get("goal_summary") or "").strip()
-    if goal:
-        entries.append(goal)
     for item in problem_brief.get("items", []):
         if not isinstance(item, dict):
             continue
@@ -205,6 +209,16 @@ def _extract_explicit_value(entries: list[str]) -> float | None:
     return None
 
 
+def _extract_explicit_value_for_key(entries: list[str], key: str) -> float | None:
+    patterns = _SIGNAL_PATTERNS[key]
+    for text in reversed(entries):
+        for match in _EXPLICIT_VALUE_RE.finditer(text):
+            prefix = text[: match.start()]
+            if any(pattern.search(prefix[-120:]) for pattern in patterns):
+                return float(match.group(1))
+    return _extract_explicit_value(entries)
+
+
 def _extract_numeric_setting(entries: list[str], markers: tuple[str, ...]) -> float | None:
     for text in reversed(entries):
         lowered = text.lower()
@@ -263,14 +277,14 @@ def derive_problem_panel_from_brief(
 
     travel_entries = _mentions(fragments, "travel_time")
     if travel_entries:
-        weights["travel_time"] = _extract_explicit_value(travel_entries) or 1.0
+        weights["travel_time"] = _extract_explicit_value_for_key(travel_entries, "travel_time") or 1.0
     fuel_entries = _mentions(fragments, "fuel_cost")
     if fuel_entries:
-        weights["fuel_cost"] = _extract_explicit_value(fuel_entries) or 1.0
+        weights["fuel_cost"] = _extract_explicit_value_for_key(fuel_entries, "fuel_cost") or 1.0
 
     capacity_entries = _mentions(fragments, "capacity_penalty")
     if capacity_entries:
-        weights["capacity_penalty"] = _extract_explicit_value(capacity_entries) or (
+        weights["capacity_penalty"] = _extract_explicit_value_for_key(capacity_entries, "capacity_penalty") or (
             1000.0
             if any(any(term in text.lower() for term in _STRONG_TERMS) for text in capacity_entries)
             else 100.0
@@ -278,7 +292,7 @@ def derive_problem_panel_from_brief(
 
     deadline_entries = _mentions(fragments, "deadline_penalty")
     if deadline_entries:
-        explicit_value = _extract_explicit_value(deadline_entries)
+        explicit_value = _extract_explicit_value_for_key(deadline_entries, "deadline_penalty")
         if explicit_value is not None:
             weights["deadline_penalty"] = explicit_value
         elif any(any(term in text.lower() for term in _PRIMARY_TERMS) for text in deadline_entries):
@@ -290,20 +304,20 @@ def derive_problem_panel_from_brief(
 
     workload_entries = _mentions(fragments, "workload_balance")
     if workload_entries:
-        weights["workload_balance"] = _extract_explicit_value(workload_entries) or (
+        weights["workload_balance"] = _extract_explicit_value_for_key(workload_entries, "workload_balance") or (
             5.0 if any(any(term in text.lower() for term in _SECONDARY_TERMS) for text in workload_entries) else 10.0
         )
     worker_pref_entries = _mentions(fragments, "worker_preference")
     if worker_pref_entries:
-        weights["worker_preference"] = _extract_explicit_value(worker_pref_entries) or 10.0
+        weights["worker_preference"] = _extract_explicit_value_for_key(worker_pref_entries, "worker_preference") or 10.0
     priority_entries = _mentions(fragments, "priority_penalty")
     if priority_entries:
-        weights["priority_penalty"] = _extract_explicit_value(priority_entries) or 100.0
+        weights["priority_penalty"] = _extract_explicit_value_for_key(priority_entries, "priority_penalty") or 100.0
 
     shift_entries = _mentions(fragments, "shift_hard_penalty")
     shift_hard_penalty = None
     if shift_entries:
-        shift_hard_penalty = _extract_explicit_value(shift_entries) or (
+        shift_hard_penalty = _extract_explicit_value_for_key(shift_entries, "shift_hard_penalty") or (
             1000.0 if any(any(term in text.lower() for term in _STRONG_TERMS) for text in shift_entries) else 250.0
         )
 

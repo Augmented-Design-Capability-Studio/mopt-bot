@@ -20,6 +20,8 @@ import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants"
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { parseRoutesForSolver } from "../results/schedule";
+import type { ParticipantOpsState } from "../lib/participantOps";
+import { buildSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 
 function maxCommittedRunNumber(existing: RunResult[]): number {
   let max = 0;
@@ -78,6 +80,7 @@ type UseParticipantSessionActionsArgs = {
   setShowModelDialog: (value: boolean) => void;
   setModelKey: (value: string) => void;
   setAiPending: (value: boolean) => void;
+  setParticipantOps: (value: ParticipantOpsState | ((prev: ParticipantOpsState) => ParticipantOpsState)) => void;
   syncMessages: () => Promise<void>;
   syncSession: () => Promise<void>;
   startEagerMessagePoll: () => void;
@@ -122,12 +125,14 @@ export function useParticipantSessionActions({
   setShowModelDialog,
   setModelKey,
   setAiPending,
+  setParticipantOps,
   syncMessages,
   syncSession,
   startEagerMessagePoll,
   refetchSnapshots,
 }: UseParticipantSessionActionsArgs) {
   const savingProblemBriefRef = useRef(false);
+  const syncingProblemConfigRef = useRef(false);
   const applyPanelConfigFromResponse = useCallback(
     (panelConfig: Session["panel_config"] | null | undefined) => {
       if (panelConfig == null) return;
@@ -226,6 +231,7 @@ export function useParticipantSessionActions({
     setChatInput("");
     setError(null);
     setBusy(true);
+    setParticipantOps((prev) => ({ ...prev, sendingChat: true }));
     setAiPending(invokeModel);
     try {
       const raw = await apiFetch<unknown>(`/sessions/${sessionId}/messages`, token, {
@@ -249,6 +255,7 @@ export function useParticipantSessionActions({
       setChatInput(text);
       setError(error instanceof Error ? error.message : "Send failed");
     } finally {
+      setParticipantOps((prev) => ({ ...prev, sendingChat: false }));
       setBusy(false);
       setAiPending(false);
     }
@@ -266,6 +273,7 @@ export function useParticipantSessionActions({
     setError,
     setLastMsgId,
     setMessages,
+    setParticipantOps,
     startEagerMessagePoll,
     token,
   ]);
@@ -273,8 +281,7 @@ export function useParticipantSessionActions({
   const simulateUpload = useCallback(
     async (fileNames: string[]) => {
       if (!token || !sessionId) return;
-      const fileList = fileNames.join(", ");
-      await postContextMessage(`I'm uploading the following file(s): ${fileList}`, invokeModel);
+      await postContextMessage(buildSimulatedUploadMessage(fileNames), invokeModel);
       try {
         await apiFetch(`/sessions/${sessionId}/simulate-upload`, token, { method: "POST" });
         setError(null);
@@ -300,6 +307,7 @@ export function useParticipantSessionActions({
     const changedKeys = configChangeSummary(previousPanel, parsed);
     const acknowledgement = `Problem configuration saved (changed: ${changedKeys}).`;
     setBusy(true);
+    setParticipantOps((prev) => ({ ...prev, savingConfig: true }));
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/panel`, token, {
         method: "PATCH",
@@ -324,6 +332,7 @@ export function useParticipantSessionActions({
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
     } finally {
+      setParticipantOps((prev) => ({ ...prev, savingConfig: false }));
       setBusy(false);
     }
   }, [
@@ -338,6 +347,7 @@ export function useParticipantSessionActions({
     setConfigText,
     setEditMode,
     setError,
+    setParticipantOps,
     setProblemBrief,
     setSession,
     token,
@@ -354,6 +364,7 @@ export function useParticipantSessionActions({
     const acknowledgement = `Problem definition saved (${changedSummary}).`;
     savingProblemBriefRef.current = true;
     setBusy(true);
+    setParticipantOps((prev) => ({ ...prev, savingDefinition: true }));
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
         method: "PATCH",
@@ -383,6 +394,7 @@ export function useParticipantSessionActions({
       return false;
     } finally {
       savingProblemBriefRef.current = false;
+      setParticipantOps((prev) => ({ ...prev, savingDefinition: false }));
       setBusy(false);
     }
   }, [
@@ -397,6 +409,7 @@ export function useParticipantSessionActions({
     setConfigText,
     setEditMode,
     setError,
+    setParticipantOps,
     setProblemBrief,
     setSession,
     syncSession,
@@ -422,6 +435,7 @@ export function useParticipantSessionActions({
       if (!token || !sessionId || session?.status === "terminated") return;
       const timeStr = formatSnapshotTime(snapshot.created_at);
       setBusy(true);
+      setParticipantOps((prev) => ({ ...prev, restoringSnapshot: true }));
       try {
         if (source === "definition") {
           const brief = snapshot.problem_brief;
@@ -473,6 +487,7 @@ export function useParticipantSessionActions({
       } catch (error) {
         setError(error instanceof Error ? error.message : "Restore failed");
       } finally {
+        setParticipantOps((prev) => ({ ...prev, restoringSnapshot: false }));
         setBusy(false);
       }
     },
@@ -486,6 +501,7 @@ export function useParticipantSessionActions({
       setConfigText,
       setEditMode,
       setError,
+      setParticipantOps,
       setProblemBrief,
       setSession,
       token,
@@ -494,13 +510,22 @@ export function useParticipantSessionActions({
 
   const syncProblemConfig = useCallback(async () => {
     if (!token || !sessionId || !problemBrief) return;
+    if (syncingProblemConfigRef.current) return;
+    if (session?.processing?.brief_status === "pending" || session?.processing?.config_status === "pending") {
+      setError("A background definition/config update is still running. Wait for it to settle, then sync again.");
+      return;
+    }
     const cleanedBrief = cleanProblemBriefForCompare(problemBrief);
-    setBusy(true);
+    syncingProblemConfigRef.current = true;
     setSyncingProblemConfig(true);
+    setParticipantOps((prev) => ({ ...prev, syncingConfig: true }));
     setError(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30000);
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
         method: "PATCH",
+        signal: controller.signal,
         body: JSON.stringify({
           problem_brief: cleanedBrief,
           acknowledgement: "Problem config synced from the saved definition.",
@@ -511,19 +536,27 @@ export function useParticipantSessionActions({
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Sync failed");
+      if (error instanceof Error && error.name === "AbortError") {
+        setError("Sync timed out after 30s. You can continue chatting and retry sync.");
+      } else {
+        setError(error instanceof Error ? error.message : "Sync failed");
+      }
     } finally {
+      window.clearTimeout(timeoutId);
+      syncingProblemConfigRef.current = false;
+      setParticipantOps((prev) => ({ ...prev, syncingConfig: false }));
       setSyncingProblemConfig(false);
-      setBusy(false);
     }
   }, [
+    problemBrief,
     problemPanelHydrationRef,
+    session?.processing?.brief_status,
+    session?.processing?.config_status,
     sessionId,
-    setBusy,
     setConfigText,
     setError,
+    setParticipantOps,
     setSyncingProblemConfig,
-    problemBrief,
     setProblemBrief,
     setSession,
     token,

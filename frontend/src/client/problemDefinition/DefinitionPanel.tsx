@@ -16,6 +16,7 @@ export type DefinitionPanelProps = {
   onChange: (value: ProblemBrief) => void;
   /** Enter definition edit mode (no-op if already editing another panel mode) */
   onEnsureDefinitionEditing: () => void;
+  suppressTransientMarkers?: boolean;
 };
 
 type DefinitionSectionProps = {
@@ -34,6 +35,7 @@ type DefinitionSectionProps = {
   rowMarkerKind?: (item: ProblemBriefItem) => "new" | "upd" | null;
   removedItems?: Array<{ id: string; text: string; index: number }>;
   onRestoreItem?: (id: string) => void;
+  suppressTransientMarkers?: boolean;
 };
 
 function makeId(prefix: string): string {
@@ -81,6 +83,7 @@ function DefinitionSection({
   rowMarkerKind,
   removedItems = [],
   onRestoreItem,
+  suppressTransientMarkers = false,
 }: DefinitionSectionProps) {
   const locked = sessionTerminated || !editable;
 
@@ -175,7 +178,8 @@ function DefinitionSection({
           <div className="definition-delete-marker" aria-hidden="true" />
         ) : null}
         {items.length === 0 ? <div className="muted definition-empty">Nothing here yet.</div> : null}
-        {removedItems.map((removed) => (
+        {!suppressTransientMarkers &&
+          removedItems.map((removed) => (
           <div
             key={`removed-${removed.id}`}
             className="definition-item definition-item-removed"
@@ -214,7 +218,7 @@ function DefinitionSection({
               {removed.text || "(empty)"}
             </div>
           </div>
-        ))}
+          ))}
       </div>
     </section>
   );
@@ -227,6 +231,7 @@ export function DefinitionPanel({
   workflowMode,
   onChange,
   onEnsureDefinitionEditing,
+  suppressTransientMarkers = false,
 }: DefinitionPanelProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingScrollToItemIdRef = useRef<string | null>(null);
@@ -242,9 +247,10 @@ export function DefinitionPanel({
     assumption: [],
   });
   useEffect(() => {
-    if (editable) return;
+    if (editable && !suppressTransientMarkers) return;
     setRemovedItems({ gathered: [], assumption: [] });
-  }, [editable]);
+    setDeletedMarker(null);
+  }, [editable, suppressTransientMarkers]);
   const { markLockedInteraction } = useLockedEditFocus({
     rootRef,
     editable,
@@ -477,6 +483,7 @@ export function DefinitionPanel({
         onTextareaInput={autoGrowTextarea}
         rowExtraClassName={(item) => flashClassForItem(item.id)}
         rowMarkerKind={(item) => markerKindForItem(item.id)}
+        suppressTransientMarkers={suppressTransientMarkers}
         removedItems={removedItems.gathered.map((entry) => ({
           id: entry.id,
           text: entry.item.text,
@@ -500,6 +507,7 @@ export function DefinitionPanel({
           onTextareaInput={autoGrowTextarea}
           rowExtraClassName={(item) => flashClassForItem(item.id)}
           rowMarkerKind={(item) => markerKindForItem(item.id)}
+          suppressTransientMarkers={suppressTransientMarkers}
           removedItems={removedItems.assumption.map((entry) => ({
             id: entry.id,
             text: entry.item.text,

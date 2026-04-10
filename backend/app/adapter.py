@@ -407,6 +407,17 @@ def _validate_locked_assignments(raw: Any) -> dict[int, int]:
     return out
 
 
+def _normalize_order_priority_value(raw: object) -> str:
+    pr = str(raw or "").strip().lower()
+    if pr in ("low", "normal", "std", "default"):
+        return "standard"
+    if pr in ("high", "vip", "priority", "express_line", "exp"):
+        return "express"
+    if pr in ("express", "standard"):
+        return pr
+    return "standard"
+
+
 def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
     """Normalize and validate driver preference rules for the VRPTW evaluator."""
     out: list[dict[str, Any]] = []
@@ -451,12 +462,7 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
             nr["zone"] = zi
 
         if cond in ("order_priority", "express_order"):
-            pr = str(rule.get("order_priority", "express")).strip().lower()
-            if pr not in ("express", "standard"):
-                raise ValueError(
-                    f"driver_preferences[{i}]: order_priority must be 'express' or 'standard'"
-                )
-            nr["order_priority"] = pr
+            nr["order_priority"] = _normalize_order_priority_value(rule.get("order_priority", "express"))
 
         if cond in ("shift_over_hours", "shift_over_limit"):
             if rule.get("limit_minutes") is not None:

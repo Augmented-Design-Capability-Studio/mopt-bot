@@ -458,6 +458,65 @@ select:focus-visible {
   margin-top: 0.35rem;
 }
 
+.chat-upload-footer {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  min-height: 2rem;
+}
+
+.chat-upload-footer > button {
+  flex-shrink: 0;
+}
+
+.chat-upload-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.chat-upload-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 11rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f8f9fb;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.chat-upload-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.chat-upload-chip-remove {
+  flex-shrink: 0;
+  line-height: 1;
+  padding: 0 0.1rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.chat-upload-chip-remove:hover {
+  color: #c00;
+}
+
 .mono {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.8rem;
@@ -1388,4 +1447,30 @@ select:focus-visible {
   100% {
     transform: translateX(360%);
   }
+}
+
+/* Problem Config: driver preference rules accordion (child of worker_preference row) */
+.driver-pref-details {
+  margin: 0.15rem 0 0 0.75rem;
+  padding: 0.25rem 0 0.25rem 0.5rem;
+  border-left: 1px solid var(--border);
+}
+
+.driver-pref-details[open] .driver-pref-peek {
+  display: none;
+}
+
+.driver-pref-details:not([open]) .driver-pref-rules {
+  display: none;
+}
+
+.driver-pref-peek {
+  margin-top: 0.2rem;
+  max-height: 1.35rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  line-height: 1.35rem;
+  padding-right: 0.35rem;
+  -webkit-mask-image: linear-gradient(to bottom, #000 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 50%, transparent 100%);
 }

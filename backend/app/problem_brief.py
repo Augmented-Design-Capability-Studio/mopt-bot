@@ -23,6 +23,38 @@ _WEIGHT_ITEM_LABELS = {
     "worker_preference": "Worker preferences",
     "priority_penalty": "Priority-order deadlines",
 }
+
+
+def locked_goal_terms_prompt_section(panel_config: Any) -> str | None:
+    """Human-readable block for chat / brief system prompts when goal terms are locked in the panel."""
+    if not isinstance(panel_config, dict):
+        return None
+    problem = panel_config.get("problem") if isinstance(panel_config.get("problem"), dict) else None
+    if not isinstance(problem, dict):
+        return None
+    raw = problem.get("locked_goal_terms")
+    if not isinstance(raw, list) or not raw:
+        return None
+    lines: list[str] = []
+    for key in raw:
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if key == "shift_hard_penalty":
+            label = "Shift duration hard penalty"
+        else:
+            label = _WEIGHT_ITEM_LABELS.get(key, key.replace("_", " ").strip().title())
+        lines.append(f"- `{key}` — {label}")
+    if not lines:
+        return None
+    body = "\n".join(lines)
+    return (
+        "## Locked goal terms (saved Problem Config)\n"
+        "The participant locked these objective/penalty terms in the **Problem Config** UI. "
+        "**Do not** propose changing weights or penalties for these keys (including via `problem_brief_patch`) unless the "
+        "user says they unlocked them. If they ask to change a locked term, say clearly that it is locked and they must "
+        "unlock it in Problem Config first.\n"
+        f"{body}"
+    )
 _EXPLICIT_VALUE_RE = re.compile(
     r"\b(?:set to|weight(?:ed)? to|weight(?:ed)? at|target(?:ed)? at|target(?:ed)? of|target of|penalty of)\s+(\d+(?:\.\d+)?)",
     re.IGNORECASE,
@@ -40,6 +72,17 @@ _WEIGHT_SLOT_MARKERS: dict[str, tuple[str, ...]] = {
     "worker_preference": ("worker preferences", "worker preference", "driver preference"),
     "priority_penalty": ("priority-order deadlines", "priority deadline", "priority order"),
 }
+_ATOMIZE_TERM_HINTS = tuple({hint for hints in _WEIGHT_SLOT_MARKERS.values() for hint in hints})
+_GOAL_SUMMARY_FORBIDDEN_RE = re.compile(
+    r"\b(?:weight|penalty|population|swarm|iterations?|epochs?|algorithm|pc|pm|c1|c2|temp_init|cooling_rate)\b",
+    re.IGNORECASE,
+)
+# "Constraint handling: …" lists goal/penalty terms like objectives; split even when hints
+# (travel time, capacity penalty, …) do not appear as substrings.
+_CONSTRAINT_HANDLING_PREFIX_RE = re.compile(
+    r"^\s*constraint\s+handling\s*:\s*",
+    re.IGNORECASE,
+)
 
 # Model sometimes emits fake "open questions" like "Cap shifts? (Answered: 8h)." — fold into gathered instead.
 _ANSWERED_SUFFIX_IN_OPQ_RE = re.compile(
@@ -202,6 +245,88 @@ def _ensure_terminator(s: str) -> str:
     return _sentence_start(t)
 
 
+def _sanitize_goal_summary(text: Any) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    clauses = [chunk.strip() for chunk in re.split(r"[.;]", raw) if chunk.strip()]
+    clean_clauses = [
+        clause
+        for clause in clauses
+        if not any(char.isdigit() for char in clause) and not _GOAL_SUMMARY_FORBIDDEN_RE.search(clause)
+    ]
+    if not clean_clauses:
+        return ""
+    return _ensure_terminator(" ".join(clean_clauses))
+
+
+def _split_into_goal_term_clauses(text: str) -> list[str]:
+    """Split a compound line listing multiple objective/constraint terms (semicolon, comma, and)."""
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return []
+    return [
+        p.strip(" ,")
+        for p in re.split(r"\s*(?:;|,\s+and\s+|\s+and\s+|,\s+)\s*", normalized)
+        if p.strip(" ,")
+    ]
+
+
+def _split_compound_item_text(text: str) -> list[str]:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return []
+    lowered = normalized.lower()
+
+    ch = _CONSTRAINT_HANDLING_PREFIX_RE.match(normalized)
+    if ch:
+        body = normalized[ch.end() :].strip()
+        if not body:
+            return [normalized]
+        parts = _split_into_goal_term_clauses(body)
+        if len(parts) <= 1:
+            return [normalized]
+        out: list[str] = []
+        for idx, part in enumerate(parts):
+            t = _ensure_terminator(part)
+            if idx == 0:
+                out.append(f"Constraint handling: {t}")
+            else:
+                out.append(t)
+        return out
+
+    if not any(hint in lowered for hint in _ATOMIZE_TERM_HINTS):
+        return [normalized]
+    parts = _split_into_goal_term_clauses(normalized)
+    if len(parts) <= 1:
+        return [normalized]
+    return [_ensure_terminator(part) for part in parts]
+
+
+def _atomize_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in {"gathered", "assumption"}:
+            out.append(item)
+            continue
+        text = str(item.get("text") or "").strip()
+        item_id = str(item.get("id") or "")
+        # Promoted answered open questions: single logical row (Question — Answer); do not split on commas/and.
+        if item_id.startswith("gathered-oq-") or "\u2014" in text:
+            out.append(item)
+            continue
+        chunks = _split_compound_item_text(text)
+        if len(chunks) <= 1:
+            out.append(item)
+            continue
+        for idx, chunk in enumerate(chunks, start=1):
+            out.append({**item, "id": f"{item['id']}-{idx}", "text": chunk})
+    return out
+
+
 def _format_answered_open_question_gathered(question: str, answer: str) -> str:
     """Turn a resolved Q&A into one gathered line: literal question — answer (then normalized punctuation)."""
     a = (answer or "").strip()
@@ -321,7 +446,7 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return base
 
-    goal_summary = str(raw.get("goal_summary", "")).strip()
+    goal_summary = _sanitize_goal_summary(raw.get("goal_summary", ""))
     solver_scope = str(raw.get("solver_scope") or base["solver_scope"]).strip() or base["solver_scope"]
     backend_template = (
         str(raw.get("backend_template") or base["backend_template"]).strip() or base["backend_template"]
@@ -344,7 +469,7 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
             normalized_items.append(item)
 
     normalized_items.extend(system_items.values())
-    normalized_items = _reconcile_problem_brief_items(normalized_items)
+    normalized_items = _atomize_problem_brief_items(_reconcile_problem_brief_items(normalized_items))
     questions = _coerce_question_list(raw.get("open_questions"))
     promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
     promoted_items = _reconcile_problem_brief_items(promoted_items)
@@ -368,7 +493,7 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     replace_open_questions = bool(patch.get("replace_open_questions"))
 
     if "goal_summary" in patch:
-        merged["goal_summary"] = str(patch.get("goal_summary") or "").strip()
+        merged["goal_summary"] = _sanitize_goal_summary(patch.get("goal_summary") or "")
     # If the model sets replace_open_questions but omits open_questions (common on cleanup
     # turns that only replace items), keep the existing list — do not wipe it.
     if "open_questions" in patch:

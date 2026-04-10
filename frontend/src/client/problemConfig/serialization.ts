@@ -1,5 +1,35 @@
 import { parseAlgorithmParamsFromInner, serializeAlgorithmParams } from "./algorithmCatalog";
-import type { ProblemBlock } from "./types";
+import type { DriverPref, ProblemBlock } from "./types";
+
+function normalizeOrderPriority(raw: unknown): "express" | "standard" {
+  const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (s === "low" || s === "normal" || s === "std" || s === "default") return "standard";
+  if (s === "high" || s === "vip" || s === "priority" || s === "express_line" || s === "exp") return "express";
+  if (s === "express" || s === "standard") return s;
+  return "standard";
+}
+
+function parseDriverPreferences(raw: unknown): DriverPref[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DriverPref[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const o = entry as Record<string, unknown>;
+    if (typeof o.vehicle_idx !== "number") continue;
+    const condition = typeof o.condition === "string" ? o.condition : "";
+    const penalty = typeof o.penalty === "number" ? o.penalty : 0;
+    const pref: DriverPref = { vehicle_idx: o.vehicle_idx, condition, penalty };
+    if (typeof o.zone === "number") pref.zone = o.zone;
+    if (typeof o.limit_minutes === "number") pref.limit_minutes = o.limit_minutes;
+    if (typeof o.hours === "number") pref.hours = o.hours;
+    if (typeof o.aggregation === "string") pref.aggregation = o.aggregation;
+    if (condition === "order_priority" || condition === "express_order") {
+      pref.order_priority = normalizeOrderPriority(o.order_priority);
+    }
+    out.push(pref);
+  }
+  return out;
+}
 
 type ParsedProblemConfig = {
   outerRaw: Record<string, unknown>;
@@ -56,9 +86,7 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
         !Array.isArray(inner.locked_assignments)
           ? (inner.locked_assignments as Record<string, number>)
           : {},
-      driver_preferences: Array.isArray(inner.driver_preferences)
-        ? (inner.driver_preferences as ProblemBlock["driver_preferences"])
-        : [],
+      driver_preferences: parseDriverPreferences(inner.driver_preferences),
     },
   };
 }

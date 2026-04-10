@@ -6,6 +6,7 @@ import { StatusChip } from "@shared/status/StatusChip";
 
 import { ChatSection } from "../chat/ChatSection";
 import { type EditMode } from "../lib/participantTypes";
+import type { ParticipantOpsState } from "../lib/participantOps";
 import { ConfigPanel } from "../problemConfig/ConfigPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
@@ -31,7 +32,9 @@ type ParticipantShellProps = {
   scheduleText: string;
   editMode: EditMode;
   busy: boolean;
+  chatBusy: boolean;
   syncingProblemConfig: boolean;
+  participantOps: ParticipantOpsState;
   optimizing: boolean;
   error: string | null;
   showModelDialog: boolean;
@@ -39,6 +42,7 @@ type ParticipantShellProps = {
   modelKey: string;
   aiPending: boolean;
   fileRef: RefObject<HTMLInputElement>;
+  simulatedUploadChips: string[];
   onChatInputChange: (value: string) => void;
   onInvokeModelChange: (value: boolean) => void;
   onConfigTextChange: (value: string) => void;
@@ -54,6 +58,7 @@ type ParticipantShellProps = {
   onSendChat: () => void | Promise<void>;
   onRequestDefinitionCleanup: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
+  onRemoveSimulatedUploadChip: (fileName: string) => void;
   onSaveConfig: () => void | Promise<void>;
   onSaveDefinitionEdit: () => void | Promise<void>;
   onCancelDefinitionEdit: () => void;
@@ -93,7 +98,9 @@ export function ParticipantShell({
   scheduleText,
   editMode,
   busy,
+  chatBusy,
   syncingProblemConfig,
+  participantOps,
   optimizing,
   error,
   showModelDialog,
@@ -101,6 +108,7 @@ export function ParticipantShell({
   modelKey,
   aiPending,
   fileRef,
+  simulatedUploadChips,
   onChatInputChange,
   onInvokeModelChange,
   onConfigTextChange,
@@ -116,6 +124,7 @@ export function ParticipantShell({
   onSendChat,
   onRequestDefinitionCleanup,
   onSimulateUpload,
+  onRemoveSimulatedUploadChip,
   onSaveConfig,
   onSaveDefinitionEdit,
   onCancelDefinitionEdit,
@@ -212,15 +221,17 @@ export function ParticipantShell({
             aiPending={aiPending}
             invokeModel={invokeModel}
             editMode={editMode}
-            busy={busy}
+            chatBusy={chatBusy}
             chatLocked={chatLocked}
             chatInput={chatInput}
             chatAttentionKey={chatAttentionKey}
             fileRef={fileRef}
+            simulatedUploadChips={simulatedUploadChips}
             onInvokeModelChange={onInvokeModelChange}
             onChatInputChange={onChatInputChange}
             onSendChat={onSendChat}
             onSimulateUpload={onSimulateUpload}
+            onRemoveSimulatedUploadChip={onRemoveSimulatedUploadChip}
           />
         </section>
 
@@ -235,6 +246,7 @@ export function ParticipantShell({
             invokeModel={invokeModel}
             busy={busy}
             syncingProblemConfig={syncingProblemConfig}
+            participantOps={participantOps}
             backgroundBriefPending={backgroundBriefPending}
             backgroundConfigPending={backgroundConfigPending}
             backgroundProcessingError={backgroundProcessingError}

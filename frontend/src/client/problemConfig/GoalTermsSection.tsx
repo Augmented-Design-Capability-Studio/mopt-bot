@@ -17,6 +17,19 @@ function preferenceConditionLabel(value: string): string {
   return PREFERENCE_CONDITIONS.find((o) => o.value === value)?.label ?? value;
 }
 
+function driverPreferencePeekLine(pref: DriverPref): string {
+  const name = WORKER_NAMES[pref.vehicle_idx];
+  const worker = `${pref.vehicle_idx}: ${name ?? "?"}`;
+  const cond = preferenceConditionLabel(pref.condition);
+  const bits: string[] = [worker, cond];
+  if (pref.condition === "avoid_zone" || pref.condition === "zone_d") bits.push(`zone ${pref.zone ?? "?"}`);
+  if (pref.condition === "order_priority" || pref.condition === "express_order") {
+    bits.push(String(pref.order_priority ?? "express"));
+  }
+  bits.push(`penalty ${pref.penalty}`);
+  return bits.join(" · ");
+}
+
 export function toggleLockedGoalTerm(list: string[], key: string): string[] {
   const next = new Set(list);
   if (next.has(key)) next.delete(key);
@@ -218,6 +231,8 @@ function WeightRow({
 type GoalTermsSectionProps = {
   problem: ProblemBlock;
   editable: boolean;
+  /** When false, preference-rule rows are read-only (e.g. worker_preference weight is locked). */
+  preferencesEditable: boolean;
   showWorkerBlock: boolean;
   displayWeightKeys: string[];
   removedGoalTerms: RemovedGoalTermEntry[];
@@ -237,6 +252,7 @@ type GoalTermsSectionProps = {
 export function GoalTermsSection({
   problem,
   editable,
+  preferencesEditable,
   showWorkerBlock,
   displayWeightKeys,
   removedGoalTerms,
@@ -254,6 +270,13 @@ export function GoalTermsSection({
 }: GoalTermsSectionProps) {
   const hasHardStructural =
     Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
+  const rules = problem.driver_preferences;
+  const preferencePeekText =
+    rules.length === 0
+      ? "No preference rules"
+      : rules.length === 1
+        ? driverPreferencePeekLine(rules[0]!)
+        : `${driverPreferencePeekLine(rules[0]!)} (+${rules.length - 1} more)`;
   return (
     <>
       {displayWeightKeys.map((key) =>
@@ -266,7 +289,7 @@ export function GoalTermsSection({
               updateProblem={(patch) => runEditingAction(() => updateProblem(patch))}
               onActivate={(event) => ensureEditing(event)}
             />
-            <details style={{ margin: "0.15rem 0 0", padding: "0.25rem 0" }} className="driver-pref-details">
+            <details className="driver-pref-details">
               <summary
                 style={{
                   cursor: "pointer",
@@ -288,7 +311,10 @@ export function GoalTermsSection({
                   ) : null}
                 </span>
               </summary>
-              <div style={{ marginTop: "0.4rem" }}>
+              <div className="driver-pref-peek muted" aria-hidden>
+                {preferencePeekText}
+              </div>
+              <div className="driver-pref-rules" style={{ marginTop: "0.4rem" }}>
                 {problem.driver_preferences.map((pref, index) => (
                   <div
                     key={index}
@@ -302,7 +328,7 @@ export function GoalTermsSection({
                     }}
                   >
                     <ConfigSelect
-                      editable={editable}
+                      editable={preferencesEditable}
                       value={pref.vehicle_idx}
                       displayLabel={workerOptionLabel(pref.vehicle_idx)}
                       onChange={(e) =>
@@ -321,7 +347,7 @@ export function GoalTermsSection({
                       ))}
                     </ConfigSelect>
                     <ConfigSelect
-                      editable={editable}
+                      editable={preferencesEditable}
                       value={pref.condition}
                       displayLabel={preferenceConditionLabel(pref.condition)}
                       onChange={(e) =>
@@ -340,7 +366,7 @@ export function GoalTermsSection({
                     <label className="muted" style={{ fontSize: "0.75rem" }}>
                       penalty
                       <ConfigNumberInput
-                        editable={editable}
+                        editable={preferencesEditable}
                         value={pref.penalty}
                         min={0}
                         step={0.5}
@@ -357,7 +383,7 @@ export function GoalTermsSection({
                       <label className="muted" style={{ fontSize: "0.75rem" }}>
                         zone
                         <ConfigSelect
-                          editable={editable}
+                          editable={preferencesEditable}
                           value={pref.zone ?? 4}
                           displayLabel={String.fromCharCode(64 + (pref.zone ?? 4))}
                           onChange={(e) =>
@@ -377,7 +403,7 @@ export function GoalTermsSection({
                     )}
                     {(pref.condition === "order_priority" || pref.condition === "express_order") && (
                       <ConfigSelect
-                        editable={editable}
+                        editable={preferencesEditable}
                         value={pref.order_priority ?? "express"}
                         displayLabel={pref.order_priority ?? "express"}
                         onChange={(e) =>
@@ -395,7 +421,7 @@ export function GoalTermsSection({
                       <label className="muted" style={{ fontSize: "0.75rem" }}>
                         limit (min)
                         <ConfigNumberInput
-                          editable={editable}
+                          editable={preferencesEditable}
                           value={pref.limit_minutes ?? (pref.hours != null ? pref.hours * 60 : 390)}
                           min={1}
                           onValueChange={(v) => {
@@ -414,7 +440,7 @@ export function GoalTermsSection({
                         />
                       </label>
                     )}
-                    {editable && (
+                    {preferencesEditable && (
                       <button
                         type="button"
                         className="muted"
@@ -426,7 +452,7 @@ export function GoalTermsSection({
                     )}
                   </div>
                 ))}
-                {editable && (
+                {preferencesEditable && (
                   <button type="button" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }} onClick={() => runEditingAction(addPreference)}>
                     + Add preference rule
                   </button>

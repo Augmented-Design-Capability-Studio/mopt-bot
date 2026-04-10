@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { ProblemBrief, Session, SnapshotSummary } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
+import type { ParticipantOpsState } from "../lib/participantOps";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 import { SnapshotDialog } from "./SnapshotDialog";
@@ -14,6 +15,7 @@ type ConfigPanelProps = {
   invokeModel: boolean;
   busy: boolean;
   syncingProblemConfig: boolean;
+  participantOps: ParticipantOpsState;
   backgroundBriefPending: boolean;
   backgroundConfigPending: boolean;
   backgroundProcessingError?: string | null;
@@ -74,6 +76,7 @@ export function ConfigPanel({
   invokeModel,
   busy,
   syncingProblemConfig,
+  participantOps,
   backgroundBriefPending,
   backgroundConfigPending,
   backgroundProcessingError,
@@ -247,7 +250,17 @@ export function ConfigPanel({
     return "Start in chat (or wait until open questions appear in the definition) before optimization can run.";
   }, [problemBrief, session]);
 
-  const definitionSaveShield = definitionEditing && busy;
+  const definitionSaveInFlight = participantOps.savingDefinition;
+  const configSyncInFlight = participantOps.syncingConfig || syncingProblemConfig;
+  const processingSpinnerActive = backgroundProcessingPending && !forceUnlockProcessingUi;
+  const definitionSaveShieldActive = definitionEditing && definitionSaveInFlight;
+  const canSyncToConfig =
+    !busy &&
+    editMode === "none" &&
+    !sessionTerminated &&
+    Boolean(problemBrief) &&
+    !backgroundProcessingPending &&
+    !configSyncInFlight;
 
   return (
     <section className={className}>
@@ -256,7 +269,7 @@ export function ConfigPanel({
         {(configEditing || definitionEditing) && (
           <span className="panel-editing-indicator"> - Editing...</span>
         )}
-        {!definitionEditing && !configEditing && (backgroundBriefPending || backgroundConfigPending) && (
+        {!definitionEditing && !configEditing && processingSpinnerActive && (
           <span className="muted" style={{ display: "inline-flex", alignItems: "center", marginLeft: "0.5rem" }}>
             <span className="inline-spinner" aria-hidden="true" />
           </span>
@@ -296,7 +309,7 @@ export function ConfigPanel({
               type="button"
               className={`tab ${activeTab === tabId ? "active" : ""} ${
                 (tabId === "definition" && definitionUnread && !backgroundBriefPending) ||
-                (tabId === "config" && configUnread && !backgroundConfigPending && !syncingProblemConfig)
+                (tabId === "config" && configUnread && !backgroundConfigPending && !configSyncInFlight)
                   ? "tab-has-update"
                   : ""
               }`}
@@ -315,16 +328,16 @@ export function ConfigPanel({
               disabled={tabLocked && activeTab !== tabId}
             >
               {label}
-              {tabId === "definition" && backgroundBriefPending ? (
+              {tabId === "definition" && backgroundBriefPending && !forceUnlockProcessingUi ? (
                 <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
               ) : null}
-              {tabId === "config" && (backgroundConfigPending || syncingProblemConfig) ? (
+              {tabId === "config" && (backgroundConfigPending || configSyncInFlight) && !forceUnlockProcessingUi ? (
                 <span className="inline-spinner" aria-hidden="true" style={{ marginLeft: "0.35rem" }} />
               ) : null}
               {tabId === "definition" && definitionUnread && !backgroundBriefPending ? (
                 <span title="Updated" aria-hidden="true" className="tab-update-dot" />
               ) : null}
-              {tabId === "config" && configUnread && !backgroundConfigPending && !syncingProblemConfig ? (
+              {tabId === "config" && configUnread && !backgroundConfigPending && !configSyncInFlight ? (
                 <span title="Updated" aria-hidden="true" className="tab-update-dot" />
               ) : null}
             </button>
@@ -353,6 +366,7 @@ export function ConfigPanel({
                   editable={editableDefinition}
                   sessionTerminated={sessionTerminated}
                   workflowMode={session?.workflow_mode ?? null}
+                  suppressTransientMarkers={definitionSaveShieldActive || configOrRawBlockingUi}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}
                 />
@@ -379,11 +393,11 @@ export function ConfigPanel({
               />
             )}
           </div>
-          {definitionSaveShield || configOrRawBlockingUi ? (
+          {definitionSaveShieldActive || configOrRawBlockingUi ? (
             <div className="config-panel-processing-shield" aria-live="polite">
               <span className="inline-spinner" aria-hidden="true" />
               <span className="muted">
-                {definitionSaveShield
+                {definitionSaveShieldActive
                   ? "Saving problem definition…"
                   : "Updating problem config from the latest definition…"}
               </span>
@@ -452,10 +466,10 @@ export function ConfigPanel({
                 <button
                   type="button"
                   onClick={() => void onSyncProblemConfig()}
-                  disabled={busy || editMode !== "none" || sessionTerminated || !problemBrief}
+                  disabled={!canSyncToConfig}
                   title="Rebuild the saved problem config from the saved definition"
                 >
-                  {syncingProblemConfig ? (
+                  {configSyncInFlight ? (
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
                       <span className="inline-spinner" aria-hidden="true" />
                       Syncing...

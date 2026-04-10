@@ -4,19 +4,27 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from threading import Thread
 from typing import Any
 
+from app.config import get_settings
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
-from app.problem_brief import merge_problem_brief_patch, normalize_problem_brief
+from app.problem_brief import merge_problem_brief_patch, normalize_problem_brief, sync_problem_brief_from_panel
 
 from . import helpers, sync
 
 log = logging.getLogger(__name__)
+
+
+def _run_with_timeout(callable_obj, timeout_sec: float):
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(callable_obj)
+        return future.result(timeout=timeout_sec)
 
 
 def append_message(
@@ -50,10 +58,7 @@ def persist_processing_failure(session_id: str, revision: int, detail: str) -> N
         row = db.get(StudySession, session_id)
         if row is None or row.processing_revision != revision:
             return
-        row.brief_status = "failed"
-        row.config_status = "failed"
-        row.processing_error = detail
-        helpers.touch_session(row)
+        helpers.fail_processing_state(row, detail)
         db.commit()
 
 
@@ -77,21 +82,27 @@ def _run_background_derivation(
 ) -> None:
     try:
         from app.services.llm import generate_problem_brief_update
-
-        brief_turn = generate_problem_brief_update(
-            user_text=user_text,
-            history_lines=history_lines,
-            api_key=api_key,
-            model_name=model_name,
-            current_problem_brief=base_problem_brief,
-            workflow_mode=workflow_mode,
-            current_panel=base_panel,
-            recent_runs_summary=recent_runs_summary or None,
-            researcher_steers=researcher_steers or None,
-            cleanup_mode=cleanup_requested,
-            is_run_acknowledgement=is_run_acknowledgement,
-            is_answered_open_question=is_answered_open_question,
-        )
+        timeout_sec = get_settings().derivation_timeout_sec
+        try:
+            brief_turn = _run_with_timeout(
+                lambda: generate_problem_brief_update(
+                    user_text=user_text,
+                    history_lines=history_lines,
+                    api_key=api_key,
+                    model_name=model_name,
+                    current_problem_brief=base_problem_brief,
+                    workflow_mode=workflow_mode,
+                    current_panel=base_panel,
+                    recent_runs_summary=recent_runs_summary or None,
+                    researcher_steers=researcher_steers or None,
+                    cleanup_mode=cleanup_requested,
+                    is_run_acknowledgement=is_run_acknowledgement,
+                    is_answered_open_question=is_answered_open_question,
+                ),
+                timeout_sec,
+            )
+        except FuturesTimeoutError as exc:
+            raise TimeoutError("Brief derivation timed out") from exc
         patch_payload: dict[str, Any] | None = None
         if brief_turn.problem_brief_patch:
             patch_payload = dict(brief_turn.problem_brief_patch)
@@ -111,6 +122,10 @@ def _run_background_derivation(
             elif brief_turn.replace_open_questions:
                 patch_payload["replace_open_questions"] = True
             effective_problem_brief = merge_problem_brief_patch(base_problem_brief, patch_payload)
+            if (cleanup_requested or brief_turn.cleanup_mode) and base_panel:
+                effective_problem_brief = sync_problem_brief_from_panel(
+                    effective_problem_brief, base_panel
+                )
 
         with SessionLocal() as db:
             row = db.get(StudySession, session_id)

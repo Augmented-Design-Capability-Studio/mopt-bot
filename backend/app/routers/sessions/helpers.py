@@ -72,6 +72,15 @@ def mark_processing_pending(row: StudySession) -> int:
     return row.processing_revision
 
 
+def fail_processing_state(row: StudySession, detail: str, *, cancel_revision: bool = False) -> None:
+    if cancel_revision:
+        row.processing_revision = int(row.processing_revision or 0) + 1
+    row.brief_status = "failed"
+    row.config_status = "failed"
+    row.processing_error = detail
+    touch_session(row)
+
+
 def maybe_mark_optimization_gate_engaged_from_brief(row: StudySession, brief: dict) -> bool:
     """Set ``optimization_gate_engaged`` when the brief lists at least one open-question object."""
     if row.optimization_gate_engaged:

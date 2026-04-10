@@ -47,6 +47,7 @@ export function ResearcherApp() {
           onPatchSession={researcher.patchSession}
           onSetOnlyActiveTerms={researcher.setOnlyActiveTerms}
           onPushParticipantStarterPanel={researcher.pushParticipantStarterPanel}
+          onPushDummyParticipantUpload={researcher.pushDummyParticipantUpload}
           onPushGeminiKey={researcher.pushGeminiKey}
           onExportJson={researcher.exportJson}
           onTerminate={researcher.terminate}

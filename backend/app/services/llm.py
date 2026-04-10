@@ -9,8 +9,11 @@ from typing import Any, Literal
 from google import genai
 from google.genai import types
 
+from app.problem_brief import locked_goal_terms_prompt_section
+
 from app.prompts.study_chat import (
     STUDY_CHAT_BRIEF_UPDATE_TASK,
+    STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
     STUDY_CHAT_CONFIG_DERIVE_SYSTEM_PROMPT,
     STUDY_CHAT_PHASE_CONFIGURATION,
     STUDY_CHAT_PHASE_DISCOVERY,
@@ -91,7 +94,11 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
         },
         "penalty": {"type": "number"},
         "zone": {"type": "integer"},
-        "order_priority": {"type": "string"},
+        "order_priority": {
+            "type": "string",
+            "enum": ["express", "standard"],
+            "description": "Must be exactly express or standard (not low/high synonyms).",
+        },
         "limit_minutes": {"type": "number"},
         "hours": {"type": "number"},
         "aggregation": {"type": "string"},
@@ -326,6 +333,9 @@ def _build_structured_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    lock_structured = locked_goal_terms_prompt_section(current_panel or {})
+    if lock_structured:
+        parts.append(lock_structured)
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn. Reorganize gathered facts and assumptions holistically. "
@@ -382,6 +392,9 @@ def _build_visible_chat_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    lock_blob = locked_goal_terms_prompt_section(current_panel or {})
+    if lock_blob:
+        parts.append(lock_blob)
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
     if cleanup_mode:
@@ -431,11 +444,32 @@ def _build_brief_update_system_instruction(
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_BRIEF_UPDATE_TASK,
+        STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    lock_blob = locked_goal_terms_prompt_section(current_panel or {})
+    if lock_blob:
+        parts.append(lock_blob)
+    if cleanup_mode and current_panel and isinstance(current_panel, dict) and current_panel:
+        parts.append(
+            "Current saved **panel configuration** (authoritative numeric weights, algorithm, "
+            "iterations, population, shift hard penalty, `only_active_terms`, algorithm_params, …). "
+            "When you rewrite gathered rows (one row per objective or penalty term), **carry these "
+            "values through** in plain language (e.g. “… weight is set to N”). The server merges "
+            "slot-backed lines from this panel after cleanup, but matching the numbers here avoids "
+            "confusing churn."
+        )
+        parts.append(json.dumps(current_panel, indent=2, ensure_ascii=False))
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
+        if workflow_mode == "waterfall":
+            parts.append(
+                "**Waterfall — hidden brief after run:** merge-append **`problem_brief_patch.open_questions`** "
+                "(omit `replace_open_questions` or set it false unless you intentionally replace the entire list). "
+                "Add or refine **one or two** questions when there is something left to clarify; skip if the "
+                "specification is already adequately covered."
+            )
     if is_answered_open_question:
         parts.append(
             "Answer-save context: Record the resolved Q&A as a gathered fact (kind gathered), "
@@ -444,11 +478,15 @@ def _build_brief_update_system_instruction(
         )
     if cleanup_mode:
         parts.append(
-            "Cleanup mode is active for this turn. Reorganize gathered facts and assumptions holistically. "
-            "If you return problem_brief_patch.items, return a coherent full editable snapshot and "
-            "set replace_editable_items=true. Preserve existing open questions unless you intentionally "
-            "emit a full replacement list under problem_brief_patch.open_questions with "
-            "replace_open_questions=true (omit open_questions from the patch to leave them unchanged)."
+            "Cleanup mode is active for this turn (user asked to clean up / consolidate / deduplicate the definition). "
+            "Return a coherent **full** gathered+assumption snapshot: set cleanup_mode=true, replace_editable_items=true, "
+            "and include every non-system item you intend to keep. "
+            "**Mandatory:** one `gathered` row per objective weight and per constraint-handling / penalty term — do **not** "
+            "merge multiple terms into one comma-separated `Constraint handling:` or bundled objective line; use separate rows. "
+            "Deduplicate by marking superseded facts `rejected`, not by gluing terms together. "
+            "Keep `goal_summary` qualitative (no numeric weights or run budgets). "
+            "Preserve existing open questions unless you intentionally emit a full replacement under "
+            "problem_brief_patch.open_questions with replace_open_questions=true (omit open_questions from the patch to leave them unchanged)."
         )
     if recent_runs_summary:
         parts.append("Recent run results (for hidden brief-update context):")
@@ -646,6 +684,10 @@ def classify_run_trigger_intent(
     Classify whether the latest participant message should trigger optimization.
     This is intent-only; router-level gate checks remain authoritative.
     """
+    from app.routers.sessions import intent as session_intent
+
+    if session_intent.is_run_acknowledgement_message(user_text):
+        return RunTriggerIntentTurn()
     client = genai.Client(api_key=api_key)
     system_instruction = "\n\n".join(
         [
@@ -655,6 +697,11 @@ def classify_run_trigger_intent(
                 "Return JSON only. Set should_trigger_run=true only when the user clearly intends to start a run now, "
                 "either by direct request (e.g., asking to run/start optimize) or by affirmative response to a recent "
                 "assistant invitation to run. If intent is ambiguous, return should_trigger_run=false."
+            ),
+            (
+                "Never set should_trigger_run=true for automated run-result context lines (e.g. messages containing "
+                "\"Run #\" and \"just completed\", or \"Please interpret these results\") — those are not the user "
+                "asking to start a new run."
             ),
             (
                 "Set intent_type to one of: "

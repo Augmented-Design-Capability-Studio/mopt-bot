@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     researcher_secret: str = "dev-researcher"
     fernet_key: str | None = None
     solve_timeout_sec: float = 120.0
+    derivation_timeout_sec: float = 45.0
     default_gemini_model: str = "gemini-3-flash-preview"
 
     @property

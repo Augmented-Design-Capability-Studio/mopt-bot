@@ -67,6 +67,11 @@ explicitly lists several. Propose values and let the user confirm or adjust. The
 (agile vs waterfall) further refines how much confirmation to require — see workflow
 guidance below.
 
+**Locked goal terms:** When a **Locked goal terms** section appears below (from the saved
+Problem Config), those weight/penalty keys are **fixed** until the participant unlocks them
+in Problem Config. Do not suggest changing locked terms in chat or in brief patches; if asked,
+explain that the term is locked and they should unlock it first.
+
 Internal mapping — use this to structure the brief so config derivation can map correctly
 (reveal fields as they become relevant):
 
@@ -114,7 +119,7 @@ All available fields under `"problem"`:
 - `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
   - **Worker names → index** (when the scenario names workers): Alice → 0, Bob → 1, Carol → 2, Dave → 3, Eve → 4.
   - **`avoid_zone`** (or legacy **`zone_d`**): soft dislike of delivery stops in a zone; set `"zone": 1–5` matching order zones (1=A … 4=D Westgate … 5=E Northgate). Depot/matrix index 0 is not an order zone.
-  - **`order_priority`** (or legacy **`express_order`**): set `"order_priority": "express"` or `"standard"`.
+  - **`order_priority`** (or legacy **`express_order`**): `"order_priority"` must be exactly **`express`** or **`standard`** (never synonyms like `"low"` / `"high"` / `"priority"`).
   - **`shift_over_limit`** (or legacy **`shift_over_hours`**): soft dislike of long shifts; set `"limit_minutes"` (e.g. 390 for 6.5h) or legacy `"hours": 6.5` (adapter converts to minutes).
   - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
   - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
@@ -330,10 +335,11 @@ STUDY_CHAT_RUN_ACK_AGILE = """
 """.strip()
 
 STUDY_CHAT_RUN_ACK_WATERFALL = """
-- **Waterfall (post-run focus):** After a run, lean on **new or updated `open_questions`**
-  (merge-append; avoid `replace_open_questions` unless you intentionally replace the whole
-  list). Prefer clarifications over new **assumption** rows unless the participant asked
-  for an assumption explicitly.
+- **Waterfall (post-run focus):** After a run, **prioritize `open_questions`**: add or refine
+  **one or two** questions when anything material is still unclear (merge-append; avoid
+  `replace_open_questions` unless you intentionally replace the whole list). You need not add
+  questions every single run if the specification is already well covered. Prefer
+  clarifications over new **assumption** rows unless the participant asked for an assumption.
 - If you suggest a config change, tie it explicitly to the stated objectives. "Given your
   priority for on-time delivery, we could try increasing the deadline penalty — I've
   updated that."
@@ -358,6 +364,8 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   editable rows (while preserving system rows).
 - If you claim that you removed or corrected conflicting definition facts, emit a non-null
   `problem_brief_patch` that includes the corrected fact for that setting.
+- Keep `goal_summary` qualitative only: no explicit numeric weights, penalties, algorithm params,
+  or run-budget numbers. Put those details in `items` (`gathered`/`assumption`) instead.
 - `"replace_editable_items"`: boolean. Set true only when performing holistic cleanup or
   reorganization of gathered/assumption rows.
 - `"replace_open_questions"`: boolean. Set true only when `problem_brief_patch.open_questions`
@@ -392,6 +400,13 @@ assumption rows instead of incremental append-style edits. **Do not drop open qu
 on cleanup: omit `open_questions` from the patch, or send a deliberate full replacement
 list with `replace_open_questions=true` (use `open_questions: []` only when intentionally
 clearing every question).
+
+**Rule 5 — One goal term per row (objectives and constraint handling).** Treat each soft
+objective term and each constraint-handling term (capacity-style penalties, deadline/priority
+penalties, shift hard limits, etc.) like separate **goal terms**: prefer **one** `gathered`
+row per term with its weight or penalty detail. If you combine several into one line starting
+with `Constraint handling:` (or a long comma-separated objective list), the server may split
+that line into multiple rows for parsing—still prefer emitting separate rows when practical.
 
 ### Valid example
 
@@ -455,24 +470,58 @@ Rules:
 - Preserve existing `"kind": "system"` items unchanged and non-editable.
 - Keep the brief coherent: if a newer fact supersedes an older fact, keep the newer fact
   active and mark the superseded one `"rejected"` instead of leaving both active.
+- Keep `goal_summary` qualitative and short. Never encode explicit weights, penalties,
+  algorithm parameters, or run-budget numbers in `goal_summary`; store those details in
+  `items` (`gathered` or `assumption`) only.
+- Prefer **one gathered row per objective or constraint-handling term** (each weight or
+  penalty line), aligned with how goal terms are configured. **Never** pack several terms into
+  one comma-separated `Constraint handling:` or objective list line when separate rows would work.
 - Keep search-strategy notes concise: consolidate algorithm + tuning details into one brief
   entry when possible, and avoid listing default-only parameter values unless explicitly discussed.
-- **Formulation discipline**: Add at most one new objective or constraint per turn. Follow
-  workflow formulation style: waterfall — only add after explicit user confirmation;
-  agile — can add from a clear hint when the visible reply reflects that.
+- **Formulation discipline (incremental chat turns only):** Add at most one **new** objective or
+  constraint per turn when you are **not** doing a full replacement. Follow workflow style:
+  waterfall — only add after explicit user confirmation; agile — can add from a clear hint when
+  the visible reply reflects that. **Exception:** holistic **cleanup** with `replace_editable_items=true`
+  must output the **full** current term set with **one row per term** (see hidden items rules).
 - Omit untouched fields.
 - Cleanup requests must be holistic: set `cleanup_mode=true`, `replace_editable_items=true`,
   and emit a coherent editable snapshot when the user asks to clean up, consolidate,
   deduplicate, reorganize, or clear definition content. **Leave `replace_open_questions=false`
   and omit `open_questions` from the patch** unless you are intentionally replacing the
   entire question list (then include every question and set `replace_open_questions=true`).
-- On cleanup turns, you may merge or rephrase gathered rows that came from answered open
-  questions (e.g. item id prefix `gathered-oq-`, or text shaped like `Question — Answer`)
-  into clearer declarative facts without losing meaning.
+- On cleanup turns, you may rephrase **a single** gathered row (e.g. from answered open
+  questions, id prefix `gathered-oq-`, or `Question — Answer` text) into clearer declarative wording.
+  Do **not** merge **multiple goal terms** into one row while doing so.
 - When the user answers a previously open question, add the substance under
   `problem_brief_patch.items` as `kind: "gathered"` and drop that question from
   `open_questions` (use `replace_open_questions=true` when you emit a full replacement list).
   Never use `(Answered: …)` suffixes in open-question text.
+""".strip()
+
+# Appended to the hidden brief-update system instruction only (not the visible chat turn).
+# Ensures the background JSON pass gets the same items discipline as STUDY_CHAT_STRUCTURED_JSON_RULES,
+# which is otherwise only injected into the legacy combined structured reply path.
+STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES = """
+## problem_brief_patch.items — match structured-chat discipline
+
+Your JSON has **no** `assistant_message`; only `problem_brief_patch`, `replace_editable_items`,
+`replace_open_questions`, and `cleanup_mode`. When you emit `problem_brief_patch.items`, follow:
+
+**Rule 1 — Preserve system facts.** Copy existing `"kind": "system"` entries unchanged and non-editable.
+
+**Rule 2 — Coherent fact set.** When a newer fact supersedes an older one, keep the newer active and mark the superseded row `"rejected"`.
+
+**Rule 3 — Only include keys you are changing.**
+
+**Rule 4 — Holistic cleanup.** On clean-up / consolidate / deduplicate requests, set `cleanup_mode=true`, `replace_editable_items=true`, and emit the **full** replacement gathered + assumption list. Preserve open questions by omitting `open_questions` from the patch, unless you intentionally replace the whole list (`replace_open_questions=true`).
+
+**Rule 5 — One goal term per row (objectives and constraint handling).** Each soft objective term and each constraint-handling term (capacity-style penalties, deadline/priority penalties, shift hard limits, etc.) must be its **own** `gathered` row with weight or penalty text. Do **not** collapse several terms into one comma-separated line, one long `Constraint handling:` sentence, or one bundled “Active objectives:” sentence — **split into separate rows**, including on cleanup turns.
+
+**Overlap vs bundling:** Mark redundant facts `"rejected"` or rephrase **one** fact more clearly. Never merge **multiple distinct goal terms** into a single row to “save space.”
+
+**Incremental vs cleanup:** The “at most one new objective or constraint per **chat turn**” rule applies to **incremental** updates. A **holistic cleanup** snapshot must still list **every** current term as its **own** row (many rows are expected).
+
+**Cleanup + saved panel:** When the system message includes **current saved panel configuration** JSON, treat `problem.weights`, `algorithm`, `epochs`, `pop_size`, penalties, etc. as **authoritative**. Write matching numeric detail into the appropriate gathered rows; the server also merges canonical config lines from the panel after cleanup so values are not lost.
 """.strip()
 
 STUDY_CHAT_PHASE_DISCOVERY = """

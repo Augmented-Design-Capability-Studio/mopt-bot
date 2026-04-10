@@ -41,7 +41,9 @@ export function ClientApp() {
       scheduleText={controller.scheduleText}
       editMode={controller.editMode}
       busy={controller.busy}
+      chatBusy={controller.chatBusy}
       syncingProblemConfig={controller.syncingProblemConfig}
+      participantOps={controller.participantOps}
       optimizing={controller.optimizing}
       error={controller.error}
       showModelDialog={controller.showModelDialog}
@@ -49,6 +51,7 @@ export function ClientApp() {
       modelKey={controller.modelKey}
       aiPending={controller.aiPending}
       fileRef={controller.fileRef}
+      simulatedUploadChips={controller.simulatedUploadChips}
       onChatInputChange={controller.setChatInput}
       onInvokeModelChange={controller.setInvokeModel}
       onConfigTextChange={controller.setConfigText}
@@ -64,6 +67,7 @@ export function ClientApp() {
       onSendChat={controller.sendChat}
       onRequestDefinitionCleanup={controller.requestDefinitionCleanup}
       onSimulateUpload={controller.simulateUpload}
+      onRemoveSimulatedUploadChip={controller.onRemoveSimulatedUploadChip}
       onSaveConfig={controller.saveConfig}
       onSaveDefinitionEdit={controller.saveDefinitionEdit}
       onCancelDefinitionEdit={controller.cancelDefinitionEdit}

@@ -40,6 +40,8 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
 
   const hasWorkerWeight = "worker_preference" in problem.weights;
   const showWorkerBlock = hasWorkerWeight || problem.driver_preferences.length > 0;
+  const workerPrefLocked = problem.locked_goal_terms.includes("worker_preference");
+  const preferencesEditable = editable && !workerPrefLocked;
 
   const displayWeightKeys = (() => {
     const keys = Object.keys(problem.weights);
@@ -172,6 +174,7 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
         <GoalTermsSection
           problem={problem}
           editable={editable}
+          preferencesEditable={preferencesEditable}
           showWorkerBlock={showWorkerBlock}
           displayWeightKeys={displayWeightKeys}
           removedGoalTerms={removedGoalTerms}

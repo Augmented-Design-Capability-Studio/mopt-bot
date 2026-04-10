@@ -269,6 +269,25 @@ export function useResearcherController() {
     }
   }
 
+  async function pushDummyParticipantUpload() {
+    if (!savedToken.trim() || !selected) return;
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      await apiFetch(`/sessions/${selected}/researcher/simulate-participant-upload`, savedToken.trim(), {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await loadDetail();
+      await refreshList();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Push dummy files failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function setOnlyActiveTerms(enabled: boolean) {
     if (!detail) return;
     const panel =
@@ -366,6 +385,7 @@ export function useResearcherController() {
     removeSelectedSessions,
     removeRun,
     pushParticipantStarterPanel,
+    pushDummyParticipantUpload,
     setOnlyActiveTerms,
     exportJson,
     pushGeminiKey,

@@ -91,6 +91,72 @@ def test_message_response_marks_processing_pending_before_background_finishes(mo
         assert session.json()["processing"]["config_status"] == "pending"
 
 
+def test_run_ack_message_does_not_trigger_post_run_even_if_classifier_says_run(monkeypatch):
+    """Auto-posted run-complete lines must not start optimization in the same request."""
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-run-ack-no-autorun-secret")
+    get_settings.cache_clear()
+
+    called = {"post_run": False}
+
+    def fake_post_run(*args, **kwargs):
+        called["post_run"] = True
+        return None
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Here is my interpretation of the run.",
+            panel_patch=None,
+            problem_brief_patch=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.classify_run_trigger_intent",
+        lambda *args, **kwargs: RunTriggerIntentTurn(
+            should_trigger_run=True,
+            intent_type="direct_request",
+            confidence=0.99,
+            rationale="Misclassified.",
+        ),
+    )
+    router_module = importlib.import_module("app.routers.sessions.router")
+    monkeypatch.setattr(router_module, "post_run", fake_post_run)
+    monkeypatch.setattr(
+        "app.routers.sessions.derivation.launch_background_derivation",
+        lambda **kwargs: None,
+    )
+
+    run_ack_text = (
+        "Run #1 just completed - cost 123.45 (5 time-window stops late). "
+        "Please interpret these results, compare to any previous runs, and suggest what to adjust next."
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "agile"},
+            headers={"Authorization": "Bearer test-run-ack-no-autorun-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/panel",
+            json={"panel_config": {"problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}}},
+            headers={"Authorization": "Bearer test-run-ack-no-autorun-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": run_ack_text, "invoke_model": True},
+            headers={"Authorization": "Bearer test-run-ack-no-autorun-secret"},
+        )
+        assert send.status_code == 200
+        assert called["post_run"] is False
+
+
 def test_direct_run_request_triggers_autorun_when_gate_open(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-autorun-open-secret")
     get_settings.cache_clear()
@@ -312,6 +378,45 @@ def test_post_message_without_model_returns_current_processing_state(monkeypatch
         assert body["processing"]["brief_status"] == "pending"
         assert body["processing"]["config_status"] == "pending"
         assert body["processing"]["processing_revision"] == 5
+
+
+def test_inline_sync_failure_marks_processing_failed(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-inline-sync-fail-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="I will update the config.",
+            panel_patch=None,
+            problem_brief_patch={"goal_summary": "new"},
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.sessions.sync.sync_panel_from_problem_brief",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("sync failed")),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-inline-sync-fail-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "please update definition", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-inline-sync-fail-secret"},
+        )
+        assert send.status_code == 200
+        processing = send.json()["processing"]
+        assert processing["brief_status"] == "failed"
+        assert processing["config_status"] == "failed"
+        assert "Inline problem-config sync failed" in (processing["processing_error"] or "")
 
 
 def test_steer_messages_hidden_and_forwarded_to_next_model_turn(monkeypatch):
@@ -1932,3 +2037,35 @@ def test_post_snapshot_bookmark_creates_row(monkeypatch):
         )
         assert after.status_code == 200
         assert len(after.json()) == n_before + 1
+
+
+def test_researcher_simulate_participant_upload_posts_default_file_names(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-researcher-dummy-upload")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-dummy-upload")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-researcher-dummy-upload"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        r = client.post(
+            f"/sessions/{sid}/researcher/simulate-participant-upload",
+            json={},
+            headers={"Authorization": "Bearer test-researcher-dummy-upload"},
+        )
+        assert r.status_code == 200
+        posted = r.json()
+        assert posted["messages"][0]["role"] == "user"
+        assert "DRIVER_INFO.csv" in posted["messages"][0]["content"]
+        assert "ORDERS.csv" in posted["messages"][0]["content"]
+
+        visible = client.get(
+            f"/sessions/{sid}/messages",
+            headers={"Authorization": "Bearer test-client-researcher-dummy-upload"},
+        )
+        assert visible.status_code == 200
+        assert any("DRIVER_INFO.csv" in m["content"] for m in visible.json())

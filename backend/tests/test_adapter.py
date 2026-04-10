@@ -60,6 +60,31 @@ def test_parse_driver_preferences_validates_vehicle_idx():
         )
 
 
+def test_parse_driver_preferences_normalizes_order_priority_synonyms():
+    cfg = parse_problem_config(
+        {
+            "driver_preferences": [
+                {
+                    "vehicle_idx": 0,
+                    "condition": "order_priority",
+                    "penalty": 1,
+                    "order_priority": "low",
+                    "aggregation": "per_stop",
+                },
+                {
+                    "vehicle_idx": 1,
+                    "condition": "express_order",
+                    "penalty": 1,
+                    "order_priority": "VIP",
+                    "aggregation": "per_stop",
+                },
+            ],
+        }
+    )
+    assert cfg["driver_preferences"][0]["order_priority"] == "standard"
+    assert cfg["driver_preferences"][1]["order_priority"] == "express"
+
+
 def test_parse_driver_preferences_accepts_zone_letters():
     cfg = parse_problem_config(
         {

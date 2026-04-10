@@ -92,6 +92,13 @@ class MessageCreate(BaseModel):
     skip_hidden_brief_update: bool = False
 
 
+class ResearcherSimulateParticipantUploadBody(BaseModel):
+    """Researcher-only: inject the same user message as a simulated file upload."""
+
+    file_names: list[str] | None = None
+    invoke_model: bool = False
+
+
 class SteerCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=32000)
 

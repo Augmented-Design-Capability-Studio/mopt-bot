@@ -27,6 +27,7 @@ from app.schemas import (
     ParticipantPanelUpdate,
     ParticipantProblemBriefUpdate,
     PostMessagesResponse,
+    ResearcherSimulateParticipantUploadBody,
     RunOut,
     SessionCreate,
     SessionProcessingState,
@@ -345,13 +346,7 @@ def list_messages_researcher(
     return list(q.all())
 
 
-@router.post("/{session_id}/messages", response_model=PostMessagesResponse)
-def post_message(
-    session_id: str,
-    body: MessageCreate,
-    db: Session = Depends(get_db),
-    _: Principal = Depends(require_client),
-):
+def _handle_post_participant_message(session_id: str, db: Session, body: MessageCreate) -> PostMessagesResponse:
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -414,18 +409,20 @@ def post_message(
             am = derivation.append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
             run_intent = None
-            try:
-                from app.services.llm import classify_run_trigger_intent
+            # Auto-posted run-complete messages must never be classified as "run now" intent.
+            if not is_run_ack:
+                try:
+                    from app.services.llm import classify_run_trigger_intent
 
-                run_intent = classify_run_trigger_intent(
-                    user_text=body.content,
-                    history_lines=hist,
-                    api_key=key,
-                    model_name=model,
-                    workflow_mode=row.workflow_mode,
-                )
-            except Exception:
-                log.exception("Run-trigger intent classification failed for session %s", session_id)
+                    run_intent = classify_run_trigger_intent(
+                        user_text=body.content,
+                        history_lines=hist,
+                        api_key=key,
+                        model_name=model,
+                        workflow_mode=row.workflow_mode,
+                    )
+                except Exception:
+                    log.exception("Run-trigger intent classification failed for session %s", session_id)
             if turn and (
                 turn.problem_brief_patch is not None
                 or turn.replace_editable_items
@@ -433,47 +430,55 @@ def post_message(
                 or turn.cleanup_mode
                 or clear_requested
             ):
-                patch_payload: dict[str, Any] | None = None
-                if turn.problem_brief_patch:
-                    patch_payload = dict(turn.problem_brief_patch)
-                elif clear_requested:
-                    patch_payload = {"items": [], "open_questions": []}
-                elif cleanup_requested:
-                    log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
+                try:
+                    patch_payload: dict[str, Any] | None = None
+                    if turn.problem_brief_patch:
+                        patch_payload = dict(turn.problem_brief_patch)
+                    elif clear_requested:
+                        patch_payload = {"items": [], "open_questions": []}
+                    elif cleanup_requested:
+                        log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
 
-                if patch_payload is not None:
-                    if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
-                        patch_payload["replace_editable_items"] = True
-                    if clear_requested:
-                        patch_payload["replace_open_questions"] = True
-                    elif turn.replace_open_questions:
-                        patch_payload["replace_open_questions"] = True
-                    merged_brief = merge_problem_brief_patch(current_problem_brief, patch_payload)
-                    if merged_brief != current_problem_brief:
-                        row = db.get(StudySession, session_id) or row
-                        row.problem_brief_json = json.dumps(merged_brief)
-                        updated_problem_brief = merged_brief
-                        helpers.touch_session(row)
-                        db.commit()
-                        db.refresh(row)
-                effective_problem_brief = updated_problem_brief or current_problem_brief
-                row = db.get(StudySession, session_id) or row
-                updated_panel, _ = sync.sync_panel_from_problem_brief(
-                    row,
-                    db,
-                    effective_problem_brief,
-                    api_key=key,
-                    model_name=model,
-                    workflow_mode=row.workflow_mode,
-                    recent_runs_summary=recent_runs_summary,
-                    preserve_missing_managed_fields=True,
-                )
-                row = db.get(StudySession, session_id) or row
-                helpers.settle_processing_state(row, cancel_revision=True)
-                helpers.touch_session(row)
-                db.commit()
-                db.refresh(row)
-                proc_state = helpers.processing_state(row)
+                    if patch_payload is not None:
+                        if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
+                            patch_payload["replace_editable_items"] = True
+                        if clear_requested:
+                            patch_payload["replace_open_questions"] = True
+                        elif turn.replace_open_questions:
+                            patch_payload["replace_open_questions"] = True
+                        merged_brief = merge_problem_brief_patch(current_problem_brief, patch_payload)
+                        if merged_brief != current_problem_brief:
+                            row = db.get(StudySession, session_id) or row
+                            row.problem_brief_json = json.dumps(merged_brief)
+                            updated_problem_brief = merged_brief
+                            helpers.touch_session(row)
+                            db.commit()
+                            db.refresh(row)
+                    effective_problem_brief = updated_problem_brief or current_problem_brief
+                    row = db.get(StudySession, session_id) or row
+                    updated_panel, _ = sync.sync_panel_from_problem_brief(
+                        row,
+                        db,
+                        effective_problem_brief,
+                        api_key=key,
+                        model_name=model,
+                        workflow_mode=row.workflow_mode,
+                        recent_runs_summary=recent_runs_summary,
+                        preserve_missing_managed_fields=True,
+                    )
+                    row = db.get(StudySession, session_id) or row
+                    helpers.settle_processing_state(row, cancel_revision=True)
+                    helpers.touch_session(row)
+                    db.commit()
+                    db.refresh(row)
+                    proc_state = helpers.processing_state(row)
+                except Exception:
+                    log.exception("Inline brief/config sync failed for session %s", session_id)
+                    row = db.get(StudySession, session_id) or row
+                    helpers.fail_processing_state(row, "Inline problem-config sync failed", cancel_revision=True)
+                    db.commit()
+                    db.refresh(row)
+                    proc_state = helpers.processing_state(row)
             elif body.skip_hidden_brief_update:
                 row = db.get(StudySession, session_id) or row
                 helpers.settle_processing_state(row, cancel_revision=True)
@@ -575,6 +580,37 @@ def post_message(
         panel_config=updated_panel,
         problem_brief=updated_problem_brief,
         processing=proc_state,
+    )
+
+
+@router.post("/{session_id}/messages", response_model=PostMessagesResponse)
+def post_message(
+    session_id: str,
+    body: MessageCreate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    return _handle_post_participant_message(session_id, db, body)
+
+
+@router.post("/{session_id}/researcher/simulate-participant-upload", response_model=PostMessagesResponse)
+def researcher_simulate_participant_upload(
+    session_id: str,
+    body: ResearcherSimulateParticipantUploadBody | None = None,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Post the same user-visible message as a simulated upload (for demos / dry runs)."""
+    b = body or ResearcherSimulateParticipantUploadBody()
+    names = list(b.file_names) if b.file_names else ["DRIVER_INFO.csv", "ORDERS.csv"]
+    cleaned = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file_names must not be empty")
+    content = f"I'm uploading the following file(s): {', '.join(cleaned)}"
+    return _handle_post_participant_message(
+        session_id,
+        db,
+        MessageCreate(content=content, invoke_model=b.invoke_model, skip_hidden_brief_update=False),
     )
 
 
@@ -891,6 +927,7 @@ def patch_participant_problem_brief(
         api_key=decrypt_secret(row.gemini_key_encrypted),
         model_name=row.gemini_model or get_settings().default_gemini_model,
         workflow_mode=row.workflow_mode,
+        preserve_missing_managed_fields=True,
     )
     helpers.settle_processing_state(row)
     row.updated_at = datetime.now(timezone.utc)
@@ -934,6 +971,7 @@ def sync_panel_from_problem_brief_route(
         api_key=decrypt_secret(row.gemini_key_encrypted),
         model_name=row.gemini_model or get_settings().default_gemini_model,
         workflow_mode=row.workflow_mode,
+        preserve_missing_managed_fields=True,
     )
     if updated_panel is None:
         raise HTTPException(
