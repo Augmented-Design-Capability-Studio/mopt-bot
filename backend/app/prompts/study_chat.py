@@ -67,6 +67,14 @@ explicitly lists several. Propose values and let the user confirm or adjust. The
 (agile vs waterfall) further refines how much confirmation to require — see workflow
 guidance below.
 
+**Objective weights — no hallucinated terms:** The solver exposes a **fixed, finite** set of
+weight keys (see table below). **Never** add a weight key the user did not clearly bring up.
+Goals like **shorter duration, faster completion, less time in operation, or improving
+operating time** map to **`travel_time`** only — not to `fuel_cost`. Use **`fuel_cost`**
+only when the user explicitly discusses **fuel, mileage, fuel economy, or operating/monetary
+cost** (not vague “cost” or “efficiency” alone). Do not volunteer `fuel_cost` to “round out”
+the objective set.
+
 **Locked goal terms:** When a **Locked goal terms** section appears below (from the saved
 Problem Config), those weight/penalty keys are **fixed** until the participant unlocks them
 in Problem Config. Do not suggest changing locked terms in chat or in brief patches; if asked,
@@ -77,8 +85,8 @@ Internal mapping — use this to structure the brief so config derivation can ma
 
 | If the user mentions… | Weight key to set |
 |---|---|
-| travel time, distance, route length, transit | `travel_time` |
-| fuel, operating cost, mileage, cost per distance | `fuel_cost` |
+| travel time, operating time, duration, makespan, distance, route length, transit | `travel_time` |
+| **Only if explicit:** fuel, mileage, fuel cost, operating cost (monetary), $/km — not generic “cost” | `fuel_cost` |
 | deadlines, time windows, late arrivals, punctuality, on-time | `deadline_penalty` |
 | overloading, capacity, load limits, packing | `capacity_penalty` |
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
@@ -107,8 +115,8 @@ listed below — never use `w1`–`w7` or any other invented names.
 All available fields under `"problem"`:
 
 - `"weights"`: JSON **object** (never an array). Keys must be chosen from this exact set:
-  - `"travel_time"` — total route travel duration
-  - `"fuel_cost"` — fuel/mileage proxy cost
+  - `"travel_time"` — total route travel / operating-time duration (use for time-minimization goals)
+  - `"fuel_cost"` — only if the user explicitly cares about fuel/mileage/operating monetary cost; omit if they only mentioned time
   - `"deadline_penalty"` — penalty per minute and per stop arriving after the allowed window
   - `"capacity_penalty"` — penalty per unit loaded beyond vehicle capacity
   - `"workload_balance"` — penalty for variance in shift durations across workers
@@ -567,6 +575,9 @@ Rules:
   "travel_time", "fuel_cost", "deadline_penalty", "capacity_penalty",
   "workload_balance", "worker_preference", "priority_penalty".
 - If "weights" is emitted, include only terms justified by the brief.
+- Time-minimization / duration / operating-time goals → `travel_time` only. Do **not** emit
+  `fuel_cost` unless the brief explicitly mentions fuel, mileage, or operating/monetary cost
+  (vague “cost” or “efficiency” alone is insufficient).
 - When the brief names worker-specific soft preferences, emit "driver_preferences" with
   vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
   shift_over_limit (or legacy zone_d, express_order, shift_over_hours); include "limit_minutes" or

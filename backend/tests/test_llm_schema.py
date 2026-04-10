@@ -13,6 +13,7 @@ def test_config_schema_constrains_problem_weights_to_object():
     weights = problem["properties"]["weights"]
 
     assert weights["type"] == "object"
+    assert weights.get("additionalProperties") is False
     assert set(weights["properties"]) == {
         "travel_time",
         "fuel_cost",
@@ -22,6 +23,8 @@ def test_config_schema_constrains_problem_weights_to_object():
         "worker_preference",
         "priority_penalty",
     }
+    assert problem.get("additionalProperties") is False
+    assert panel_patch.get("additionalProperties") is False
 
 
 def test_config_schema_algorithm_params_has_bounded_properties():

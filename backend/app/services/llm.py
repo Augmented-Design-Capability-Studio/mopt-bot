@@ -37,6 +37,10 @@ log = logging.getLogger(__name__)
 # "object" schema lets malformed fragments like `{"weights": "{"}` slip through.
 _WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
     "type": "object",
+    "description": (
+        "Only these objective keys exist — omit keys the user did not discuss. "
+        "Never invent names; never add fuel_cost unless the user explicitly mentioned fuel, mileage, or operating/monetary cost."
+    ),
     "properties": {
         "travel_time": {"type": "number"},
         "fuel_cost": {"type": "number"},
@@ -46,6 +50,7 @@ _WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "worker_preference": {"type": "number"},
         "priority_penalty": {"type": "number"},
     },
+    "additionalProperties": False,
 }
 
 # Union of all keys MEALpy accepts per algorithm (see app.algorithm_catalog / optimizer.py).
@@ -104,6 +109,7 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
         "aggregation": {"type": "string"},
     },
     "required": ["vehicle_idx", "condition", "penalty"],
+    "additionalProperties": False,
 }
 
 _PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
@@ -116,7 +122,11 @@ _PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
             "items": _DRIVER_PREFERENCE_SCHEMA,
         },
         "shift_hard_penalty": {"type": "number"},
-        "locked_assignments": {"type": "object"},
+        "locked_assignments": {
+            "type": "object",
+            "description": "Map task index string to vehicle index integer.",
+            "additionalProperties": {"type": "integer"},
+        },
         "algorithm": {
             "type": "string",
             "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR"],
@@ -128,6 +138,7 @@ _PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         "hard_constraints": {"type": "array", "items": {"type": "string"}},
         "soft_constraints": {"type": "array", "items": {"type": "string"}},
     },
+    "additionalProperties": False,
 }
 
 _PANEL_PATCH_SCHEMA: dict[str, Any] = {
@@ -135,6 +146,7 @@ _PANEL_PATCH_SCHEMA: dict[str, Any] = {
     "properties": {
         "problem": _PROBLEM_PATCH_SCHEMA,
     },
+    "additionalProperties": False,
 }
 
 CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
@@ -144,6 +156,7 @@ CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "problem": _PROBLEM_PATCH_SCHEMA,
     },
     "required": ["problem"],
+    "additionalProperties": False,
 }
 
 _PROBLEM_BRIEF_ITEM_SCHEMA: dict[str, Any] = {

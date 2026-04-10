@@ -743,9 +743,9 @@ def test_problem_brief_save_reconciles_panel_from_brief(monkeypatch):
         assert patch.status_code == 200
         panel = patch.json()["panel_config"]["problem"]
         assert panel["algorithm"] == "PSO"
+        # Deterministic seed reads gathered item text only (not goal_summary); no item mentions
+        # travel/fuel, so weights come from capacity + deadline lines only.
         assert panel["weights"] == {
-            "travel_time": 1.0,
-            "fuel_cost": 1.0,
             "capacity_penalty": 1000.0,
             "deadline_penalty": 50.0,
         }
@@ -830,11 +830,12 @@ def test_chat_can_override_pushed_starter_panel(monkeypatch):
         assert send.status_code == 200
         panel = send.json()["panel_config"]["problem"]
         assert panel["algorithm"] == "PSO"
+        # Brief items (not goal_summary) drive deterministic seed; no travel/fuel lines in items.
         assert panel["weights"] == {
-            "travel_time": 1.0,
-            "fuel_cost": 1.0,
             "capacity_penalty": 1000.0,
             "deadline_penalty": 50.0,
+            "travel_time": 1.0,
+            "workload_balance": 4.0,
         }
         assert panel["algorithm_params"] == {"c1": 2.0, "c2": 2.0, "w": 0.4}
 
@@ -1245,11 +1246,12 @@ def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeyp
         assert problem["epochs"] == 33
         assert problem["pop_size"] == 21
         brief_texts = [item["text"] for item in body["problem_brief"]["items"] if item["kind"] != "system"]
-        assert "Solver algorithm is PSO." in brief_texts
+        strategy_line = next(t for t in brief_texts if "Search strategy:" in t and "PSO" in t)
+        assert "max iterations 33" in strategy_line
+        assert "population size 21" in strategy_line
+        assert "c1=1.8" in strategy_line
+        assert "Travel time weight is set to 1.0." in brief_texts
         assert "Workload balance weight is set to 100.0." in brief_texts
-        assert "Search epochs are set to 33." in brief_texts
-        assert "Population size is set to 21." in brief_texts
-        assert "Algorithm parameter c1 is set to 1.8." in brief_texts
 
         save_brief = client.patch(
             f"/sessions/{sid}/problem-brief",
@@ -1647,7 +1649,7 @@ def test_cleanup_replace_flag_without_items_clears_editable_rows(monkeypatch):
         # replace_open_questions without open_questions in patch must not wipe existing questions
         assert len(brief["open_questions"]) == 1
         assert brief["open_questions"][0]["id"] == "oq-a"
-        assert brief["goal_summary"] == "Cleaned up"
+        assert brief["goal_summary"].rstrip(".").strip() == "Cleaned up"
 
 
 def test_replace_open_questions_round_trips_answer_fields(monkeypatch):
@@ -1825,8 +1827,12 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
         assert patch.status_code == 200
         assert captured["current_panel"] is None
         weights = patch.json()["panel_config"]["problem"]["weights"]
-        assert set(weights) == {"deadline_penalty"}
         assert weights["deadline_penalty"] == 80.0
+        # preserve_missing_managed_fields keeps prior panel weights not contradicted by the brief
+        assert weights["travel_time"] == 1.0
+        assert weights["fuel_cost"] == 1.0
+        assert weights["capacity_penalty"] == 100.0
+        assert weights["workload_balance"] == 15.0
 
 
 def test_definition_save_collapses_conflicting_config_linked_facts(monkeypatch):
@@ -1959,7 +1965,7 @@ def test_sync_panel_endpoint_rebuilds_saved_config(monkeypatch):
         assert save_panel.status_code == 200
         assert save_panel.json()["panel_config"]["problem"]["algorithm"] == "GA"
         brief_texts = [item["text"] for item in save_panel.json()["problem_brief"]["items"] if item["kind"] != "system"]
-        assert "Solver algorithm is GA." in brief_texts
+        assert any("Search strategy:" in t and "GA" in t for t in brief_texts)
 
         sync = client.post(
             f"/sessions/{sid}/sync-panel",

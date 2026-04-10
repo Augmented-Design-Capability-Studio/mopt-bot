@@ -34,15 +34,20 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "travel_time": (
         re.compile(r"\btravel time\b", re.IGNORECASE),
         re.compile(r"\btravel[_\s-]?time\b", re.IGNORECASE),
-        re.compile(r"\broute(?:ing)?\b", re.IGNORECASE),
+        re.compile(r"\boperating time\b", re.IGNORECASE),
+        re.compile(r"\bmakespan\b", re.IGNORECASE),
+        # Avoid bare "duration" — matches "shift duration" (shift hard penalty) and corrupts seeding.
+        re.compile(r"\broute duration\b", re.IGNORECASE),
+        re.compile(r"\btrip duration\b", re.IGNORECASE),
+        re.compile(r"\broute length\b", re.IGNORECASE),
         re.compile(r"\bdistance\b", re.IGNORECASE),
         re.compile(r"\btransit\b", re.IGNORECASE),
-        re.compile(r"\befficiency\b", re.IGNORECASE),
     ),
     "fuel_cost": (
         re.compile(r"\bfuel\b", re.IGNORECASE),
         re.compile(r"\bmileage\b", re.IGNORECASE),
         re.compile(r"\boperating cost\b", re.IGNORECASE),
+        re.compile(r"\bfuel cost\b", re.IGNORECASE),
     ),
     "deadline_penalty": (
         re.compile(r"\bdeadline(?:s)?\b", re.IGNORECASE),
@@ -117,6 +122,18 @@ _ALGORITHM_PARAM_RE = re.compile(
     r"\balgorithm parameter\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+is set to\s+([^\s]+)",
     re.IGNORECASE,
 )
+# Panel→brief sync uses compact phrases ("max iterations 33") without "set to …" wording.
+_ITERATIONS_COMPACT_RE = re.compile(
+    r"\b(?:max\s+)?iterations?\s+(\d+(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+_EPOCHS_COMPACT_RE = re.compile(r"\bepochs?\s+(\d+(?:\.\d+)?)\b", re.IGNORECASE)
+_POP_SWARM_SIZE_COMPACT_RE = re.compile(
+    r"\b(?:population|swarm)\s+size\s+(\d+(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+_EPOCH_POP_MARKERS = frozenset(("epoch", "epochs", "iteration", "iterations"))
+_POP_MARKERS = frozenset(("population size", "swarm size"))
 
 
 def _brief_entries(problem_brief: dict[str, Any]) -> list[str]:
@@ -220,6 +237,7 @@ def _extract_explicit_value_for_key(entries: list[str], key: str) -> float | Non
 
 
 def _extract_numeric_setting(entries: list[str], markers: tuple[str, ...]) -> float | None:
+    marker_set = frozenset(markers)
     for text in reversed(entries):
         lowered = text.lower()
         if not any(marker in lowered for marker in markers):
@@ -227,6 +245,14 @@ def _extract_numeric_setting(entries: list[str], markers: tuple[str, ...]) -> fl
         match = _EXPLICIT_VALUE_RE.search(text)
         if match:
             return float(match.group(1))
+        if marker_set & _EPOCH_POP_MARKERS:
+            m2 = _ITERATIONS_COMPACT_RE.search(text) or _EPOCHS_COMPACT_RE.search(text)
+            if m2:
+                return float(m2.group(1))
+        if marker_set & _POP_MARKERS:
+            m2 = _POP_SWARM_SIZE_COMPACT_RE.search(text)
+            if m2:
+                return float(m2.group(1))
     return None
 
 

@@ -91,3 +91,47 @@ def test_seed_ignores_numeric_goal_summary_for_weights():
         }
     )
     assert panel is None
+
+
+def test_seed_operating_time_maps_to_travel_time_not_fuel():
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-time",
+                    "text": "Primary goal is shorter operating time across the plan.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+            ],
+        }
+    )
+    assert panel is not None
+    w = panel["problem"]["weights"]
+    assert "travel_time" in w
+    assert "fuel_cost" not in w
+
+
+def test_seed_explicit_fuel_phrase_sets_fuel_cost():
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-fuel",
+                    "text": "We also care about fuel use alongside travel time.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+            ],
+        }
+    )
+    assert panel is not None
+    w = panel["problem"]["weights"]
+    assert "fuel_cost" in w
+    assert "travel_time" in w

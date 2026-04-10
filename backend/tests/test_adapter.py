@@ -51,6 +51,15 @@ def test_parse_invalid_algo():
         parse_problem_config({"algorithm": "INVALID"})
 
 
+def test_parse_weights_generic_cost_key_not_mapped_to_fuel():
+    """Vague 'cost' must not fuzzy-match to fuel_cost (user may only care about time)."""
+    cfg = parse_problem_config({"weights": {"cost": 2.0, "travel_time": 1.0}})
+    w = cfg["weights"]
+    assert w.get("w2", 0) != 2.0
+    assert not any("interpreted" in m.lower() and "fuel" in m.lower() for m in cfg["weight_warnings"])
+    assert any("'cost'" in m and "ignored" in m.lower() for m in cfg["weight_warnings"])
+
+
 def test_parse_driver_preferences_validates_vehicle_idx():
     with pytest.raises(ValueError, match="vehicle_idx"):
         parse_problem_config(

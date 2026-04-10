@@ -43,19 +43,15 @@ _WEIGHT_VALID_WN: frozenset[str] = frozenset(WEIGHT_ALIASES.values())
 # Keyword map: common alternative phrasings → canonical alias.
 # Enables fuzzy recovery when a user (or the agent) types a close but non-exact key.
 _WEIGHT_KEYWORD_MAP: dict[str, str] = {
-    # travel_time
+    # travel_time (avoid bare "route"/"routing" — too easy to false-positive; use difflib on full keys)
     "travel":          "travel_time",
     "distance":        "travel_time",
     "transit":         "travel_time",
     "route_length":    "travel_time",
-    "routing":         "travel_time",
-    "route":           "travel_time",
-    # fuel_cost
+    # fuel_cost — only when language clearly refers to fuel/mileage/operating cost, not generic "cost"
     "fuel":            "fuel_cost",
     "mileage":         "fuel_cost",
     "operating_cost":  "fuel_cost",
-    "emission":        "fuel_cost",
-    "cost":            "fuel_cost",
     # deadline_penalty
     "deadline":        "deadline_penalty",
     "late":            "deadline_penalty",
@@ -73,14 +69,12 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "overflow":        "capacity_penalty",
     "packing":         "capacity_penalty",
     "weight_limit":    "capacity_penalty",
-    # workload_balance
+    # workload_balance (omit bare "balance"/"shift" — map to wrong objective too often)
     "fairness":        "workload_balance",
-    "balance":         "workload_balance",
     "equity":          "workload_balance",
     "workload":        "workload_balance",
     "shift_fairness":  "workload_balance",
     "shift_balance":   "workload_balance",
-    "shift":           "workload_balance",
     "equitable":       "workload_balance",
     # worker_preference
     "preference":      "worker_preference",
@@ -89,8 +83,7 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "comfort":         "worker_preference",
     "satisfaction":    "worker_preference",
     "welfare":         "worker_preference",
-    # priority_penalty
-    "priority":        "priority_penalty",
+    # priority_penalty (omit bare "priority" — matches unrelated keys)
     "urgent":          "priority_penalty",
     "express":         "priority_penalty",
     "sla":             "priority_penalty",
@@ -106,8 +99,10 @@ def _fuzzy_match_weight_key(key: str) -> str | None:
     1. Direct keyword lookup (exact).
     2. Substring containment: keyword inside key (longest keyword first to avoid
        short keywords like "load" winning over "workload").
-    3. Substring containment: key inside keyword.
-    4. Difflib close-match against canonical alias names.
+    3. Difflib close-match against canonical alias names.
+
+    (No "key inside keyword" pass: short keys like ``cost`` would wrongly match
+    ``operating_cost`` and map to ``fuel_cost``.)
     Returns the matched canonical alias name, or None if no confident match.
     """
     k = key.lower().strip()
@@ -120,13 +115,12 @@ def _fuzzy_match_weight_key(key: str) -> str | None:
     for kw, alias in sorted_keywords:
         if kw in k:
             return alias
-    for kw, alias in sorted_keywords:
-        if k in kw:
-            return alias
-    # 4. Difflib fuzzy match against canonical alias names
-    close = difflib.get_close_matches(k, list(WEIGHT_ALIASES.keys()), n=1, cutoff=0.6)
-    if close:
-        return close[0]
+    # 3. Difflib fuzzy match against canonical alias names (skip very short keys — e.g. "cost"
+    # otherwise matches "fuel_cost" and wrongly assigns fuel weight).
+    if len(k) >= 5:
+        close = difflib.get_close_matches(k, list(WEIGHT_ALIASES.keys()), n=1, cutoff=0.6)
+        if close:
+            return close[0]
     return None
 
 
