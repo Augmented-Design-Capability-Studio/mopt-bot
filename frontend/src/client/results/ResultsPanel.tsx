@@ -220,7 +220,7 @@ export function ResultsPanel({
                   className={`tab ${vizTab === "schedule" ? "active" : ""}`}
                   onClick={() => setVizTab("schedule")}
                 >
-                  Schedule
+                  Main Visualization
                 </button>
                 <button
                   type="button"
