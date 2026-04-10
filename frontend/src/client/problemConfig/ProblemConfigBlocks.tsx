@@ -1,22 +1,14 @@
-import { Fragment, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import {
-  ALLOWED_ALGORITHM_PARAMS,
-  ALGORITHM_PARAM_FIELD_META,
-  defaultParamsForAlgorithm,
-} from "./algorithmCatalog";
-import {
-  ALGORITHM_DESC,
-  PREFERENCE_CONDITIONS,
-  SHIFT_HARD_PENALTY_INFO,
-  WEIGHT_DISPLAY_ORDER,
-  WEIGHT_INFO,
-  WORKER_NAMES,
-} from "./metadata";
-import { BlockSection, FieldRow } from "./layout";
+import { defaultParamsForAlgorithm } from "./algorithmCatalog";
+import { BlockSection } from "./layout";
 import { parseProblemConfig, serializeProblemConfig } from "./serialization";
 import type { DriverPref, ProblemBlock } from "./types";
+import { useProblemConfigDiffMarkers } from "./useProblemConfigDiffMarkers";
 import { useLockedEditFocus } from "../lib/useLockedEditFocus";
+import { GoalTermsSection, type RemovedGoalTermEntry } from "./GoalTermsSection";
+import { SearchStrategySection } from "./SearchStrategySection";
+import type { ActivateHint } from "./controls";
 
 /**
  * Renders the solver configuration as structured natural-language blocks with
@@ -30,185 +22,6 @@ export type ProblemConfigBlocksProps = {
   onInteractionStart?: () => void;
 };
 
-function workerOptionLabel(vehicleIdx: number): string {
-  const name = WORKER_NAMES[vehicleIdx];
-  return `${vehicleIdx}: ${name}`;
-}
-
-function preferenceConditionLabel(value: string): string {
-  return PREFERENCE_CONDITIONS.find((o) => o.value === value)?.label ?? value;
-}
-
-/** Locked: button mimic (same as Definition read-only). Edit: real number input. */
-function ConfigNumberInput({
-  editable,
-  value,
-  onChange,
-  style,
-  min,
-  max,
-  step,
-}: {
-  editable: boolean;
-  value: number;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  style?: CSSProperties;
-  min?: number;
-  max?: number;
-  step?: number;
-}) {
-  if (!editable) {
-    const label = Number.isNaN(value) ? "—" : String(value);
-    return (
-      <button type="button" className="problem-config-field-mimic" title="Edit..." style={style}>
-        {label}
-      </button>
-    );
-  }
-  return (
-    <input
-      type="number"
-      className="problem-config-input"
-      min={min}
-      max={max}
-      step={step}
-      value={Number.isNaN(value) ? "" : value}
-      onChange={onChange}
-      style={style}
-    />
-  );
-}
-
-/** Select elements cannot be read-only; when locked, show a button that matches input fields. */
-function ConfigSelect({
-  editable,
-  value,
-  onChange,
-  displayLabel,
-  style,
-  children,
-}: {
-  editable: boolean;
-  value: string | number;
-  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-  displayLabel: string;
-  style?: CSSProperties;
-  children: ReactNode;
-}) {
-  if (!editable) {
-    return (
-      <button
-        type="button"
-        className="problem-config-field-mimic problem-config-field-mimic--select"
-        title="Edit..."
-        style={style}
-      >
-        {displayLabel}
-      </button>
-    );
-  }
-  return (
-    <select className="problem-config-select" value={value} onChange={onChange} style={style}>
-      {children}
-    </select>
-  );
-}
-
-/** Same row chrome as weight terms (bold title, muted description, value + caption). */
-function GoalTermRow({
-  label,
-  description,
-  editable,
-  value,
-  min,
-  max,
-  step,
-  valueCaption,
-  onChange,
-  inputStyle,
-}: {
-  label: string;
-  description?: string;
-  editable: boolean;
-  value: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  valueCaption: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  inputStyle?: CSSProperties;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "0.6rem",
-        padding: "0.4rem 0",
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{label}</div>
-        {description ? (
-          <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
-            {description}
-          </div>
-        ) : null}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
-        <ConfigNumberInput
-          editable={editable}
-          value={value}
-          min={min}
-          max={max}
-          step={step}
-          onChange={onChange}
-          style={{
-            width: "5.5rem",
-            textAlign: "right",
-            fontFamily: "monospace",
-            ...inputStyle,
-          }}
-        />
-        <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>
-          {valueCaption}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function WeightRow({
-  wkey,
-  problem,
-  editable,
-  updateProblem,
-}: {
-  wkey: string;
-  problem: ProblemBlock;
-  editable: boolean;
-  updateProblem: (patch: Partial<ProblemBlock>) => void;
-}) {
-  const info = WEIGHT_INFO[wkey];
-  return (
-    <GoalTermRow
-      label={info?.label ?? wkey}
-      description={info?.description}
-      editable={editable}
-      value={problem.weights[wkey] ?? 0}
-      min={0}
-      step={0.5}
-      valueCaption="weight"
-      onChange={(e) => {
-        const value = parseFloat(e.target.value);
-        updateProblem({
-          weights: { ...problem.weights, [wkey]: Number.isNaN(value) ? 0 : value },
-        });
-      }}
-    />
-  );
-}
 
 export function ProblemConfigBlocks({ configJson, onChange, editable, onInteractionStart }: ProblemConfigBlocksProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -218,14 +31,21 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
     focusSelector: ".problem-config-input, .problem-config-select",
   });
   const { outerRaw, hasProblemKey, problem } = parseProblemConfig(configJson);
+  const { markerKindFor } = useProblemConfigDiffMarkers(problem, editable);
+  const [removedGoalTerms, setRemovedGoalTerms] = useState<RemovedGoalTermEntry[]>([]);
+  useEffect(() => {
+    if (editable) return;
+    setRemovedGoalTerms([]);
+  }, [editable]);
 
   const hasWorkerWeight = "worker_preference" in problem.weights;
   const showWorkerBlock = hasWorkerWeight || problem.driver_preferences.length > 0;
 
-  const displayWeightKeys = WEIGHT_DISPLAY_ORDER.filter((k) => {
-    if (k === "worker_preference") return showWorkerBlock;
-    return k in problem.weights;
-  });
+  const displayWeightKeys = (() => {
+    const keys = Object.keys(problem.weights);
+    if (showWorkerBlock && !keys.includes("worker_preference")) keys.push("worker_preference");
+    return keys;
+  })();
 
   const hasSearch =
     problem.algorithm !== "" ||
@@ -236,7 +56,6 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
     problem.early_stop_epsilon !== null;
   const hasHardStructural =
     Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
-
   const hasSomething = displayWeightKeys.length > 0 || hasSearch || hasHardStructural;
 
   if (!hasSomething) {
@@ -262,6 +81,45 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
     onChange(serializeProblemConfig(outerRaw, hasProblemKey, nextProblem));
   }
 
+  function ensureEditing(event?: ActivateHint) {
+    if (editable) return;
+    markLockedInteraction(event?.focusSelector ?? ".problem-config-input, .problem-config-select", event?.caretIndex);
+    onInteractionStart?.();
+  }
+
+  function runEditingAction(action: () => void, event?: ActivateHint) {
+    if (!editable) ensureEditing(event);
+    action();
+  }
+
+  function rememberRemovedGoalTerm(entry: { key: string; value: number; locked: boolean; type: "weight" | "shift" }) {
+    setRemovedGoalTerms((current) => {
+      if (current.some((row) => row.key === entry.key)) return current;
+      return [...current, entry];
+    });
+  }
+
+  function restoreRemovedGoalTerm(key: string) {
+    const removed = removedGoalTerms.find((entry) => entry.key === key);
+    if (!removed) return;
+    if (removed.type === "weight") {
+      updateProblem({
+        weights: { ...problem.weights, [removed.key]: removed.value },
+        locked_goal_terms: removed.locked
+          ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
+          : problem.locked_goal_terms,
+      });
+    } else {
+      updateProblem({
+        shift_hard_penalty: removed.value,
+        locked_goal_terms: removed.locked
+          ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
+          : problem.locked_goal_terms,
+      });
+    }
+    setRemovedGoalTerms((current) => current.filter((entry) => entry.key !== key));
+  }
+
   function updatePreferenceAt(index: number, pref: DriverPref) {
     const next = [...problem.driver_preferences];
     next[index] = pref;
@@ -281,7 +139,7 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
       weights: w,
       driver_preferences: [
         ...problem.driver_preferences,
-        { vehicle_idx: 0, condition: "zone_d", penalty: 1 },
+        { vehicle_idx: 0, condition: "avoid_zone", penalty: 1, zone: 4 },
       ],
     });
   }
@@ -309,417 +167,38 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
       ref={rootRef}
       className={`problem-config-blocks${editable ? "" : " problem-config-blocks--readonly"}`}
       style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
-      onPointerDownCapture={() => {
-        if (!editable) {
-          markLockedInteraction();
-          onInteractionStart?.();
-        }
-      }}
     >
       <BlockSection title="Goal terms">
-        {displayWeightKeys.map((key) =>
-          key === "worker_preference" ? (
-            <Fragment key={key}>
-              <WeightRow wkey={key} problem={problem} editable={editable} updateProblem={updateProblem} />
-              <details style={{ margin: "0.15rem 0 0", padding: "0.25rem 0" }} className="driver-pref-details">
-                <summary
-                  style={{
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    fontSize: "0.82rem",
-                    userSelect: "none",
-                  }}
-                >
-                  Preference rules
-                </summary>
-                <div style={{ marginTop: "0.4rem" }}>
-                  {problem.driver_preferences.map((pref, index) => (
-                    <div
-                      key={index}
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "0.35rem",
-                        alignItems: "center",
-                        padding: "0.35rem 0",
-                        borderBottom: "1px solid var(--border)",
-                      }}
-                    >
-                      <ConfigSelect
-                        editable={editable}
-                        value={pref.vehicle_idx}
-                        displayLabel={workerOptionLabel(pref.vehicle_idx)}
-                        onChange={(e) =>
-                          updatePreferenceAt(index, { ...pref, vehicle_idx: parseInt(e.target.value, 10) })
-                        }
-                        style={{ fontSize: "0.8rem" }}
-                      >
-                        {WORKER_NAMES.map((name, vi) => (
-                          <option key={name} value={vi}>
-                            {vi}: {name}
-                          </option>
-                        ))}
-                      </ConfigSelect>
-                      <ConfigSelect
-                        editable={editable}
-                        value={pref.condition}
-                        displayLabel={preferenceConditionLabel(pref.condition)}
-                        onChange={(e) => updatePreferenceAt(index, { ...pref, condition: e.target.value })}
-                        style={{ fontSize: "0.8rem", maxWidth: "12rem" }}
-                      >
-                        {PREFERENCE_CONDITIONS.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </ConfigSelect>
-                      <label className="muted" style={{ fontSize: "0.75rem" }}>
-                        penalty
-                        <ConfigNumberInput
-                          editable={editable}
-                          value={pref.penalty}
-                          min={0}
-                          step={0.5}
-                          onChange={(e) => {
-                            const value = parseFloat(e.target.value);
-                            updatePreferenceAt(index, { ...pref, penalty: Number.isNaN(value) ? 0 : value });
-                          }}
-                          style={{ width: "4rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
-                        />
-                      </label>
-                      {(pref.condition === "avoid_zone" || pref.condition === "zone_d") && (
-                        <label className="muted" style={{ fontSize: "0.75rem" }}>
-                          zone 1–5
-                          <ConfigNumberInput
-                            editable={editable}
-                            value={pref.zone ?? 4}
-                            min={1}
-                            max={5}
-                            onChange={(e) =>
-                              updatePreferenceAt(index, { ...pref, zone: parseInt(e.target.value, 10) })
-                            }
-                            style={{ width: "3rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
-                          />
-                        </label>
-                      )}
-                      {(pref.condition === "order_priority" || pref.condition === "express_order") && (
-                        <ConfigSelect
-                          editable={editable}
-                          value={pref.order_priority ?? "express"}
-                          displayLabel={pref.order_priority ?? "express"}
-                          onChange={(e) => updatePreferenceAt(index, { ...pref, order_priority: e.target.value })}
-                          style={{ fontSize: "0.8rem" }}
-                        >
-                          <option value="express">express</option>
-                          <option value="standard">standard</option>
-                        </ConfigSelect>
-                      )}
-                      {(pref.condition === "shift_over_limit" || pref.condition === "shift_over_hours") && (
-                        <label className="muted" style={{ fontSize: "0.75rem" }}>
-                          limit (min)
-                          <ConfigNumberInput
-                            editable={editable}
-                            value={pref.limit_minutes ?? (pref.hours != null ? pref.hours * 60 : 390)}
-                            min={1}
-                            onChange={(e) => {
-                              const v = parseFloat(e.target.value);
-                              updatePreferenceAt(index, {
-                                ...pref,
-                                limit_minutes: Number.isNaN(v) ? 390 : v,
-                                hours: undefined,
-                              });
-                            }}
-                            style={{ width: "4.5rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
-                          />
-                        </label>
-                      )}
-                      {editable && (
-                        <button
-                          type="button"
-                          className="muted"
-                          style={{ fontSize: "0.75rem" }}
-                          onClick={() => removePreference(index)}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  {editable && (
-                    <button type="button" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }} onClick={addPreference}>
-                      + Add preference rule
-                    </button>
-                  )}
-                </div>
-              </details>
-            </Fragment>
-          ) : (
-            <WeightRow key={key} wkey={key} problem={problem} editable={editable} updateProblem={updateProblem} />
-          ),
-        )}
-
-        {hasHardStructural && (
-          <>
-            {problem.shift_hard_penalty !== null && (
-              <GoalTermRow
-                label={SHIFT_HARD_PENALTY_INFO.label}
-                description={SHIFT_HARD_PENALTY_INFO.description}
-                editable={editable}
-                value={problem.shift_hard_penalty}
-                min={0}
-                step={100}
-                valueCaption="penalty"
-                onChange={(e) => {
-                  const value = parseFloat(e.target.value);
-                  updateProblem({
-                    shift_hard_penalty: Number.isNaN(value) ? 0 : value,
-                  });
-                }}
-              />
-            )}
-
-            {Object.keys(problem.locked_assignments).length > 0 && (
-              <FieldRow label="Fixed task → worker assignments">
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                  {Object.entries(problem.locked_assignments).map(([taskKey, workerIdx]) => (
-                    <div key={taskKey} style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
-                      <span className="muted" style={{ fontSize: "0.8rem" }}>
-                        Task #{taskKey} →
-                      </span>
-                      <ConfigSelect
-                        editable={editable}
-                        value={workerIdx}
-                        displayLabel={workerOptionLabel(workerIdx)}
-                        onChange={(e) => updateLocked(taskKey, parseInt(e.target.value, 10))}
-                        style={{ fontSize: "0.8rem" }}
-                      >
-                        {WORKER_NAMES.map((name, vi) => (
-                          <option key={name} value={vi}>
-                            {vi}: {name}
-                          </option>
-                        ))}
-                      </ConfigSelect>
-                      {editable && (
-                        <button
-                          type="button"
-                          className="muted"
-                          style={{ fontSize: "0.75rem" }}
-                          onClick={() => updateLocked(taskKey, "")}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </FieldRow>
-            )}
-            {editable && showWorkerBlock && Object.keys(problem.locked_assignments).length < 30 && (
-              <button type="button" style={{ fontSize: "0.8rem" }} onClick={addLockedRow}>
-                + Add locked assignment
-              </button>
-            )}
-          </>
-        )}
+        <GoalTermsSection
+          problem={problem}
+          editable={editable}
+          showWorkerBlock={showWorkerBlock}
+          displayWeightKeys={displayWeightKeys}
+          removedGoalTerms={removedGoalTerms}
+          markerKindFor={markerKindFor}
+          updateProblem={updateProblem}
+          runEditingAction={runEditingAction}
+          ensureEditing={ensureEditing}
+          rememberRemovedGoalTerm={rememberRemovedGoalTerm}
+          restoreRemovedGoalTerm={restoreRemovedGoalTerm}
+          updatePreferenceAt={updatePreferenceAt}
+          removePreference={removePreference}
+          addPreference={addPreference}
+          updateLocked={updateLocked}
+          addLockedRow={addLockedRow}
+        />
       </BlockSection>
 
       {hasSearch ? (
         <BlockSection title="Search strategy">
-            {problem.algorithm && (
-              <FieldRow label="Algorithm">
-                <ConfigSelect
-                  editable={editable}
-                  value={problem.algorithm}
-                  displayLabel={problem.algorithm}
-                  onChange={(e) => {
-                    const nextAlgo = e.target.value;
-                    updateProblem({
-                      algorithm: nextAlgo,
-                      algorithm_params: defaultParamsForAlgorithm(nextAlgo),
-                    });
-                  }}
-                  style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
-                >
-                  {["GA", "PSO", "SA", "SwarmSA", "ACOR"].map((algorithm) => (
-                    <option key={algorithm} value={algorithm}>
-                      {algorithm}
-                    </option>
-                  ))}
-                </ConfigSelect>
-                {ALGORITHM_DESC[problem.algorithm] && (
-                  <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
-                    {ALGORITHM_DESC[problem.algorithm]}
-                  </div>
-                )}
-              </FieldRow>
-            )}
-
-            {problem.algorithm &&
-              (ALLOWED_ALGORITHM_PARAMS[problem.algorithm] ?? []).map((paramKey) => {
-                const meta = ALGORITHM_PARAM_FIELD_META[problem.algorithm]?.[paramKey];
-                const value = problem.algorithm_params[paramKey];
-                const safe =
-                  typeof value === "number" && Number.isFinite(value) ? value : (meta?.min ?? 0);
-                return (
-                  <FieldRow key={paramKey} label={meta?.label ?? paramKey}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                      <ConfigNumberInput
-                        editable={editable}
-                        value={safe}
-                        min={meta?.min}
-                        max={meta?.max}
-                        step={meta?.step ?? 0.01}
-                        onChange={(e) => {
-                          const n = parseFloat(e.target.value);
-                          const nextVal = Number.isNaN(n) ? safe : n;
-                          updateProblem({
-                            algorithm_params: {
-                              ...problem.algorithm_params,
-                              [paramKey]: nextVal,
-                            },
-                          });
-                        }}
-                        style={{ width: "7rem", fontFamily: "monospace", fontSize: "0.85rem" }}
-                      />
-                      {meta?.description ? (
-                        <span className="muted" style={{ fontSize: "0.72rem" }}>
-                          {meta.description}
-                        </span>
-                      ) : null}
-                    </div>
-                  </FieldRow>
-                );
-              })}
-
-            {problem.epochs !== null && (
-              <FieldRow label="Max iterations">
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <ConfigNumberInput
-                      editable={editable}
-                      value={problem.epochs}
-                      min={1}
-                      max={50000}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value);
-                        updateProblem({ epochs: Number.isNaN(value) ? 1 : Math.max(1, value) });
-                      }}
-                      style={{ width: "6rem", fontFamily: "monospace" }}
-                    />
-                    <span className="muted" style={{ fontSize: "0.75rem" }}>
-                      {problem.epochs < 100 ? "quick (may not fully converge)" : problem.epochs < 500 ? "moderate" : "thorough"}
-                    </span>
-                  </div>
-                  {problem.early_stop && (
-                    <span className="muted" style={{ fontSize: "0.72rem" }}>
-                      Ceiling only — search may stop earlier if the best score stops improving.
-                    </span>
-                  )}
-                </div>
-              </FieldRow>
-            )}
-
-            {(problem.algorithm || problem.epochs !== null) && (
-              <FieldRow label="Stop early on plateau">
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <ConfigSelect
-                    editable={editable}
-                    value={problem.early_stop ? "1" : "0"}
-                    displayLabel={problem.early_stop ? "Yes" : "No (run all iterations)"}
-                    onChange={(e) => updateProblem({ early_stop: e.target.value === "1" })}
-                    style={{ fontFamily: "monospace", fontSize: "0.85rem", maxWidth: "16rem" }}
-                  >
-                    <option value="1">Yes</option>
-                    <option value="0">No (run all iterations)</option>
-                  </ConfigSelect>
-                  {problem.early_stop && (
-                    <span className="muted" style={{ fontSize: "0.72rem" }}>
-                      Ends when the best cost barely changes for several epochs in a row (defaults apply if fields below are empty).
-                    </span>
-                  )}
-                </div>
-              </FieldRow>
-            )}
-
-            {problem.early_stop && (problem.algorithm || problem.epochs !== null) && (
-              <>
-                <FieldRow label="Plateau patience (epochs)">
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <ConfigNumberInput
-                      editable={editable}
-                      value={problem.early_stop_patience ?? NaN}
-                      min={1}
-                      max={5000}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value, 10);
-                        updateProblem({
-                          early_stop_patience: Number.isNaN(value) ? null : Math.max(1, Math.min(5000, value)),
-                        });
-                      }}
-                      style={{ width: "6rem", fontFamily: "monospace" }}
-                    />
-                    <span className="muted" style={{ fontSize: "0.75rem" }}>
-                      default 20
-                    </span>
-                  </div>
-                </FieldRow>
-                <FieldRow label="Min score improvement">
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <ConfigNumberInput
-                      editable={editable}
-                      value={problem.early_stop_epsilon ?? NaN}
-                      min={0}
-                      step={0.0001}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value);
-                        updateProblem({
-                          early_stop_epsilon: Number.isNaN(value) || value <= 0 ? null : value,
-                        });
-                      }}
-                      style={{ width: "8rem", fontFamily: "monospace" }}
-                    />
-                    <span className="muted" style={{ fontSize: "0.75rem" }}>
-                      default 1e-4
-                    </span>
-                  </div>
-                </FieldRow>
-              </>
-            )}
-
-            {problem.pop_size !== null && (
-              <FieldRow label="Population / swarm size">
-                <ConfigNumberInput
-                  editable={editable}
-                  value={problem.pop_size}
-                  min={2}
-                  max={500}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value);
-                    updateProblem({ pop_size: Number.isNaN(value) ? 2 : Math.max(2, value) });
-                  }}
-                  style={{ width: "6rem", fontFamily: "monospace" }}
-                />
-              </FieldRow>
-            )}
-
-            {problem.random_seed !== null && (
-              <FieldRow label="Random seed">
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <ConfigNumberInput
-                    editable={editable}
-                    value={problem.random_seed}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value);
-                      updateProblem({ random_seed: Number.isNaN(value) ? 0 : value });
-                    }}
-                    style={{ width: "6rem", fontFamily: "monospace" }}
-                  />
-                  <span className="muted" style={{ fontSize: "0.75rem" }}>
-                    fix to reproduce results
-                  </span>
-                </div>
-              </FieldRow>
-            )}
+          <SearchStrategySection
+            problem={problem}
+            editable={editable}
+            markerKindFor={markerKindFor}
+            updateProblem={updateProblem}
+            runEditingAction={runEditingAction}
+            ensureEditing={ensureEditing}
+          />
         </BlockSection>
       ) : null}
     </div>

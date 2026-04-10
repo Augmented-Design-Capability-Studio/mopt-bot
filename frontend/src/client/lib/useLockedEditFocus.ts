@@ -34,9 +34,16 @@ export function useLockedEditFocus({ rootRef, editable, focusSelector }: UseLock
     const scrollContainer = root.closest(".config-panel-scroll") as HTMLElement | null;
     const savedScrollTop = scrollTopBeforeEditRef.current;
     const preferredSelector = preferredFocusSelectorRef.current;
-    const firstEditable = preferredSelector
-      ? root.querySelector<HTMLElement>(preferredSelector) ?? root.querySelector<HTMLElement>(focusSelector)
-      : root.querySelector<HTMLElement>(focusSelector);
+    const safeQuery = (selector: string): HTMLElement | null => {
+      try {
+        return root.querySelector<HTMLElement>(selector);
+      } catch {
+        return null;
+      }
+    };
+    // If a specific control was clicked, focus only that control after edit mode opens.
+    // Do not fall back to the first field, which can feel like "focus jumping".
+    const firstEditable = preferredSelector ? safeQuery(preferredSelector) : safeQuery(focusSelector);
     if (firstEditable) {
       firstEditable.focus({ preventScroll: true });
       const caretIndex = preferredCaretIndexRef.current;
@@ -44,9 +51,19 @@ export function useLockedEditFocus({ rootRef, editable, focusSelector }: UseLock
         caretIndex != null &&
         (firstEditable instanceof HTMLInputElement || firstEditable instanceof HTMLTextAreaElement)
       ) {
+        // setSelectionRange throws for unsupported input types (e.g., number).
+        // Keep focus behavior robust and never crash the page on click.
         const valueLen = firstEditable.value.length;
         const safeIndex = Math.max(0, Math.min(valueLen, caretIndex));
-        firstEditable.setSelectionRange(safeIndex, safeIndex);
+        try {
+          if (firstEditable instanceof HTMLTextAreaElement) {
+            firstEditable.setSelectionRange(safeIndex, safeIndex);
+          } else if (firstEditable.type !== "number") {
+            firstEditable.setSelectionRange(safeIndex, safeIndex);
+          }
+        } catch {
+          // Ignore caret placement failures; focus alone is sufficient.
+        }
       }
     }
     if (scrollContainer && savedScrollTop != null) {

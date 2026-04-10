@@ -517,6 +517,8 @@ def _problem_brief_item_slot(item: dict[str, Any]) -> str | None:
 
 
 def _slot_from_item_id(item_id: str) -> str | None:
+    if item_id == "config-search-strategy":
+        return "search_strategy"
     if item_id == "config-algorithm":
         return "algorithm"
     if item_id == "config-epochs":
@@ -536,6 +538,8 @@ def _slot_from_item_id(item_id: str) -> str | None:
 
 def _slot_from_text(text: str) -> str | None:
     lowered = text.lower()
+    if lowered.startswith("search strategy:"):
+        return "search_strategy"
     algorithm_param_match = _ALGORITHM_PARAM_RE.search(text)
     if algorithm_param_match:
         return f"algorithm_param:{algorithm_param_match.group(1)}"
@@ -589,16 +593,8 @@ def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     algorithm = str(problem.get("algorithm") or "").strip()
-    if algorithm:
-        items.append(_config_item("config-algorithm", f"Solver algorithm is {algorithm}."))
-
     epochs = problem.get("epochs")
-    if isinstance(epochs, (int, float)) and not isinstance(epochs, bool):
-        items.append(_config_item("config-epochs", f"Search epochs are set to {epochs}."))
-
     pop_size = problem.get("pop_size")
-    if isinstance(pop_size, (int, float)) and not isinstance(pop_size, bool):
-        items.append(_config_item("config-pop-size", f"Population size is set to {pop_size}."))
 
     if "only_active_terms" in problem and isinstance(problem.get("only_active_terms"), bool):
         items.append(
@@ -637,6 +633,11 @@ def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
     algorithm_params = problem.get("algorithm_params")
     algo_key = canonical_algorithm_stored(algorithm) if algorithm else None
     allowed_ap = allowed_param_keys(algo_key) if algo_key else frozenset()
+    strategy_details: list[str] = []
+    if isinstance(epochs, (int, float)) and not isinstance(epochs, bool):
+        strategy_details.append(f"max iterations {epochs}")
+    if isinstance(pop_size, (int, float)) and not isinstance(pop_size, bool):
+        strategy_details.append(f"population size {pop_size}")
     if isinstance(algorithm_params, dict) and allowed_ap:
         for key in sorted(algorithm_params):
             if key not in allowed_ap:
@@ -652,11 +653,13 @@ def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
                 rendered = value.strip()
             else:
                 continue
-            items.append(
-                _config_item(
-                    f"config-algorithm-param-{key}",
-                    f"Algorithm parameter {key} is set to {rendered}.",
-                )
+            strategy_details.append(f"{key}={rendered}")
+    if algorithm and strategy_details:
+        items.append(
+            _config_item(
+                "config-search-strategy",
+                f"Search strategy: {algorithm} ({', '.join(strategy_details)}).",
             )
+        )
 
     return items

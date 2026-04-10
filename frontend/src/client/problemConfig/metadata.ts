@@ -66,7 +66,7 @@ const ALGORITHM_DESC: Record<string, string> = {
 
 const CONDITION_LABEL: Record<string, string> = {
   zone_d: "avoid zone D (Westgate) stops",
-  avoid_zone: "avoid a delivery zone (set zone 1–5)",
+  avoid_zone: "avoid a delivery zone (set zone A–E)",
   express_order: "avoid express / priority orders",
   order_priority: "avoid a priority class (express or standard)",
   shift_over_hours: "soft limit on shift length",
@@ -78,7 +78,7 @@ const WORKER_NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve"] as const;
 
 const PREFERENCE_CONDITIONS = [
   { value: "zone_d", label: "Avoid zone D (legacy)" },
-  { value: "avoid_zone", label: "Avoid zone (specify 1–5)" },
+  { value: "avoid_zone", label: "Avoid zone (specify A–E)" },
   { value: "express_order", label: "Avoid express orders (legacy)" },
   { value: "order_priority", label: "Avoid order priority class" },
   { value: "shift_over_hours", label: "Soft shift length (legacy hours)" },

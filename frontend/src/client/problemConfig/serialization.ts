@@ -37,6 +37,9 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
     hasProblemKey,
     problem: {
       weights,
+      locked_goal_terms: Array.isArray(inner.locked_goal_terms)
+        ? inner.locked_goal_terms.filter((entry): entry is string => typeof entry === "string")
+        : [],
       only_active_terms: typeof inner.only_active_terms === "boolean" ? inner.only_active_terms : true,
       algorithm: algorithmStr,
       algorithm_params: parseAlgorithmParamsFromInner(inner, algorithmStr),
@@ -69,9 +72,11 @@ export function serializeProblemConfig(
   const problemObject: Record<string, unknown> = { ...base };
 
   problemObject.weights = problem.weights;
+  problemObject.locked_goal_terms = problem.locked_goal_terms;
   problemObject.only_active_terms = problem.only_active_terms;
   if (problem.algorithm) problemObject.algorithm = problem.algorithm;
   if (problem.epochs !== null) problemObject.epochs = problem.epochs;
+  else delete problemObject.epochs;
   if (!problem.early_stop) {
     problemObject.early_stop = false;
     delete problemObject.early_stop_patience;
@@ -84,8 +89,11 @@ export function serializeProblemConfig(
     else delete problemObject.early_stop_epsilon;
   }
   if (problem.pop_size !== null) problemObject.pop_size = problem.pop_size;
+  else delete problemObject.pop_size;
   if (problem.random_seed !== null) problemObject.random_seed = problem.random_seed;
+  else delete problemObject.random_seed;
   if (problem.shift_hard_penalty !== null) problemObject.shift_hard_penalty = problem.shift_hard_penalty;
+  else delete problemObject.shift_hard_penalty;
 
   problemObject.driver_preferences = problem.driver_preferences;
   problemObject.locked_assignments = problem.locked_assignments;

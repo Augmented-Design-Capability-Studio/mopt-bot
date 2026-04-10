@@ -12,6 +12,8 @@ export type DriverPref = {
 
 export type ProblemBlock = {
   weights: Record<string, number>;
+  /** Goal-term keys locked against chat/definition-driven backend sync changes. */
+  locked_goal_terms: string[];
   only_active_terms: boolean;
   algorithm: string;
   /** Current algorithm’s hyperparameters (defaults merged from JSON). */

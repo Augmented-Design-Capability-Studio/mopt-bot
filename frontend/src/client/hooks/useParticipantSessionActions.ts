@@ -309,12 +309,12 @@ export function useParticipantSessionActions({
         }),
       });
       setSession(nextSession);
+      setEditMode("none");
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
-      setEditMode("none");
       if (invokeModel) {
-        await postContextMessage(
+        void postContextMessage(
           `I just manually updated the problem configuration. Changed fields: ${changedKeys}. Please acknowledge the change and briefly explain the expected impact on the solver.`,
           true,
           { skipHiddenBriefUpdate: true },
@@ -363,15 +363,15 @@ export function useParticipantSessionActions({
         }),
       });
       setSession(nextSession);
+      setEditMode("none");
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
-      setEditMode("none");
       if (invokeModel) {
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()
           : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
-        await postContextMessage(chatMessage, true, {
+        void postContextMessage(chatMessage, true, {
           skipHiddenBriefUpdate: !options?.chatNote?.trim(),
         });
       }

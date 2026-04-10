@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 
 import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
 
@@ -31,6 +31,9 @@ type DefinitionSectionProps = {
   deletedMarkerIndex: number | null;
   onTextareaInput: (e: FormEvent<HTMLTextAreaElement>) => void;
   rowExtraClassName?: (item: ProblemBriefItem) => string;
+  rowMarkerKind?: (item: ProblemBriefItem) => "new" | "upd" | null;
+  removedItems?: Array<{ id: string; text: string; index: number }>;
+  onRestoreItem?: (id: string) => void;
 };
 
 function makeId(prefix: string): string {
@@ -75,6 +78,9 @@ function DefinitionSection({
   deletedMarkerIndex,
   onTextareaInput,
   rowExtraClassName,
+  rowMarkerKind,
+  removedItems = [],
+  onRestoreItem,
 }: DefinitionSectionProps) {
   const locked = sessionTerminated || !editable;
 
@@ -112,6 +118,15 @@ function DefinitionSection({
             >
                 <div className="definition-item-meta">
                   <span className="definition-source mono">{item.source}</span>
+                  {rowMarkerKind?.(item) ? (
+                    <span
+                      className={`entry-diff-marker ${rowMarkerKind(item) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
+                      title={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
+                      aria-label={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
+                    >
+                      {rowMarkerKind(item) === "new" ? "+" : "Δ"}
+                    </span>
+                  ) : null}
                   {!sessionTerminated ? (
                     <button
                       type="button"
@@ -160,6 +175,46 @@ function DefinitionSection({
           <div className="definition-delete-marker" aria-hidden="true" />
         ) : null}
         {items.length === 0 ? <div className="muted definition-empty">Nothing here yet.</div> : null}
+        {removedItems.map((removed) => (
+          <div
+            key={`removed-${removed.id}`}
+            className="definition-item definition-item-removed"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              onEnsureDefinitionEditing();
+              onRestoreItem?.(removed.id);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              onEnsureDefinitionEditing();
+              onRestoreItem?.(removed.id);
+            }}
+          >
+            <div className="definition-item-meta">
+              <span className="entry-diff-marker entry-diff-marker--removed">-</span>
+              <span className="muted">Removed entry</span>
+              {!sessionTerminated ? (
+                <button
+                  type="button"
+                  className="definition-icon-btn definition-restore-btn"
+                  aria-label="Restore row"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEnsureDefinitionEditing();
+                    onRestoreItem?.(removed.id);
+                  }}
+                >
+                  R
+                </button>
+              ) : null}
+            </div>
+            <div className="muted" style={{ fontSize: "0.78rem" }}>
+              {removed.text || "(empty)"}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -180,6 +235,16 @@ export function DefinitionPanel({
     section: "gathered" | "assumption" | "open";
     index: number;
   } | null>(null);
+  const [removedItems, setRemovedItems] = useState<
+    Record<"gathered" | "assumption", Array<{ id: string; item: ProblemBriefItem; index: number }>>
+  >({
+    gathered: [],
+    assumption: [],
+  });
+  useEffect(() => {
+    if (editable) return;
+    setRemovedItems({ gathered: [], assumption: [] });
+  }, [editable]);
   const { markLockedInteraction } = useLockedEditFocus({
     rootRef,
     editable,
@@ -202,7 +267,7 @@ export function DefinitionPanel({
     }, 1650);
   }, []);
 
-  const { flashClassForItem, flashClassForQuestion } = useDefinitionExternalFlash(
+  const { flashClassForItem, flashClassForQuestion, markerKindForItem, markerKindForQuestion } = useDefinitionExternalFlash(
     problemBrief,
     editable,
     showDeletedMarker,
@@ -225,8 +290,47 @@ export function DefinitionPanel({
     const item = problemBrief.items.find((row) => row.id === id);
     if (item && index >= 0) {
       showDeletedMarker(item.kind === "assumption" ? "assumption" : "gathered", index);
+      if (item.kind === "gathered" || item.kind === "assumption") {
+        const bucket: "gathered" | "assumption" = item.kind;
+        setRemovedItems((current) => {
+          if (current[bucket].some((entry) => entry.id === item.id)) return current;
+          return {
+            ...current,
+            [bucket]: [...current[bucket], { id: item.id, item: { ...item }, index }],
+          };
+        });
+      }
     }
     persist(updateItems(problemBrief, (items) => items.filter((item) => item.id !== id)));
+  }
+
+  function restoreRemovedItem(kind: "gathered" | "assumption", id: string) {
+    const removed = removedItems[kind].find((entry) => entry.id === id);
+    if (!removed) return;
+    persist(
+      updateItems(problemBrief, (items) => {
+        const sameKindCount = items.filter((item) => item.kind === kind).length;
+        const targetSameKindIndex = Math.max(0, Math.min(sameKindCount, removed.index));
+        let seen = 0;
+        let insertAt = items.length;
+        for (let i = 0; i < items.length; i += 1) {
+          const row = items[i];
+          if (row?.kind !== kind) continue;
+          if (seen === targetSameKindIndex) {
+            insertAt = i;
+            break;
+          }
+          seen += 1;
+        }
+        const next = [...items];
+        next.splice(insertAt, 0, { ...removed.item });
+        return next;
+      }),
+    );
+    setRemovedItems((current) => ({
+      ...current,
+      [kind]: current[kind].filter((entry) => entry.id !== id),
+    }));
   }
 
   function addItem(kind: "gathered" | "assumption") {
@@ -372,6 +476,13 @@ export function DefinitionPanel({
         deletedMarkerIndex={deletedMarker?.section === "gathered" ? deletedMarker.index : null}
         onTextareaInput={autoGrowTextarea}
         rowExtraClassName={(item) => flashClassForItem(item.id)}
+        rowMarkerKind={(item) => markerKindForItem(item.id)}
+        removedItems={removedItems.gathered.map((entry) => ({
+          id: entry.id,
+          text: entry.item.text,
+          index: entry.index,
+        }))}
+        onRestoreItem={(id) => restoreRemovedItem("gathered", id)}
       />
 
       {showAssumptions ? (
@@ -388,6 +499,13 @@ export function DefinitionPanel({
           deletedMarkerIndex={deletedMarker?.section === "assumption" ? deletedMarker.index : null}
           onTextareaInput={autoGrowTextarea}
           rowExtraClassName={(item) => flashClassForItem(item.id)}
+          rowMarkerKind={(item) => markerKindForItem(item.id)}
+          removedItems={removedItems.assumption.map((entry) => ({
+            id: entry.id,
+            text: entry.item.text,
+            index: entry.index,
+          }))}
+          onRestoreItem={(id) => restoreRemovedItem("assumption", id)}
         />
       ) : null}
 
@@ -422,6 +540,17 @@ export function DefinitionPanel({
                 <div className={`definition-item ${flashClassForQuestion(question.id)}`.trim()}>
                     <div className="definition-item-meta">
                       <span className={`definition-chip status-${questionStatus}`}>{questionStatus}</span>
+                      {markerKindForQuestion(question.id) ? (
+                        <span
+                          className={`entry-diff-marker ${markerKindForQuestion(question.id) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
+                          title={markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"}
+                          aria-label={
+                            markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"
+                          }
+                        >
+                          {markerKindForQuestion(question.id) === "new" ? "+" : "Δ"}
+                        </span>
+                      ) : null}
                       {!sessionTerminated ? (
                         <button
                           type="button"

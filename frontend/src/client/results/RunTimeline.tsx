@@ -44,6 +44,22 @@ export function RunTimeline({ schedule, schedulePreferencesActive = false }: Run
     return grouped;
   }, [schedule.stops]);
 
+  const stopContext = useMemo(() => {
+    const context = new Map<string, { origin: string; destination: string; driveMinutes: number }>();
+    for (const [vehicleIndex, list] of stopsByVehicle.entries()) {
+      let prevDeparture = schedule.vehicle_summaries.find((v) => v.vehicle_index === vehicleIndex)?.shift_start_minutes ?? 0;
+      let prevRegion = "Depot";
+      for (const stop of list) {
+        const key = `${stop.vehicle_index}:${stop.task_index ?? stop.task_id}`;
+        const driveMinutes = Math.max(0, stop.arrival_minutes - prevDeparture);
+        context.set(key, { origin: prevRegion, destination: stop.region_name, driveMinutes });
+        prevDeparture = stop.departure_minutes;
+        prevRegion = stop.region_name;
+      }
+    }
+    return context;
+  }, [schedule.vehicle_summaries, stopsByVehicle]);
+
   const allStops = schedule.stops;
   const selectedStop =
     allStops.find(
@@ -189,8 +205,14 @@ export function RunTimeline({ schedule, schedulePreferencesActive = false }: Run
               <div>{selectedStop.task_id}</div>
               <div>vehicle</div>
               <div>{selectedStop.vehicle_name}</div>
-              <div>region</div>
-              <div>{selectedStop.region_name}</div>
+              <div>origin → destination</div>
+              <div>
+                {stopContext.get(`${selectedStop.vehicle_index}:${selectedStop.task_index ?? selectedStop.task_id}`)?.origin ??
+                  "Depot"}{" "}
+                →{" "}
+                {stopContext.get(`${selectedStop.vehicle_index}:${selectedStop.task_index ?? selectedStop.task_id}`)?.destination ??
+                  selectedStop.region_name}
+              </div>
               <div>time</div>
               <div>
                 {formatClock(selectedStop.arrival_minutes)} - {formatClock(selectedStop.departure_minutes)}
@@ -199,11 +221,15 @@ export function RunTimeline({ schedule, schedulePreferencesActive = false }: Run
               <div>
                 {formatClock(selectedStop.window_open_minutes)} - {formatClock(selectedStop.window_close_minutes)}
               </div>
-              <div>wait / service</div>
+              <div>drive / wait / service</div>
               <div>
-                {selectedStop.wait_minutes.toFixed(0)}m / {selectedStop.service_minutes}m
+                {(
+                  stopContext.get(`${selectedStop.vehicle_index}:${selectedStop.task_index ?? selectedStop.task_id}`)
+                    ?.driveMinutes ?? 0
+                ).toFixed(0)}
+                m / {selectedStop.wait_minutes.toFixed(0)}m / {selectedStop.service_minutes}m
               </div>
-              <div>load / capacity</div>
+              <div>cumulated load / capacity</div>
               <div>
                 {selectedStop.load_after_stop}/{selectedStop.capacity_limit}
               </div>

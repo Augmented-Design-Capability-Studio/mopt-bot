@@ -61,6 +61,25 @@ def sync_panel_from_problem_brief(
     for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size", "shift_hard_penalty"):
         next_problem.pop(key, None)
     derived_problem = deepcopy(derived_panel["problem"])
+    # Preserve locked goal-term weights against brief/chat-driven derivation updates.
+    locked_goal_terms_raw = current_problem.get("locked_goal_terms")
+    locked_goal_terms = (
+        [k for k in locked_goal_terms_raw if isinstance(k, str)]
+        if isinstance(locked_goal_terms_raw, list)
+        else []
+    )
+    if isinstance(derived_problem.get("weights"), dict) and isinstance(current_problem.get("weights"), dict):
+        derived_weights = deepcopy(derived_problem["weights"])
+        current_weights = current_problem["weights"]
+        for key in locked_goal_terms:
+            if key in current_weights and isinstance(current_weights[key], (int, float)):
+                derived_weights[key] = float(current_weights[key])
+        derived_problem["weights"] = derived_weights
+    for key in locked_goal_terms:
+        if key in current_problem and key not in (derived_problem.get("weights") or {}):
+            derived_problem[key] = deepcopy(current_problem[key])
+    if locked_goal_terms:
+        derived_problem["locked_goal_terms"] = locked_goal_terms
     if preserve_missing_managed_fields:
         for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size", "shift_hard_penalty"):
             if key not in derived_problem and key in current_problem:

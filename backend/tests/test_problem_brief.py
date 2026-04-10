@@ -72,7 +72,7 @@ def test_brief_items_from_panel_omit_default_ga_algorithm_params():
     panel = {"problem": {"algorithm": "GA", "algorithm_params": {"pc": 0.9, "pm": 0.05}}}
     items = _brief_items_from_panel(panel)
     texts = [i["text"] for i in items]
-    assert any("Solver algorithm is GA" in t for t in texts)
+    assert not any("search strategy:" in t.lower() for t in texts)
     assert not any("parameter pc" in t.lower() for t in texts)
     assert not any("parameter pm" in t.lower() for t in texts)
 
@@ -81,13 +81,16 @@ def test_brief_items_from_panel_include_non_default_ga_param_only():
     panel = {"problem": {"algorithm": "GA", "algorithm_params": {"pc": 0.8, "pm": 0.05}}}
     items = _brief_items_from_panel(panel)
     texts = [i["text"] for i in items]
-    assert any("pc" in t and "0.8" in t for t in texts)
-    assert not any("parameter pm" in t.lower() or "pm is set" in t.lower() for t in texts)
+    assert len(texts) == 1
+    assert "Search strategy: GA" in texts[0]
+    assert "pc=0.8" in texts[0]
+    assert "pm=0.05" not in texts[0]
 
 
 def test_brief_items_from_panel_skip_keys_not_allowed_for_algorithm():
     panel = {"problem": {"algorithm": "GA", "algorithm_params": {"pc": 0.85, "w": 0.4}}}
     items = _brief_items_from_panel(panel)
     texts = [i["text"] for i in items]
-    assert any("pc" in t for t in texts)
-    assert not any("parameter w" in t.lower() for t in texts)
+    assert len(texts) == 1
+    assert "pc=0.85" in texts[0]
+    assert "w=0.4" not in texts[0]

@@ -2,7 +2,42 @@ import { useEffect, useRef, useState } from "react";
 
 import type { ProblemBrief, ProblemBriefItem } from "@shared/api";
 
-const FLASH_MS = 2300;
+const DEFINITION_MARKERS_STORAGE_KEY = "mopt:definition-diff-markers";
+const DEFINITION_BASELINE_STORAGE_KEY = "mopt:definition-diff-baseline";
+
+function valueChanged(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
+}
+
+function readStoredMarkers(): {
+  item: Record<string, "new" | "upd">;
+  question: Record<string, "new" | "upd">;
+} {
+  try {
+    const raw = sessionStorage.getItem(DEFINITION_MARKERS_STORAGE_KEY);
+    if (!raw) return { item: {}, question: {} };
+    const parsed = JSON.parse(raw) as {
+      item?: Record<string, "new" | "upd">;
+      question?: Record<string, "new" | "upd">;
+    };
+    return {
+      item: parsed.item ?? {},
+      question: parsed.question ?? {},
+    };
+  } catch {
+    return { item: {}, question: {} };
+  }
+}
+
+function readStoredBaseline(): ProblemBrief | null {
+  try {
+    const raw = sessionStorage.getItem(DEFINITION_BASELINE_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as ProblemBrief;
+  } catch {
+    return null;
+  }
+}
 
 function gatheredList(items: ProblemBriefItem[]) {
   return items.filter((i) => i.kind === "gathered");
@@ -21,21 +56,28 @@ export function useDefinitionExternalFlash(
   editable: boolean,
   showDeletedMarker: (section: "gathered" | "assumption" | "open", index: number) => void,
 ) {
-  const prevRef = useRef<ProblemBrief | null>(null);
-  const [itemFlash, setItemFlash] = useState<Record<string, "new" | "upd">>({});
-  const [questionFlash, setQuestionFlash] = useState<Record<string, "new" | "upd">>({});
+  const prevRef = useRef<ProblemBrief | null>(readStoredBaseline());
+  const initial = readStoredMarkers();
+  const [itemFlash, setItemFlash] = useState<Record<string, "new" | "upd">>(initial.item);
+  const [questionFlash, setQuestionFlash] = useState<Record<string, "new" | "upd">>(initial.question);
 
   useEffect(() => {
     if (editable) {
-      prevRef.current = problemBrief;
-      setItemFlash({});
-      setQuestionFlash({});
       return;
     }
 
     const prev = prevRef.current;
+    if (!prev) {
+      prevRef.current = problemBrief;
+      try {
+        sessionStorage.setItem(DEFINITION_BASELINE_STORAGE_KEY, JSON.stringify(problemBrief));
+      } catch {
+        // best effort only
+      }
+      return;
+    }
     prevRef.current = problemBrief;
-    if (!prev) return;
+    if (!valueChanged(prev, problemBrief)) return;
 
     const nextItems: Record<string, "new" | "upd"> = {};
     const prevById = new Map(prev.items.map((i) => [i.id, i] as const));
@@ -79,29 +121,47 @@ export function useDefinitionExternalFlash(
       if (idx >= 0) showDeletedMarker("open", idx);
     }
 
-    if (Object.keys(nextItems).length) setItemFlash(nextItems);
-    if (Object.keys(nextQs).length) setQuestionFlash(nextQs);
-
-    const t = window.setTimeout(() => {
-      setItemFlash({});
-      setQuestionFlash({});
-    }, FLASH_MS);
-    return () => window.clearTimeout(t);
+    // Persist markers until the next external definition update with actual diffs.
+    if (Object.keys(nextItems).length > 0 || Object.keys(nextQs).length > 0) {
+      setItemFlash(nextItems);
+      setQuestionFlash(nextQs);
+      try {
+        sessionStorage.setItem(
+          DEFINITION_MARKERS_STORAGE_KEY,
+          JSON.stringify({ item: nextItems, question: nextQs }),
+        );
+      } catch {
+        // best effort only
+      }
+    }
+    try {
+      sessionStorage.setItem(DEFINITION_BASELINE_STORAGE_KEY, JSON.stringify(problemBrief));
+    } catch {
+      // best effort only
+    }
   }, [editable, problemBrief, showDeletedMarker]);
 
   function flashClassForItem(id: string): string {
     const k = itemFlash[id];
-    if (k === "new") return "definition-item-external-flash definition-item-external-flash--new";
-    if (k === "upd") return "definition-item-external-flash definition-item-external-flash--upd";
+    if (k === "new") return "definition-item-external-mark--new";
+    if (k === "upd") return "definition-item-external-mark--upd";
     return "";
   }
 
   function flashClassForQuestion(id: string): string {
     const k = questionFlash[id];
-    if (k === "new") return "definition-item-external-flash definition-item-external-flash--new";
-    if (k === "upd") return "definition-item-external-flash definition-item-external-flash--upd";
+    if (k === "new") return "definition-item-external-mark--new";
+    if (k === "upd") return "definition-item-external-mark--upd";
     return "";
   }
 
-  return { flashClassForItem, flashClassForQuestion };
+  function markerKindForItem(id: string): "new" | "upd" | null {
+    return itemFlash[id] ?? null;
+  }
+
+  function markerKindForQuestion(id: string): "new" | "upd" | null {
+    return questionFlash[id] ?? null;
+  }
+
+  return { flashClassForItem, flashClassForQuestion, markerKindForItem, markerKindForQuestion };
 }

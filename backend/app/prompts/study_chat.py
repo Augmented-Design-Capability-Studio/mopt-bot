@@ -455,6 +455,8 @@ Rules:
 - Preserve existing `"kind": "system"` items unchanged and non-editable.
 - Keep the brief coherent: if a newer fact supersedes an older fact, keep the newer fact
   active and mark the superseded one `"rejected"` instead of leaving both active.
+- Keep search-strategy notes concise: consolidate algorithm + tuning details into one brief
+  entry when possible, and avoid listing default-only parameter values unless explicitly discussed.
 - **Formulation discipline**: Add at most one new objective or constraint per turn. Follow
   workflow formulation style: waterfall — only add after explicit user confirmation;
   agile — can add from a clear hint when the visible reply reflects that.

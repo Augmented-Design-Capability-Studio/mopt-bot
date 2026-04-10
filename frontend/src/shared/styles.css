@@ -490,12 +490,12 @@ select:focus-visible {
 @keyframes tab-update-ring {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(198, 40, 40, 0);
+    box-shadow: 0 0 0 0 rgba(46, 125, 50, 0);
   }
   45% {
     box-shadow:
-      0 0 0 2px rgba(198, 40, 40, 0.35),
-      0 0 10px 2px rgba(198, 40, 40, 0.2);
+      0 0 0 2px rgba(46, 125, 50, 0.35),
+      0 0 10px 2px rgba(46, 125, 50, 0.2);
   }
 }
 
@@ -505,11 +505,11 @@ select:focus-visible {
   height: 0.55rem;
   margin-left: 0.35rem;
   border-radius: 50%;
-  background: #c62828;
+  background: #2e7d32;
   vertical-align: middle;
   box-shadow:
-    0 0 0 2px rgba(198, 40, 40, 0.35),
-    0 0 8px 3px rgba(198, 40, 40, 0.45);
+    0 0 0 2px rgba(46, 125, 50, 0.35),
+    0 0 8px 3px rgba(46, 125, 50, 0.45);
   animation: tab-update-dot-pulse 1.6s ease-in-out infinite;
 }
 
@@ -519,22 +519,22 @@ select:focus-visible {
     transform: scale(1);
     opacity: 1;
     box-shadow:
-      0 0 0 2px rgba(198, 40, 40, 0.3),
-      0 0 6px 2px rgba(198, 40, 40, 0.35);
+      0 0 0 2px rgba(46, 125, 50, 0.3),
+      0 0 6px 2px rgba(46, 125, 50, 0.35);
   }
   50% {
     transform: scale(1.12);
     opacity: 0.95;
     box-shadow:
-      0 0 0 4px rgba(198, 40, 40, 0.25),
-      0 0 12px 4px rgba(198, 40, 40, 0.5);
+      0 0 0 4px rgba(46, 125, 50, 0.25),
+      0 0 12px 4px rgba(46, 125, 50, 0.5);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .tab.tab-has-update {
     animation: none;
-    box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.3);
+    box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.3);
   }
 
   .tab-update-dot {
@@ -802,50 +802,74 @@ select:focus-visible {
   }
 }
 
-.definition-item-external-flash {
-  animation: definition-item-external-flash-pulse 2.25s ease-out forwards;
+.definition-item-external-mark--new {
+  border-color: rgba(46, 125, 50, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(46, 125, 50, 0.22);
 }
 
-.definition-item-external-flash--new {
-  animation-name: definition-item-external-flash-pulse-new;
+.definition-item-external-mark--upd {
+  border-color: rgba(56, 142, 60, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(56, 142, 60, 0.16);
 }
 
-.definition-item-external-flash--upd {
-  animation-name: definition-item-external-flash-pulse-upd;
+.entry-diff-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  border: 1px solid rgba(46, 125, 50, 0.65);
+  color: #1b5e20;
+  background: rgba(76, 175, 80, 0.12);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 0.22rem;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .definition-item-external-flash {
-    animation: none;
-    outline: 1px solid rgba(46, 120, 200, 0.45);
-  }
+.entry-diff-marker--new {
+  border-color: rgba(27, 94, 32, 0.72);
+  background: rgba(67, 160, 71, 0.2);
 }
 
-@keyframes definition-item-external-flash-pulse {
-  0% {
-    box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.55);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(46, 120, 200, 0);
-  }
+.entry-diff-marker--upd {
+  border-color: rgba(46, 125, 50, 0.65);
+  background: rgba(102, 187, 106, 0.14);
 }
 
-@keyframes definition-item-external-flash-pulse-new {
-  0% {
-    box-shadow: 0 0 0 2px rgba(80, 160, 90, 0.55);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(80, 160, 90, 0);
-  }
+.entry-diff-marker--removed {
+  border-color: rgba(176, 0, 32, 0.72);
+  color: #8b001b;
+  background: rgba(176, 0, 32, 0.12);
 }
 
-@keyframes definition-item-external-flash-pulse-upd {
-  0% {
-    box-shadow: 0 0 0 2px rgba(46, 120, 200, 0.55);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(46, 120, 200, 0);
-  }
+.definition-item-meta .entry-diff-marker {
+  margin-left: 0.15rem;
+}
+
+.field-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.goal-term-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.definition-item-removed {
+  border-color: rgba(176, 0, 32, 0.4);
+  background: rgba(176, 0, 32, 0.06);
+  cursor: pointer;
+}
+
+.definition-restore-btn {
+  margin-left: auto;
+  border-color: #2e7d32;
+  color: #1b5e20;
 }
 
 .config-panel-waterfall-alert {

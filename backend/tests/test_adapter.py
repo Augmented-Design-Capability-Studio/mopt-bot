@@ -60,6 +60,39 @@ def test_parse_driver_preferences_validates_vehicle_idx():
         )
 
 
+def test_parse_driver_preferences_accepts_zone_letters():
+    cfg = parse_problem_config(
+        {
+            "driver_preferences": [
+                {"vehicle_idx": 0, "condition": "avoid_zone", "zone": "D", "penalty": 1.5},
+            ]
+        }
+    )
+    assert cfg["driver_preferences"][0]["zone"] == 4
+
+
+def test_parse_driver_preferences_rejects_bad_shift_limit():
+    with pytest.raises(ValueError, match="limit_minutes must be > 0"):
+        parse_problem_config(
+            {
+                "driver_preferences": [
+                    {"vehicle_idx": 0, "condition": "shift_over_limit", "limit_minutes": 0, "penalty": 1},
+                ]
+            }
+        )
+
+
+def test_parse_driver_preferences_normalizes_priority_case():
+    cfg = parse_problem_config(
+        {
+            "driver_preferences": [
+                {"vehicle_idx": 1, "condition": "order_priority", "order_priority": "Express", "penalty": 2},
+            ]
+        }
+    )
+    assert cfg["driver_preferences"][0]["order_priority"] == "express"
+
+
 def test_parse_locked_assignments_validates_range():
     with pytest.raises(ValueError, match="task index"):
         parse_problem_config({"locked_assignments": {"99": 0}})

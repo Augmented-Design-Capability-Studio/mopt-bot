@@ -379,6 +379,14 @@ _CONDITIONS = frozenset(
 )
 
 
+def _normalize_zone_value(raw_zone: Any) -> int:
+    if isinstance(raw_zone, str):
+        cleaned = raw_zone.strip().upper()
+        if cleaned in {"A", "B", "C", "D", "E"}:
+            return ord(cleaned) - ord("A") + 1
+    return int(raw_zone)
+
+
 def _validate_locked_assignments(raw: Any) -> dict[int, int]:
     """Task indices 0–29, vehicle indices 0–4; no duplicate tasks."""
     if raw is None:
@@ -408,7 +416,7 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
         vid = rule.get("vehicle_idx")
         if vid is None or not (0 <= int(vid) <= 4):
             raise ValueError(f"driver_preferences[{i}]: vehicle_idx must be an integer 0–4")
-        cond = str(rule.get("condition", "")).strip()
+        cond = str(rule.get("condition", "")).strip().lower()
         if cond not in _CONDITIONS:
             raise ValueError(
                 f"driver_preferences[{i}]: unknown condition {cond!r}; "
@@ -434,13 +442,16 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
             z = rule.get("zone", 4 if cond == "zone_d" else None)
             if z is None:
                 raise ValueError(f"driver_preferences[{i}]: avoid_zone requires 'zone' (1–5)")
-            zi = int(z)
+            try:
+                zi = _normalize_zone_value(z)
+            except (TypeError, ValueError):
+                raise ValueError(f"driver_preferences[{i}]: zone must be 1–5 or A–E") from None
             if not 1 <= zi <= 5:
                 raise ValueError(f"driver_preferences[{i}]: zone must be 1–5 (delivery zones A–E)")
             nr["zone"] = zi
 
         if cond in ("order_priority", "express_order"):
-            pr = str(rule.get("order_priority", "express"))
+            pr = str(rule.get("order_priority", "express")).strip().lower()
             if pr not in ("express", "standard"):
                 raise ValueError(
                     f"driver_preferences[{i}]: order_priority must be 'express' or 'standard'"
@@ -454,6 +465,8 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
                 nr["limit_minutes"] = float(rule["hours"]) * 60.0
             else:
                 nr["limit_minutes"] = 6.5 * 60.0
+            if nr["limit_minutes"] <= 0:
+                raise ValueError(f"driver_preferences[{i}]: limit_minutes must be > 0")
 
         out.append(nr)
     return out

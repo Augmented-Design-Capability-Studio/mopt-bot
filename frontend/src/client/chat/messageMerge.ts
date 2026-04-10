@@ -38,5 +38,16 @@ export function mergeMessagesFromPost(existing: Message[], incoming: Message[]):
     }
   }
 
-  return merged;
+  return sortCommittedMessagesFirst(merged);
+}
+
+function sortCommittedMessagesFirst(messages: Message[]): Message[] {
+  return [...messages].sort((a, b) => {
+    const aCommitted = a.id >= 0;
+    const bCommitted = b.id >= 0;
+    if (aCommitted && bCommitted) return a.id - b.id;
+    if (aCommitted && !bCommitted) return -1;
+    if (!aCommitted && bCommitted) return 1;
+    return 0;
+  });
 }
