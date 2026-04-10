@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import type { ProblemBrief, Session, SnapshotSummary } from "@shared/api";
+import type { ProblemBrief, Session, SnapshotSummary, TestProblemMeta } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
 import type { ParticipantOpsState } from "../lib/participantOps";
@@ -22,6 +22,7 @@ type ConfigPanelProps = {
   sessionTerminated: boolean;
   /** Used for workflow-specific definition UI and waterfall run reminders. */
   session: Session | null;
+  testProblemMeta: TestProblemMeta | null;
   className: string;
   onConfigTextChange: (value: string) => void;
   onProblemBriefChange: (value: ProblemBrief | null) => void;
@@ -82,6 +83,7 @@ export function ConfigPanel({
   backgroundProcessingError,
   sessionTerminated,
   session,
+  testProblemMeta,
   className,
   onConfigTextChange,
   onProblemBriefChange,
@@ -381,6 +383,7 @@ export function ConfigPanel({
                 onChange={onConfigTextChange}
                 editable={editableConfig}
                 onInteractionStart={onEnterConfigEdit}
+                problemMeta={testProblemMeta}
               />
             ) : (
               <textarea

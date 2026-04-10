@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     solve_timeout_sec: float = 120.0
     derivation_timeout_sec: float = 45.0
     default_gemini_model: str = "gemini-3-flash-preview"
+    # Comma-separated extra directories (repo-relative or absolute): mopt_manifest.toml and/or register_ports.py
+    problem_paths: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

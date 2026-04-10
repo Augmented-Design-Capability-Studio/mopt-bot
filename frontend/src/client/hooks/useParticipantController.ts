@@ -4,11 +4,13 @@ import { flushSync } from "react-dom";
 import {
   createSessionSnapshotBookmark,
   fetchSnapshots,
+  fetchTestProblemsMeta,
   type Message,
   type ProblemBrief,
   type RunResult,
   type Session,
   type SnapshotSummary,
+  type TestProblemMeta,
 } from "@shared/api";
 import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 
@@ -84,6 +86,31 @@ export function useParticipantController() {
   );
 
   const authed = useMemo(() => Boolean(token && sessionId), [token, sessionId]);
+
+  const [testProblemsMeta, setTestProblemsMeta] = useState<TestProblemMeta[]>([]);
+
+  useEffect(() => {
+    if (!authed) {
+      setTestProblemsMeta([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchTestProblemsMeta()
+      .then((list) => {
+        if (!cancelled) setTestProblemsMeta(list);
+      })
+      .catch(() => {
+        if (!cancelled) setTestProblemsMeta([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authed]);
+
+  const testProblemMeta = useMemo(() => {
+    const id = (session?.test_problem_id ?? "vrptw").trim().toLowerCase();
+    return testProblemsMeta.find((m) => m.id === id) ?? null;
+  }, [session?.test_problem_id, testProblemsMeta]);
 
   const sync = useParticipantSessionSync({
     token,
@@ -373,6 +400,7 @@ export function useParticipantController() {
     recentRows,
     recentBusy,
     authed,
+    testProblemMeta,
     fileRef,
     simulatedUploadChips,
     onRemoveSimulatedUploadChip: removeSimulatedUploadChip,

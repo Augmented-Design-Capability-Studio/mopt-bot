@@ -1,6 +1,13 @@
 import type { RefObject } from "react";
 
-import type { Message, ProblemBrief, RunResult, Session, SnapshotSummary } from "@shared/api";
+import type {
+  Message,
+  ProblemBrief,
+  RunResult,
+  Session,
+  SnapshotSummary,
+  TestProblemMeta,
+} from "@shared/api";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 import { StatusChip } from "@shared/status/StatusChip";
 
@@ -20,6 +27,8 @@ function workflowAccentClass(mode: string | undefined): string {
 type ParticipantShellProps = {
   sessionId: string;
   participantLabel: string;
+  /** Resolved from GET /meta/test-problems for the active session id; null if unavailable. */
+  testProblemMeta: TestProblemMeta | null;
   session: Session | null;
   messages: Message[];
   runs: RunResult[];
@@ -86,6 +95,7 @@ type ParticipantShellProps = {
 export function ParticipantShell({
   sessionId,
   participantLabel,
+  testProblemMeta,
   session,
   messages,
   runs,
@@ -252,6 +262,7 @@ export function ParticipantShell({
             backgroundProcessingError={backgroundProcessingError}
             sessionTerminated={sessionTerminated}
             session={session}
+            testProblemMeta={testProblemMeta}
             onConfigTextChange={onConfigTextChange}
             onProblemBriefChange={onProblemBriefChange}
             onSetEditMode={onSetEditMode}

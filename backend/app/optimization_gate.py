@@ -9,7 +9,7 @@ from app.problem_brief import _normalize_question_status, normalize_problem_brie
 # Mirrors frontend `WEIGHT_DISPLAY_ORDER` / ProblemConfigBlocks display keys.
 _WEIGHT_ORDER = (
     "travel_time",
-    "fuel_cost",
+    "shift_overtime",
     "workload_balance",
     "deadline_penalty",
     "capacity_penalty",

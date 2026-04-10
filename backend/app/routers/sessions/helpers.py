@@ -128,6 +128,7 @@ def session_to_out(row: StudySession) -> SessionOut:
         updated_at=row.updated_at,
         workflow_mode=row.workflow_mode,
         participant_number=row.participant_number,
+        test_problem_id=str(getattr(row, "test_problem_id", None) or "vrptw"),
         status=row.status,
         panel_config=panel_dict(row),
         problem_brief=problem_brief_dict(row),

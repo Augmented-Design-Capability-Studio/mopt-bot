@@ -1761,7 +1761,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
 
     captured: dict[str, object] = {}
 
-    def fake_generate_config_from_brief(brief, current_panel, api_key, model_name):
+    def fake_generate_config_from_brief(brief, current_panel, api_key, model_name, **_kwargs):
         captured["current_panel"] = current_panel
         return {
             "problem": {
@@ -1789,7 +1789,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
                     "problem": {
                         "weights": {
                             "travel_time": 1.0,
-                            "fuel_cost": 1.0,
+                            "shift_overtime": 1.0,
                             "deadline_penalty": 60.0,
                             "capacity_penalty": 100.0,
                             "workload_balance": 15.0,
@@ -1830,7 +1830,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
         assert weights["deadline_penalty"] == 80.0
         # preserve_missing_managed_fields keeps prior panel weights not contradicted by the brief
         assert weights["travel_time"] == 1.0
-        assert weights["fuel_cost"] == 1.0
+        assert weights["shift_overtime"] == 1.0
         assert weights["capacity_penalty"] == 100.0
         assert weights["workload_balance"] == 15.0
 

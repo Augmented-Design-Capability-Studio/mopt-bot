@@ -49,12 +49,47 @@ export async function apiFetch<T>(
   return data as T;
 }
 
+/** Public metadata; no auth required (same origin or CORS). */
+export async function fetchTestProblemsMeta(): Promise<TestProblemMeta[]> {
+  const url = buildApiUrl("/meta/test-problems");
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error("Invalid JSON from /meta/test-problems");
+  }
+  const list = (data as { test_problems?: TestProblemMeta[] } | null)?.test_problems;
+  return Array.isArray(list) ? list : [];
+}
+
+export type WeightDefinitionMeta = {
+  key: string;
+  label: string;
+  description: string | null;
+};
+
+export type TestProblemMeta = {
+  id: string;
+  label: string;
+  weight_definitions: WeightDefinitionMeta[];
+  extension_ui: string;
+  visualization_presets: string[];
+  primary_visualization: string | null;
+};
+
 export type Session = {
   id: string;
   created_at: string;
   updated_at: string;
   participant_number?: string | null;
   workflow_mode: string;
+  /** Active benchmark module for solver + problem config shape (e.g. vrptw, knapsack). */
+  test_problem_id: string;
   status: string;
   panel_config: Record<string, unknown> | null;
   problem_brief: ProblemBrief;
@@ -261,11 +296,18 @@ export type RunViolations = {
 
 export type RunMetrics = {
   total_travel_minutes: number;
-  fuel_proxy_minutes: number;
+  /** VRPTW: sum of minutes each route exceeds the 8h cap. Knapsack: 0. */
+  shift_overtime_minutes: number;
   workload_variance: number;
   /** Raw preference cost units before weighting; same value as driver_preference_penalty. */
   driver_preference_units?: number;
   driver_preference_penalty: number;
+};
+
+export type RunVisualization = {
+  preset: string;
+  version?: number;
+  payload?: Record<string, unknown>;
 };
 
 export type RunPayload = {
@@ -278,6 +320,7 @@ export type RunPayload = {
   algorithm: string;
   convergence: number[];
   weight_warnings?: string[];
+  visualization?: RunVisualization | null;
 };
 
 export type RunResult = {

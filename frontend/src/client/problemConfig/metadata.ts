@@ -1,13 +1,13 @@
 const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
   travel_time: {
-    label: "Travel Time",
+    label: "Travel time",
     description:
-      "Penalizes total time spent in transit between stops. Higher values favour shorter, faster routes.",
+      "Penalizes total route and driving minutes (includes distance / time-in-transit goals).",
   },
-  fuel_cost: {
-    label: "Fuel & Operating Cost",
+  shift_overtime: {
+    label: "Shift overtime",
     description:
-      "Penalizes fuel consumption (scaled from travel time). Higher values favour fuel-efficient routes.",
+      "Penalizes total minutes routes run past the 8h shift cap (summed over drivers). Separate from the hard shift penalty field below.",
   },
   deadline_penalty: {
     label: "On-Time Delivery",
@@ -29,14 +29,14 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
     description: "Weight on preference-rule cost units (per rules below).",
   },
   priority_penalty: {
-    label: "Priority Order Deadlines",
+    label: "Express & priority deadlines",
     description:
-      "Penalizes late delivery of express or high-priority tasks. Higher values protect critical deadlines.",
+      "Penalizes each express (or emphasized priority) order delivered after its deadline window. Higher values protect SLA-style orders.",
   },
 };
 
 /** Weight keys shown under “Goal terms” (routing / efficiency). */
-const WEIGHT_GOAL_KEYS = ["travel_time", "fuel_cost", "workload_balance"] as const;
+const WEIGHT_GOAL_KEYS = ["travel_time", "shift_overtime", "workload_balance"] as const;
 
 /** Weight keys shown under “Soft penalties” (violations / lateness), excluding worker_preference. */
 const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty"] as const;

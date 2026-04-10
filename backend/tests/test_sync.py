@@ -1,7 +1,10 @@
 import json
 from types import SimpleNamespace
 
+from app.problems.registry import get_study_port
 from app.routers.sessions import sync
+
+VrptwStudyPort = type(get_study_port("vrptw"))
 
 
 class _DummyDb:
@@ -17,20 +20,21 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
         panel_config_json=json.dumps(
             {
                 "problem": {
-                    "weights": {"travel_time": 9.0, "fuel_cost": 1.0},
+                    "weights": {"travel_time": 9.0, "shift_overtime": 1.0},
                     "locked_goal_terms": ["travel_time"],
                     "algorithm": "GA",
                 }
             }
         ),
         workflow_mode="agile",
+        test_problem_id="vrptw",
         updated_at=None,
     )
 
-    monkeypatch.setattr(
-        "app.problem_config_seed.derive_problem_panel_from_brief",
-        lambda _brief: {"problem": {"weights": {"travel_time": 1.0, "fuel_cost": 3.0}}},
-    )
+    def _fake_derive(self, _brief):
+        return {"problem": {"weights": {"travel_time": 1.0, "shift_overtime": 3.0}}}
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
     panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,
@@ -42,7 +46,7 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
 
     assert panel is not None
     assert panel["problem"]["weights"]["travel_time"] == 9.0
-    assert panel["problem"]["weights"]["fuel_cost"] == 3.0
+    assert panel["problem"]["weights"]["shift_overtime"] == 3.0
     assert panel["problem"]["locked_goal_terms"] == ["travel_time"]
 
 
@@ -58,13 +62,14 @@ def test_sync_panel_from_brief_normalizes_stale_locked_goal_terms(monkeypatch):
             }
         ),
         workflow_mode="agile",
+        test_problem_id="vrptw",
         updated_at=None,
     )
 
-    monkeypatch.setattr(
-        "app.problem_config_seed.derive_problem_panel_from_brief",
-        lambda _brief: {"problem": {"weights": {"travel_time": 1.0, "fuel_cost": 3.0}}},
-    )
+    def _fake_derive(self, _brief):
+        return {"problem": {"weights": {"travel_time": 1.0, "shift_overtime": 3.0}}}
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
     panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,
@@ -91,13 +96,14 @@ def test_sync_panel_from_brief_non_destructive_when_llm_omits_weight(monkeypatch
             }
         ),
         workflow_mode="agile",
+        test_problem_id="vrptw",
         updated_at=None,
     )
 
-    monkeypatch.setattr(
-        "app.problem_config_seed.derive_problem_panel_from_brief",
-        lambda _brief: {"problem": {"weights": {"travel_time": 3.0}}},
-    )
+    def _fake_derive(self, _brief):
+        return {"problem": {"weights": {"travel_time": 3.0}}}
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
     panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,
@@ -144,18 +150,19 @@ def test_sync_preserves_driver_preferences_when_worker_preference_locked(monkeyp
             }
         ),
         workflow_mode="agile",
+        test_problem_id="vrptw",
         updated_at=None,
     )
 
-    monkeypatch.setattr(
-        "app.problem_config_seed.derive_problem_panel_from_brief",
-        lambda _brief: {
+    def _fake_derive(self, _brief):
+        return {
             "problem": {
                 "weights": {"travel_time": 9.0, "worker_preference": 99.0},
                 "driver_preferences": derived_prefs,
             }
-        },
-    )
+        }
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
     panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,

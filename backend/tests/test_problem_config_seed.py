@@ -25,6 +25,60 @@ def test_seed_splits_sentences_and_ignores_negated_objectives():
     assert weights["deadline_penalty"] == 120.0
 
 
+def test_seed_parses_search_strategy_line_from_panel_sync():
+    """Brief items from the panel use 'max iterations 33' without 'set to …' phrasing."""
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "config-search-strategy",
+                    "text": (
+                        "Search strategy: PSO (max iterations 33, population size 21, "
+                        "c1=1.8, c2=2.2, w=0.55)."
+                    ),
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+                {
+                    "id": "config-weight-travel_time",
+                    "text": "Travel time weight is set to 1.0.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+                {
+                    "id": "config-weight-workload_balance",
+                    "text": "Workload balance weight is set to 100.0.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+                {
+                    "id": "config-shift-hard-penalty",
+                    "text": "Shift duration hard penalty is set to 88.0.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+            ],
+        }
+    )
+    assert panel is not None
+    problem = panel["problem"]
+    assert problem["algorithm"] == "PSO"
+    assert problem["epochs"] == 33
+    assert problem["pop_size"] == 21
+    assert problem["weights"]["travel_time"] == 1.0
+    assert problem["weights"]["workload_balance"] == 100.0
+    assert problem["shift_hard_penalty"] == 88.0
+
+
 def test_seed_accepts_broader_numeric_phrasings():
     panel = derive_problem_panel_from_brief(
         {
@@ -115,7 +169,7 @@ def test_seed_operating_time_maps_to_travel_time_not_fuel():
     assert "fuel_cost" not in w
 
 
-def test_seed_explicit_fuel_phrase_sets_fuel_cost():
+def test_seed_explicit_fuel_phrase_maps_to_travel_time_not_fuel_cost():
     panel = derive_problem_panel_from_brief(
         {
             "goal_summary": "",
@@ -133,5 +187,5 @@ def test_seed_explicit_fuel_phrase_sets_fuel_cost():
     )
     assert panel is not None
     w = panel["problem"]["weights"]
-    assert "fuel_cost" in w
+    assert "fuel_cost" not in w
     assert "travel_time" in w

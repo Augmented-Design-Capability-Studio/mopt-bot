@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { apiFetch, displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
+import {
+  apiFetch,
+  displayRunNumber,
+  fetchTestProblemsMeta,
+  type Message,
+  type RunResult,
+  type Session,
+  type TestProblemMeta,
+} from "@shared/api";
 import { DEFAULT_SUGGESTED_GEMINI_MODEL } from "@shared/geminiModelSuggestions";
 
 import { getOnlyActiveTerms } from "../lib/sessionConfig";
@@ -25,6 +33,7 @@ export function useResearcherController() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pushKeySuccess, setPushKeySuccess] = useState<string | null>(null);
+  const [testProblemsMeta, setTestProblemsMeta] = useState<TestProblemMeta[]>([]);
 
   // Every mutation increments this generation counter so older poll responses
   // cannot overwrite fresher researcher state.
@@ -72,6 +81,24 @@ export function useResearcherController() {
   useEffect(() => {
     void refreshList();
   }, [refreshList]);
+
+  useEffect(() => {
+    if (!savedToken.trim()) {
+      setTestProblemsMeta([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchTestProblemsMeta()
+      .then((list) => {
+        if (!cancelled) setTestProblemsMeta(list);
+      })
+      .catch(() => {
+        if (!cancelled) setTestProblemsMeta([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedToken]);
 
   useEffect(() => {
     void loadDetail();
@@ -311,7 +338,7 @@ export function useResearcherController() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `session-${selected}.json`;
+      anchor.download = `session-${selected}-archive.json`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -390,5 +417,6 @@ export function useResearcherController() {
     exportJson,
     pushGeminiKey,
     getOnlyActiveTerms,
+    testProblemsMeta,
   };
 }

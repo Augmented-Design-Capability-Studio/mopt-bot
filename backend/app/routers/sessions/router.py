@@ -16,7 +16,7 @@ from app.auth import Principal, require_any_study_user, require_client, require_
 from app.config import get_settings
 from app.crypto_util import encrypt_secret
 from app.database import get_db
-from app.default_config import MEDIOCRE_PARTICIPANT_STARTER_CONFIG
+from app.default_config import mediocre_participant_starter_config
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
@@ -38,6 +38,7 @@ from app.schemas import (
     SteerCreate,
     serialize_utc_datetime,
 )
+from app.session_export import EXPORT_SCHEMA_VERSION, build_export_timeline
 from app.session_snapshots import EVENT_BEFORE_RUN, EVENT_BOOKMARK, EVENT_MANUAL_SAVE, create_snapshot
 
 from . import context, derivation, helpers, intent, sync
@@ -75,6 +76,7 @@ def create_session(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
         participant_number=helpers.clean_participant_number(body.participant_number),
+        test_problem_id="vrptw",
         status="active",
         panel_config_json=None,
         problem_brief_json=json.dumps(default_problem_brief()),
@@ -133,7 +135,7 @@ def push_participant_starter_panel(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    row.panel_config_json = json.dumps(MEDIOCRE_PARTICIPANT_STARTER_CONFIG)
+    row.panel_config_json = json.dumps(mediocre_participant_starter_config(row.test_problem_id))
     helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -253,6 +255,8 @@ def patch_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if body.workflow_mode is not None:
         row.workflow_mode = body.workflow_mode
+    if body.test_problem_id is not None:
+        row.test_problem_id = str(body.test_problem_id).strip().lower()[:64] or "vrptw"
     if "participant_number" in body.model_fields_set:
         row.participant_number = helpers.clean_participant_number(body.participant_number)
     if body.panel_config is not None:
@@ -401,6 +405,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     researcher_steers=researcher_steers or None,
                     cleanup_mode=cleanup_requested,
                     is_run_acknowledgement=is_run_ack,
+                    test_problem_id=row.test_problem_id,
                 )
                 text = turn.assistant_message
             except Exception:
@@ -508,6 +513,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     clear_requested=clear_requested,
                     is_run_acknowledgement=is_run_ack,
                     is_answered_open_question=is_answer_save,
+                    test_problem_id=row.test_problem_id,
                 )
 
             row = db.get(StudySession, session_id) or row
@@ -664,7 +670,8 @@ def post_run(
     db: Session = Depends(get_db),
     _: Principal = Depends(require_client),
 ):
-    from app.adapter import RunCancelled, solve_request_to_result
+    from app.problems.exceptions import RunCancelled
+    from app.problems.registry import get_study_port
     from app.solve_cancel import clear_cancel_event, register_cancel_event
 
     row = db.get(StudySession, session_id)
@@ -719,7 +726,8 @@ def post_run(
     cancel_ev = register_cancel_event(session_id) if str(body.type).lower() == "optimize" else None
     try:
         timeout = get_settings().solve_timeout_sec
-        result = solve_request_to_result(payload, timeout, cancel_event=cancel_ev)
+        port = get_study_port(row.test_problem_id)
+        result = port.solve_request_to_result(payload, timeout, cancel_event=cancel_ev)
         run_row.ok = True
         run_row.cost = float(result["cost"])
         run_row.reference_cost = (
@@ -866,9 +874,10 @@ def patch_participant_panel(
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
 
-    from app.adapter import sanitize_panel_weights
+    from app.problems.registry import get_study_port
 
-    sanitized_config, weight_warnings = sanitize_panel_weights(body.panel_config)
+    port = get_study_port(row.test_problem_id)
+    sanitized_config, weight_warnings = port.sanitize_panel_config(body.panel_config)
 
     row.panel_config_json = json.dumps(sanitized_config)
     helpers.settle_processing_state(row, cancel_revision=True)
@@ -1002,6 +1011,15 @@ def simulate_upload(
     return None
 
 
+def _parse_json_field(raw: str | None) -> dict | list | None:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
 @router.get("/{session_id}/export")
 def export_session(
     session_id: str,
@@ -1017,20 +1035,37 @@ def export_session(
     runs = (
         db.query(OptimizationRun).filter(OptimizationRun.session_id == session_id).order_by(OptimizationRun.id.asc()).all()
     )
+    snapshots = (
+        db.query(SessionSnapshot)
+        .filter(SessionSnapshot.session_id == session_id)
+        .order_by(SessionSnapshot.id.asc())
+        .all()
+    )
+    exported_at = datetime.now(timezone.utc)
+    timeline = build_export_timeline(messages, runs, snapshots, run_number=helpers.run_number)
     return {
+        "export_schema_version": EXPORT_SCHEMA_VERSION,
+        "exported_at": serialize_utc_datetime(exported_at),
+        "timeline": timeline,
         "session": {
             "id": row.id,
             "created_at": serialize_utc_datetime(row.created_at),
             "updated_at": serialize_utc_datetime(row.updated_at),
             "workflow_mode": row.workflow_mode,
             "participant_number": row.participant_number,
+            "test_problem_id": str(getattr(row, "test_problem_id", None) or "vrptw"),
             "status": row.status,
             "panel_config": helpers.panel_dict(row),
             "problem_brief": helpers.problem_brief_dict(row),
+            "processing_revision": int(row.processing_revision or 0),
+            "brief_status": row.brief_status,
+            "config_status": row.config_status,
+            "processing_error": row.processing_error,
             "optimization_allowed": row.optimization_allowed,
             "optimization_runs_blocked_by_researcher": row.optimization_runs_blocked_by_researcher,
             "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
+            "gemini_key_configured": bool(row.gemini_key_encrypted),
         },
         "messages": [
             {
@@ -1040,12 +1075,14 @@ def export_session(
                 "content": m.content,
                 "visible_to_participant": m.visible_to_participant,
                 "kind": m.kind,
+                "meta": _parse_json_field(m.meta_json),
             }
             for m in messages
         ],
         "runs": [
             {
                 "id": r.id,
+                "session_run_index": r.session_run_index,
                 "run_number": helpers.run_number(r),
                 "created_at": serialize_utc_datetime(r.created_at),
                 "run_type": r.run_type,
@@ -1057,5 +1094,15 @@ def export_session(
                 "result": json.loads(r.result_json) if r.result_json else None,
             }
             for r in runs
+        ],
+        "snapshots": [
+            {
+                "id": s.id,
+                "created_at": serialize_utc_datetime(s.created_at),
+                "event_type": s.event_type,
+                "problem_brief": _parse_json_field(s.problem_brief_json),
+                "panel_config": _parse_json_field(s.panel_config_json),
+            }
+            for s in snapshots
         ],
     }

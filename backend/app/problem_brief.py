@@ -14,18 +14,23 @@ SYSTEM_ITEM_IDS = {
 
 CONFIG_ITEM_PREFIX = "config-"
 
-_WEIGHT_ITEM_LABELS = {
-    "travel_time": "Travel time",
-    "fuel_cost": "Fuel and operating cost",
-    "deadline_penalty": "On-time delivery",
-    "capacity_penalty": "Load capacity limits",
-    "workload_balance": "Workload balance",
-    "worker_preference": "Worker preferences",
-    "priority_penalty": "Priority-order deadlines",
-}
+def _all_weight_slot_markers() -> dict[str, tuple[str, ...]]:
+    from app.problems.registry import register_study_ports
+
+    merged: dict[str, tuple[str, ...]] = {}
+    for p in register_study_ports().values():
+        merged.update(p.weight_slot_markers())
+    return merged
 
 
-def locked_goal_terms_prompt_section(panel_config: Any) -> str | None:
+def _all_atomize_hints() -> tuple[str, ...]:
+    hints: set[str] = set()
+    for tup in _all_weight_slot_markers().values():
+        hints.update(tup)
+    return tuple(sorted(hints))
+
+
+def locked_goal_terms_prompt_section(panel_config: Any, test_problem_id: str | None = None) -> str | None:
     """Human-readable block for chat / brief system prompts when goal terms are locked in the panel."""
     if not isinstance(panel_config, dict):
         return None
@@ -39,10 +44,13 @@ def locked_goal_terms_prompt_section(panel_config: Any) -> str | None:
     for key in raw:
         if not isinstance(key, str) or not key.strip():
             continue
+        from app.problems.registry import get_study_port
+
+        labels = get_study_port(test_problem_id).weight_item_labels()
         if key == "shift_hard_penalty":
             label = "Shift duration hard penalty"
         else:
-            label = _WEIGHT_ITEM_LABELS.get(key, key.replace("_", " ").strip().title())
+            label = labels.get(key, key.replace("_", " ").strip().title())
         lines.append(f"- `{key}` — {label}")
     if not lines:
         return None
@@ -63,16 +71,6 @@ _ALGORITHM_PARAM_RE = re.compile(
     r"\balgorithm parameter\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+is set to\s+([^\s]+)",
     re.IGNORECASE,
 )
-_WEIGHT_SLOT_MARKERS: dict[str, tuple[str, ...]] = {
-    "travel_time": ("travel time",),
-    "fuel_cost": ("fuel and operating cost", "fuel cost", "operating cost"),
-    "deadline_penalty": ("on-time delivery", "deadline penalty", "lateness penalty"),
-    "capacity_penalty": ("load capacity limits", "capacity penalty"),
-    "workload_balance": ("workload balance",),
-    "worker_preference": ("worker preferences", "worker preference", "driver preference"),
-    "priority_penalty": ("priority-order deadlines", "priority deadline", "priority order"),
-}
-_ATOMIZE_TERM_HINTS = tuple({hint for hints in _WEIGHT_SLOT_MARKERS.values() for hint in hints})
 _GOAL_SUMMARY_FORBIDDEN_RE = re.compile(
     r"\b(?:weight|penalty|population|swarm|iterations?|epochs?|algorithm|pc|pm|c1|c2|temp_init|cooling_rate)\b",
     re.IGNORECASE,
@@ -102,26 +100,22 @@ def _system_item(item_id: str, text: str) -> dict[str, Any]:
     }
 
 
-def default_problem_brief() -> dict[str, Any]:
+def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
+    from app.problems.registry import get_study_port
+
+    port = get_study_port(test_problem_id)
+    system_items = port.default_problem_brief_system_items()
+    tmpl = port.problem_brief_template_fields()
     return {
         "goal_summary": "",
         "items": [
-            _system_item(
-                SYSTEM_ITEM_IDS["backend-template"],
-                "Current backend template uses a routing and time-window optimization schema.",
-            ),
-            _system_item(
-                SYSTEM_ITEM_IDS["translation-layer"],
-                "The assistant may discuss the task in general optimization terms and translate that intent into the active solver configuration.",
-            ),
-            _system_item(
-                SYSTEM_ITEM_IDS["schema-scope"],
-                "Final configuration fields map onto the currently supported backend rather than an arbitrary custom codebase.",
-            ),
+            _system_item(str(it["id"]), str(it["text"]))
+            for it in system_items
+            if isinstance(it, dict) and it.get("id") and it.get("text")
         ],
         "open_questions": [],
-        "solver_scope": "general_metaheuristic_translation",
-        "backend_template": "routing_time_windows",
+        "solver_scope": tmpl.get("solver_scope", "general_metaheuristic_translation"),
+        "backend_template": tmpl.get("backend_template", "routing_time_windows"),
     }
 
 
@@ -278,6 +272,15 @@ def _split_compound_item_text(text: str) -> list[str]:
         return []
     lowered = normalized.lower()
 
+    # Keep a single item when "A and B … strict constraint(s)" shares one modality across conjuncts
+    # (splitting would strand "strict" away from "capacity" and breaks deterministic config seeding).
+    if re.search(r"\s+and\s+", normalized, re.IGNORECASE) and (
+        "strict constraints" in lowered
+        or "strict constraint" in lowered
+        or re.search(r"\btreated as\s+.+\bstrict\b", lowered)
+    ):
+        return [normalized]
+
     ch = _CONSTRAINT_HANDLING_PREFIX_RE.match(normalized)
     if ch:
         body = normalized[ch.end() :].strip()
@@ -295,7 +298,7 @@ def _split_compound_item_text(text: str) -> list[str]:
                 out.append(t)
         return out
 
-    if not any(hint in lowered for hint in _ATOMIZE_TERM_HINTS):
+    if not any(hint in lowered for hint in _all_atomize_hints()):
         return [normalized]
     parts = _split_into_goal_term_clauses(normalized)
     if len(parts) <= 1:
@@ -583,11 +586,13 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     return normalize_problem_brief(merged)
 
 
-def sync_problem_brief_from_panel(base_brief: Any, panel_config: Any) -> dict[str, Any]:
+def sync_problem_brief_from_panel(
+    base_brief: Any, panel_config: Any, test_problem_id: str | None = None
+) -> dict[str, Any]:
     """Mirror saved config choices back into the editable problem brief."""
     base = normalize_problem_brief(base_brief)
     merged = deepcopy(base)
-    panel_items = _brief_items_from_panel(panel_config)
+    panel_items = _brief_items_from_panel(panel_config, test_problem_id=test_problem_id)
     panel_slots = {
         slot
         for item in panel_items
@@ -678,7 +683,7 @@ def _slot_from_text(text: str) -> str | None:
         return "only_active_terms"
     if "shift duration hard penalty" in lowered and _EXPLICIT_VALUE_RE.search(text):
         return "shift_hard_penalty"
-    for weight_key, markers in _WEIGHT_SLOT_MARKERS.items():
+    for weight_key, markers in _all_weight_slot_markers().items():
         if any(marker in lowered for marker in markers) and _EXPLICIT_VALUE_RE.search(text):
             return f"weight:{weight_key}"
     return None
@@ -707,7 +712,7 @@ def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str
     return reconciled
 
 
-def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
+def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = None) -> list[dict[str, Any]]:
     if not isinstance(panel_config, dict):
         return []
 
@@ -715,6 +720,9 @@ def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
     if not isinstance(problem, dict):
         return []
 
+    from app.problems.registry import get_study_port
+
+    weight_labels = get_study_port(test_problem_id).weight_item_labels()
     items: list[dict[str, Any]] = []
 
     algorithm = str(problem.get("algorithm") or "").strip()
@@ -737,7 +745,7 @@ def _brief_items_from_panel(panel_config: Any) -> list[dict[str, Any]]:
             value = weights.get(key)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 continue
-            label = _WEIGHT_ITEM_LABELS.get(str(key), str(key).replace("_", " ").capitalize())
+            label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             items.append(_config_item(f"config-weight-{key}", f"{label} weight is set to {value}."))
 
     shift_hard_penalty = problem.get("shift_hard_penalty")

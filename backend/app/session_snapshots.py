@@ -11,7 +11,9 @@ from app.models import SessionSnapshot, StudySession
 
 log = logging.getLogger(__name__)
 
-KEEP_SNAPSHOTS_PER_SESSION = 10
+# Retain many checkpoints per session so researcher exports capture long session history.
+# Oldest snapshots are deleted only after this count is exceeded (see _prune_snapshots).
+KEEP_SNAPSHOTS_PER_SESSION = 2000
 EVENT_BEFORE_RUN = "before_run"
 EVENT_MANUAL_SAVE = "manual_save"
 EVENT_BOOKMARK = "bookmark"

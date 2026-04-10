@@ -1,3 +1,4 @@
+from app.problems.gemini_schemas import knapsack_panel_patch_response_json_schema
 from app.services.llm import (
     CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
@@ -16,7 +17,7 @@ def test_config_schema_constrains_problem_weights_to_object():
     assert weights.get("additionalProperties") is False
     assert set(weights["properties"]) == {
         "travel_time",
-        "fuel_cost",
+        "shift_overtime",
         "deadline_penalty",
         "capacity_penalty",
         "workload_balance",
@@ -41,6 +42,14 @@ def test_config_schema_requires_known_driver_preference_fields():
 
     assert driver_pref["required"] == ["vehicle_idx", "condition", "penalty"]
     assert driver_pref["properties"]["condition"]["type"] == "string"
+
+
+def test_knapsack_config_schema_weights():
+    schema = knapsack_panel_patch_response_json_schema()
+    weights = schema["properties"]["problem"]["properties"]["weights"]
+    assert weights.get("additionalProperties") is False
+    assert set(weights["properties"]) == {"value_emphasis", "capacity_overflow", "selection_sparsity"}
+    assert "driver_preferences" not in schema["properties"]["problem"]["properties"]
 
 
 def test_chat_schema_focuses_on_assistant_and_problem_brief_patch():
@@ -80,3 +89,23 @@ def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_m
     )
     assert "Rule 5 — One goal term per row" in system
     assert "Mandatory:" in system and "Constraint handling" in system
+
+
+def test_system_instruction_includes_vrptw_benchmark_appendix():
+    system = _build_structured_system_instruction(
+        current_problem_brief={},
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+    )
+    assert "Active benchmark — fleet scheduling (VRPTW)" in system
+    assert "travel_time" in system
+
+
+def test_system_instruction_includes_knapsack_benchmark_appendix():
+    system = _build_structured_system_instruction(
+        current_problem_brief={},
+        workflow_mode="waterfall",
+        test_problem_id="knapsack",
+    )
+    assert "Active benchmark — 0/1 knapsack" in system
+    assert "value_emphasis" in system

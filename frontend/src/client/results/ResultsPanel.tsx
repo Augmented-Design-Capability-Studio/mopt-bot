@@ -5,7 +5,8 @@ import { displayRunNumber, type ProblemBrief, type RunResult, type Session } fro
 import type { EditMode } from "../lib/participantTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { ConvergencePlot } from "./ConvergencePlot";
-import { RunTimeline } from "./RunTimeline";
+import { KnapsackSelectionViz } from "./KnapsackSelectionViz";
+import { FleetScheduleViz } from "./schedule/FleetScheduleViz";
 import { ViolationSummary } from "./ViolationSummary";
 
 type ResultsPanelProps = {
@@ -78,6 +79,15 @@ export function ResultsPanel({
   const showOptimizeProgress = optimizing || Boolean(currentRun?.clientPending);
   const convergence = currentResult?.convergence ?? [];
   const runActiveWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
+
+  const sessionProblemId = (session?.test_problem_id ?? "vrptw").trim().toLowerCase();
+  const viz = currentResult?.visualization;
+  const vizPreset =
+    viz && typeof viz.preset === "string" && viz.preset.trim()
+      ? viz.preset.trim()
+      : sessionProblemId === "knapsack"
+        ? "knapsack_selection"
+        : "fleet_gantt";
 
   const driverPrefs = Array.isArray(runProblem.driver_preferences) ? runProblem.driver_preferences : [];
   const wpw = Number(runWeights.worker_preference);
@@ -223,8 +233,10 @@ export function ResultsPanel({
             )}
             {vizTab === "convergence" && convergence.length > 0 ? (
               <ConvergencePlot convergence={convergence} referenceCost={currentRun?.reference_cost} />
+            ) : vizPreset === "knapsack_selection" && viz ? (
+              <KnapsackSelectionViz visualization={viz} />
             ) : (
-              <RunTimeline
+              <FleetScheduleViz
                 schedule={currentResult.schedule}
                 schedulePreferencesActive={schedulePreferencesActive}
               />

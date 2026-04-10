@@ -51,8 +51,8 @@ def test_parse_invalid_algo():
         parse_problem_config({"algorithm": "INVALID"})
 
 
-def test_parse_weights_generic_cost_key_not_mapped_to_fuel():
-    """Vague 'cost' must not fuzzy-match to fuel_cost (user may only care about time)."""
+def test_parse_weights_generic_cost_key_not_mapped_to_shift_overtime():
+    """Vague 'cost' must not fuzzy-match to a specific weight (user may only care about time)."""
     cfg = parse_problem_config({"weights": {"cost": 2.0, "travel_time": 1.0}})
     w = cfg["weights"]
     assert w.get("w2", 0) != 2.0
@@ -158,6 +158,33 @@ def test_sanitize_panel_weights_drops_malformed_weights():
     panel, warnings = sanitize_panel_weights({"problem": {"weights": "{", "epochs": 500}})
     assert "weights" not in panel["problem"]
     assert warnings == ["Ignored malformed `problem.weights`; expected an object."]
+
+
+def test_sanitize_migrates_fuel_cost_to_shift_overtime_and_locked_terms():
+    panel, warnings = sanitize_panel_weights(
+        {
+            "problem": {
+                "weights": {"travel_time": 1.0, "fuel_cost": 2.5},
+                "locked_goal_terms": ["travel_time", "fuel_cost"],
+            }
+        }
+    )
+    w = panel["problem"]["weights"]
+    assert "fuel_cost" not in w
+    assert w.get("shift_overtime") == pytest.approx(2.5)
+    assert panel["problem"]["locked_goal_terms"] == ["travel_time", "shift_overtime"]
+    assert any("Migrated deprecated `fuel_cost`" in msg for msg in warnings)
+    assert any("Renamed locked goal term `fuel_cost`" in msg for msg in warnings)
+
+
+def test_sanitize_drops_fuel_cost_when_shift_overtime_already_set():
+    panel, warnings = sanitize_panel_weights(
+        {"problem": {"weights": {"fuel_cost": 1.0, "shift_overtime": 3.0}}}
+    )
+    w = panel["problem"]["weights"]
+    assert w.get("shift_overtime") == pytest.approx(3.0)
+    assert "fuel_cost" not in w
+    assert any("already set" in msg.lower() for msg in warnings)
 
 
 def test_parse_problem_config_filters_algorithm_params():

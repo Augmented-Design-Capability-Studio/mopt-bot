@@ -1,4 +1,4 @@
-"""Canonical algorithm names and algorithm_params keys (must match vrptw-problem/optimizer.py)."""
+"""Canonical algorithm names and algorithm_params keys (must match vrptw_problem/optimizer.py)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ ALLOWED_ALGORITHM_PARAMS: dict[str, frozenset[str]] = {
     "ACOR": frozenset({"sample_count", "intent_factor", "zeta"}),
 }
 
-# Defaults duplicated from vrptw-problem/optimizer._default_algorithm_params (keep in sync).
+# Defaults duplicated from vrptw_problem/optimizer._default_algorithm_params (keep in sync).
 DEFAULT_ALGORITHM_PARAMS: dict[str, dict[str, float | int]] = {
     "GA": {"pc": 0.9, "pm": 0.05},
     "PSO": {"c1": 2.05, "c2": 2.05, "w": 0.4},

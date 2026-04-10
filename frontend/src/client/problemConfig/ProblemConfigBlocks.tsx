@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import type { TestProblemMeta } from "@shared/api";
 
 import { defaultParamsForAlgorithm } from "./algorithmCatalog";
 import { BlockSection } from "./layout";
@@ -7,8 +9,33 @@ import type { DriverPref, ProblemBlock } from "./types";
 import { useProblemConfigDiffMarkers } from "./useProblemConfigDiffMarkers";
 import { useLockedEditFocus } from "../lib/useLockedEditFocus";
 import { GoalTermsSection, type RemovedGoalTermEntry } from "./GoalTermsSection";
+import { WEIGHT_INFO } from "./metadata";
 import { SearchStrategySection } from "./SearchStrategySection";
 import type { ActivateHint } from "./controls";
+
+function orderedDisplayWeightKeys(
+  weights: Record<string, number>,
+  definitionOrder: string[],
+  showWorkerBlock: boolean,
+): string[] {
+  const keys = Object.keys(weights);
+  if (showWorkerBlock && !keys.includes("worker_preference")) keys.push("worker_preference");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of definitionOrder) {
+    if (keys.includes(k) && !seen.has(k)) {
+      out.push(k);
+      seen.add(k);
+    }
+  }
+  for (const k of keys) {
+    if (!seen.has(k)) {
+      out.push(k);
+      seen.add(k);
+    }
+  }
+  return out;
+}
 
 /**
  * Renders the solver configuration as structured natural-language blocks with
@@ -20,10 +47,17 @@ export type ProblemConfigBlocksProps = {
   editable: boolean;
   /** When not editable, first pointer interaction enters config edit mode */
   onInteractionStart?: () => void;
+  /** From GET /meta/test-problems for `session.test_problem_id`; null uses VRPTW labels/order. */
+  problemMeta?: TestProblemMeta | null;
 };
 
-
-export function ProblemConfigBlocks({ configJson, onChange, editable, onInteractionStart }: ProblemConfigBlocksProps) {
+export function ProblemConfigBlocks({
+  configJson,
+  onChange,
+  editable,
+  onInteractionStart,
+  problemMeta = null,
+}: ProblemConfigBlocksProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const { markLockedInteraction } = useLockedEditFocus({
     rootRef,
@@ -38,16 +72,28 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
     setRemovedGoalTerms([]);
   }, [editable]);
 
+  const weightCatalog = useMemo(() => {
+    const defs = problemMeta?.weight_definitions;
+    if (defs?.length) {
+      const o: Record<string, { label: string; description: string }> = {};
+      for (const w of defs) {
+        o[w.key] = { label: w.label, description: w.description ?? "" };
+      }
+      return o;
+    }
+    return WEIGHT_INFO;
+  }, [problemMeta]);
+
+  const definitionKeyOrder = problemMeta?.weight_definitions?.map((w) => w.key) ?? [];
+  const extensionUi = problemMeta?.extension_ui ?? "vrptw_extras";
+
   const hasWorkerWeight = "worker_preference" in problem.weights;
-  const showWorkerBlock = hasWorkerWeight || problem.driver_preferences.length > 0;
+  const showWorkerBlock =
+    extensionUi === "vrptw_extras" && (hasWorkerWeight || problem.driver_preferences.length > 0);
   const workerPrefLocked = problem.locked_goal_terms.includes("worker_preference");
   const preferencesEditable = editable && !workerPrefLocked;
 
-  const displayWeightKeys = (() => {
-    const keys = Object.keys(problem.weights);
-    if (showWorkerBlock && !keys.includes("worker_preference")) keys.push("worker_preference");
-    return keys;
-  })();
+  const displayWeightKeys = orderedDisplayWeightKeys(problem.weights, definitionKeyOrder, showWorkerBlock);
 
   const hasSearch =
     problem.algorithm !== "" ||
@@ -57,7 +103,8 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
     problem.early_stop_patience !== null ||
     problem.early_stop_epsilon !== null;
   const hasHardStructural =
-    Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
+    extensionUi === "vrptw_extras" &&
+    (Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null);
   const hasSomething = displayWeightKeys.length > 0 || hasSearch || hasHardStructural;
 
   if (!hasSomething) {
@@ -176,6 +223,8 @@ export function ProblemConfigBlocks({ configJson, onChange, editable, onInteract
           editable={editable}
           preferencesEditable={preferencesEditable}
           showWorkerBlock={showWorkerBlock}
+          extensionUi={extensionUi}
+          weightCatalog={weightCatalog}
           displayWeightKeys={displayWeightKeys}
           removedGoalTerms={removedGoalTerms}
           markerKindFor={markerKindFor}

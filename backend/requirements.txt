@@ -6,10 +6,11 @@ sqlalchemy>=2.0.36
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.0
+tomli>=2.0.0
 google-genai>=1.0.0
 cryptography>=43.0.0
 
-# VRPTW solver (also: pip install -r ../vrptw-problem/requirements.txt)
+# VRPTW solver (also: pip install -r ../vrptw_problem/requirements.txt)
 numpy>=2.0
 mealpy>=3.0.1
 

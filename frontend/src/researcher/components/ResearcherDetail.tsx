@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { displayRunNumber, type Message, type RunResult, type Session } from "@shared/api";
+import {
+  displayRunNumber,
+  type Message,
+  type RunResult,
+  type Session,
+  type TestProblemMeta,
+} from "@shared/api";
 import { ChatPanel } from "@shared/chat/ChatPanel";
 import { parseServerDate } from "@shared/dateTime";
 import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
@@ -35,6 +41,7 @@ type ResearcherDetailProps = {
   onRemoveSession: () => void | Promise<void>;
   onSendSteer: () => void | Promise<void>;
   onRemoveRun: (run: RunResult) => void | Promise<void>;
+  testProblemsMeta: TestProblemMeta[];
 };
 
 export function ResearcherDetail({
@@ -63,6 +70,7 @@ export function ResearcherDetail({
   onRemoveSession,
   onSendSteer,
   onRemoveRun,
+  testProblemsMeta,
 }: ResearcherDetailProps) {
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [participantNumberDraft, setParticipantNumberDraft] = useState("");
@@ -123,6 +131,40 @@ export function ResearcherDetail({
               >
                 <option value="agile">agile</option>
                 <option value="waterfall">waterfall</option>
+              </select>
+            </label>
+
+            <label className="muted researcher-control-group">
+              Test problem
+              <select
+                value={detail.test_problem_id ?? "vrptw"}
+                title="Changing mid-session can mix incompatible run artifacts; prefer new sessions when possible."
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (
+                    runs.length > 0 &&
+                    next !== (detail.test_problem_id ?? "vrptw") &&
+                    !window.confirm(
+                      "This session already has optimization runs. Switching the test problem can mix incompatible result shapes in history. Continue?",
+                    )
+                  ) {
+                    return;
+                  }
+                  void onPatchSession({ test_problem_id: next });
+                }}
+                className="researcher-workflow-select"
+              >
+                {(testProblemsMeta.length > 0
+                  ? testProblemsMeta
+                  : ([
+                      { id: "vrptw", label: "Fleet scheduling (VRPTW)" },
+                      { id: "knapsack", label: "0/1 knapsack (toy)" },
+                    ] satisfies Pick<TestProblemMeta, "id" | "label">[])
+                ).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} ({p.id})
+                  </option>
+                ))}
               </select>
             </label>
 

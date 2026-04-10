@@ -79,6 +79,7 @@ def _run_background_derivation(
     clear_requested: bool,
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
+    test_problem_id: str | None = None,
 ) -> None:
     try:
         from app.services.llm import generate_problem_brief_update
@@ -98,6 +99,7 @@ def _run_background_derivation(
                     cleanup_mode=cleanup_requested,
                     is_run_acknowledgement=is_run_acknowledgement,
                     is_answered_open_question=is_answered_open_question,
+                    test_problem_id=test_problem_id,
                 ),
                 timeout_sec,
             )
@@ -124,7 +126,7 @@ def _run_background_derivation(
             effective_problem_brief = merge_problem_brief_patch(base_problem_brief, patch_payload)
             if (cleanup_requested or brief_turn.cleanup_mode) and base_panel:
                 effective_problem_brief = sync_problem_brief_from_panel(
-                    effective_problem_brief, base_panel
+                    effective_problem_brief, base_panel, test_problem_id=test_problem_id
                 )
 
         with SessionLocal() as db:

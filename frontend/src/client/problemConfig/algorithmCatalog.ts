@@ -1,5 +1,5 @@
 /**
- * Mirrors backend/app/algorithm_catalog.py and vrptw-problem/optimizer.py.
+ * Mirrors backend/app/algorithm_catalog.py and vrptw_problem/optimizer.py.
  * Keep keys and defaults aligned when the solver changes.
  */
 export const ALLOWED_ALGORITHM_PARAMS: Record<string, readonly string[]> = {

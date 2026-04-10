@@ -1,13 +1,14 @@
 """Default neutral panel configuration for new sessions.
 
-Weight keys use human-readable aliases (see adapter.WEIGHT_ALIASES).
-The adapter translates them to w1–w7 before calling the solver.
+VRPTW weight keys use human-readable aliases (see ``vrptw_study_bridge`` / ``app.adapter``).
 """
+
+from copy import deepcopy
 
 # Canonical default weights using participant-visible alias names.
 _PROBLEM_WEIGHTS: dict = {
     "travel_time":       1.0,
-    "fuel_cost":         0.15,
+    "shift_overtime":    5.0,
     "deadline_penalty":  50.0,
     "capacity_penalty":  1000.0,
     "workload_balance":  10.0,
@@ -41,3 +42,24 @@ MEDIOCRE_PARTICIPANT_STARTER_CONFIG: dict = {
         "random_seed": 42,
     }
 }
+
+MEDIOCRE_KNAPSACK_PARTICIPANT_STARTER_CONFIG: dict = {
+    "problem": {
+        "weights": {
+            "value_emphasis": 1.0,
+            "capacity_overflow": 40.0,
+        },
+        "only_active_terms": True,
+        "algorithm": "GA",
+        "epochs": 24,
+        "pop_size": 16,
+        "random_seed": 42,
+    }
+}
+
+
+def mediocre_participant_starter_config(test_problem_id: str | None = None) -> dict:
+    pid = (test_problem_id or "vrptw").strip().lower()
+    if pid == "knapsack":
+        return deepcopy(MEDIOCRE_KNAPSACK_PARTICIPANT_STARTER_CONFIG)
+    return deepcopy(MEDIOCRE_PARTICIPANT_STARTER_CONFIG)

@@ -1,6 +1,15 @@
 # MOPT study stack
 
-Participant and researcher web apps plus a FastAPI backend for the workflow study described in `AI_INSTRUCTIONS.md`. Solver logic lives in `vrptw-problem/` (imported by the backend adapter; coordinate cross-cutting study changes there with maintainers).
+Participant and researcher web apps plus a FastAPI backend for the workflow study described in `AI_INSTRUCTIONS.md`. **Solver domains** ship as sibling directories **`vrptw_problem/`** (fleet VRPTW) and **`knapsack_problem/`** (toy 0/1 knapsack). Each domain exposes a **study port** (see `mopt_manifest.toml` in that folder) loaded by **`backend/app/problems/registry.py`**. Per-session **`test_problem_id`** (default **`vrptw`**) selects the port. **`GET /meta/test-problems`** lists ids, labels, weight definitions, and UI extension keys for clients. Pulling new code **adds SQLite columns idempotently** on API startup (`ensure_database_shape`).
+
+## Table of contents
+
+- [Prerequisites](#prerequisites)
+- [Backend](#backend)
+- [Problem modules (adding a benchmark)](#problem-modules-adding-a-benchmark)
+- [Frontend](#frontend)
+- [Tests](#tests)
+- [Smoke checklist (manual)](#smoke-checklist-manual)
 
 ## Prerequisites
 
@@ -47,7 +56,7 @@ cd backend
 ../venv/bin/python run_server.py
 ```
 
-Participant chat uses **Gemini** via **`google-genai`** (chat sessions). Prompts live under **`backend/app/prompts/`**.
+Participant chat uses **Gemini** via **`google-genai`** (chat sessions). **Domain-neutral** study prompts live in **`backend/app/prompts/study_chat.py`**; each registered benchmark adds an appendix and config-derivation text from its domain tree (e.g. **`vrptw_problem/vrptw_study_prompts.py`**, **`knapsack_problem/knapsack_study_prompts.py`**), merged in **`backend/app/services/llm.py`** via **`get_study_port(...)`**. Gemini **panel patch** schemas live next to each benchmark (**`*_panel_schema.py`**) with shared algorithm-param fragments in **`backend/app/problems/schema_shared.py`**; **`gemini_schemas.py`** still exposes convenience wrappers that add the domain directory to `sys.path` when needed.
 
 From the **repo root** (script changes into `backend/` automatically):
 
@@ -76,11 +85,13 @@ You can still use Uvicorn directly if you prefer:
 - Auth: `Authorization: Bearer <MOPT_CLIENT_SECRET>` (participant) or `<MOPT_RESEARCHER_SECRET>` (researcher)
 - **Cancel in-flight optimize:** `POST /sessions/{id}/runs/cancel` or `POST /sessions/{id}/optimization/cancel` (equivalent). The participant app uses **`/optimization/cancel`** to avoid some proxy/preflight issues with paths under `/runs/`.
 
-Install **mealpy** (via `vrptw-problem/requirements.txt`) or optimization runs return a clear error.
+Install **mealpy** (via `vrptw_problem/requirements.txt` and the knapsack package’s needs) or optimization runs return a clear error.
 
-**Optimization stopping:** By default the solver uses MEALpy **early stopping** (plateau on the global best cost) together with **`epochs` as a maximum** iteration cap, so runs often finish before the cap when improvements stall. Set `early_stop` to `false` in `problem` for fixed full-epoch runs; optional `early_stop_patience` and `early_stop_epsilon` tune plateau detection (see `backend/app/adapter.py` / `vrptw-problem/optimizer.py`).
+Optional **`MOPT_PROBLEM_PATHS`** (comma-separated directories, trusted hosts only) registers extra benchmarks: if a directory contains **`mopt_manifest.toml`**, it is loaded the same way as built-ins; otherwise the backend looks for legacy **`register_ports.py`** with a `register(registry)` function — see `backend/.env.example`.
 
-**Participant chat (Gemini):** Python package **`google-genai`** (`pip` installs it via `backend/requirements.txt`). Prompt fragments live in `backend/app/prompts/study_chat.py`, and the LLM orchestration in `backend/app/services/llm.py` now splits the work into visible chat reply, hidden brief update, and config derivation tasks.
+**Optimization stopping:** By default the solver uses MEALpy **early stopping** (plateau on the global best cost) together with **`epochs` as a maximum** iteration cap, so runs often finish before the cap when improvements stall. Set `early_stop` to `false` in `problem` for fixed full-epoch runs; optional `early_stop_patience` and `early_stop_epsilon` tune plateau detection (see `backend/app/adapter.py` / `vrptw_problem/optimizer.py`).
+
+**Participant chat (Gemini):** Python package **`google-genai`** (`pip` installs it via `backend/requirements.txt`). General prompt fragments live in `backend/app/prompts/study_chat.py`; benchmark-specific appendices ship with each problem package (see server paragraph above). `backend/app/services/llm.py` splits visible chat reply, hidden brief update, and config derivation, and selects structured JSON schemas by **`test_problem_id`**.
 - **Fast chat path:** `POST /sessions/:id/messages` returns the assistant chat reply first (when **Ask model** is on), then continues brief/config derivation in a background thread. The same response **always** includes a `processing` snapshot (even when `invoke_model` is `false`) so the client never keeps a stale pending overlay after a user-only message. Session JSON exposes `processing` state (`brief_status`, `config_status`, `processing_revision`, `processing_error`) so the frontend can show panel-level pending state without blocking chat. After the hidden brief pass, if the normalized brief is unchanged, the background thread **skips the config LLM** and uses heuristic `derive_problem_panel_from_brief` only (same shortcut for `agile` and `waterfall`). Optional body field **`skip_hidden_brief_update`** (with `invoke_model`): visible reply only, no background brief merge — used after participant-driven definition/config saves and snapshot restores so the model does not overwrite stored state; open-question answer flows still run full derivation.
 - **Visible/hidden output separation:** participant-visible replies remain plain conversational text. Hidden structured patch keys (for example `problem_brief_patch`) are used only in backend brief-update flow and are stripped from visible chat if the model leaks them.
 - **`STUDY_CHAT_SYSTEM_PROMPT`** — domain-neutral persona; stays general until the user describes the problem. When the user asks to "write code" or "implement", the agent updates the problem brief (not source code) and the backend derives solver configuration JSON from that brief. Constraints and objectives are revealed progressively — only when the user mentions related concepts. Weight keys use human-readable alias names (see below).
@@ -92,11 +103,11 @@ The chat system instruction includes the current **problem brief** middle layer 
 
 After the visible reply is saved, backend derives the brief and then the `problem` panel block from the latest brief. If model-based config derivation fails (or no key is configured), backend falls back to deterministic regex parsing (`derive_problem_panel_from_brief`) so manual definition saves and sync actions still work. Cleanup requests (consolidate/remove/reorganize) are detected in backend orchestration and routed through holistic replacement mode so redundant gathered/assumption rows can be reliably removed.
 
-**Weight aliases:** Objective weights are referenced by human-readable alias names (`travel_time`, `fuel_cost`, `deadline_penalty`, `capacity_penalty`, `workload_balance`, `worker_preference`, `priority_penalty`) in the participant panel, in agent-generated `panel_patch` objects, and in `default_config.py`. The adapter (`backend/app/adapter.py` — `WEIGHT_ALIASES` + `translate_weights`) maps these to the internal `w1`–`w7` keys before calling the solver. This avoids leaking the numbered scheme to participants and makes the panel self-explanatory. Structured model output for config uses **closed** weight/panel JSON schemas (`backend/app/services/llm.py`) so the LLM cannot invent new weight keys; the adapter only keyword-maps keys that clearly name a known objective (vague keys like a bare `cost` are dropped with a warning rather than forced to `fuel_cost`). Chat prompts stress **time / operating-time** goals → `travel_time` and treat **`fuel_cost` as user-triggered** (explicit fuel or monetary operating-cost language).
+**Weight aliases:** The participant panel uses seven VRPTW alias names (`travel_time`, `shift_overtime`, `deadline_penalty`, `capacity_penalty`, `workload_balance`, `worker_preference`, `priority_penalty`), matching internal `w1`–`w7`. **`shift_overtime` (w2)** penalizes total minutes routes run past the 8h cap (fleet sum); **`shift_hard_penalty`** remains a separate per-vehicle lump field. The adapter (`backend/app/adapter.py` — re-exports **`vrptw_study_bridge`**: `WEIGHT_ALIASES` + `translate_weights`) maps aliases to `w1`–`w7`. Human-readable definitions live in **`vrptw_problem/vrptw_study_meta.py`** (shim **`study_port.py`** re-exports for older imports). Sanitize migrates deprecated **`fuel_cost`** to **`shift_overtime`** (same value when possible) and renames that lock entry in **`locked_goal_terms`**. Chat/LLM closed schemas list the seven aliases; fuel/mileage language still maps to **`travel_time`** only.
 
 **Algorithm hyperparameters:** `problem.algorithm_params` may only contain keys the MEALpy wrapper actually passes for the selected algorithm (`GA`/`PSO`/`SA`/`SwarmSA`/`ACOR`). The canonical list and defaults live in [`backend/app/algorithm_catalog.py`](backend/app/algorithm_catalog.py) (mirrored in [`frontend/src/client/problemConfig/algorithmCatalog.ts`](frontend/src/client/problemConfig/algorithmCatalog.ts) for the structured config UI). The adapter drops unknown keys with a panel note; the Definition tab only surfaces non-default parameter values so default `pc`/`pm` lines no longer clutter gathered info. The participant **Problem Config** tab exposes the same fields as editable numbers under **Search strategy**.
 
-**Driver preferences defaulting:** participant-facing runs now treat `driver_preferences` as **opt-in**. If the field is omitted from `problem`, backend solve/evaluate paths default to `[]` (no implicit driver-trait penalties). Driver-preference validation now normalizes all supported term variants (zone, priority, and shift-limit forms), accepts zone letters `A`–`E` (mapped to `1`–`5`), and keeps strict malformed-value checks before run execution. Canonical/official research scoring can still use canonical defaults when explicitly evaluated via `vrptw-problem/researcher/official_evaluator.py`.
+**Driver preferences defaulting:** participant-facing runs now treat `driver_preferences` as **opt-in**. If the field is omitted from `problem`, backend solve/evaluate paths default to `[]` (no implicit driver-trait penalties). Driver-preference validation now normalizes all supported term variants (zone, priority, and shift-limit forms), accepts zone letters `A`–`E` (mapped to `1`–`5`), and keeps strict malformed-value checks before run execution. Canonical/official research scoring can still use canonical defaults when explicitly evaluated via `vrptw_problem/researcher/official_evaluator.py`.
 
 With **Ask model (requires API key).** enabled, structured chat replies update the editable `problem_brief` middle layer, then backend derives the final `panel_config` from that updated brief. The **hidden** brief-update LLM pass (`generate_problem_brief_update`) receives the same **`problem_brief_patch.items` rules** as the structured JSON path (`STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES` in `study_chat.py`), including explicit cleanup instructions: one gathered row per objective/constraint term, not bundled comma-separated lines. After a successful optimization run, if **Ask model** is on, the frontend automatically posts a context message asking the agent to interpret and compare results. **Run-ack rules** prevent the agent from contaminating the problem definition with run-result narrative (costs, violation counts); it may still suggest one or two targeted config refinements. **`POST /sessions/:id/messages`** does **not** run chat-triggered auto-optimization when that user message is the auto-posted run-complete line (`intent.is_run_acknowledgement_message`), so it cannot spuriously start a new run in the same request. Chat system prompts include **`locked_goal_terms`** from the saved panel (`problem_brief.locked_goal_terms_prompt_section`) so the model does not suggest changing locked weights; **waterfall** run-ack prompts encourage merge-appended **open_questions** when clarification remains. Similarly, manual definition/config saves trigger a model notification with the changed fields. New sessions start without panel JSON until the researcher **Push starter problem config** or the participant flow creates one; in `waterfall`, backend keeps deriving and syncing the `problem` block from the saved brief so the config stays aligned with the participant's current definition instead of a stale starter. There is no separate automatic "test config" fallback beyond the explicit researcher-pushed starter.
 
@@ -118,6 +129,22 @@ While background brief/config derivation is pending, **Problem Config** and **Ra
 
 **Session lifecycle:** **Terminate** keeps the row so the participant can still **read** chat/runs; **Delete** removes the row — the client returns to the start gate (saved token) when polling detects the session is gone.
 
+## Problem modules (adding a benchmark)
+
+1. **Directory:** Add a repo-root folder named **`{name}_problem/`** (underscore, valid as a Python-style identifier). Keep solver code and study-facing modules in that tree.
+
+2. **Manifest:** Add **`mopt_manifest.toml`** at the domain root with:
+   - **`port_module`** — Python module name to import after the domain root is on `sys.path` (e.g. `myproblem_study_port`).
+   - **`port_attr`** — Attribute holding the port instance (default **`STUDY_PORT`**).
+
+3. **Study port:** Implement the contract in **`backend/app/problems/port.py`** (`StudyProblemPort`): `meta`, `sanitize_panel_config`, `parse_problem_config`, `solve_request_to_result`, brief/prompt hooks, `panel_patch_response_json_schema`, etc. Prefer **domain-prefixed** filenames (`{name}_study_port.py`, `{name}_study_bridge.py`, `{name}_panel_schema.py`, …) so multiple domains can coexist on `sys.path` without shadowing generic names like `study_port.py` / `evaluator.py`.
+
+4. **Registration:** Add the directory name to **`_BUILTIN_REL_DIRS`** in **`backend/app/problems/registry.py`**, or expose the module via **`MOPT_PROBLEM_PATHS`** (manifest-driven) without editing the registry.
+
+5. **Frontend:** If the benchmark needs extra UI, set `extension_ui` and visualization preset ids in `meta()` and implement matching client handling (see existing `vrptw_extras` / `fleet_gantt` and knapsack presets).
+
+6. **Tests:** Add tests under **`{name}_problem/tests/`** and include that path in **`pytest.ini`** (`testpaths` / `pythonpath`) if imports need the domain root.
+
 ## Frontend
 
 ```powershell
@@ -131,6 +158,7 @@ Open the dev server root — **http://localhost:5173/** — for a small **homepa
 - Homepage: [http://localhost:5173/](http://localhost:5173/)
 - Participant: [http://localhost:5173/client.html](http://localhost:5173/client.html)
 - Researcher: [http://localhost:5173/researcher.html](http://localhost:5173/researcher.html)
+- Session archive viewer (upload exported JSON locally; **Timeline** table + **Raw JSON**): [http://localhost:5173/analyzer.html](http://localhost:5173/analyzer.html)
 
 The frontend now uses this backend priority: browser-local backend override from the chip dialog, then `VITE_API_BASE`, then `http://127.0.0.1:8000` (see `frontend/.env.example`).
 
@@ -140,18 +168,19 @@ Build:
 npm run build
 ```
 
-Outputs under `frontend/dist/` (`index.html`, `client.html`, `researcher.html`, assets).
+Outputs under `frontend/dist/` (`index.html`, `client.html`, `researcher.html`, `analyzer.html`, assets).
 
 ## Tests
 
+From the **repository root** (runs backend + domain packages per `pytest.ini`):
+
 ```powershell
-cd backend
-..\venv\Scripts\python.exe -m pytest tests\ -v
+.\venv\Scripts\pytest.exe -q
 ```
 
 ## Smoke checklist (manual)
 
-1. Researcher token: list sessions, open one, export JSON.
+1. Researcher token: list sessions, open one, export JSON (versioned **session archive**, `export_schema_version` **2**: session row, messages with `meta`, runs, snapshots, sorted **`timeline`** for review tools; filename `session-{id}-archive.json`). Up to **2000** brief/panel **snapshots** per session are retained (older pruned). Open the export in the analyzer **Timeline** tab to align chat, snapshots, and runs by time.
 2. Participant token: **Start session** (no workflow choice; optional participant number), or expand **Past sessions on this browser** to **Resume** a stored session id (same token; local list only — not IP-based). Resume entries show participant number and session start time from server (or last local snapshot). After sign-in, the participant header shows **Participant #…** when the session has a number (from the server) and a short session id prefix; workflow mode is not labeled there, only a very thin cool vs warm top accent for discreet condition identification. New sessions default to **waterfall** with **`optimization_allowed: false`**; runs unlock when not **researcher-blocked** and **intrinsic readiness** is met and/or the researcher clears the block and permit (see optimization eligibility above). Then: chat, edit/save panel JSON, run optimization (with mealpy installed), see run tab and violations.
 3. Researcher: set **workflow mode** (agile vs waterfall) and the **“'Run' button available.”** control (mirrors participant Run; uncheck to hard-block runs). Participant run controls follow **`computeCanRunOptimization`**. In session detail, workflow mode drives a stronger panel accent (cool/agile, warm/waterfall) so condition is easy to spot while controlling that session.
 4. Researcher session list: each row shows participant number and start time; in session detail, participant number can be edited and saved.

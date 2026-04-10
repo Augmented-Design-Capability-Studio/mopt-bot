@@ -1,0 +1,3 @@
+# MOPT builtin manifest — discovered by backend/app/problems/registry.py
+port_module = "knapsack_study_port"
+port_attr = "STUDY_PORT"

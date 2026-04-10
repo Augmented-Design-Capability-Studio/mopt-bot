@@ -8,19 +8,22 @@ const TRACKABLE: {
 }[] = [
   {
     key: "travel_time",
-    label: "Travel Time",
+    label: "Travel time",
     card: (_, m) => ({
-      value: `${m.total_travel_minutes.toFixed(1)} min total`,
+      value: `${m.total_travel_minutes.toFixed(1)} min route time`,
       warn: false,
     }),
   },
   {
-    key: "fuel_cost",
-    label: "Fuel & Operating",
-    card: (_, m) => ({
-      value: `${m.fuel_proxy_minutes.toFixed(1)} min (proxy)`,
-      warn: false,
-    }),
+    key: "shift_overtime",
+    label: "Shift overtime",
+    card: (_, m) => {
+      const ot = Number(m.shift_overtime_minutes ?? 0);
+      return {
+        value: `${ot.toFixed(1)} min past 8h cap (fleet total)`,
+        warn: ot > 0,
+      };
+    },
   },
   {
     key: "deadline_penalty",
@@ -40,9 +43,9 @@ const TRACKABLE: {
   },
   {
     key: "priority_penalty",
-    label: "Priority Misses",
+    label: "Express & priority deadlines",
     card: (v) => ({
-      value: `${v.priority_deadline_misses} missed`,
+      value: `${v.priority_deadline_misses} late`,
       warn: v.priority_deadline_misses > 0,
     }),
   },
@@ -73,37 +76,50 @@ function weightedContributionLine(
   metrics: RunMetrics,
   violations: RunViolations,
 ): string | null {
-  const w = Number(runWeights[key]);
-  if (!Number.isFinite(w)) return null;
   switch (key) {
     case "travel_time": {
+      const w = Number(runWeights["travel_time"]);
+      if (!Number.isFinite(w) || w === 0) return null;
       const c = w * metrics.total_travel_minutes;
-      return `+${c.toFixed(2)} to cost (${w}×${metrics.total_travel_minutes.toFixed(1)} travel min)`;
+      return `+${c.toFixed(2)} to cost (${w}×${metrics.total_travel_minutes.toFixed(1)} route min)`;
     }
-    case "fuel_cost": {
-      const c = w * metrics.fuel_proxy_minutes;
-      return `+${c.toFixed(2)} to cost (${w}×${metrics.fuel_proxy_minutes.toFixed(1)} fuel proxy min)`;
+    case "shift_overtime": {
+      const w = Number(runWeights[key]);
+      if (!Number.isFinite(w)) return null;
+      const ot = Number(metrics.shift_overtime_minutes ?? 0);
+      const c = w * ot;
+      return `+${c.toFixed(2)} to cost (${w}×${ot.toFixed(1)} overtime min)`;
     }
     case "deadline_penalty": {
+      const w = Number(runWeights[key]);
+      if (!Number.isFinite(w)) return null;
       const c = w * violations.time_window_minutes_over;
       return `+${c.toFixed(2)} to cost (${w}×${violations.time_window_minutes_over.toFixed(1)} min late)`;
     }
     case "capacity_penalty": {
+      const w = Number(runWeights[key]);
+      if (!Number.isFinite(w)) return null;
       const c = w * violations.capacity_units_over;
       return `+${c.toFixed(2)} to cost (${w}×${violations.capacity_units_over} units)`;
     }
     case "workload_balance": {
+      const w = Number(runWeights[key]);
+      if (!Number.isFinite(w)) return null;
       const c = w * metrics.workload_variance;
       return `+${c.toFixed(2)} to cost (${w}×${metrics.workload_variance.toFixed(2)} variance)`;
     }
     case "worker_preference": {
+      const w = Number(runWeights[key]);
+      if (!Number.isFinite(w)) return null;
       const u = metrics.driver_preference_penalty ?? metrics.driver_preference_units ?? 0;
       const c = w * Number(u);
       return `+${c.toFixed(2)} to cost (${w}×${Number(u).toFixed(1)} pref units)`;
     }
     case "priority_penalty": {
+      const w = Number(runWeights[key]);
+      if (!Number.isFinite(w)) return null;
       const c = w * violations.priority_deadline_misses;
-      return `+${c.toFixed(2)} to cost (${w}×${violations.priority_deadline_misses} misses)`;
+      return `+${c.toFixed(2)} to cost (${w}×${violations.priority_deadline_misses} late orders)`;
     }
     default:
       return null;
@@ -130,7 +146,8 @@ export function ViolationSummary({
   runWeights,
 }: ViolationSummaryProps) {
   const active = new Set(activeWeightKeys);
-  const visibleCards = TRACKABLE.filter((t) => active.has(t.key));
+  const rowActive = (key: string) => active.has(key);
+  const visibleCards = TRACKABLE.filter((t) => rowActive(t.key));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>

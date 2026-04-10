@@ -19,6 +19,7 @@ class SessionCreate(BaseModel):
 class SessionPatch(BaseModel):
     workflow_mode: Literal["agile", "waterfall"] | None = None
     participant_number: str | None = Field(default=None, max_length=64)
+    test_problem_id: str | None = Field(default=None, max_length=64)
     panel_config: dict[str, Any] | None = None
     problem_brief: dict[str, Any] | None = None
     optimization_allowed: bool | None = None
@@ -70,6 +71,7 @@ class SessionOut(BaseModel):
     updated_at: datetime
     workflow_mode: str
     participant_number: str | None
+    test_problem_id: str = "vrptw"
     status: str
     panel_config: dict[str, Any] | None
     problem_brief: ProblemBrief

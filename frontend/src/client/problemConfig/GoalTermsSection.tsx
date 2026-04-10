@@ -170,6 +170,7 @@ function WeightRow({
   wkey,
   problem,
   editable,
+  weightCatalog,
   updateProblem,
   onActivate,
   markerKind,
@@ -178,12 +179,13 @@ function WeightRow({
   wkey: string;
   problem: ProblemBlock;
   editable: boolean;
+  weightCatalog: Record<string, { label: string; description: string }>;
   updateProblem: (patch: Partial<ProblemBlock>) => void;
   onActivate?: (event?: ActivateHint) => void;
   markerKind?: MarkerKind | null;
   onRememberRemoved?: (entry: RemovedGoalTermEntry) => void;
 }) {
-  const info = WEIGHT_INFO[wkey];
+  const info = weightCatalog[wkey] ?? WEIGHT_INFO[wkey];
   const isLocked = problem.locked_goal_terms.includes(wkey);
   return (
     <GoalTermRow
@@ -234,6 +236,8 @@ type GoalTermsSectionProps = {
   /** When false, preference-rule rows are read-only (e.g. worker_preference weight is locked). */
   preferencesEditable: boolean;
   showWorkerBlock: boolean;
+  extensionUi: string;
+  weightCatalog: Record<string, { label: string; description: string }>;
   displayWeightKeys: string[];
   removedGoalTerms: RemovedGoalTermEntry[];
   markerKindFor: (key: string) => MarkerKind | null;
@@ -254,6 +258,8 @@ export function GoalTermsSection({
   editable,
   preferencesEditable,
   showWorkerBlock,
+  extensionUi,
+  weightCatalog,
   displayWeightKeys,
   removedGoalTerms,
   markerKindFor,
@@ -269,7 +275,8 @@ export function GoalTermsSection({
   addLockedRow,
 }: GoalTermsSectionProps) {
   const hasHardStructural =
-    Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null;
+    extensionUi === "vrptw_extras" &&
+    (Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null);
   const rules = problem.driver_preferences;
   const preferencePeekText =
     rules.length === 0
@@ -280,12 +287,13 @@ export function GoalTermsSection({
   return (
     <>
       {displayWeightKeys.map((key) =>
-        key === "worker_preference" ? (
+        key === "worker_preference" && extensionUi === "vrptw_extras" ? (
           <Fragment key={key}>
             <WeightRow
               wkey={key}
               problem={problem}
               editable={editable}
+              weightCatalog={weightCatalog}
               updateProblem={(patch) => runEditingAction(() => updateProblem(patch))}
               onActivate={(event) => ensureEditing(event)}
             />
@@ -466,6 +474,7 @@ export function GoalTermsSection({
             wkey={key}
             problem={problem}
             editable={editable}
+            weightCatalog={weightCatalog}
             updateProblem={(patch) => runEditingAction(() => updateProblem(patch))}
             onActivate={(event) => ensureEditing(event)}
             markerKind={markerKindFor(`weight:${key}`)}
@@ -605,7 +614,7 @@ export function GoalTermsSection({
           >
             <div className="definition-item-meta">
               <span className="entry-diff-marker entry-diff-marker--removed">-</span>
-              <span className="muted">{WEIGHT_INFO[entry.key]?.label ?? entry.key} (removed)</span>
+              <span className="muted">{weightCatalog[entry.key]?.label ?? WEIGHT_INFO[entry.key]?.label ?? entry.key} (removed)</span>
               <button
                 type="button"
                 className="definition-icon-btn definition-restore-btn"

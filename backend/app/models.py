@@ -35,6 +35,7 @@ class StudySession(Base):
     optimization_gate_engaged: Mapped[bool] = mapped_column(Boolean, default=False)
     gemini_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gemini_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    test_problem_id: Mapped[str] = mapped_column(String(64), default="vrptw")
 
     messages: Mapped[list["ChatMessage"]] = relationship(
         "ChatMessage", back_populates="session", cascade="all, delete-orphan"

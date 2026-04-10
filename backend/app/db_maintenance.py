@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 def ensure_database_shape() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_sessions_test_problem_id_column()
     _ensure_sessions_problem_brief_column()
     _ensure_sessions_participant_number_column()
     _ensure_sessions_processing_columns()
@@ -23,6 +24,22 @@ def ensure_database_shape() -> None:
     _backfill_optimization_gate_engaged()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
+
+
+def _ensure_sessions_test_problem_id_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "test_problem_id" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE sessions ADD COLUMN test_problem_id VARCHAR(64) NOT NULL DEFAULT 'vrptw'"
+            )
+        )
+    log.info("Added sessions.test_problem_id column")
 
 
 def _ensure_sessions_problem_brief_column() -> None:

@@ -10,11 +10,11 @@ from google import genai
 from google.genai import types
 
 from app.problem_brief import locked_goal_terms_prompt_section
+from app.problems.registry import get_study_port
 
 from app.prompts.study_chat import (
     STUDY_CHAT_BRIEF_UPDATE_TASK,
     STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
-    STUDY_CHAT_CONFIG_DERIVE_SYSTEM_PROMPT,
     STUDY_CHAT_PHASE_CONFIGURATION,
     STUDY_CHAT_PHASE_DISCOVERY,
     STUDY_CHAT_PHASE_STRUCTURING,
@@ -31,133 +31,15 @@ from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn, RunTriggerIntentT
 
 log = logging.getLogger(__name__)
 
-# Gemini rejects nested OpenAPI "additional_properties" when passing a Pydantic model as
-# response_schema (dict[str, Any] becomes additionalProperties: true). Use response_json_schema
-# with a hand-written schema instead. Keep it explicit around `problem.weights`, since a loose
-# "object" schema lets malformed fragments like `{"weights": "{"}` slip through.
-_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "description": (
-        "Only these objective keys exist — omit keys the user did not discuss. "
-        "Never invent names; never add fuel_cost unless the user explicitly mentioned fuel, mileage, or operating/monetary cost."
-    ),
-    "properties": {
-        "travel_time": {"type": "number"},
-        "fuel_cost": {"type": "number"},
-        "deadline_penalty": {"type": "number"},
-        "capacity_penalty": {"type": "number"},
-        "workload_balance": {"type": "number"},
-        "worker_preference": {"type": "number"},
-        "priority_penalty": {"type": "number"},
-    },
-    "additionalProperties": False,
-}
+# Default panel schema follows the default study benchmark (``test_problem_id`` default ``vrptw``).
+CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA: dict[str, Any] = get_study_port(None).panel_patch_response_json_schema()
 
-# Union of all keys MEALpy accepts per algorithm (see app.algorithm_catalog / optimizer.py).
-_ALGORITHM_PARAMS_PROPERTY_NAMES: tuple[str, ...] = (
-    "pc",
-    "pm",
-    "c1",
-    "c2",
-    "w",
-    "temp_init",
-    "cooling_rate",
-    "max_sub_iter",
-    "t0",
-    "t1",
-    "move_count",
-    "mutation_rate",
-    "mutation_step_size",
-    "mutation_step_size_damp",
-    "sample_count",
-    "intent_factor",
-    "zeta",
-)
 
-_ALGORITHM_PARAMS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "description": (
-        "Optional tuning object. Only use keys that exist for the selected algorithm — "
-        "GA: pc, pm. PSO: c1, c2, w. SA: temp_init, cooling_rate. SwarmSA: max_sub_iter, t0, t1, "
-        "move_count, mutation_rate, mutation_step_size, mutation_step_size_damp. "
-        "ACOR: sample_count, intent_factor, zeta. "
-        "Omit unless the user discussed hyperparameters; never invent other names."
-    ),
-    "properties": {name: {"type": "number"} for name in _ALGORITHM_PARAMS_PROPERTY_NAMES},
-    "additionalProperties": False,
-}
-
-_DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "vehicle_idx": {"type": "integer"},
-        "condition": {
-            "type": "string",
-            "description": (
-                "avoid_zone, order_priority, shift_over_limit; legacy: zone_d, express_order, shift_over_hours"
-            ),
-        },
-        "penalty": {"type": "number"},
-        "zone": {"type": "integer"},
-        "order_priority": {
-            "type": "string",
-            "enum": ["express", "standard"],
-            "description": "Must be exactly express or standard (not low/high synonyms).",
-        },
-        "limit_minutes": {"type": "number"},
-        "hours": {"type": "number"},
-        "aggregation": {"type": "string"},
-    },
-    "required": ["vehicle_idx", "condition", "penalty"],
-    "additionalProperties": False,
-}
-
-_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "weights": _WEIGHTS_OBJECT_SCHEMA,
-        "only_active_terms": {"type": "boolean"},
-        "driver_preferences": {
-            "type": "array",
-            "items": _DRIVER_PREFERENCE_SCHEMA,
-        },
-        "shift_hard_penalty": {"type": "number"},
-        "locked_assignments": {
-            "type": "object",
-            "description": "Map task index string to vehicle index integer.",
-            "additionalProperties": {"type": "integer"},
-        },
-        "algorithm": {
-            "type": "string",
-            "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR"],
-        },
-        "algorithm_params": _ALGORITHM_PARAMS_SCHEMA,
-        "epochs": {"type": "integer"},
-        "pop_size": {"type": "integer"},
-        "random_seed": {"type": "integer"},
-        "hard_constraints": {"type": "array", "items": {"type": "string"}},
-        "soft_constraints": {"type": "array", "items": {"type": "string"}},
-    },
-    "additionalProperties": False,
-}
-
-_PANEL_PATCH_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "problem": _PROBLEM_PATCH_SCHEMA,
-    },
-    "additionalProperties": False,
-}
-
-CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
-    "title": "PanelPatch",
-    "type": "object",
-    "properties": {
-        "problem": _PROBLEM_PATCH_SCHEMA,
-    },
-    "required": ["problem"],
-    "additionalProperties": False,
-}
+def _study_benchmark_appendix(test_problem_id: str | None) -> str | None:
+    blob = get_study_port(test_problem_id).study_prompt_appendix()
+    if not blob or not str(blob).strip():
+        return None
+    return str(blob).strip()
 
 _PROBLEM_BRIEF_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -282,6 +164,14 @@ def _run_ack_prompt(workflow_mode: str) -> str:
     return f"{STUDY_CHAT_RUN_ACK_BASE}\n{wf_addendum}"
 
 
+def _system_prompt_openers(test_problem_id: str | None) -> list[str]:
+    parts = [STUDY_CHAT_SYSTEM_PROMPT]
+    apx = _study_benchmark_appendix(test_problem_id)
+    if apx:
+        parts.append(apx)
+    return parts
+
+
 def resolve_workflow_phase(
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
@@ -326,6 +216,7 @@ def _build_structured_system_instruction(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     current_panel: dict[str, Any] | None = None,
+    test_problem_id: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -339,14 +230,14 @@ def _build_structured_system_instruction(
         else "{}"
     )
     parts = [
-        STUDY_CHAT_SYSTEM_PROMPT,
+        *_system_prompt_openers(test_problem_id),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_STRUCTURED_JSON_RULES,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
-    lock_structured = locked_goal_terms_prompt_section(current_panel or {})
+    lock_structured = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_structured:
         parts.append(lock_structured)
     if cleanup_mode:
@@ -385,6 +276,7 @@ def _build_visible_chat_system_instruction(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    test_problem_id: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -398,14 +290,14 @@ def _build_visible_chat_system_instruction(
         else "{}"
     )
     parts = [
-        STUDY_CHAT_SYSTEM_PROMPT,
+        *_system_prompt_openers(test_problem_id),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_VISIBLE_REPLY_TASK,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
-    lock_blob = locked_goal_terms_prompt_section(current_panel or {})
+    lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_blob:
         parts.append(lock_blob)
     if is_run_acknowledgement:
@@ -440,6 +332,7 @@ def _build_brief_update_system_instruction(
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
+    test_problem_id: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -453,7 +346,7 @@ def _build_brief_update_system_instruction(
         else "{}"
     )
     parts = [
-        STUDY_CHAT_SYSTEM_PROMPT,
+        *_system_prompt_openers(test_problem_id),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_BRIEF_UPDATE_TASK,
@@ -461,13 +354,13 @@ def _build_brief_update_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
-    lock_blob = locked_goal_terms_prompt_section(current_panel or {})
+    lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_blob:
         parts.append(lock_blob)
     if cleanup_mode and current_panel and isinstance(current_panel, dict) and current_panel:
         parts.append(
             "Current saved **panel configuration** (authoritative numeric weights, algorithm, "
-            "iterations, population, shift hard penalty, `only_active_terms`, algorithm_params, …). "
+            "iterations, population, benchmark-specific penalties or extras, `only_active_terms`, algorithm_params, …). "
             "When you rewrite gathered rows (one row per objective or penalty term), **carry these "
             "values through** in plain language (e.g. “… weight is set to N”). The server merges "
             "slot-backed lines from this panel after cleanup, but matching the numbers here avoids "
@@ -528,6 +421,7 @@ def _plain_fallback_reply(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    test_problem_id: str | None = None,
 ) -> str:
     system = _build_visible_chat_system_instruction(
         current_problem_brief=current_problem_brief,
@@ -537,6 +431,7 @@ def _plain_fallback_reply(
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
+        test_problem_id=test_problem_id,
     )
     client = genai.Client(api_key=api_key)
     chat = client.chats.create(
@@ -562,6 +457,7 @@ def generate_visible_chat_reply(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    test_problem_id: str | None = None,
 ) -> str:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_visible_chat_system_instruction(
@@ -572,6 +468,7 @@ def generate_visible_chat_reply(
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
+        test_problem_id=test_problem_id,
     )
     chat = client.chats.create(
         model=model_name,
@@ -597,6 +494,7 @@ def generate_problem_brief_update(
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
+    test_problem_id: str | None = None,
 ) -> ProblemBriefUpdateTurn:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_brief_update_system_instruction(
@@ -608,6 +506,7 @@ def generate_problem_brief_update(
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
         is_answered_open_question=is_answered_open_question,
+        test_problem_id=test_problem_id,
     )
     history = _history_to_contents(history_lines)
     config = types.GenerateContentConfig(
@@ -652,6 +551,7 @@ def generate_chat_turn(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    test_problem_id: str | None = None,
 ) -> ChatModelTurn:
     """Compatibility wrapper that now prioritizes the visible assistant reply."""
     try:
@@ -667,6 +567,7 @@ def generate_chat_turn(
             researcher_steers=researcher_steers,
             cleanup_mode=cleanup_mode,
             is_run_acknowledgement=is_run_acknowledgement,
+            test_problem_id=test_problem_id,
         )
     except Exception as e:
         log.warning("Visible chat failed (%s); using plain fallback", e)
@@ -682,6 +583,7 @@ def generate_chat_turn(
             researcher_steers,
             cleanup_mode,
             is_run_acknowledgement,
+            test_problem_id=test_problem_id,
         )
     return ChatModelTurn(assistant_message=text, panel_patch=None)
 
@@ -762,6 +664,7 @@ def generate_config_from_brief(
     model_name: str,
     workflow_mode: str = "waterfall",
     recent_runs_summary: list[dict[str, Any]] | None = None,
+    test_problem_id: str | None = None,
 ) -> dict[str, Any] | None:
     """One-shot structured call that derives a panel patch from a brief."""
     if not api_key.strip():
@@ -780,17 +683,18 @@ def generate_config_from_brief(
         "Current panel JSON (auxiliary only; do not preserve managed fields from it):\n"
         f"{json.dumps(current_panel or {}, ensure_ascii=False)}\n"
     )
+    port = get_study_port(test_problem_id)
     system_instruction = "\n\n".join(
         [
             _workflow_prompt(workflow_mode),
             _phase_prompt(phase),
-            STUDY_CHAT_CONFIG_DERIVE_SYSTEM_PROMPT,
+            port.config_derive_system_prompt(),
         ]
     )
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         response_mime_type="application/json",
-        response_json_schema=CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
+        response_json_schema=port.panel_patch_response_json_schema(),
     )
     try:
         resp = client.models.generate_content(

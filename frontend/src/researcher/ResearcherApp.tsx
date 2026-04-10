@@ -54,6 +54,7 @@ export function ResearcherApp() {
           onRemoveSession={researcher.removeSession}
           onSendSteer={researcher.sendSteer}
           onRemoveRun={researcher.removeRun}
+          testProblemsMeta={researcher.testProblemsMeta}
         />
       </div>
     </div>

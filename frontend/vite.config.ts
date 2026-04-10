@@ -23,6 +23,7 @@ export default defineConfig({
         index: path.resolve(__dirname, "index.html"),
         client: path.resolve(__dirname, "client.html"),
         researcher: path.resolve(__dirname, "researcher.html"),
+        analyzer: path.resolve(__dirname, "analyzer.html"),
       },
     },
   },

@@ -108,9 +108,10 @@ def sync_panel_from_problem_brief(
     recent_runs_summary: list | None = None,
     preserve_missing_managed_fields: bool = False,
 ) -> tuple[dict | None, list[str]]:
-    from app.adapter import sanitize_panel_weights
-    from app.problem_config_seed import derive_problem_panel_from_brief
+    from app.problems.registry import get_study_port
     from app.services.llm import generate_config_from_brief
+
+    test_problem_id = getattr(row, "test_problem_id", None) or "vrptw"
 
     current_panel = helpers.panel_dict(row)
     derived_panel = None
@@ -125,6 +126,7 @@ def sync_panel_from_problem_brief(
                     model_name=model_name,
                     workflow_mode=workflow_mode or row.workflow_mode,
                     recent_runs_summary=recent_runs_summary,
+                    test_problem_id=test_problem_id,
                 ),
                 timeout_sec,
             )
@@ -137,11 +139,12 @@ def sync_panel_from_problem_brief(
                     current_panel=None,
                     api_key=api_key,
                     model_name=model_name,
+                    test_problem_id=test_problem_id,
                 ),
                 timeout_sec,
             )
     if derived_panel is None:
-        derived_panel = derive_problem_panel_from_brief(problem_brief)
+        derived_panel = get_study_port(test_problem_id).derive_problem_panel_from_brief(problem_brief)
     if derived_panel is None:
         return None, []
 
@@ -156,7 +159,7 @@ def sync_panel_from_problem_brief(
         derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
     next_problem.update(derived_problem)
     next_panel["problem"] = next_problem
-    merged, weight_warnings = sanitize_panel_weights(next_panel)
+    merged, weight_warnings = get_study_port(test_problem_id).sanitize_panel_config(next_panel)
     if merged == current_panel:
         return merged, weight_warnings
 
@@ -174,7 +177,10 @@ def sync_problem_brief_from_panel(
     panel_config: dict,
 ) -> dict:
     current_problem_brief = helpers.problem_brief_dict(row)
-    next_problem_brief = merge_brief_from_panel(current_problem_brief, panel_config)
+    tpid = getattr(row, "test_problem_id", None) or "vrptw"
+    next_problem_brief = merge_brief_from_panel(
+        current_problem_brief, panel_config, test_problem_id=tpid
+    )
     if next_problem_brief == current_problem_brief:
         return current_problem_brief
     row.problem_brief_json = json.dumps(next_problem_brief)
