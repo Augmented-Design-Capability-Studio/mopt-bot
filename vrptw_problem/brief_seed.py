@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.algorithm_catalog import DEFAULT_EPOCHS, DEFAULT_POP_SIZE
+
 _ENTRY_SPLIT_RE = re.compile(r"[\n\r]+|(?<=[.!?;])\s+")
 _ALGORITHM_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bparticle swarm\b|\bpso\b", re.IGNORECASE), "PSO"),
@@ -190,37 +192,30 @@ def _detect_algorithm(entries: list[str]) -> str | None:
 
 
 def _default_algorithm_block(algorithm: str) -> dict[str, Any]:
-    defaults: dict[str, dict[str, Any]] = {
-        "GA": {"algorithm": "GA", "algorithm_params": {"pc": 0.9, "pm": 0.05}, "epochs": 80, "pop_size": 40},
-        "PSO": {"algorithm": "PSO", "algorithm_params": {"c1": 2.0, "c2": 2.0, "w": 0.4}, "epochs": 80, "pop_size": 50},
-        "SA": {
-            "algorithm": "SA",
-            "algorithm_params": {"temp_init": 100, "cooling_rate": 0.99},
-            "epochs": 120,
-            "pop_size": 40,
-        },
-        "SwarmSA": {
-            "algorithm": "SwarmSA",
-            "algorithm_params": {
-                "max_sub_iter": 10,
-                "t0": 1.0,
-                "t1": 0.01,
-                "move_count": 5,
-                "mutation_rate": 0.1,
-                "mutation_step_size": 0.1,
-                "mutation_step_size_damp": 0.99,
-            },
-            "epochs": 80,
-            "pop_size": 40,
-        },
-        "ACOR": {
-            "algorithm": "ACOR",
-            "algorithm_params": {"sample_count": 25, "intent_factor": 0.5, "zeta": 1.0},
-            "epochs": 80,
-            "pop_size": 40,
-        },
+    # Centralized defaults from app.algorithm_catalog. GA/PSO/SA all start here.
+    base = {
+        "algorithm": algorithm,
+        "epochs": DEFAULT_EPOCHS,
+        "pop_size": DEFAULT_POP_SIZE,
     }
-    return defaults.get(algorithm, defaults["GA"]).copy()
+    # Specific algorithm_params defaults.
+    params: dict[str, dict[str, Any]] = {
+        "GA": {"pc": 0.9, "pm": 0.05},
+        "PSO": {"c1": 2.0, "c2": 2.0, "w": 0.4},
+        "SA": {"temp_init": 100, "cooling_rate": 0.99},
+        "SwarmSA": {
+            "max_sub_iter": 10,
+            "t0": 1.0,
+            "t1": 0.01,
+            "move_count": 5,
+            "mutation_rate": 0.1,
+            "mutation_step_size": 0.1,
+            "mutation_step_size_damp": 0.99,
+        },
+        "ACOR": {"sample_count": 25, "intent_factor": 0.5, "zeta": 1.0},
+    }
+    base["algorithm_params"] = params.get(algorithm, params["GA"]).copy()
+    return base
 
 
 def _mentions(entries: list[str], key: str) -> list[str]:

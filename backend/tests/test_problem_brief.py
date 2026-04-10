@@ -96,13 +96,19 @@ def test_merge_moves_answered_suffix_open_question_to_gathered():
     assert any("8h cap" in t for t in gathered_texts)
 
 
-def test_brief_items_from_panel_omit_default_ga_algorithm_params():
+def test_brief_items_from_panel_always_shows_strategy_if_algorithm_present():
+    """Now search strategy details (iterations/population) are explicitly shown even if other params are default."""
     panel = {"problem": {"algorithm": "GA", "algorithm_params": {"pc": 0.9, "pm": 0.05}}}
     items = _brief_items_from_panel(panel)
     texts = [i["text"] for i in items]
-    assert not any("search strategy:" in t.lower() for t in texts)
-    assert not any("parameter pc" in t.lower() for t in texts)
-    assert not any("parameter pm" in t.lower() for t in texts)
+    assert any("search strategy: ga" in t.lower() for t in texts)
+    # Check that it includes default iterations/population (100/50).
+    s = [t for t in texts if "search strategy:" in t.lower()][0]
+    assert "iterations 100" in s
+    assert "population size 50" in s
+    # But still omits default algorithm-specific params (pc, pm).
+    assert "pc=" not in s
+    assert "pm=" not in s
 
 
 def test_brief_items_from_panel_include_non_default_ga_param_only():
@@ -112,6 +118,7 @@ def test_brief_items_from_panel_include_non_default_ga_param_only():
     assert len(texts) == 1
     assert "Search strategy: GA" in texts[0]
     assert "pc=0.8" in texts[0]
+    assert "iterations 100" in texts[0]
     assert "pm=0.05" not in texts[0]
 
 

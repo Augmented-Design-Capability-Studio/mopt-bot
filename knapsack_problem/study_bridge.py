@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.algorithm_catalog import DEFAULT_EPOCHS, DEFAULT_POP_SIZE
 import numpy as np
 
 _EARLY_STOP_PATIENCE = 20
@@ -32,8 +33,8 @@ def parse_problem_config(
     if algo_norm not in allowed:
         raise ValueError(f"Unknown algorithm: use one of {sorted(allowed)}")
 
-    epochs = int(raw.get("epochs", 500))
-    pop_size = int(raw.get("pop_size", 100))
+    epochs = int(raw.get("epochs", DEFAULT_EPOCHS))
+    pop_size = int(raw.get("pop_size", DEFAULT_POP_SIZE))
     if epochs < 1 or epochs > 50000:
         raise ValueError("epochs must be between 1 and 50000")
     if pop_size < 2 or pop_size > 500:

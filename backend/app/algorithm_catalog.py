@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+# Defaults for top-level search configuration.
+DEFAULT_EPOCHS = 100
+DEFAULT_POP_SIZE = 50
+
 # Allowed algorithm_params keys per algorithm — same filter sets as optimizer model construction.
 ALLOWED_ALGORITHM_PARAMS: dict[str, frozenset[str]] = {
     "GA": frozenset({"pc", "pm"}),

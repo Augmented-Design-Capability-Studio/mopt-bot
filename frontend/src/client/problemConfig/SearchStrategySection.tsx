@@ -1,6 +1,8 @@
 import {
   ALLOWED_ALGORITHM_PARAMS,
   ALGORITHM_PARAM_FIELD_META,
+  DEFAULT_EPOCHS,
+  DEFAULT_POP_SIZE,
   defaultParamsForAlgorithm,
 } from "./algorithmCatalog";
 import { ALGORITHM_DESC } from "./metadata";
@@ -100,13 +102,13 @@ export function SearchStrategySection({
           );
         })}
 
-      {problem.epochs !== null && (
+      {(problem.algorithm !== "" || problem.epochs !== null) && (
         <FieldRow label="Max iterations" markerKind={markerKindFor("field:epochs")}>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <ConfigNumberInput
                 editable={editable}
-                value={problem.epochs}
+                value={problem.epochs ?? DEFAULT_EPOCHS}
                 min={1}
                 max={50000}
                 onValueChange={(value) => {
@@ -118,7 +120,7 @@ export function SearchStrategySection({
                 style={{ width: "6rem", fontFamily: "monospace" }}
               />
               <span className="muted" style={{ fontSize: "0.75rem" }}>
-                {problem.epochs < 100 ? "quick (may not fully converge)" : problem.epochs < 500 ? "moderate" : "thorough"}
+                {(problem.epochs ?? DEFAULT_EPOCHS) < 100 ? "quick (may not fully converge)" : (problem.epochs ?? DEFAULT_EPOCHS) < 500 ? "moderate" : "thorough"}
               </span>
             </div>
             {problem.early_stop && (
@@ -207,11 +209,11 @@ export function SearchStrategySection({
         </>
       )}
 
-      {problem.pop_size !== null && (
+      {(problem.algorithm !== "" || problem.pop_size !== null) && (
         <FieldRow label="Population / swarm size" markerKind={markerKindFor("field:pop_size")}>
           <ConfigNumberInput
             editable={editable}
-            value={problem.pop_size}
+            value={problem.pop_size ?? DEFAULT_POP_SIZE}
             min={2}
             max={500}
             onValueChange={(value) => {

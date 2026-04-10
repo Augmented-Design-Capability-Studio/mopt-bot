@@ -2,6 +2,9 @@
  * Mirrors backend/app/algorithm_catalog.py and vrptw_problem/optimizer.py.
  * Keep keys and defaults aligned when the solver changes.
  */
+export const DEFAULT_EPOCHS = 100;
+export const DEFAULT_POP_SIZE = 50;
+
 export const ALLOWED_ALGORITHM_PARAMS: Record<string, readonly string[]> = {
   GA: ["pc", "pm"],
   PSO: ["c1", "c2", "w"],

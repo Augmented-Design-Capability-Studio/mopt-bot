@@ -715,6 +715,15 @@ def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str
 
 
 def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = None) -> list[dict[str, Any]]:
+    from app.algorithm_catalog import (
+        DEFAULT_ALGORITHM_PARAMS,
+        DEFAULT_EPOCHS,
+        DEFAULT_POP_SIZE,
+        allowed_param_keys,
+        canonical_algorithm_stored,
+        param_value_is_default,
+    )
+
     if not isinstance(panel_config, dict):
         return []
 
@@ -729,7 +738,11 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
 
     algorithm = str(problem.get("algorithm") or "").strip()
     epochs = problem.get("epochs")
+    if epochs is None:
+        epochs = DEFAULT_EPOCHS
     pop_size = problem.get("pop_size")
+    if pop_size is None:
+        pop_size = DEFAULT_POP_SIZE
 
     if "only_active_terms" in problem and isinstance(problem.get("only_active_terms"), bool):
         items.append(
@@ -758,12 +771,6 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
                 f"Shift duration hard penalty is set to {shift_hard_penalty}.",
             )
         )
-
-    from app.algorithm_catalog import (
-        allowed_param_keys,
-        canonical_algorithm_stored,
-        param_value_is_default,
-    )
 
     algorithm_params = problem.get("algorithm_params")
     algo_key = canonical_algorithm_stored(algorithm) if algorithm else None

@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from app.algorithm_catalog import filter_algorithm_params
+from app.algorithm_catalog import filter_algorithm_params, DEFAULT_EPOCHS, DEFAULT_POP_SIZE
 from app.problems.exceptions import RunCancelled
 
 _VRPTW_ROOT = Path(__file__).resolve().parent
@@ -539,8 +539,8 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     if algo_norm not in allowed:
         raise ValueError(f"Unknown algorithm: use one of {sorted(allowed)}")
 
-    epochs = int(raw.get("epochs", 500))
-    pop_size = int(raw.get("pop_size", 100))
+    epochs = int(raw.get("epochs", DEFAULT_EPOCHS))
+    pop_size = int(raw.get("pop_size", DEFAULT_POP_SIZE))
     if epochs < 1 or epochs > 50000:
         raise ValueError("epochs must be between 1 and 50000")
     if pop_size < 2 or pop_size > 500:
