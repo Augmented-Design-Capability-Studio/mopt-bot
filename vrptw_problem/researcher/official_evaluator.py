@@ -61,7 +61,7 @@ def evaluate_official(
         rng,
         weights=DEFAULT_WEIGHTS,
         driver_preferences=DEFAULT_DRIVER_PREFERENCES,
-        shift_hard_penalty=SHIFT_HARD_PENALTY,
+        max_shift_hours=8.0,
     )
     return float(cost), metrics
 
@@ -86,7 +86,7 @@ def evaluate_user(
         rng,
         weights=user_config["weights"],
         driver_preferences=user_config.get("driver_preferences", []),
-        shift_hard_penalty=user_config.get("shift_hard_penalty", SHIFT_HARD_PENALTY),
+        max_shift_hours=user_config.get("max_shift_hours", 8.0),
     )
     return float(cost), metrics
 
@@ -114,7 +114,7 @@ def evaluate_constraint_satisfaction(
         rng,
         weights={k: 0.0 for k in ["w1", "w2", "w3", "w4", "w5", "w6", "w7"]},
         driver_preferences=[],
-        shift_hard_penalty=0,  # we check manually
+        max_shift_hours=8.0,  # we check manually using metrics or assume canonical limit
     )
 
     # All orders covered
@@ -128,8 +128,11 @@ def evaluate_constraint_satisfaction(
     flat = [o for r in routes for o in r]
     no_duplicates = len(flat) == len(set(flat))
 
-    # Shifts under 8h
+    # Shifts under user's or official limit
     shift_durations = metrics.get("shift_durations", [])
+    # In official satisfaction, we usually compare against 8h.
+    # If this is evaluate_user, we might want to use that max_shift_hours.
+    # For now, keeping the 8.0 constant for 'all_shifts_under_8h' metric name.
     all_under_8h = all(sd <= MAX_SHIFT_MIN for sd in shift_durations)
 
     # Locked assignments obeyed
@@ -198,9 +201,6 @@ def full_official_evaluation(
     }
 
 
-def _cost_contribution(metrics: dict, weights: dict) -> dict[str, float]:
-    """Break down cost by term (for comparison)."""
-    w = weights
     return {
         "travel": w.get("w1", 0) * metrics.get("travel_time", 0),
         "shift_overtime": w.get("w2", 0) * metrics.get("shift_overtime_minutes", 0),

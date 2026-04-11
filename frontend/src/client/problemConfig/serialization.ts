@@ -79,7 +79,7 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
       early_stop_epsilon: typeof inner.early_stop_epsilon === "number" ? inner.early_stop_epsilon : null,
       pop_size: typeof inner.pop_size === "number" ? inner.pop_size : null,
       random_seed: typeof inner.random_seed === "number" ? inner.random_seed : null,
-      shift_hard_penalty: typeof inner.shift_hard_penalty === "number" ? inner.shift_hard_penalty : null,
+      max_shift_hours: typeof inner.max_shift_hours === "number" ? inner.max_shift_hours : null,
       locked_assignments:
         inner.locked_assignments !== null &&
         typeof inner.locked_assignments === "object" &&
@@ -120,8 +120,8 @@ export function serializeProblemConfig(
   else delete problemObject.pop_size;
   if (problem.random_seed !== null) problemObject.random_seed = problem.random_seed;
   else delete problemObject.random_seed;
-  if (problem.shift_hard_penalty !== null) problemObject.shift_hard_penalty = problem.shift_hard_penalty;
-  else delete problemObject.shift_hard_penalty;
+  if (problem.max_shift_hours !== null) problemObject.max_shift_hours = problem.max_shift_hours;
+  else delete problemObject.max_shift_hours;
 
   problemObject.driver_preferences = problem.driver_preferences;
   problemObject.locked_assignments = problem.locked_assignments;

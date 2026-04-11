@@ -50,11 +50,11 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\boperating cost\b", re.IGNORECASE),
         re.compile(r"\bfuel cost\b", re.IGNORECASE),
     ),
-    "shift_overtime": (
+    "shift_limit": (
         re.compile(r"\bshift overtime\b", re.IGNORECASE),
         re.compile(r"\bovertime minutes\b", re.IGNORECASE),
         re.compile(r"\bminutes over shift\b", re.IGNORECASE),
-        re.compile(r"\bbeyond 8\s*h(?:ours)?\b", re.IGNORECASE),
+        re.compile(r"\bbeyond ([\d.]+)\s*h(?:ours)?\b", re.IGNORECASE),
         re.compile(r"\bexceed max shift\b", re.IGNORECASE),
         re.compile(r"\bhours over limit\b", re.IGNORECASE),
         re.compile(r"\blong shift penalty\b", re.IGNORECASE),
@@ -96,14 +96,14 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\burgent\b", re.IGNORECASE),
         re.compile(r"\bpriority[_\s-]?deadline\b", re.IGNORECASE),
     ),
-    "shift_hard_penalty": (
+    "max_shift_hours": (
         re.compile(r"\bshift duration\b", re.IGNORECASE),
         re.compile(r"\bshift limits?\b", re.IGNORECASE),
         re.compile(r"\bshift compliance\b", re.IGNORECASE),
         re.compile(r"\bmaximum shift\b", re.IGNORECASE),
         re.compile(r"\bmax hours\b", re.IGNORECASE),
-        re.compile(r"\bovertime\b", re.IGNORECASE),
-        re.compile(r"\bshift[_\s-]?hard[_\s-]?penalty\b", re.IGNORECASE),
+        re.compile(r"\bovertime limit\b", re.IGNORECASE),
+        re.compile(r"\bmax_shift_hours\b", re.IGNORECASE),
     ),
 }
 _EXPLICIT_VALUE_RE = re.compile(
@@ -333,9 +333,9 @@ def derive_problem_panel_from_brief(
     if travel_entries:
         weights["travel_time"] = _extract_explicit_value_for_key(travel_entries, "travel_time") or 1.0
 
-    shift_ot_entries = _mentions(fragments, "shift_overtime")
-    if shift_ot_entries:
-        weights["shift_overtime"] = _extract_explicit_value_for_key(shift_ot_entries, "shift_overtime") or 10.0
+    shift_limit_entries = _mentions(fragments, "shift_limit")
+    if shift_limit_entries:
+        weights["shift_limit"] = _extract_explicit_value_for_key(shift_limit_entries, "shift_limit") or 500.0
 
     capacity_entries = _mentions(fragments, "capacity_penalty")
     if capacity_entries:
@@ -369,12 +369,23 @@ def derive_problem_panel_from_brief(
     if priority_entries:
         weights["priority_penalty"] = _extract_explicit_value_for_key(priority_entries, "priority_penalty") or 100.0
 
-    shift_entries = _mentions(fragments, "shift_hard_penalty")
-    shift_hard_penalty = None
-    if shift_entries:
-        shift_hard_penalty = _extract_explicit_value_for_key(shift_entries, "shift_hard_penalty") or (
-            1000.0 if any(any(term in text.lower() for term in _STRONG_TERMS) for text in shift_entries) else 250.0
-        )
+    shift_threshold_entries = _mentions(fragments, "max_shift_hours")
+    max_shift_hours = None
+    if shift_threshold_entries:
+        max_shift_hours = _extract_explicit_value_for_key(shift_threshold_entries, "max_shift_hours") or 8.0
+        # If they mentioned shift limits, give w2 a boost
+        weights["shift_limit"] = max(weights.get("shift_limit", 0), 500.0)
+    
+    # Also check if w2 patterns captured a specific threshold like "beyond 6.5 hours"
+    if max_shift_hours is None and shift_limit_entries:
+        weights["shift_limit"] = max(weights.get("shift_limit", 0), 500.0)
+        for text in shift_limit_entries:
+            match = re.search(r"beyond ([\d.]+)\s*h(?:ours)?", text, re.IGNORECASE)
+            if match:
+                max_shift_hours = float(match.group(1))
+                break
+        if max_shift_hours is None:
+            max_shift_hours = 8.0
 
     algorithm_params = _extract_algorithm_params(fragments)
     epochs = _extract_numeric_setting(fragments, ("epoch", "epochs", "iteration", "iterations"))
@@ -383,7 +394,7 @@ def derive_problem_panel_from_brief(
 
     if (
         not weights
-        and shift_hard_penalty is None
+        and max_shift_hours is None
         and explicit_algorithm is None
         and not algorithm_params
         and epochs is None
@@ -400,11 +411,12 @@ def derive_problem_panel_from_brief(
         algorithm_block["epochs"] = int(epochs) if epochs.is_integer() else epochs
     if pop_size is not None:
         algorithm_block["pop_size"] = int(pop_size) if pop_size.is_integer() else pop_size
+    
     problem: dict[str, Any] = {
         "weights": weights,
         "only_active_terms": True if only_active_terms is None else only_active_terms,
         **algorithm_block,
     }
-    if shift_hard_penalty is not None:
-        problem["shift_hard_penalty"] = shift_hard_penalty
+    if max_shift_hours is not None:
+        problem["max_shift_hours"] = max_shift_hours
     return {"problem": problem}

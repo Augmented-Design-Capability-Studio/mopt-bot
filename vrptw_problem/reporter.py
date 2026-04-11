@@ -16,13 +16,13 @@ def _get_sim_config(result: SolveResult) -> tuple[dict, list, float]:
     if result.weights is not None:
         weights = result.weights
         driver_prefs = result.driver_preferences or []
-        shift_penalty = result.shift_hard_penalty or 5000.0
+        max_shift = result.max_shift_hours or 8.0
     else:
         config = load_user_input()
         weights = config["weights"]
         driver_prefs = config["driver_preferences"]
-        shift_penalty = config["shift_hard_penalty"]
-    return weights, driver_prefs, shift_penalty
+        max_shift = config["max_shift_hours"]
+    return weights, driver_prefs, max_shift
 
 
 def get_gantt_data(
@@ -38,14 +38,14 @@ def get_gantt_data(
     """
     orders = get_orders(seed=None)
     rng = np.random.RandomState(random_seed)
-    weights, driver_prefs, shift_penalty = _get_sim_config(result)
+    weights, driver_prefs, max_shift = _get_sim_config(result)
     _, _, visits_per_vehicle = simulate_routes(
         result.routes,
         orders,
         rng,
         weights,
         driver_preferences=driver_prefs,
-        shift_hard_penalty=shift_penalty,
+        max_shift_hours=max_shift,
     )
 
     gantt = []
@@ -79,14 +79,14 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
     """Print a formatted QuickBite optimization report."""
     orders = get_orders(seed=None)
     rng = np.random.RandomState(random_seed)
-    weights, driver_prefs, shift_penalty = _get_sim_config(result)
+    weights, driver_prefs, max_shift = _get_sim_config(result)
     _, metrics, visits_per_vehicle = simulate_routes(
         result.routes,
         orders,
         rng,
         weights,
         driver_preferences=driver_prefs,
-        shift_hard_penalty=shift_penalty,
+        max_shift_hours=max_shift,
     )
 
     m = metrics
@@ -99,7 +99,7 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
     print(f"  Best Cost : {result.best_cost:.1f}")
     print("\n  --- Cost Breakdown ---")
     print(f"  Travel Time       : {m.get('travel_time', 0):.1f} min")
-    print(f"  Shift overtime    : {m.get('shift_overtime_minutes', 0):.1f} min (fleet total past 8h cap)")
+    print(f"  Max Shift Penalty : {m.get('shift_overtime_minutes', 0):.1f} min (fleet total past limit)")
     print(f"  TW Violations     : {m.get('tw_violation_count', 0)} orders, "
           f"{m.get('tw_violation_min', 0):.1f} min total")
     print(f"  Capacity Overflow : {m.get('capacity_overflow', 0)} units")

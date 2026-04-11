@@ -25,7 +25,7 @@ _VRPTW_ROOT = Path(__file__).resolve().parent
 # w2 / ``shift_overtime`` scales total minutes beyond the 8h cap (summed over vehicles).
 WEIGHT_ALIASES: dict[str, str] = {
     "travel_time":       "w1",
-    "shift_overtime":    "w2",
+    "shift_limit":       "w2",
     "deadline_penalty":  "w3",
     "capacity_penalty":  "w4",
     "workload_balance":  "w5",
@@ -51,10 +51,11 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "fuel":            "travel_time",
     "mileage":         "travel_time",
     "operating_cost":  "travel_time",
-    # shift_overtime (w2) — avoid bare "overtime" (ambiguous)
-    "shift_overtime":  "shift_overtime",
-    "shift_over":      "shift_overtime",
-    "hours_over_8":    "shift_overtime",
+    # shift_limit (w2) — avoid bare "overtime" (ambiguous)
+    "shift_limit":     "shift_limit",
+    "shift_overtime":  "shift_limit",
+    "shift_over":      "shift_limit",
+    "hours_over_8":    "shift_limit",
     # deadline_penalty
     "deadline":        "deadline_penalty",
     "late":            "deadline_penalty",
@@ -215,14 +216,23 @@ def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any]
         wr = dict(weights_raw)
         if "fuel_cost" in wr:
             fc = wr.pop("fuel_cost")
-            if "shift_overtime" not in wr:
-                wr["shift_overtime"] = fc
+            if "shift_limit" not in wr:
+                wr["shift_limit"] = fc
                 warnings.append(
-                    "Migrated deprecated `fuel_cost` weight to `shift_overtime` (w2 — shift overtime minutes)."
+                    "Migrated deprecated `fuel_cost` weight to `shift_limit` (w2 — max shift penalty)."
                 )
             else:
                 warnings.append(
-                    "Removed deprecated `fuel_cost` weight; `shift_overtime` was already set."
+                    "Removed deprecated `fuel_cost` weight; `shift_limit` was already set."
+                )
+        if "shift_overtime" in wr:
+            so = wr.pop("shift_overtime")
+            if "shift_limit" not in wr:
+                wr["shift_limit"] = so
+                # No warning needed for this rename as it's the standard evolution.
+            else:
+                warnings.append(
+                    "Removed redundant `shift_overtime` weight; `shift_limit` was already set."
                 )
         translated, w = translate_weights_strict(wr)
         problem["weights"] = {WEIGHT_ALIAS_REVERSE.get(k, k): v for k, v in translated.items()}
@@ -237,14 +247,14 @@ def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any]
             if not isinstance(x, str):
                 continue
             raw_k = x.strip()
-            nk = "shift_overtime" if raw_k == "fuel_cost" else raw_k
-            if raw_k == "fuel_cost":
+            nk = "shift_limit" if raw_k in ("fuel_cost", "shift_overtime") else raw_k
+            if raw_k in ("fuel_cost", "shift_overtime"):
                 migrated_lock = True
             if nk not in seen:
                 out.append(nk)
                 seen.add(nk)
         if migrated_lock:
-            warnings.append("Renamed locked goal term `fuel_cost` → `shift_overtime`.")
+            warnings.append("Renamed locked goal term to `shift_limit`.")
         problem["locked_goal_terms"] = out
 
     warnings.extend(_sanitize_algorithm_params_on_problem(problem))
@@ -266,7 +276,7 @@ def neutral_violations(metrics: dict) -> dict[str, Any]:
         "time_window_minutes_over": float(metrics.get("tw_violation_min", 0)),
         "time_window_stop_count": int(metrics.get("tw_violation_count", 0)),
         "capacity_units_over": int(metrics.get("capacity_overflow", 0)),
-        "shift_limit_penalty": float(metrics.get("shift_hard_penalty", 0)),
+        "shift_limit_minutes": float(metrics.get("shift_overtime_minutes", 0)),
         "priority_deadline_misses": int(metrics.get("express_late_count", 0)),
     }
 
@@ -529,7 +539,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("driver_preferences must be a list")
     driver_preferences = _validate_driver_preferences(driver_preferences_raw)
 
-    shift_hard = float(raw.get("shift_hard_penalty", SHIFT_HARD_PENALTY))
+    shift_hard = float(raw.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS))
 
     locked = _validate_locked_assignments(raw.get("locked_assignments"))
 
@@ -588,7 +598,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "weights": weights,
         "driver_preferences": driver_preferences,
-        "shift_hard_penalty": shift_hard,
+        "max_shift_hours": shift_hard,
         "locked_assignments": locked,
         "algorithm": algo_norm,
         "algorithm_params": algorithm_params_filtered,
@@ -615,7 +625,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             weights=cfg["weights"],
             locked=cfg["locked_assignments"],
             driver_preferences=cfg["driver_preferences"],
-            shift_hard_penalty=cfg["shift_hard_penalty"],
+            max_shift_hours=cfg["max_shift_hours"],
             seed=cfg["random_seed"],
         )
         return opt.solve(
@@ -663,7 +673,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             rng_ref,
             cfg["reference_weights"],
             driver_preferences=cfg["driver_preferences"],
-            shift_hard_penalty=cfg["shift_hard_penalty"],
+            max_shift_hours=cfg["max_shift_hours"],
         )
         ref_cost = float(rc)
 
@@ -710,7 +720,7 @@ def run_evaluate_routes(
         rng,
         cfg["weights"],
         driver_preferences=cfg["driver_preferences"],
-        shift_hard_penalty=cfg["shift_hard_penalty"],
+        max_shift_hours=cfg["max_shift_hours"],
     )
     visits = _visits_from_evaluator_records(visits_pv)
     route_rows = routes_to_neutral(routes)
@@ -725,7 +735,7 @@ def run_evaluate_routes(
             rng2,
             cfg["reference_weights"],
             driver_preferences=cfg["driver_preferences"],
-            shift_hard_penalty=cfg["shift_hard_penalty"],
+            max_shift_hours=cfg["max_shift_hours"],
         )
         ref_cost = float(rc)
 

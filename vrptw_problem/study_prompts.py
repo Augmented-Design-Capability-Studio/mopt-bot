@@ -19,25 +19,25 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | If the user mentions… | Weight key to set |
 |---|---|
 | travel time, operating time, duration, makespan, distance, route length, transit, fuel, mileage, operating cost | `travel_time` |
-| shift overtime past max hours, minutes beyond 8h cap, fleet overtime (soft, minute-linear) | `shift_overtime` |
+| shift overtime past max hours, minutes beyond limit, fleet overtime (soft, minute-linear) | `shift_limit` |
 | deadlines, time windows, late arrivals, punctuality, on-time | `deadline_penalty` |
 | overloading, capacity, load limits, packing | `capacity_penalty` |
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
 | priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `priority_penalty` |
-| large lump penalty per driver still over max shift (hard-style field) | `shift_hard_penalty` |
+| maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
 | algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` |
 | speed/budget, how long to run, iterations, stop when flat | `epochs` (max), `early_stop` / `early_stop_patience` / `early_stop_epsilon`, `pop_size` |
 
 Hard constraints (always enforced — only mention when the user asks):
 - Every task is served exactly once (enforced by the encoding).
-- Shift duration limits (controlled by `shift_hard_penalty`).
+- Shift duration limits (controlled by `max_shift_hours` and `shift_limit`).
 - Locked/forced assignments (`locked_assignments`).
 
 Soft constraints (penalized in cost — reveal only when user mentions the related concept):
 - Capacity limits (`capacity_penalty`), time-window compliance (`deadline_penalty`),
-  shift overtime minutes (`shift_overtime`), priority lateness (`priority_penalty`),
+  shift overtime minutes (`shift_limit`), priority lateness (`priority_penalty`),
   workload fairness (`workload_balance`), worker preferences (`worker_preference`).
 
 ### Solver configuration schema (for backend config derivation)
@@ -49,7 +49,7 @@ All available fields under `"problem"`:
 
 - `"weights"`: JSON **object** (never an array). Keys must be chosen from this exact set:
   - `"travel_time"` — total route travel / driving minutes (use for time, distance, fuel/mileage language too)
-  - `"shift_overtime"` — weight on total minutes routes exceed the 8h cap (summed over vehicles)
+  - `"shift_limit"` — weight on total minutes routes exceed the Max Shift Hours limit (summed over vehicles)
   - `"deadline_penalty"` — penalty per minute and per stop arriving after the allowed window
   - `"capacity_penalty"` — penalty per unit loaded beyond vehicle capacity
   - `"workload_balance"` — penalty for variance in shift durations across workers
@@ -64,7 +64,7 @@ All available fields under `"problem"`:
   - **`shift_over_limit`** (or legacy **`shift_over_hours`**): soft dislike of long shifts; set `"limit_minutes"` (e.g. 390 for 6.5h) or legacy `"hours": 6.5` (adapter converts to minutes).
   - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
   - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
-- `"shift_hard_penalty"`: numeric penalty per worker exceeding maximum shift duration.
+- `"max_shift_hours"`: numeric threshold (e.g. 8.0) beyond which `shift_limit` penalty applies.
 - `"locked_assignments"`: object mapping task index (string) to vehicle index (int),
   e.g. `{"6": 0}` forces task 6 onto vehicle 0.
 - `"algorithm"`: one of `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"`.
@@ -124,11 +124,14 @@ Rules:
   driver_preferences, locked_assignments, only_active_terms, early_stop fields), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
-  "travel_time", "shift_overtime", "deadline_penalty", "capacity_penalty",
+  "travel_time", "shift_limit", "deadline_penalty", "capacity_penalty",
   "workload_balance", "worker_preference", "priority_penalty".
 - If "weights" is emitted, include only terms justified by the brief.
 - Time-minimization / duration / operating-time / fuel / mileage goals → `travel_time` only.
-- Shift overage past the platform max (8h) as an objective → `shift_overtime`.
+- Shift overage past the configurable limit as an objective → `shift_limit`.
+- Threshold for shift-length penalties (e.g. 8.0 hours) → `max_shift_hours`.
+  Use a default of 8.0 if a limit is mentioned without a specific duration.
+  Default `shift_limit` weight to 500.0 if the user asks for a strict limit.
 - When the brief names worker-specific soft preferences, emit "driver_preferences" with
   vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
   shift_over_limit (or legacy zone_d, express_order, shift_over_hours); include "limit_minutes" or

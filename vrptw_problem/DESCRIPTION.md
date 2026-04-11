@@ -66,7 +66,7 @@ Five vehicles with different capacities, start locations, and shift start times:
 
 - **Capacity** is in units; total load per route must not exceed it (soft constraint via penalty).
 - **Shift start**: vehicle cannot depart before this time.
-- **Max hours**: shift cannot exceed 8 hours (hard penalty if violated).
+- **Max hours**: shift duration threshold (e.g. 8h) beyond which penalties apply (controlled by `max_shift_hours`).
 - **Compensation and fairness**: drivers are assumed to be salaried (or compensated under a pooled/guaranteed-hours scheme), so the scheduler aims to keep routes operationally efficient while maintaining fair workloads across drivers.
 - **Driver preferences**: some vehicles have soft preferences (see §1.6), such as Alice disliking Zone D stops, Carol disliking many express orders, and Dave disliking very long shifts.
 
@@ -143,13 +143,15 @@ Cost is a weighted sum of:
 | Term | Weight | Description |
 |------|--------|-------------|
 | w1 | 1.0 | Total travel time (minutes) |
-| w2 | 5.0 | Shift overtime — per minute beyond the 8h cap, summed over vehicles |
+| w2 | 500.0 | Max Shift Penalty — penalty per minute beyond `max_shift_hours`, summed over vehicles |
 | w3 | 50.0 | Time-window violation penalty (per minute late) |
 | w4 | 1000.0 | Capacity overflow penalty (per unit) |
 | w5 | 10.0 | Workload fairness penalty (shift duration variance across vehicles) |
 | w6 | 1.0 | Driver preference penalties |
 | w7 | 100.0 | Express lateness penalty (per late express order) |
-| — | 5000 | Hard penalty per vehicle exceeding 8h shift |
+
+**Configurable Parameters:**
+- `max_shift_hours` (default 8.0): Threshold in hours for $w_2$ shift penalties.
 
 **Driver preference penalties** (soft, scaled by w6): each rule adds **preference cost units** to a running total (not minutes added to the traffic model). Legacy examples in sample configs:
 
@@ -161,8 +163,7 @@ Example defaults: Alice avoids zone D, Carol dislikes many express orders, Dave 
 
 ### 1.7 Constraints
 
-- **Hard**: Each order served exactly once; shift ≤ 8h (heavily penalized).
-- **Soft**: Capacity, time windows, express lateness, driver preferences (all penalized in cost).
+- **Soft**: Capacity, time windows, shift duration (per `max_shift_hours`), express lateness, driver preferences (all penalized in cost).
 
 ---
 
@@ -176,8 +177,8 @@ In the 2×2 user study (experts vs novices × agile vs waterfall workflow), part
 |---------------|---------|-------|
 | **Objective priorities** | `weights` (w1–w7) | User may specify only some terms; `only_active_terms: true` zeros the rest |
 | **Trade-offs** | `weights` | e.g. "prioritize on-time delivery" → higher w3, w7 |
-| **Hard constraints** | `shift_hard_penalty`, `locked_assignments` | Shift limit (always enforced); locked assignments (order X → vehicle Y) |
-| **Soft constraints** | `weights` + `driver_preferences` | Travel (w1), shift overtime (w2), time windows (w3), capacity (w4), workload (w5), driver prefs (w6), express (w7) |
+| **Hard constraints** | `locked_assignments` | Locked assignments (order X → vehicle Y) |
+| **Soft constraints** | `weights` + `driver_preferences` | Travel (w1), shift limit (w2 @ max_shift_hours), time windows (w3), capacity (w4), workload (w5), driver prefs (w6), express (w7) |
 | **Locked assignments** | `locked_assignments` | e.g. `{"6": 0}` = order O06 must go with Alice |
 | **Driver preferences** | `driver_preferences` | Rules: `avoid_zone`, `order_priority`, `shift_over_limit` (legacy: `zone_d`, `express_order`, `shift_over_hours`); optional `aggregation`: `per_stop` / `once_per_route` |
 | **Algorithm** | `algorithm` | Optional: GA, PSO, SA, SwarmSA, or ACOR (default GA) |
@@ -194,17 +195,17 @@ The chatbot writes user config as JSON (e.g. `data/user_*.json`), loaded by `loa
 {
   "weights": {"w1": 1.0, "w3": 80.0, "w5": 10.0},
   "only_active_terms": true,
+  "max_shift_hours": 8.0,
   "driver_preferences": [
     {"vehicle_idx": 0, "condition": "zone_d", "penalty": 8}
   ],
-  "shift_hard_penalty": 5000,
   "locked_assignments": {"6": 0},
   "algorithm": "GA",
   "algorithm_params": {"pc": 0.9, "pm": 0.05},
   "epochs": 500,
   "pop_size": 100,
-  "hard_constraints": ["shift_limit", "locked_assignments"],
-  "soft_constraints": ["travel_time", "tw_violation", "workload"]
+  "hard_constraints": ["locked_assignments"],
+  "soft_constraints": ["travel_time", "tw_violation", "workload", "shift_limit"]
 }
 ```
 
@@ -219,8 +220,8 @@ The **official evaluator** (`researcher/official_evaluator.py`) evaluates both:
 
 | Metric | Description |
 |--------|-------------|
-| `hard_constraints_defined` | Which hard constraints the user articulated (shift_limit, locked_assignments) |
-| `soft_constraints_defined` | Which soft constraints (travel_time, tw_violation, capacity, etc.) |
+| `hard_constraints_defined` | Which hard constraints the user articulated (locked_assignments) |
+| `soft_constraints_defined` | Which soft constraints (travel_time, tw_violation, capacity, shift_limit, etc.) |
 | Formulation completeness | Number of soft constraint terms with non-zero weight (1–7) |
 | Formulation alignment | (Optional) Similarity of user weights to canonical weights |
 
@@ -230,7 +231,7 @@ The **official evaluator** (`researcher/official_evaluator.py`) evaluates both:
 |--------|-------------|
 | **Official cost** | Score under canonical objective (full 7 terms + defaults) — lower is better |
 | **User cost** | Score under user's objective — measures fit to their stated goals |
-| **Hard constraint satisfaction** | All orders covered, no duplicates, shifts ≤ 8h, locked assignments obeyed |
+| **Hard constraint satisfaction** | All orders covered, no duplicates, locked assignments obeyed |
 | **Soft constraint violations** | TW violations, capacity overflow, express lateness counts |
 
 `full_official_evaluation(routes, user_config, ...)` returns all of the above. Use `python -m researcher.run_user_comparison` from the `vrptw_problem` directory to run the optimizer for sample users and print the official report.
@@ -287,13 +288,12 @@ For each vehicle in order:
 Cost is computed as:
 
 ```
-cost = w1×travel_time + w2×shift_overtime_minutes + w3×tw_violation_min
+cost = w1×travel_time + w2×shift_limit_minutes + w3×tw_violation_min
      + w4×capacity_overflow + w5×workload_variance
      + w6×driver_penalty + w7×express_late_count
-     + shift_hard_penalty
 ```
 
-**Shift overtime (`shift_overtime_minutes`):** for each vehicle, minutes by which that route’s shift length exceeds the platform maximum (8h); **w2** scales the **sum** of those overages across the fleet. This is a **soft**, minute-linear pressure. **`shift_hard_penalty`** (config field) still adds a **lump** penalty **per vehicle** that exceeds the cap — it is separate from **w2**. **w7** scales **express / priority-order deadline** lateness (per late express order), distinct from generic time-window minutes (**w3**).
+**Shift limit (** `shift_limit_minutes` **):** for each vehicle, minutes by which that route’s shift length exceeds the configurable threshold (`max_shift_hours`); **w2** scales the **sum** of those overages across the fleet. This is a linear penalty. **w7** scales **express / priority-order deadline** lateness (per late express order), distinct from generic time-window minutes (**w3**).
 
 ### 4.3 `evaluate_solution`
 
@@ -301,7 +301,7 @@ cost = w1×travel_time + w2×shift_overtime_minutes + w3×tw_violation_min
 - Runs `simulate_routes` on those routes.
 - Returns `(cost, metrics_dict, visits_per_vehicle)`.
 
-`metrics_dict` includes: `travel_time`, `shift_overtime_minutes`, `tw_violation_min`, `tw_violation_count`, `capacity_overflow`, `workload_variance`, `driver_penalty`, `express_late_count`, `shift_hard_penalty`, `shift_durations`.
+`metrics_dict` includes: `travel_time`, `shift_overtime_minutes`, `tw_violation_min`, `tw_violation_count`, `capacity_overflow`, `workload_variance`, `driver_penalty`, `express_late_count`, `shift_durations`.
 
 ---
 

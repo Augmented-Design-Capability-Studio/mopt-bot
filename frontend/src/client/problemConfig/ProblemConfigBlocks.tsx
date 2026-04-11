@@ -104,7 +104,7 @@ export function ProblemConfigBlocks({
     problem.early_stop_epsilon !== null;
   const hasHardStructural =
     extensionUi === "vrptw_extras" &&
-    (Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null);
+    (Object.keys(problem.locked_assignments).length > 0 || problem.max_shift_hours !== null);
   const hasSomething = displayWeightKeys.length > 0 || hasSearch || hasHardStructural;
 
   if (!hasSomething) {
@@ -141,7 +141,7 @@ export function ProblemConfigBlocks({
     action();
   }
 
-  function rememberRemovedGoalTerm(entry: { key: string; value: number; locked: boolean; type: "weight" | "shift" }) {
+  function rememberRemovedGoalTerm(entry: RemovedGoalTermEntry) {
     setRemovedGoalTerms((current) => {
       if (current.some((row) => row.key === entry.key)) return current;
       return [...current, entry];
@@ -158,9 +158,9 @@ export function ProblemConfigBlocks({
           ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
           : problem.locked_goal_terms,
       });
-    } else {
+    } else if (removed.type === "max_shift") {
       updateProblem({
-        shift_hard_penalty: removed.value,
+        max_shift_hours: removed.value,
         locked_goal_terms: removed.locked
           ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
           : problem.locked_goal_terms,

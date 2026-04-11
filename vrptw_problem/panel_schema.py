@@ -11,11 +11,11 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
     "description": (
         "Only these participant-facing objective keys exist — omit keys the user did not discuss. "
         "Never invent names. Time, distance, fuel, or operating-time language maps to travel_time only. "
-        "Shift hours beyond the cap → shift_overtime."
+        "Shift hours beyond the max_shift_hours limit → shift_limit."
     ),
     "properties": {
         "travel_time": {"type": "number"},
-        "shift_overtime": {"type": "number"},
+        "shift_limit": {"type": "number"},
         "deadline_penalty": {"type": "number"},
         "capacity_penalty": {"type": "number"},
         "workload_balance": {"type": "number"},
@@ -59,7 +59,7 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": _DRIVER_PREFERENCE_SCHEMA,
         },
-        "shift_hard_penalty": {"type": "number"},
+        "max_shift_hours": {"type": "number"},
         "locked_assignments": {
             "type": "object",
             "description": "Map task index string to vehicle index integer.",

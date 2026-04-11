@@ -26,7 +26,7 @@ export type ProblemBlock = {
   early_stop_epsilon: number | null;
   pop_size: number | null;
   random_seed: number | null;
-  shift_hard_penalty: number | null;
+  max_shift_hours: number | null;
   locked_assignments: Record<string, number>;
   driver_preferences: DriverPref[];
 };

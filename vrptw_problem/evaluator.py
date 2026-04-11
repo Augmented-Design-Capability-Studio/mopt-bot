@@ -166,7 +166,7 @@ def simulate_routes(
     rng: np.random.RandomState,
     weights: dict,
     driver_preferences: Optional[list[dict]] = None,
-    shift_hard_penalty: float = 5000.0,
+    max_shift_hours: float = 8.0,
 ) -> tuple[float, dict, list[list[VisitRecord]]]:
     """
     Simulate route execution and compute cost components.
@@ -177,7 +177,7 @@ def simulate_routes(
         rng: Seeded RandomState for get_travel_time.
         weights: Weight dict (w1..w7). Partial dicts supported; missing keys use 0.
         driver_preferences: List of rule dicts. Default [] (no driver penalties).
-        shift_hard_penalty: Penalty per vehicle exceeding 8h.
+        max_shift_hours: Threshold in hours beyond which w2 penalty applies.
 
     Returns:
         (total_cost, metrics_dict, visits_per_vehicle)
@@ -202,7 +202,7 @@ def simulate_routes(
     shift_durations: list[float] = []
     visits_per_vehicle: list[list[VisitRecord]] = []
 
-    max_shift_min = 8.0 * 60  # 8 hours in minutes
+    max_shift_min = max_shift_hours * 60
 
     for v_idx, (vehicle, order_indices) in enumerate(zip(VEHICLES, routes)):
         rm = RouteMetrics()
@@ -299,13 +299,7 @@ def simulate_routes(
     shift_arr = np.array(shift_durations)
     workload_variance = float(np.var(shift_arr)) if len(shift_arr) > 1 else 0.0
 
-    # Hard shift penalty (lump per vehicle over max shift; separate from w2 soft overtime minutes)
-    hard_penalty_total = 0
-    for sd in shift_durations:
-        if sd > max_shift_min:
-            hard_penalty_total += shift_hard_penalty
-
-    # w2: total minutes beyond platform max shift (8h), summed over vehicles — soft shift-hours pressure
+    # w2: total minutes beyond max_shift_hours, summed over vehicles — soft shift-hours pressure
     shift_overtime_minutes = float(
         sum(max(0.0, float(sd) - max_shift_min) for sd in shift_durations)
     )
@@ -318,7 +312,6 @@ def simulate_routes(
         + w5 * workload_variance
         + w6 * total_driver_penalty
         + w7 * total_express_late
-        + hard_penalty_total
     )
 
     metrics = {
@@ -330,7 +323,6 @@ def simulate_routes(
         "workload_variance": workload_variance,
         "driver_penalty": total_driver_penalty,
         "express_late_count": total_express_late,
-        "shift_hard_penalty": hard_penalty_total,
         "shift_durations": shift_durations,
     }
     return cost, metrics, visits_per_vehicle
@@ -343,7 +335,7 @@ def evaluate_solution(
     weights: dict,
     locked_assignments: Optional[dict[int, int]] = None,
     driver_preferences: Optional[list[dict]] = None,
-    shift_hard_penalty: float = 5000.0,
+    max_shift_hours: float = 8.0,
 ) -> tuple[float, dict, list[list[VisitRecord]]]:
     """
     Decode position vector, simulate routes, and return cost + metrics.
@@ -355,7 +347,7 @@ def evaluate_solution(
         weights: Weight dict (w1..w7). Partial dicts supported.
         locked_assignments: Optional {order_idx: vehicle_idx}.
         driver_preferences: Optional list of rule dicts.
-        shift_hard_penalty: Penalty per vehicle exceeding 8h.
+        max_shift_hours: Threshold in hours beyond which w2 penalty applies.
 
     Returns:
         (cost, metrics, visits_per_vehicle)
@@ -370,5 +362,5 @@ def evaluate_solution(
         rng,
         weights,
         driver_preferences=driver_preferences,
-        shift_hard_penalty=shift_hard_penalty,
+        max_shift_hours=max_shift_hours,
     )

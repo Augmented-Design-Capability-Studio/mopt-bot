@@ -15,7 +15,7 @@ WEIGHT_KEYS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7"]
 # Default objective weights (all 7 terms)
 DEFAULT_WEIGHTS = {
     "w1": 1.0,      # total travel time
-    "w2": 5.0,      # per minute over max shift (8h), summed across vehicles — panel alias `shift_overtime`
+    "w2": 500.0,      # per minute over configurable max shift, summed across vehicles — panel alias `shift_limit`
     "w3": 50.0,     # per minute TW violation
     "w4": 1000.0,   # per unit capacity overflow
     "w5": 10.0,     # workload variance
@@ -32,8 +32,8 @@ DEFAULT_DRIVER_PREFERENCES = [
     {"vehicle_idx": 3, "condition": "shift_over_hours", "hours": 6.5, "penalty": 15},
 ]
 
-SHIFT_HARD_PENALTY = 5000  # per vehicle exceeding 8h
-MAX_SHIFT_MIN = 8.0 * 60   # 8 hours
+# Base platform constraints (unless overridden by problem configuration)
+DEFAULT_MAX_SHIFT_HOURS = 8.0  # hours
 
 DEFAULT_USER_CONFIG_PATH = Path(__file__).parent / "data" / "user_config.json"
 
@@ -71,7 +71,6 @@ def _infer_constraint_definitions(
     weights: dict,
     locked_assignments: dict,
     driver_preferences: list,
-    shift_hard_penalty: Optional[float],
 ) -> tuple[list[str], list[str]]:
     """
     Infer which constraints the user defined based on what they specified.
@@ -80,13 +79,11 @@ def _infer_constraint_definitions(
     """
     hard = []
     soft = []
-    if shift_hard_penalty is not None and shift_hard_penalty > 0:
-        hard.append("shift_limit")
     if locked_assignments:
         hard.append("locked_assignments")
     w_to_name = {
         "w1": "travel_time",
-        "w2": "route_minutes_w2",
+        "w2": "shift_limit",
         "w3": "tw_violation",
         "w4": "capacity",
         "w5": "workload",
@@ -109,15 +106,15 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
     {
         "weights": {"w1": 1.0, "w3": 80.0, "w5": 10.0},
         "only_active_terms": true,
-        "shift_hard_penalty": 5000,
+        "max_shift_hours": 8.0,
         "driver_preferences": [...],
         "locked_assignments": {"5": 0},
         "algorithm": "GA",
         "algorithm_params": {"pc": 0.9, "pm": 0.05},
         "epochs": 500,
         "pop_size": 100,
-        "hard_constraints": ["shift_limit"],
-        "soft_constraints": ["tw_violation", "capacity"]
+        "hard_constraints": ["locked_assignments"],
+        "soft_constraints": ["tw_violation", "capacity", "shift_limit"]
     }
 
     Supported algorithms: GA, PSO, SA, SwarmSA, ACOR. algorithm, algorithm_params, epochs, pop_size optional.
@@ -134,7 +131,6 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
         only_active = data.get("only_active_terms", False)
         user_weights = data.get("weights", {})
         driver_prefs = data.get("driver_preferences", [])
-        shift_pen = data.get("shift_hard_penalty", SHIFT_HARD_PENALTY)
         locked = _parse_locked_assignments(data.get("locked_assignments", {}))
         weights = build_weights(user_weights, only_active_terms=only_active)
 
@@ -142,13 +138,13 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
         soft = data.get("soft_constraints")
         if hard is None or soft is None:
             hard, soft = _infer_constraint_definitions(
-                weights, locked, driver_prefs, shift_pen
+                weights, locked, driver_prefs
             )
 
         return {
             "weights": weights,
+            "max_shift_hours": data.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS),
             "driver_preferences": driver_prefs,
-            "shift_hard_penalty": shift_pen,
             "locked_assignments": locked,
             "algorithm": data.get("algorithm", "GA"),
             "algorithm_params": data.get("algorithm_params"),
@@ -159,17 +155,17 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
         }
     return {
         "weights": dict(DEFAULT_WEIGHTS),
+        "max_shift_hours": DEFAULT_MAX_SHIFT_HOURS,
         "driver_preferences": [],
-        "shift_hard_penalty": SHIFT_HARD_PENALTY,
         "locked_assignments": {},
         "algorithm": "GA",
         "algorithm_params": None,
         "epochs": 500,
         "pop_size": 100,
-        "hard_constraints": ["shift_limit"],
+        "hard_constraints": [],
         "soft_constraints": [
             "travel_time",
-            "shift_overtime",
+            "shift_limit",
             "tw_violation",
             "capacity",
             "workload",

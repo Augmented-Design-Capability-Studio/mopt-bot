@@ -4,10 +4,10 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
     description:
       "Penalizes total route and driving minutes (includes distance / time-in-transit goals).",
   },
-  shift_overtime: {
-    label: "Shift overtime",
+  shift_limit: {
+    label: "Max Shift Penalty",
     description:
-      "Penalizes total minutes routes run past the 8h shift cap (summed over drivers). Separate from the hard shift penalty field below.",
+      "Penalizes total minutes routes run past the configurable shift cap (summed over drivers). Set a high value to enforce a strict limit.",
   },
   deadline_penalty: {
     label: "On-Time Delivery",
@@ -36,7 +36,7 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
 };
 
 /** Weight keys shown under “Goal terms” (routing / efficiency). */
-const WEIGHT_GOAL_KEYS = ["travel_time", "shift_overtime", "workload_balance"] as const;
+const WEIGHT_GOAL_KEYS = ["travel_time", "shift_limit", "workload_balance"] as const;
 
 /** Weight keys shown under “Soft penalties” (violations / lateness), excluding worker_preference. */
 const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty"] as const;
@@ -48,11 +48,11 @@ const WEIGHT_DISPLAY_ORDER = [
   "worker_preference",
 ] as const;
 
-/** Same typography as `WEIGHT_INFO` rows — hard shift cap is not a weight key but sits with goal terms. */
-const SHIFT_HARD_PENALTY_INFO = {
-  label: "Max Shift Enforcement",
+/** Metadata for the configurable maximum shift limit. */
+const MAX_SHIFT_HOURS_INFO = {
+  label: "Max Shift Hours",
   description:
-    "Large cost units applied per worker when a shift exceeds the platform maximum — strongly discourages overtime.",
+    "The maximum allowed duration for a driver's shift (including travel and service time). Exceeding this triggers the penalty weight above.",
 } as const;
 
 const ALGORITHM_DESC: Record<string, string> = {
@@ -87,7 +87,7 @@ const PREFERENCE_CONDITIONS = [
 
 export {
   ALGORITHM_DESC,
-  SHIFT_HARD_PENALTY_INFO,
+  MAX_SHIFT_HOURS_INFO,
   WEIGHT_DISPLAY_ORDER,
   CONDITION_LABEL,
   PREFERENCE_CONDITIONS,

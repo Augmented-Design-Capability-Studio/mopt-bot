@@ -1,12 +1,12 @@
 import { Fragment, type CSSProperties } from "react";
 
-import { SHIFT_HARD_PENALTY_INFO, WEIGHT_INFO, WORKER_NAMES, PREFERENCE_CONDITIONS } from "./metadata";
+import { MAX_SHIFT_HOURS_INFO, WEIGHT_INFO, WORKER_NAMES, PREFERENCE_CONDITIONS } from "./metadata";
 import { FieldRow } from "./layout";
 import type { DriverPref, ProblemBlock } from "./types";
 import type { MarkerKind } from "./useProblemConfigDiffMarkers";
 import { ConfigNumberInput, ConfigSelect, type ActivateHint } from "./controls";
 
-export type RemovedGoalTermEntry = { key: string; value: number; locked: boolean; type: "weight" | "shift" };
+export type RemovedGoalTermEntry = { key: string; value: number; locked: boolean; type: "weight" | "shift" | "max_shift" };
 
 function workerOptionLabel(vehicleIdx: number): string {
   const name = WORKER_NAMES[vehicleIdx];
@@ -275,8 +275,7 @@ export function GoalTermsSection({
   addLockedRow,
 }: GoalTermsSectionProps) {
   const hasHardStructural =
-    extensionUi === "vrptw_extras" &&
-    (Object.keys(problem.locked_assignments).length > 0 || problem.shift_hard_penalty !== null);
+    extensionUi === "vrptw_extras" && Object.keys(problem.locked_assignments).length > 0;
   const rules = problem.driver_preferences;
   const preferencePeekText =
     rules.length === 0
@@ -469,69 +468,104 @@ export function GoalTermsSection({
             </details>
           </Fragment>
         ) : (
-          <WeightRow
-            key={key}
-            wkey={key}
-            problem={problem}
-            editable={editable}
-            weightCatalog={weightCatalog}
-            updateProblem={(patch) => runEditingAction(() => updateProblem(patch))}
-            onActivate={(event) => ensureEditing(event)}
-            markerKind={markerKindFor(`weight:${key}`)}
-            onRememberRemoved={rememberRemovedGoalTerm}
-          />
+          <Fragment key={key}>
+            <WeightRow
+              wkey={key}
+              problem={problem}
+              editable={editable}
+              weightCatalog={weightCatalog}
+              updateProblem={(patch) => runEditingAction(() => updateProblem(patch))}
+              onActivate={(event) => ensureEditing(event)}
+              markerKind={markerKindFor(`weight:${key}`)}
+              onRememberRemoved={rememberRemovedGoalTerm}
+            />
+            {key === "shift_limit" && problem.max_shift_hours !== null && (
+              <details className="driver-pref-details" open>
+                <summary
+                  style={{
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "0.82rem",
+                    userSelect: "none",
+                  }}
+                >
+                  <span className="field-row-label">
+                    {MAX_SHIFT_HOURS_INFO.label} threshold
+                    {markerKindFor("field:max_shift_hours") ? (
+                      <span
+                        className={`entry-diff-marker ${markerKindFor("field:max_shift_hours") === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
+                        title={markerKindFor("field:max_shift_hours") === "new" ? "New agent update" : "Updated by agent"}
+                        aria-label={markerKindFor("field:max_shift_hours") === "new" ? "New agent update" : "Updated by agent"}
+                      >
+                        {markerKindFor("field:max_shift_hours") === "new" ? "+" : "Δ"}
+                      </span>
+                    ) : null}
+                  </span>
+                </summary>
+                <div className="driver-pref-peek muted" aria-hidden>
+                  {problem.max_shift_hours} hours
+                </div>
+                <div
+                  style={{
+                    marginTop: "0.4rem",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  <GoalTermRow
+                    label={MAX_SHIFT_HOURS_INFO.label}
+                    description={MAX_SHIFT_HOURS_INFO.description}
+                    editable={editable}
+                    value={problem.max_shift_hours}
+                    min={0}
+                    step={0.5}
+                    valueCaption="hours"
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value);
+                      if (Number.isNaN(value)) return;
+                      updateProblem({
+                        max_shift_hours: value,
+                      });
+                    }}
+                    onActivate={(hint) => ensureEditing(hint)}
+                    focusKey="max-shift-hours"
+                    markerKind={null} /* Already shown in summary */
+                    locked={problem.locked_goal_terms.includes("max_shift_hours")}
+                    showLock
+                    showRemove
+                    onToggleLock={() =>
+                      runEditingAction(() => {
+                        updateProblem({
+                          locked_goal_terms: toggleLockedGoalTerm(problem.locked_goal_terms, "max_shift_hours"),
+                        });
+                      })
+                    }
+                    onRemove={() =>
+                      runEditingAction(() => {
+                        rememberRemovedGoalTerm({
+                          key: "max_shift_hours",
+                          value: problem.max_shift_hours ?? 8.0,
+                          locked: problem.locked_goal_terms.includes("max_shift_hours"),
+                          type: "max_shift",
+                        });
+                        updateProblem({
+                          max_shift_hours: null,
+                          locked_goal_terms: removeLockedGoalTerm(problem.locked_goal_terms, "max_shift_hours"),
+                        });
+                      })
+                    }
+                    inputStyle={{ width: "4rem" }}
+                  />
+                </div>
+              </details>
+            )}
+          </Fragment>
         ),
       )}
 
       {hasHardStructural && (
         <>
-          {problem.shift_hard_penalty !== null && (
-            <GoalTermRow
-              label={SHIFT_HARD_PENALTY_INFO.label}
-              description={SHIFT_HARD_PENALTY_INFO.description}
-              editable={editable}
-              value={problem.shift_hard_penalty}
-              min={0}
-              step={100}
-              valueCaption="penalty"
-              onChange={(e) => {
-                const value = parseFloat(e.target.value);
-                if (Number.isNaN(value)) return;
-                updateProblem({
-                  shift_hard_penalty: value,
-                });
-              }}
-              onActivate={(hint) => ensureEditing(hint)}
-              focusKey="shift-hard-penalty"
-              markerKind={markerKindFor("field:shift_hard_penalty")}
-              locked={problem.locked_goal_terms.includes("shift_hard_penalty")}
-              showLock
-              showRemove
-              onToggleLock={() =>
-                runEditingAction(() => {
-                  updateProblem({
-                    locked_goal_terms: toggleLockedGoalTerm(problem.locked_goal_terms, "shift_hard_penalty"),
-                  });
-                })
-              }
-              onRemove={() =>
-                runEditingAction(() => {
-                  rememberRemovedGoalTerm({
-                    key: "shift_hard_penalty",
-                    value: problem.shift_hard_penalty ?? 0,
-                    locked: problem.locked_goal_terms.includes("shift_hard_penalty"),
-                    type: "shift",
-                  });
-                  updateProblem({
-                    shift_hard_penalty: null,
-                    locked_goal_terms: removeLockedGoalTerm(problem.locked_goal_terms, "shift_hard_penalty"),
-                  });
-                })
-              }
-            />
-          )}
           {removedGoalTerms
-            .filter((entry) => entry.type === "shift")
+            .filter((entry) => entry.type === "max_shift")
             .map((entry) => (
               <div
                 key={`removed-${entry.key}`}
@@ -542,7 +576,7 @@ export function GoalTermsSection({
               >
                 <div className="definition-item-meta">
                   <span className="entry-diff-marker entry-diff-marker--removed">-</span>
-                  <span className="muted">{SHIFT_HARD_PENALTY_INFO.label} (removed)</span>
+                  <span className="muted">{MAX_SHIFT_HOURS_INFO.label} (removed)</span>
                   <button
                     type="button"
                     className="definition-icon-btn definition-restore-btn"
