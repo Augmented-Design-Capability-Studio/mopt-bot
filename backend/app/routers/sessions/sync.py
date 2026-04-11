@@ -42,8 +42,6 @@ def _canonicalize_locked_goal_terms(
         }
 
     lockable_keys = set(current_weight_keys)
-    if isinstance(current_problem.get("shift_hard_penalty"), (int, float)):
-        lockable_keys.add("shift_hard_penalty")
     canonical_locked = [key for key in locked_goal_terms if key in lockable_keys]
 
     if isinstance(derived_problem.get("weights"), dict) and isinstance(current_weights, dict):
@@ -52,9 +50,6 @@ def _canonicalize_locked_goal_terms(
             if key in current_weight_keys:
                 merged_weights[key] = float(current_weights[key])
         derived_problem["weights"] = merged_weights
-
-    if "shift_hard_penalty" in canonical_locked and isinstance(current_problem.get("shift_hard_penalty"), (int, float)):
-        derived_problem["shift_hard_penalty"] = float(current_problem["shift_hard_penalty"])
 
     if "worker_preference" in canonical_locked:
         prefs = current_problem.get("driver_preferences")
@@ -78,7 +73,6 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
         "algorithm_params",
         "epochs",
         "pop_size",
-        "shift_hard_penalty",
     )
     merged = deepcopy(derived_problem)
     current_weights = current_problem.get("weights")
@@ -151,7 +145,7 @@ def sync_panel_from_problem_brief(
     next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
     current_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
     next_problem = deepcopy(current_problem)
-    for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size", "shift_hard_penalty"):
+    for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size"):
         next_problem.pop(key, None)
     derived_problem = deepcopy(derived_panel["problem"])
     derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem)

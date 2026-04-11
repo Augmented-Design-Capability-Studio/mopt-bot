@@ -17,6 +17,6 @@
     {"vehicle_idx": 2, "condition": "express_order", "penalty": 5},
     {"vehicle_idx": 3, "condition": "shift_over_hours", "hours": 6.5, "penalty": 15}
   ],
-  "shift_hard_penalty": 5000,
+  "max_shift_hours": 8.0,
   "locked_assignments": {"6": 0}
 }

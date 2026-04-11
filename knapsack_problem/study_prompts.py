@@ -42,6 +42,6 @@ Rules:
 - Include "only_active_terms" when the brief supports it.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - Include epochs, pop_size, random_seed, early_stop fields only when the brief supports them.
-- Omit driver_preferences, locked_assignments, shift_hard_penalty — they do not exist for this benchmark.
+- Omit driver_preferences, locked_assignments, max_shift_hours, shift_limit — they do not exist for this benchmark.
 - Keep output compact and valid JSON.
 """.strip()

@@ -7,6 +7,6 @@
   },
   "only_active_terms": true,
   "driver_preferences": [],
-  "shift_hard_penalty": 5000,
+  "max_shift_hours": 8.0,
   "locked_assignments": {}
 }

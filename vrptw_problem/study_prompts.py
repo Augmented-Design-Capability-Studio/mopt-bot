@@ -120,7 +120,7 @@ Given the current problem brief, produce a single JSON object with exactly:
 Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
-- For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, shift_hard_penalty,
+- For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, max_shift_hours,
   driver_preferences, locked_assignments, only_active_terms, early_stop fields), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:

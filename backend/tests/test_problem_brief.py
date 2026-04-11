@@ -159,11 +159,11 @@ def test_normalize_atomizes_compound_gathered_item():
 
 def test_locked_goal_terms_prompt_section_lists_keys():
     text = locked_goal_terms_prompt_section(
-        {"problem": {"locked_goal_terms": ["deadline_penalty", "shift_hard_penalty"]}}
+        {"problem": {"locked_goal_terms": ["deadline_penalty", "shift_limit"]}}
     )
     assert text is not None
     assert "deadline_penalty" in text
-    assert "shift_hard_penalty" in text
+    assert "shift_limit" in text
     assert "Locked goal terms" in text
 
 

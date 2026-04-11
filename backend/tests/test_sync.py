@@ -20,7 +20,7 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
         panel_config_json=json.dumps(
             {
                 "problem": {
-                    "weights": {"travel_time": 9.0, "shift_overtime": 1.0},
+                    "weights": {"travel_time": 9.0, "shift_limit": 1.0},
                     "locked_goal_terms": ["travel_time"],
                     "algorithm": "GA",
                 }
@@ -32,7 +32,7 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
     )
 
     def _fake_derive(self, _brief):
-        return {"problem": {"weights": {"travel_time": 1.0, "shift_overtime": 3.0}}}
+        return {"problem": {"weights": {"travel_time": 1.0, "shift_limit": 3.0}}}
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
@@ -46,7 +46,7 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
 
     assert panel is not None
     assert panel["problem"]["weights"]["travel_time"] == 9.0
-    assert panel["problem"]["weights"]["shift_overtime"] == 3.0
+    assert panel["problem"]["weights"]["shift_limit"] == 3.0
     assert panel["problem"]["locked_goal_terms"] == ["travel_time"]
 
 
@@ -67,7 +67,7 @@ def test_sync_panel_from_brief_normalizes_stale_locked_goal_terms(monkeypatch):
     )
 
     def _fake_derive(self, _brief):
-        return {"problem": {"weights": {"travel_time": 1.0, "shift_overtime": 3.0}}}
+        return {"problem": {"weights": {"travel_time": 1.0, "shift_limit": 3.0}}}
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 

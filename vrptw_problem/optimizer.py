@@ -4,6 +4,7 @@ MEALpy-based QuickBite optimizer.
 Wraps GA, PSO, SA, SwarmSA, and ACOR algorithms for VRPTW solving.
 """
 
+import logging
 import threading
 import time
 import numpy as np
@@ -11,10 +12,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any
 
+logger = logging.getLogger(__name__)
+
 try:
     from mealpy import FloatVar, GA, PSO, SA, ACOR
-except ImportError:
+except ImportError as _mealpy_err:
     FloatVar = GA = PSO = SA = ACOR = None
+    logger.warning(
+        "mealpy import failed; VRPTW optimization will fail at solve() until installed: %s",
+        _mealpy_err,
+    )
 
 from vrptw_problem.orders import get_orders, print_order_table
 from vrptw_problem.encoder import decode_solution, VECTOR_LEN, encode_random_solution
@@ -87,7 +94,7 @@ class SolveResult:
     # Problem definition used (for reporter / research re-evaluation)
     weights: Optional[dict] = None
     driver_preferences: Optional[list] = None
-    shift_hard_penalty: Optional[float] = None
+    max_shift_hours: Optional[float] = None
     locked_assignments: Optional[dict] = None
 
 
@@ -121,7 +128,7 @@ class QuickBiteOptimizer:
         weights: Optional[dict] = None,
         locked: Optional[dict[int, int]] = None,
         driver_preferences: Optional[list] = None,
-        shift_hard_penalty: Optional[float] = None,
+        max_shift_hours: Optional[float] = None,
         seed: int = 42,
         user_config_path: Optional[Any] = None,
     ):
@@ -132,7 +139,7 @@ class QuickBiteOptimizer:
             weights: Optional weight dict (keys w1..w7). If None, load from user_input.
             locked: Optional {order_idx: vehicle_idx} locked assignments.
             driver_preferences: Optional list of rule dicts. If None, load from user_input.
-            shift_hard_penalty: Optional. If None, load from user_input.
+            max_shift_hours: Optional. If None, load from user_input.
             seed: Random seed for reproducibility.
             user_config_path: Optional path to user config JSON.
         """
@@ -148,10 +155,10 @@ class QuickBiteOptimizer:
             if driver_preferences is not None
             else config["driver_preferences"]
         )
-        self.shift_hard_penalty = (
-            shift_hard_penalty
-            if shift_hard_penalty is not None
-            else config["shift_hard_penalty"]
+        self.max_shift_hours = (
+            max_shift_hours
+            if max_shift_hours is not None
+            else config["max_shift_hours"]
         )
         self.seed = seed
         self.rng = np.random.RandomState(seed)
@@ -200,6 +207,20 @@ class QuickBiteOptimizer:
         par = dict(_default_algorithm_params(algo))
         if params:
             par.update(params)
+        _pat = early_stop_patience if early_stop_patience is not None else EARLY_STOP_DEFAULT_PATIENCE
+        _eps = early_stop_epsilon if early_stop_epsilon is not None else EARLY_STOP_DEFAULT_EPSILON
+        logger.info(
+            "VRPTW solve: algorithm=%s epochs=%d pop_size=%d seed=%d early_stop=%s "
+            "patience=%s epsilon=%g custom_termination=%s",
+            algo,
+            epochs,
+            pop_size,
+            self.seed,
+            early_stop,
+            _pat,
+            _eps,
+            termination is not None,
+        )
 
         # Closure for objective
         rng = np.random.RandomState(self.seed)
@@ -207,7 +228,7 @@ class QuickBiteOptimizer:
         weights = self.weights
         locked = self.locked
         driver_prefs = self.driver_preferences
-        shift_penalty = self.shift_hard_penalty
+        max_shift = self.max_shift_hours
 
         def obj_func(solution: np.ndarray) -> float:
             if cancel_event is not None and cancel_event.is_set():
@@ -219,7 +240,7 @@ class QuickBiteOptimizer:
                 weights,
                 locked_assignments=locked,
                 driver_preferences=driver_prefs,
-                shift_hard_penalty=shift_penalty,
+                max_shift_hours=max_shift,
             )
             return float(cost)
 
@@ -275,7 +296,7 @@ class QuickBiteOptimizer:
             weights,
             locked_assignments=locked,
             driver_preferences=driver_prefs,
-            shift_hard_penalty=shift_penalty,
+            max_shift_hours=max_shift,
         )
         routes = decode_solution(solution, locked_assignments=locked)
 
@@ -298,7 +319,7 @@ class QuickBiteOptimizer:
             algorithm=algo,
             weights=weights,
             driver_preferences=driver_prefs,
-            shift_hard_penalty=shift_penalty,
+            max_shift_hours=max_shift,
             locked_assignments=locked,
             epoch_times=epoch_times,
         )

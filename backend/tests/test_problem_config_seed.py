@@ -59,8 +59,8 @@ def test_seed_parses_search_strategy_line_from_panel_sync():
                     "editable": True,
                 },
                 {
-                    "id": "config-shift-hard-penalty",
-                    "text": "Shift duration hard penalty is set to 88.0.",
+                    "id": "config-weight-shift_limit",
+                    "text": "Shift limit weight is set to 88.0.",
                     "kind": "gathered",
                     "source": "user",
                     "status": "confirmed",
@@ -76,7 +76,7 @@ def test_seed_parses_search_strategy_line_from_panel_sync():
     assert problem["pop_size"] == 21
     assert problem["weights"]["travel_time"] == 1.0
     assert problem["weights"]["workload_balance"] == 100.0
-    assert problem["shift_hard_penalty"] == 88.0
+    assert problem["weights"]["shift_limit"] == 88.0
 
 
 def test_seed_accepts_broader_numeric_phrasings():
@@ -119,7 +119,7 @@ def test_seed_parses_snake_case_alias_terms():
             "items": [
                 {
                     "id": "fact-terms",
-                    "text": "Use travel_time weight 1, workload_balance weight 5, capacity_violation weight 100, priority_deadline weight 50, and shift_hard_penalty penalty 1000.",
+                    "text": "Use travel_time weight 1, workload_balance weight 5, capacity_violation weight 100, priority_deadline weight 50, and shift_limit penalty 1000.",
                     "kind": "gathered",
                     "source": "user",
                     "status": "confirmed",
@@ -134,7 +134,7 @@ def test_seed_parses_snake_case_alias_terms():
     assert weights["workload_balance"] == 5.0
     assert weights["capacity_penalty"] == 100.0
     assert weights["priority_penalty"] == 50.0
-    assert panel["problem"]["shift_hard_penalty"] == 1000.0
+    assert panel["problem"]["weights"]["shift_limit"] == 1000.0
 
 
 def test_seed_ignores_numeric_goal_summary_for_weights():

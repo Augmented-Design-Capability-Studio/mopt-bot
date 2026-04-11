@@ -16,7 +16,6 @@ from vrptw_problem.orders import Order, get_orders
 from vrptw_problem.user_input import (
     DEFAULT_WEIGHTS,
     DEFAULT_DRIVER_PREFERENCES,
-    SHIFT_HARD_PENALTY,
 )
 from vrptw_problem.vehicles import VEHICLES
 
@@ -75,7 +74,7 @@ def evaluate_user(
     """
     User score: user's stated objective and constraints.
 
-    user_config must have: weights, driver_preferences, shift_hard_penalty.
+    user_config must have: weights, driver_preferences, max_shift_hours.
 
     Returns:
         (user_cost, metrics)

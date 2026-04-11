@@ -34,6 +34,7 @@ DEFAULT_DRIVER_PREFERENCES = [
 
 # Base platform constraints (unless overridden by problem configuration)
 DEFAULT_MAX_SHIFT_HOURS = 8.0  # hours
+SHIFT_HARD_PENALTY = 5000.0   # Deprecated alias to prevent ImportError
 
 DEFAULT_USER_CONFIG_PATH = Path(__file__).parent / "data" / "user_config.json"
 
@@ -120,7 +121,7 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
     Supported algorithms: GA, PSO, SA, SwarmSA, ACOR. algorithm, algorithm_params, epochs, pop_size optional.
 
     Returns:
-        Dict with: weights, driver_preferences, shift_hard_penalty,
+        Dict with: weights, max_shift_hours, driver_preferences,
         locked_assignments, algorithm, epochs, pop_size,
         hard_constraints, soft_constraints
     """
@@ -130,6 +131,16 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
             data = json.load(f)
         only_active = data.get("only_active_terms", False)
         user_weights = data.get("weights", {})
+        # Fallback for legacy 'shift_hard_penalty' key
+        msh = data.get("max_shift_hours")
+        if msh is None:
+            msh = data.get("shift_hard_penalty")
+            if msh is not None:
+                 # If it's the old cost value (like 5000), default back to 8.0.
+                 # If it's a small number, assume it was intended as hours.
+                 msh = msh if msh < 24 else DEFAULT_MAX_SHIFT_HOURS
+        if msh is None:
+            msh = DEFAULT_MAX_SHIFT_HOURS
         driver_prefs = data.get("driver_preferences", [])
         locked = _parse_locked_assignments(data.get("locked_assignments", {}))
         weights = build_weights(user_weights, only_active_terms=only_active)
@@ -143,7 +154,7 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
 
         return {
             "weights": weights,
-            "max_shift_hours": data.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS),
+            "max_shift_hours": msh,
             "driver_preferences": driver_prefs,
             "locked_assignments": locked,
             "algorithm": data.get("algorithm", "GA"),

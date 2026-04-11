@@ -742,8 +742,10 @@ def post_run(
     except ValueError as e:
         run_row.error_message = str(e)
     except ImportError as e:
-        run_row.error_message = "Solver dependencies missing on server"
+        log.exception("Optimization import error for session %s", session_id)
+        run_row.error_message = f"Solver import error: {e}"
     except Exception:
+        log.exception("Optimization run failed for session %s", session_id)
         run_row.error_message = "Optimization failed"
     finally:
         if cancel_ev is not None:

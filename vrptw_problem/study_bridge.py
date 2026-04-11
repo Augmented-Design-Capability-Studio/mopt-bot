@@ -22,7 +22,7 @@ _VRPTW_ROOT = Path(__file__).resolve().parent
 
 # Human-readable alias names shown in the participant panel and used by the agent.
 # Maps alias → internal w1–w7 key expected by build_weights / evaluator.
-# w2 / ``shift_overtime`` scales total minutes beyond the 8h cap (summed over vehicles).
+# w2 / panel alias ``shift_limit`` scales total minutes beyond max_shift_hours (summed over vehicles).
 WEIGHT_ALIASES: dict[str, str] = {
     "travel_time":       "w1",
     "shift_limit":       "w2",
@@ -525,7 +525,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     """
     ensure_vrptw_on_path()
     from vrptw_problem.optimizer import EARLY_STOP_DEFAULT_EPSILON, EARLY_STOP_DEFAULT_PATIENCE
-    from vrptw_problem.user_input import SHIFT_HARD_PENALTY, build_weights
+    from vrptw_problem.user_input import DEFAULT_MAX_SHIFT_HOURS, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
     # Default to explicit-only objective scoring when the field is omitted.

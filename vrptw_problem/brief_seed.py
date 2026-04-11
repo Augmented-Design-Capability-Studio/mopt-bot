@@ -51,6 +51,9 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bfuel cost\b", re.IGNORECASE),
     ),
     "shift_limit": (
+        re.compile(r"\bshift_limit\b", re.IGNORECASE),
+        re.compile(r"\bshift_hard_penalty\b", re.IGNORECASE),
+        re.compile(r"\bshift limit\b", re.IGNORECASE),
         re.compile(r"\bshift overtime\b", re.IGNORECASE),
         re.compile(r"\bovertime minutes\b", re.IGNORECASE),
         re.compile(r"\bminutes over shift\b", re.IGNORECASE),
@@ -98,7 +101,9 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
     "max_shift_hours": (
         re.compile(r"\bshift duration\b", re.IGNORECASE),
-        re.compile(r"\bshift limits?\b", re.IGNORECASE),
+        # Omit bare "shift limit" (singular) — collides with the weight name "Shift limit weight …".
+        re.compile(r"\bdriver shift limits?\b", re.IGNORECASE),
+        re.compile(r"\bshift limits?\s+(?:are\s+)?(?:strict|treated as strict)\b", re.IGNORECASE),
         re.compile(r"\bshift compliance\b", re.IGNORECASE),
         re.compile(r"\bmaximum shift\b", re.IGNORECASE),
         re.compile(r"\bmax hours\b", re.IGNORECASE),
@@ -334,8 +339,10 @@ def derive_problem_panel_from_brief(
         weights["travel_time"] = _extract_explicit_value_for_key(travel_entries, "travel_time") or 1.0
 
     shift_limit_entries = _mentions(fragments, "shift_limit")
+    shift_limit_explicit: float | None = None
     if shift_limit_entries:
-        weights["shift_limit"] = _extract_explicit_value_for_key(shift_limit_entries, "shift_limit") or 500.0
+        shift_limit_explicit = _extract_explicit_value_for_key(shift_limit_entries, "shift_limit")
+        weights["shift_limit"] = float(shift_limit_explicit) if shift_limit_explicit is not None else 500.0
 
     capacity_entries = _mentions(fragments, "capacity_penalty")
     if capacity_entries:
@@ -378,7 +385,8 @@ def derive_problem_panel_from_brief(
     
     # Also check if w2 patterns captured a specific threshold like "beyond 6.5 hours"
     if max_shift_hours is None and shift_limit_entries:
-        weights["shift_limit"] = max(weights.get("shift_limit", 0), 500.0)
+        if shift_limit_explicit is None:
+            weights["shift_limit"] = max(weights.get("shift_limit", 0), 500.0)
         for text in shift_limit_entries:
             match = re.search(r"beyond ([\d.]+)\s*h(?:ours)?", text, re.IGNORECASE)
             if match:

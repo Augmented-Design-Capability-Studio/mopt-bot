@@ -10,9 +10,9 @@ from __future__ import annotations
 VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
     ("travel_time", "Travel time", "Total route duration and driving minutes."),
     (
-        "shift_overtime",
-        "Shift overtime",
-        "Total minutes each route runs past the 8h cap, added across vehicles — soft pressure to keep shifts legal.",
+        "shift_limit",
+        "Shift limit",
+        "Per minute past max_shift_hours (summed over vehicles); use a large weight for a near-hard cap.",
     ),
     ("deadline_penalty", "On-time delivery", "Lateness vs customer time windows (per minute late)."),
     ("capacity_penalty", "Load capacity", "Demand exceeding vehicle capacity (per overflow unit)."),
@@ -47,7 +47,8 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "operating cost",
             "fuel and operating cost",
         ),
-        "shift_overtime": (
+        "shift_limit": (
+            "shift limit",
             "shift overtime",
             "overtime minutes",
             "minutes over shift",
@@ -57,6 +58,8 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "shift length limit",
             "hours over limit",
             "long shift penalty",
+            "shift duration hard penalty",
+            "shift hard penalty",
         ),
         "deadline_penalty": (
             "on-time delivery",

@@ -8,7 +8,7 @@ from copy import deepcopy
 # Canonical default weights using participant-visible alias names.
 _PROBLEM_WEIGHTS: dict = {
     "travel_time":       1.0,
-    "shift_overtime":    5.0,
+    "shift_limit":       5.0,
     "deadline_penalty":  50.0,
     "capacity_penalty":  1000.0,
     "workload_balance":  10.0,

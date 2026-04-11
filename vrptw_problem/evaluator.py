@@ -6,7 +6,7 @@ preferences, penalties). Used by the optimizer at solve time and by
 researchers for retroactive evaluation of user problem definitions.
 
 This module does NOT load user_input; the caller supplies the problem
-definition (weights, driver_preferences, shift_hard_penalty).
+definition (weights, driver_preferences, max_shift_hours).
 """
 
 import numpy as np

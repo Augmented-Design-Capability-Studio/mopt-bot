@@ -923,7 +923,7 @@ def test_completed_delivery_brief_syncs_config_without_model_panel_patch(monkeyp
         assert panel["weights"]["deadline_penalty"] == 120.0
         assert panel["weights"]["capacity_penalty"] == 1000.0
         assert panel["weights"]["workload_balance"] == 50.0
-        assert panel["shift_hard_penalty"] == 1000.0
+        assert panel["weights"]["shift_limit"] == 500.0
 
         send = client.post(
             f"/sessions/{sid}/messages",
@@ -1228,12 +1228,11 @@ def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeyp
             json={
                 "panel_config": {
                     "problem": {
-                        "weights": {"travel_time": 1.0, "workload_balance": 100.0},
+                        "weights": {"travel_time": 1.0, "workload_balance": 100.0, "shift_limit": 88.0},
                         "algorithm": "PSO",
                         "algorithm_params": {"c1": 1.8, "c2": 2.2, "w": 0.55},
                         "epochs": 33,
                         "pop_size": 21,
-                        "shift_hard_penalty": 88.0,
                     }
                 }
             },
@@ -1252,6 +1251,7 @@ def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeyp
         assert "c1=1.8" in strategy_line
         assert "Travel time weight is set to 1.0." in brief_texts
         assert "Workload balance weight is set to 100.0." in brief_texts
+        assert "Shift limit weight is set to 88.0." in brief_texts
 
         save_brief = client.patch(
             f"/sessions/{sid}/problem-brief",
@@ -1265,7 +1265,7 @@ def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeyp
         assert round_tripped["pop_size"] == 21
         assert round_tripped["algorithm_params"] == {"c1": 1.8, "c2": 2.2, "w": 0.55}
         assert round_tripped["weights"]["workload_balance"] == 100.0
-        assert round_tripped["shift_hard_penalty"] == 88.0
+        assert round_tripped["weights"]["shift_limit"] == 88.0
 
 
 def test_chat_ignores_panel_patch_and_relies_on_brief_patch(monkeypatch):
@@ -1789,7 +1789,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
                     "problem": {
                         "weights": {
                             "travel_time": 1.0,
-                            "shift_overtime": 1.0,
+                            "shift_limit": 1.0,
                             "deadline_penalty": 60.0,
                             "capacity_penalty": 100.0,
                             "workload_balance": 15.0,
@@ -1830,7 +1830,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
         assert weights["deadline_penalty"] == 80.0
         # preserve_missing_managed_fields keeps prior panel weights not contradicted by the brief
         assert weights["travel_time"] == 1.0
-        assert weights["shift_overtime"] == 1.0
+        assert weights["shift_limit"] == 1.0
         assert weights["capacity_penalty"] == 100.0
         assert weights["workload_balance"] == 15.0
 

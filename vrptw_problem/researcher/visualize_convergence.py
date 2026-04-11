@@ -13,11 +13,9 @@ from pathlib import Path
 _VRPTW_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_VRPTW_ROOT))
 
-from vrptw_problem.optimizer import QuickBiteOptimizer
 from vrptw_problem.user_input import (
     DEFAULT_WEIGHTS,
     DEFAULT_DRIVER_PREFERENCES,
-    SHIFT_HARD_PENALTY,
 )
 
 # Fair comparison: fixed time budget (seconds) per algorithm
@@ -76,7 +74,7 @@ def main() -> None:
     optimizer = QuickBiteOptimizer(
         weights=DEFAULT_WEIGHTS,
         driver_preferences=DEFAULT_DRIVER_PREFERENCES,
-        shift_hard_penalty=SHIFT_HARD_PENALTY,
+        max_shift_hours=8.0,
         locked={},
         user_config_path=None,
     )

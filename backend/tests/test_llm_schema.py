@@ -17,7 +17,7 @@ def test_config_schema_constrains_problem_weights_to_object():
     assert weights.get("additionalProperties") is False
     assert set(weights["properties"]) == {
         "travel_time",
-        "shift_overtime",
+        "shift_limit",
         "deadline_penalty",
         "capacity_penalty",
         "workload_balance",

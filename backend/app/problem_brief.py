@@ -47,10 +47,7 @@ def locked_goal_terms_prompt_section(panel_config: Any, test_problem_id: str | N
         from app.problems.registry import get_study_port
 
         labels = get_study_port(test_problem_id).weight_item_labels()
-        if key == "shift_hard_penalty":
-            label = "Shift duration hard penalty"
-        else:
-            label = labels.get(key, key.replace("_", " ").strip().title())
+        label = labels.get(key, key.replace("_", " ").strip().title())
         lines.append(f"- `{key}` — {label}")
     if not lines:
         return None
@@ -660,7 +657,7 @@ def _slot_from_item_id(item_id: str) -> str | None:
     if item_id == "config-only-active-terms":
         return "only_active_terms"
     if item_id == "config-shift-hard-penalty":
-        return "shift_hard_penalty"
+        return "weight:shift_limit"
     if item_id.startswith("config-weight-"):
         return f"weight:{item_id.removeprefix('config-weight-')}"
     if item_id.startswith("config-algorithm-param-"):
@@ -683,8 +680,6 @@ def _slot_from_text(text: str) -> str | None:
         return "epochs"
     if "only active objective terms should be applied" in lowered or "inactive objective terms may also remain available" in lowered:
         return "only_active_terms"
-    if "shift duration hard penalty" in lowered and _EXPLICIT_VALUE_RE.search(text):
-        return "shift_hard_penalty"
     for weight_key, markers in _all_weight_slot_markers().items():
         if any(marker in lowered for marker in markers) and _EXPLICIT_VALUE_RE.search(text):
             return f"weight:{weight_key}"
@@ -762,15 +757,6 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
                 continue
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             items.append(_config_item(f"config-weight-{key}", f"{label} weight is set to {value}."))
-
-    shift_hard_penalty = problem.get("shift_hard_penalty")
-    if isinstance(shift_hard_penalty, (int, float)) and not isinstance(shift_hard_penalty, bool):
-        items.append(
-            _config_item(
-                "config-shift-hard-penalty",
-                f"Shift duration hard penalty is set to {shift_hard_penalty}.",
-            )
-        )
 
     algorithm_params = problem.get("algorithm_params")
     algo_key = canonical_algorithm_stored(algorithm) if algorithm else None
