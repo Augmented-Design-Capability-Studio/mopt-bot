@@ -14,6 +14,7 @@ _PROBLEM_WEIGHTS: dict = {
     "workload_balance":  10.0,
     "worker_preference": 1.0,
     "priority_penalty":  100.0,
+    "waiting_time":      0.0,
 }
 
 DEFAULT_PANEL_CONFIG: dict = {

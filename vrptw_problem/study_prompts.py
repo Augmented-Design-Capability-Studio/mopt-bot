@@ -25,6 +25,7 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
 | priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `priority_penalty` |
+| driver idle time, wait at stop, early arrival, dwell time, waiting for window to open | `waiting_time` |
 | maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
 | algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` |
@@ -38,7 +39,8 @@ Hard constraints (always enforced — only mention when the user asks):
 Soft constraints (penalized in cost — reveal only when user mentions the related concept):
 - Capacity limits (`capacity_penalty`), time-window compliance (`deadline_penalty`),
   shift overtime minutes (`shift_limit`), priority lateness (`priority_penalty`),
-  workload fairness (`workload_balance`), worker preferences (`worker_preference`).
+  workload fairness (`workload_balance`), worker preferences (`worker_preference`),
+  driver wait time at stops (`waiting_time`).
 
 ### Solver configuration schema (for backend config derivation)
 
@@ -55,6 +57,7 @@ All available fields under `"problem"`:
   - `"workload_balance"` — penalty for variance in shift durations across workers
   - `"worker_preference"` — soft preference violations per worker
   - `"priority_penalty"` — penalty per express / priority-order deadline miss (SLA-style orders)
+  - `"waiting_time"` — total minutes drivers idle waiting for time windows to open (across all stops)
 - `"only_active_terms"`: boolean — when true, weight terms not explicitly set are zeroed
   so only the user's stated priorities count. Use when the user says "only care about X".
 - `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
@@ -125,7 +128,7 @@ Rules:
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
   "travel_time", "shift_limit", "deadline_penalty", "capacity_penalty",
-  "workload_balance", "worker_preference", "priority_penalty".
+  "workload_balance", "worker_preference", "priority_penalty", "waiting_time".
 - If "weights" is emitted, include only terms justified by the brief.
 - Time-minimization / duration / operating-time / fuel / mileage goals → `travel_time` only.
 - Shift overage past the configurable limit as an objective → `shift_limit`.

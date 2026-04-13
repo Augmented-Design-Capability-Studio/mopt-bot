@@ -57,6 +57,7 @@ class RouteMetrics:
     tw_violation_count: int = 0
     express_late_count: int = 0
     driver_penalty: float = 0.0
+    total_wait_time: float = 0.0
     visits: list[VisitRecord] = field(default_factory=list)
 
 
@@ -192,6 +193,7 @@ def simulate_routes(
     w5 = weights.get("w5", 0.0)
     w6 = weights.get("w6", 0.0)
     w7 = weights.get("w7", 0.0)
+    w8 = weights.get("w8", 0.0)
 
     total_travel_time = 0.0
     total_tw_violation_min = 0.0
@@ -199,6 +201,7 @@ def simulate_routes(
     total_capacity_overflow = 0
     total_driver_penalty = 0.0
     total_express_late = 0
+    total_wait_time = 0.0
     shift_durations: list[float] = []
     visits_per_vehicle: list[list[VisitRecord]] = []
 
@@ -245,6 +248,7 @@ def simulate_routes(
             rm.driver_penalty += pv
 
             wait_minutes = max(0.0, float(order.time_window_open) - arrival)
+            rm.total_wait_time += wait_minutes
 
             rm.visits.append(VisitRecord(
                 vehicle_id=vehicle.vehicle_id,
@@ -292,6 +296,7 @@ def simulate_routes(
         total_capacity_overflow += rm.capacity_overflow
         total_driver_penalty += rm.driver_penalty
         total_express_late += rm.express_late_count
+        total_wait_time += rm.total_wait_time
 
         visits_per_vehicle.append(rm.visits)
 
@@ -312,6 +317,7 @@ def simulate_routes(
         + w5 * workload_variance
         + w6 * total_driver_penalty
         + w7 * total_express_late
+        + w8 * total_wait_time
     )
 
     metrics = {
@@ -323,6 +329,7 @@ def simulate_routes(
         "workload_variance": workload_variance,
         "driver_penalty": total_driver_penalty,
         "express_late_count": total_express_late,
+        "wait_time": total_wait_time,
         "shift_durations": shift_durations,
     }
     return cost, metrics, visits_per_vehicle

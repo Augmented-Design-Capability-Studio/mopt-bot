@@ -31,6 +31,7 @@ WEIGHT_ALIASES: dict[str, str] = {
     "workload_balance":  "w5",
     "worker_preference": "w6",
     "priority_penalty":  "w7",
+    "waiting_time":      "w8",
 }
 
 # Reverse map for displaying wN keys as human-readable aliases.
@@ -94,6 +95,13 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "vip":             "priority_penalty",
     "rush":            "priority_penalty",
     "critical":        "priority_penalty",
+    # waiting_time (w8)
+    "wait":            "waiting_time",
+    "waiting":         "waiting_time",
+    "idle":            "waiting_time",
+    "idle_time":       "waiting_time",
+    "dwell":           "waiting_time",
+    "dwell_time":      "waiting_time",
 }
 
 

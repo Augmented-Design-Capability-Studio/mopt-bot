@@ -94,6 +94,9 @@ export function ResultsPanel({
   const schedulePreferencesActive =
     driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
 
+  const wtw = Number(runWeights.waiting_time);
+  const scheduleWaitingTimeActive = Number.isFinite(wtw) && wtw > 0;
+
   useEffect(() => {
     setVizTab("schedule");
   }, [activeRun]);
@@ -239,6 +242,7 @@ export function ResultsPanel({
               <FleetScheduleViz
                 schedule={currentResult.schedule}
                 schedulePreferencesActive={schedulePreferencesActive}
+                scheduleWaitingTimeActive={scheduleWaitingTimeActive}
               />
             )}
           </div>

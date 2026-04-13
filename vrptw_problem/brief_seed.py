@@ -99,6 +99,13 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\burgent\b", re.IGNORECASE),
         re.compile(r"\bpriority[_\s-]?deadline\b", re.IGNORECASE),
     ),
+    "waiting_time": (
+        re.compile(r"\bwait(?:ing)? time\b", re.IGNORECASE),
+        re.compile(r"\bidle time\b", re.IGNORECASE),
+        re.compile(r"\bdwell time\b", re.IGNORECASE),
+        re.compile(r"\bearly arrival\b", re.IGNORECASE),
+        re.compile(r"\bwait at stop\b", re.IGNORECASE),
+    ),
     "max_shift_hours": (
         re.compile(r"\bshift duration\b", re.IGNORECASE),
         # Omit bare "shift limit" (singular) — collides with the weight name "Shift limit weight …".

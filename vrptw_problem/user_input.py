@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 # All supported weight keys (w1..w7) — soft constraint terms
-WEIGHT_KEYS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7"]
+WEIGHT_KEYS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8"]
 
 # Default objective weights (all 7 terms)
 DEFAULT_WEIGHTS = {
@@ -21,6 +21,7 @@ DEFAULT_WEIGHTS = {
     "w5": 10.0,     # workload variance
     "w6": 1.0,      # driver preference penalties
     "w7": 100.0,    # per express order late
+    "w8": 0.0,      # driver waiting time (off by default)
 }
 
 # Driver preference rules (preference cost units before w6; not travel-time minutes):

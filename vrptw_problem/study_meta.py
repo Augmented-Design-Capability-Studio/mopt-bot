@@ -23,6 +23,11 @@ VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
         "Express & priority deadlines",
         "Per late express (or emphasized priority) order after its window close — protects SLA-style orders.",
     ),
+    (
+        "waiting_time",
+        "Driver wait time",
+        "Total minutes drivers idle waiting for time windows to open (across all stops and vehicles).",
+    ),
 ]
 
 
@@ -95,5 +100,13 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "vip",
             "sla",
             "urgent",
+        ),
+        "waiting_time": (
+            "driver wait time",
+            "waiting time",
+            "idle time",
+            "dwell time",
+            "wait at stop",
+            "early arrival",
         ),
     }

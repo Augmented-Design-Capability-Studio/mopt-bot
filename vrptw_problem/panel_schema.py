@@ -21,6 +21,7 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "workload_balance": {"type": "number"},
         "worker_preference": {"type": "number"},
         "priority_penalty": {"type": "number"},
+        "waiting_time": {"type": "number"},
     },
     "additionalProperties": False,
 }
