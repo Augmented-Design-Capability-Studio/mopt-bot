@@ -8,7 +8,6 @@ type: reference
 ## Master Documentation
 - `AI_INSTRUCTIONS.md` — 50KB+ implementer reference (canonical source for backend/API spec)
 - `README.md` — user-facing setup and usage guide
-- `.cursor/rules/` — active coding guidelines (5 rules)
 
 ## Backend Core
 - `backend/app/main.py` — FastAPI app init, middleware, lifecycle

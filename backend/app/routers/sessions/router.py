@@ -554,6 +554,15 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     )
                     if not has_recent_run_reply:
                         try:
+                            pending = derivation.append_message(
+                                db,
+                                session_id,
+                                "assistant",
+                                "Optimization run requested. Starting now...",
+                                True,
+                                kind="run_pending",
+                            )
+                            out.append(MessageOut.model_validate(pending))
                             problem_payload = (
                                 panel_obj.get("problem")
                                 if isinstance(panel_obj, dict) and isinstance(panel_obj.get("problem"), dict)

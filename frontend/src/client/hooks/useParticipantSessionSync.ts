@@ -45,6 +45,7 @@ type UseParticipantSessionSyncArgs = {
   setConfigText: (value: string) => void;
   setProblemBrief: (value: import("@shared/api").ProblemBrief | null) => void;
   setScheduleText: (value: string) => void;
+  setOptimizing: (value: boolean) => void;
   setLastMsgId: (value: number | ((prev: number) => number)) => void;
   setActiveRun: (value: number | ((prev: number) => number)) => void;
   setEditMode: (value: EditMode) => void;
@@ -75,6 +76,7 @@ export function useParticipantSessionSync({
   setConfigText,
   setProblemBrief,
   setScheduleText,
+  setOptimizing,
   setLastMsgId,
   setActiveRun,
   setEditMode,
@@ -175,6 +177,10 @@ export function useParticipantSessionSync({
       const nextMessages = coerceParticipantMessages(list);
       if (nextMessages.length) {
         const maxIncoming = nextMessages[nextMessages.length - 1]!.id;
+        const hasRunPending = nextMessages.some((m) => m.kind === "run_pending");
+        if (hasRunPending) {
+          setOptimizing(true);
+        }
         setMessages((current) => mergeMessagesFromPoll(current, nextMessages));
         setLastMsgId((previous) => Math.max(previous, maxIncoming));
       }
@@ -186,7 +192,7 @@ export function useParticipantSessionSync({
         );
       }
     }
-  }, [invalidateRemovedSession, lastMsgId, sessionId, sessionIdRef, setLastMsgId, setMessages, token]);
+  }, [invalidateRemovedSession, lastMsgId, sessionId, sessionIdRef, setLastMsgId, setMessages, setOptimizing, token]);
 
   // Always holds the latest syncMessages so the eager-poll timer doesn't
   // capture a stale closure from when it was started.
@@ -212,7 +218,7 @@ export function useParticipantSessionSync({
 
   const syncRuns = useCallback(async () => {
     if (!token || !sessionId) return;
-    if (optimizingRef.current) return;
+    if (optimizingRef.current && runs.some((r) => r.clientPending)) return;
     const requestedId = sessionId;
     try {
       const list = await apiFetch<unknown>(`/sessions/${requestedId}/runs`, token);
@@ -230,6 +236,9 @@ export function useParticipantSessionSync({
         if (hasNewRun) return nextRuns.length - 1;
         return previous >= nextRuns.length ? nextRuns.length - 1 : previous;
       });
+      if (optimizingRef.current && !nextRuns.some((r) => r.clientPending)) {
+        setOptimizing(false);
+      }
     } catch (error) {
       if (sessionIdRef.current !== requestedId) return;
       if (isSessionGoneError(error)) {
@@ -238,7 +247,7 @@ export function useParticipantSessionSync({
         );
       }
     }
-  }, [invalidateRemovedSession, optimizingRef, runs.length, sessionId, sessionIdRef, setActiveRun, setRuns, token]);
+  }, [invalidateRemovedSession, optimizingRef, runs, sessionId, sessionIdRef, setActiveRun, setOptimizing, setRuns, token]);
 
   useEffect(() => {
     if (!authed) return;

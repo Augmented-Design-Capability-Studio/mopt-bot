@@ -1,11 +1,9 @@
 ---
 name: Cursor Rules (Project Coding Guidelines)
-description: Active .cursor/rules/ instructions that govern how to work in this codebase
+description: Active instructions that govern how to work in this codebase (from previous Cursor code)
 type: feedback
 ---
 # Cursor Rules — Active Project Guidelines
-
-These rules are in `.cursor/rules/` and apply to all work in this repo.
 
 ---
 

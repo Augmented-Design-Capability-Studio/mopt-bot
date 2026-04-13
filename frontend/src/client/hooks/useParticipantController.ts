@@ -135,6 +135,7 @@ export function useParticipantController() {
     setConfigText,
     setProblemBrief: setProblemBriefState,
     setScheduleText,
+    setOptimizing,
     setLastMsgId,
     setActiveRun,
     setEditMode,

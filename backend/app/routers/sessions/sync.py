@@ -20,9 +20,14 @@ log = logging.getLogger(__name__)
 
 
 def _run_with_timeout(callable_obj, timeout_sec: float):
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(callable_obj)
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(callable_obj)
+    try:
         return future.result(timeout=timeout_sec)
+    finally:
+        # Don't block on shutdown — if the LLM thread is still running after a
+        # timeout, wait=True would hold the request handler open indefinitely.
+        executor.shutdown(wait=False)
 
 
 def _canonicalize_locked_goal_terms(
@@ -127,16 +132,19 @@ def sync_panel_from_problem_brief(
         except FuturesTimeoutError:
             log.warning("Config derivation timed out for session %s; falling back to deterministic seed", row.id)
         except TypeError:
-            derived_panel = _run_with_timeout(
-                lambda: generate_config_from_brief(
-                    brief=problem_brief,
-                    current_panel=None,
-                    api_key=api_key,
-                    model_name=model_name,
-                    test_problem_id=test_problem_id,
-                ),
-                timeout_sec,
-            )
+            try:
+                derived_panel = _run_with_timeout(
+                    lambda: generate_config_from_brief(
+                        brief=problem_brief,
+                        current_panel=None,
+                        api_key=api_key,
+                        model_name=model_name,
+                        test_problem_id=test_problem_id,
+                    ),
+                    timeout_sec,
+                )
+            except FuturesTimeoutError:
+                log.warning("Config derivation (retry) timed out for session %s; falling back to deterministic seed", row.id)
     if derived_panel is None:
         derived_panel = get_study_port(test_problem_id).derive_problem_panel_from_brief(problem_brief)
     if derived_panel is None:
