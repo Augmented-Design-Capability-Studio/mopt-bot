@@ -6,7 +6,7 @@ import type { EditMode } from "../lib/participantTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { ConvergencePlot } from "./ConvergencePlot";
 import { KnapsackSelectionViz } from "./KnapsackSelectionViz";
-import { FleetScheduleViz } from "./schedule/FleetScheduleViz";
+import { FleetScheduleViz } from "./FleetScheduleViz";
 import { ViolationSummary } from "./ViolationSummary";
 
 type ResultsPanelProps = {
@@ -95,7 +95,7 @@ export function ResultsPanel({
     driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
 
   const wtw = Number(runWeights.waiting_time);
-  const scheduleWaitingTimeActive = Number.isFinite(wtw) && wtw > 0;
+  const scheduleEarlyArrivalActive = Number.isFinite(wtw) && wtw > 0;
 
   useEffect(() => {
     setVizTab("schedule");
@@ -242,7 +242,7 @@ export function ResultsPanel({
               <FleetScheduleViz
                 schedule={currentResult.schedule}
                 schedulePreferencesActive={schedulePreferencesActive}
-                scheduleWaitingTimeActive={scheduleWaitingTimeActive}
+                scheduleEarlyArrivalActive={scheduleEarlyArrivalActive}
               />
             )}
           </div>

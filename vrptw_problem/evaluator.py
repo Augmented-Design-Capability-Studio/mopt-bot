@@ -168,6 +168,7 @@ def simulate_routes(
     weights: dict,
     driver_preferences: Optional[list[dict]] = None,
     max_shift_hours: float = 8.0,
+    early_arrival_threshold_min: float = 30.0,
 ) -> tuple[float, dict, list[list[VisitRecord]]]:
     """
     Simulate route execution and compute cost components.
@@ -176,9 +177,11 @@ def simulate_routes(
         routes: List of 5 lists of order indices.
         orders: List of Order objects.
         rng: Seeded RandomState for get_travel_time.
-        weights: Weight dict (w1..w7). Partial dicts supported; missing keys use 0.
+        weights: Weight dict (w1..w8). Partial dicts supported; missing keys use 0.
         driver_preferences: List of rule dicts. Default [] (no driver penalties).
         max_shift_hours: Threshold in hours beyond which w2 penalty applies.
+        early_arrival_threshold_min: Grace period in minutes before w8 penalty kicks in.
+            Arrivals within this many minutes early are free; only the excess is penalised.
 
     Returns:
         (total_cost, metrics_dict, visits_per_vehicle)
@@ -248,7 +251,8 @@ def simulate_routes(
             rm.driver_penalty += pv
 
             wait_minutes = max(0.0, float(order.time_window_open) - arrival)
-            rm.total_wait_time += wait_minutes
+            # Only penalise early arrivals that exceed the grace period threshold.
+            rm.total_wait_time += max(0.0, wait_minutes - early_arrival_threshold_min)
 
             rm.visits.append(VisitRecord(
                 vehicle_id=vehicle.vehicle_id,
@@ -343,6 +347,7 @@ def evaluate_solution(
     locked_assignments: Optional[dict[int, int]] = None,
     driver_preferences: Optional[list[dict]] = None,
     max_shift_hours: float = 8.0,
+    early_arrival_threshold_min: float = 30.0,
 ) -> tuple[float, dict, list[list[VisitRecord]]]:
     """
     Decode position vector, simulate routes, and return cost + metrics.
@@ -351,10 +356,11 @@ def evaluate_solution(
         position_vector: Length-34 float array.
         orders: List of Order objects.
         rng: Seeded RandomState.
-        weights: Weight dict (w1..w7). Partial dicts supported.
+        weights: Weight dict (w1..w8). Partial dicts supported.
         locked_assignments: Optional {order_idx: vehicle_idx}.
         driver_preferences: Optional list of rule dicts.
         max_shift_hours: Threshold in hours beyond which w2 penalty applies.
+        early_arrival_threshold_min: Grace period before w8 early-arrival penalty applies.
 
     Returns:
         (cost, metrics, visits_per_vehicle)
@@ -370,4 +376,5 @@ def evaluate_solution(
         weights,
         driver_preferences=driver_preferences,
         max_shift_hours=max_shift_hours,
+        early_arrival_threshold_min=early_arrival_threshold_min,
     )

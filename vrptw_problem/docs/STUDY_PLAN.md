@@ -232,7 +232,7 @@ The cost function is a weighted sum:
 - Workload fairness penalty (shift duration variance across vehicles).
 - Driver preference penalties.
 - Express-order lateness count.
-- Driver wait time — total minutes idle waiting for time windows to open (**w8**, off by default).
+- Driver early-arrival excess — minutes a driver arrives more than `early_arrival_threshold_min` (default 30 min) before the time window opens (**w8**, off by default; arrivals within the grace period are free).
 - Hard shift-violation penalties.
 
 Conceptually:
@@ -241,7 +241,7 @@ Conceptually:
 cost = w1×travel_time + w2×shift_overtime_minutes + w3×tw_violation_min
      + w4×capacity_overflow + w5×workload_variance
      + w6×driver_penalty + w7×express_late_count
-     + w8×total_wait_time
+     + w8×max(0, wait_minutes − early_arrival_threshold_min)   [summed over all stops]
      + shift_hard_penalty
 ```
 
@@ -252,7 +252,7 @@ Constraints:
   - Shift duration ≤ 8h per vehicle (heavily penalized if violated).
   - Locked assignments (if specified) must be respected.
 - **Soft**
-  - Travel time, shift overtime past the cap (w2), capacity, time windows, express lateness, workload balance, driver preferences, driver wait time (w8, optional), etc., are encoded as penalties in the cost (alongside the separate `shift_hard_penalty` lump field).
+  - Travel time, shift overtime past the cap (w2), capacity, time windows, express lateness, workload balance, driver preferences, driver early-arrival excess (w8, optional), etc., are encoded as penalties in the cost (alongside the separate `shift_hard_penalty` lump field).
 
 ### 6. What Users Can and Cannot Change
 

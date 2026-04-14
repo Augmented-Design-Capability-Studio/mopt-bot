@@ -59,6 +59,7 @@ class SolverConfig:
     early_stop: bool = True
     early_stop_patience: Optional[int] = None
     early_stop_epsilon: Optional[float] = None
+    early_arrival_threshold_min: float = 30.0
 
     def to_dict(self) -> dict:
         """Return JSON-serializable dict."""
@@ -71,6 +72,7 @@ class SolverConfig:
             "epochs": int(self.epochs),
             "pop_size": int(self.pop_size),
             "early_stop": bool(self.early_stop),
+            "early_arrival_threshold_min": float(self.early_arrival_threshold_min),
         }
         if self.early_stop_patience is not None:
             d["early_stop_patience"] = int(self.early_stop_patience)
@@ -96,6 +98,7 @@ class SolveResult:
     driver_preferences: Optional[list] = None
     max_shift_hours: Optional[float] = None
     locked_assignments: Optional[dict] = None
+    early_arrival_threshold_min: Optional[float] = None
 
 
 def _default_algorithm_params(algorithm: str) -> dict:
@@ -129,6 +132,7 @@ class QuickBiteOptimizer:
         locked: Optional[dict[int, int]] = None,
         driver_preferences: Optional[list] = None,
         max_shift_hours: Optional[float] = None,
+        early_arrival_threshold_min: Optional[float] = None,
         seed: int = 42,
         user_config_path: Optional[Any] = None,
     ):
@@ -136,10 +140,11 @@ class QuickBiteOptimizer:
         Initialize the optimizer.
 
         Args:
-            weights: Optional weight dict (keys w1..w7). If None, load from user_input.
+            weights: Optional weight dict (keys w1..w8). If None, load from user_input.
             locked: Optional {order_idx: vehicle_idx} locked assignments.
             driver_preferences: Optional list of rule dicts. If None, load from user_input.
             max_shift_hours: Optional. If None, load from user_input.
+            early_arrival_threshold_min: Grace period before w8 penalty applies. If None, load from user_input.
             seed: Random seed for reproducibility.
             user_config_path: Optional path to user config JSON.
         """
@@ -159,6 +164,11 @@ class QuickBiteOptimizer:
             max_shift_hours
             if max_shift_hours is not None
             else config["max_shift_hours"]
+        )
+        self.early_arrival_threshold_min = (
+            early_arrival_threshold_min
+            if early_arrival_threshold_min is not None
+            else config.get("early_arrival_threshold_min", 30.0)
         )
         self.seed = seed
         self.rng = np.random.RandomState(seed)
@@ -229,6 +239,7 @@ class QuickBiteOptimizer:
         locked = self.locked
         driver_prefs = self.driver_preferences
         max_shift = self.max_shift_hours
+        early_arrival_threshold = self.early_arrival_threshold_min
 
         def obj_func(solution: np.ndarray) -> float:
             if cancel_event is not None and cancel_event.is_set():
@@ -241,6 +252,7 @@ class QuickBiteOptimizer:
                 locked_assignments=locked,
                 driver_preferences=driver_prefs,
                 max_shift_hours=max_shift,
+                early_arrival_threshold_min=early_arrival_threshold,
             )
             return float(cost)
 
@@ -297,6 +309,7 @@ class QuickBiteOptimizer:
             locked_assignments=locked,
             driver_preferences=driver_prefs,
             max_shift_hours=max_shift,
+            early_arrival_threshold_min=early_arrival_threshold,
         )
         routes = decode_solution(solution, locked_assignments=locked)
 
@@ -321,5 +334,6 @@ class QuickBiteOptimizer:
             driver_preferences=driver_prefs,
             max_shift_hours=max_shift,
             locked_assignments=locked,
+            early_arrival_threshold_min=early_arrival_threshold,
             epoch_times=epoch_times,
         )

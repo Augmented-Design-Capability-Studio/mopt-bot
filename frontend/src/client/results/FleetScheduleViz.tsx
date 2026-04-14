@@ -26,15 +26,15 @@ type FleetScheduleVizProps = {
   schedule: RunSchedule;
   /** When true, show driver-preference legend and highlight stops with per-visit preference cost. */
   schedulePreferencesActive?: boolean;
-  /** When true, show waiting-time legend and highlight stops where the driver waited for a window to open. */
-  scheduleWaitingTimeActive?: boolean;
+  /** When true, show early-arrival legend and highlight stops where the driver arrived more than the grace period early. */
+  scheduleEarlyArrivalActive?: boolean;
 };
 
 /** Per-vehicle Gantt-style schedule (fleet / VRPTW results), aligned with `schedule.ts` helpers. */
 export function FleetScheduleViz({
   schedule,
   schedulePreferencesActive = false,
-  scheduleWaitingTimeActive = false,
+  scheduleEarlyArrivalActive = false,
 }: FleetScheduleVizProps) {
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
@@ -134,10 +134,10 @@ export function FleetScheduleViz({
             Preference penalty (stop)
           </span>
         ) : null}
-        {scheduleWaitingTimeActive ? (
+        {scheduleEarlyArrivalActive ? (
           <span className="timeline-legend-item">
             <span className="timeline-legend-swatch wait" />
-            Stop involving wait
+            Early arrival excess
           </span>
         ) : null}
       </div>
@@ -178,7 +178,7 @@ export function FleetScheduleViz({
                     selectedStop.vehicle_index === stop.vehicle_index &&
                     selectedStop.task_id === stop.task_id;
                   const prefHit = schedulePreferencesActive && stopPreferenceHit(stop);
-                  const waitHit = scheduleWaitingTimeActive && (stop.wait_minutes ?? 0) > 0;
+                  const waitHit = scheduleEarlyArrivalActive && (stop.wait_minutes ?? 0) > 0;
                   return (
                     <button
                       key={`${stop.vehicle_index}:${stop.task_id}`}
@@ -261,8 +261,8 @@ export function FleetScheduleViz({
                   schedulePreferencesActive && stopPreferenceHit(selectedStop)
                     ? `preference +${(selectedStop.preference_penalty_units ?? 0).toFixed(1)} units`
                     : "",
-                  scheduleWaitingTimeActive && (selectedStop.wait_minutes ?? 0) > 0
-                    ? `wait ${selectedStop.wait_minutes.toFixed(0)}m`
+                  scheduleEarlyArrivalActive && (selectedStop.wait_minutes ?? 0) > 0
+                    ? `early +${selectedStop.wait_minutes.toFixed(0)}m`
                     : "",
                 ]
                   .filter(Boolean)

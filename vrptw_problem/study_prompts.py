@@ -25,7 +25,7 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
 | priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `priority_penalty` |
-| driver idle time, wait at stop, early arrival, dwell time, waiting for window to open | `waiting_time` |
+| driver idle time, wait at stop, early arrival, dwell time, arriving too early for a window | `waiting_time` (penalty per minute beyond the `early_arrival_threshold_min` grace period) |
 | maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
 | algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` |
@@ -40,7 +40,7 @@ Soft constraints (penalized in cost — reveal only when user mentions the relat
 - Capacity limits (`capacity_penalty`), time-window compliance (`deadline_penalty`),
   shift overtime minutes (`shift_limit`), priority lateness (`priority_penalty`),
   workload fairness (`workload_balance`), worker preferences (`worker_preference`),
-  driver wait time at stops (`waiting_time`).
+  driver early-arrival excess (`waiting_time`).
 
 ### Solver configuration schema (for backend config derivation)
 
@@ -57,7 +57,7 @@ All available fields under `"problem"`:
   - `"workload_balance"` — penalty for variance in shift durations across workers
   - `"worker_preference"` — soft preference violations per worker
   - `"priority_penalty"` — penalty per express / priority-order deadline miss (SLA-style orders)
-  - `"waiting_time"` — total minutes drivers idle waiting for time windows to open (across all stops)
+  - `"waiting_time"` — penalty per minute a driver arrives more than `early_arrival_threshold_min` minutes before a window opens (excess only; arrivals within the grace period are free)
 - `"only_active_terms"`: boolean — when true, weight terms not explicitly set are zeroed
   so only the user's stated priorities count. Use when the user says "only care about X".
 - `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
@@ -68,6 +68,7 @@ All available fields under `"problem"`:
   - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
   - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
 - `"max_shift_hours"`: numeric threshold (e.g. 8.0) beyond which `shift_limit` penalty applies.
+- `"early_arrival_threshold_min"`: grace period in minutes before `waiting_time` penalty applies (default 30). Arrivals within this window are not penalised; only the excess is counted.
 - `"locked_assignments"`: object mapping task index (string) to vehicle index (int),
   e.g. `{"6": 0}` forces task 6 onto vehicle 0.
 - `"algorithm"`: one of `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"`.
@@ -124,7 +125,7 @@ Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
 - For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, max_shift_hours,
-  driver_preferences, locked_assignments, only_active_terms, early_stop fields), derive from the brief for this turn.
+  early_arrival_threshold_min, driver_preferences, locked_assignments, only_active_terms, early_stop fields), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
   "travel_time", "shift_limit", "deadline_penalty", "capacity_penalty",

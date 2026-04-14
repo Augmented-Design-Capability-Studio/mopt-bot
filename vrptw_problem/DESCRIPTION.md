@@ -132,7 +132,7 @@ Here `Svc` is the **per-stop service time in minutes**, determined by `priority`
 In route simulation:
 
 - Travel time comes from `get_travel_time(…)` and is added to the clock.
-- If the vehicle arrives **before** `Window Open`, it waits until `Window Open`. This wait time is tracked per stop and can be optionally penalised via the **w8 waiting_time** weight term.
+- If the vehicle arrives **before** `Window Open`, it waits until `Window Open`. The actual wait is tracked per stop. If the wait exceeds `early_arrival_threshold_min` (default 30 minutes), the excess minutes are penalised via the **w8 waiting_time** weight term.
 - Then `Svc` is added to the clock to obtain the **departure** time.
 - **Time-window violations and express lateness are based on arrival vs. `Window Close` only** (not on when service finishes), but the service time contributes to shift duration and therefore to workload variance, **w2 shift overtime**, and hard shift penalties.
 
@@ -149,10 +149,11 @@ Cost is a weighted sum of:
 | w5 | 10.0 | Workload fairness penalty (shift duration variance across vehicles) |
 | w6 | 1.0 | Driver preference penalties |
 | w7 | 100.0 | Express lateness penalty (per late express order) |
-| w8 | 0.0 | Driver wait time — total minutes drivers idle waiting for time windows to open (across all stops and vehicles)|
+| w8 | 0.0 | Early arrival penalty — per minute a driver arrives more than `early_arrival_threshold_min` before a window opens (excess only; arrivals within the grace period are free) |
 
 **Configurable Parameters:**
 - `max_shift_hours` (default 8.0): Threshold in hours for $w_2$ shift penalties.
+- `early_arrival_threshold_min` (default 30.0): Grace period in minutes before $w_8$ early-arrival penalty applies.
 
 **Driver preference penalties** (soft, scaled by w6): each rule adds **preference cost units** to a running total (not minutes added to the traffic model). Legacy examples in sample configs:
 

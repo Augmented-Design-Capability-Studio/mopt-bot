@@ -25,8 +25,8 @@ VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
     ),
     (
         "waiting_time",
-        "Driver wait time",
-        "Total minutes drivers idle waiting for time windows to open (across all stops and vehicles).",
+        "Early arrival penalty",
+        "Minutes a driver arrives more than the early-arrival grace period before a time window opens (excess only; arrivals within the grace period are free).",
     ),
 ]
 
@@ -102,11 +102,11 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "urgent",
         ),
         "waiting_time": (
-            "driver wait time",
-            "waiting time",
-            "idle time",
-            "dwell time",
-            "wait at stop",
             "early arrival",
+            "early arrival penalty",
+            "arrive early",
+            "arriving early",
+            "arriving too early",
+            "waiting time",
         ),
     }

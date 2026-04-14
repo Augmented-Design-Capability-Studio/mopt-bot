@@ -11,18 +11,20 @@ from vrptw_problem.traffic_api import ZONE_NAMES
 from vrptw_problem.user_input import load_user_input
 
 
-def _get_sim_config(result: SolveResult) -> tuple[dict, list, float]:
-    """Get (weights, driver_preferences, shift_hard_penalty) from result or user_input."""
+def _get_sim_config(result: SolveResult) -> tuple[dict, list, float, float]:
+    """Get (weights, driver_preferences, max_shift_hours, early_arrival_threshold_min) from result or user_input."""
     if result.weights is not None:
         weights = result.weights
         driver_prefs = result.driver_preferences or []
         max_shift = result.max_shift_hours or 8.0
+        early_arrival = result.early_arrival_threshold_min if result.early_arrival_threshold_min is not None else 30.0
     else:
         config = load_user_input()
         weights = config["weights"]
         driver_prefs = config["driver_preferences"]
         max_shift = config["max_shift_hours"]
-    return weights, driver_prefs, max_shift
+        early_arrival = config.get("early_arrival_threshold_min", 30.0)
+    return weights, driver_prefs, max_shift, early_arrival
 
 
 def get_gantt_data(
@@ -38,7 +40,7 @@ def get_gantt_data(
     """
     orders = get_orders(seed=None)
     rng = np.random.RandomState(random_seed)
-    weights, driver_prefs, max_shift = _get_sim_config(result)
+    weights, driver_prefs, max_shift, early_arrival = _get_sim_config(result)
     _, _, visits_per_vehicle = simulate_routes(
         result.routes,
         orders,
@@ -46,6 +48,7 @@ def get_gantt_data(
         weights,
         driver_preferences=driver_prefs,
         max_shift_hours=max_shift,
+        early_arrival_threshold_min=early_arrival,
     )
 
     gantt = []
@@ -79,7 +82,7 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
     """Print a formatted QuickBite optimization report."""
     orders = get_orders(seed=None)
     rng = np.random.RandomState(random_seed)
-    weights, driver_prefs, max_shift = _get_sim_config(result)
+    weights, driver_prefs, max_shift, early_arrival = _get_sim_config(result)
     _, metrics, visits_per_vehicle = simulate_routes(
         result.routes,
         orders,
@@ -87,6 +90,7 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
         weights,
         driver_preferences=driver_prefs,
         max_shift_hours=max_shift,
+        early_arrival_threshold_min=early_arrival,
     )
 
     m = metrics

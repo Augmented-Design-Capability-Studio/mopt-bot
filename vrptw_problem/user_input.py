@@ -9,19 +9,19 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-# All supported weight keys (w1..w7) — soft constraint terms
+# All supported weight keys (w1..w8) — soft constraint terms
 WEIGHT_KEYS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8"]
 
-# Default objective weights (all 7 terms)
+# Default objective weights (all 8 terms)
 DEFAULT_WEIGHTS = {
     "w1": 1.0,      # total travel time
-    "w2": 500.0,      # per minute over configurable max shift, summed across vehicles — panel alias `shift_limit`
+    "w2": 500.0,    # per minute over configurable max shift, summed across vehicles — panel alias `shift_limit`
     "w3": 50.0,     # per minute TW violation
     "w4": 1000.0,   # per unit capacity overflow
     "w5": 10.0,     # workload variance
     "w6": 1.0,      # driver preference penalties
     "w7": 100.0,    # per express order late
-    "w8": 0.0,      # driver waiting time (off by default)
+    "w8": 0.0,      # early-arrival excess: minutes a driver arrives more than early_arrival_threshold_min before window open (off by default)
 }
 
 # Driver preference rules (preference cost units before w6; not travel-time minutes):
@@ -34,8 +34,9 @@ DEFAULT_DRIVER_PREFERENCES = [
 ]
 
 # Base platform constraints (unless overridden by problem configuration)
-DEFAULT_MAX_SHIFT_HOURS = 8.0  # hours
-SHIFT_HARD_PENALTY = 5000.0   # Deprecated alias to prevent ImportError
+DEFAULT_MAX_SHIFT_HOURS = 8.0            # hours
+DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN = 30.0  # minutes grace before w8 penalty applies
+SHIFT_HARD_PENALTY = 5000.0              # Deprecated alias to prevent ImportError
 
 DEFAULT_USER_CONFIG_PATH = Path(__file__).parent / "data" / "user_config.json"
 
@@ -91,6 +92,7 @@ def _infer_constraint_definitions(
         "w5": "workload",
         "w6": "driver_prefs",
         "w7": "express_lateness",
+        "w8": "waiting_time",
     }
     for k, v in weights.items():
         if v and v != 0 and k in w_to_name:
@@ -153,9 +155,16 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
                 weights, locked, driver_prefs
             )
 
+        eat = data.get("early_arrival_threshold_min")
+        if eat is None:
+            eat = DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN
+        else:
+            eat = float(eat)
+
         return {
             "weights": weights,
             "max_shift_hours": msh,
+            "early_arrival_threshold_min": eat,
             "driver_preferences": driver_prefs,
             "locked_assignments": locked,
             "algorithm": data.get("algorithm", "GA"),
@@ -168,6 +177,7 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
     return {
         "weights": dict(DEFAULT_WEIGHTS),
         "max_shift_hours": DEFAULT_MAX_SHIFT_HOURS,
+        "early_arrival_threshold_min": DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN,
         "driver_preferences": [],
         "locked_assignments": {},
         "algorithm": "GA",

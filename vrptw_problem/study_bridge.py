@@ -95,13 +95,11 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "vip":             "priority_penalty",
     "rush":            "priority_penalty",
     "critical":        "priority_penalty",
-    # waiting_time (w8)
+    # waiting_time (w8) — early arrival excess
     "wait":            "waiting_time",
     "waiting":         "waiting_time",
-    "idle":            "waiting_time",
-    "idle_time":       "waiting_time",
-    "dwell":           "waiting_time",
-    "dwell_time":      "waiting_time",
+    "early_arrival":   "waiting_time",
+    "early":           "waiting_time",
 }
 
 
@@ -533,7 +531,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     """
     ensure_vrptw_on_path()
     from vrptw_problem.optimizer import EARLY_STOP_DEFAULT_EPSILON, EARLY_STOP_DEFAULT_PATIENCE
-    from vrptw_problem.user_input import DEFAULT_MAX_SHIFT_HOURS, build_weights
+    from vrptw_problem.user_input import DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN, DEFAULT_MAX_SHIFT_HOURS, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
     # Default to explicit-only objective scoring when the field is omitted.
@@ -548,6 +546,9 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     driver_preferences = _validate_driver_preferences(driver_preferences_raw)
 
     shift_hard = float(raw.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS))
+    early_arrival_threshold_min = float(
+        raw.get("early_arrival_threshold_min", DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN)
+    )
 
     locked = _validate_locked_assignments(raw.get("locked_assignments"))
 
@@ -607,6 +608,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         "weights": weights,
         "driver_preferences": driver_preferences,
         "max_shift_hours": shift_hard,
+        "early_arrival_threshold_min": early_arrival_threshold_min,
         "locked_assignments": locked,
         "algorithm": algo_norm,
         "algorithm_params": algorithm_params_filtered,
@@ -634,6 +636,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             locked=cfg["locked_assignments"],
             driver_preferences=cfg["driver_preferences"],
             max_shift_hours=cfg["max_shift_hours"],
+            early_arrival_threshold_min=cfg["early_arrival_threshold_min"],
             seed=cfg["random_seed"],
         )
         return opt.solve(
@@ -682,6 +685,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             cfg["reference_weights"],
             driver_preferences=cfg["driver_preferences"],
             max_shift_hours=cfg["max_shift_hours"],
+            early_arrival_threshold_min=cfg["early_arrival_threshold_min"],
         )
         ref_cost = float(rc)
 
@@ -729,6 +733,7 @@ def run_evaluate_routes(
         cfg["weights"],
         driver_preferences=cfg["driver_preferences"],
         max_shift_hours=cfg["max_shift_hours"],
+        early_arrival_threshold_min=cfg["early_arrival_threshold_min"],
     )
     visits = _visits_from_evaluator_records(visits_pv)
     route_rows = routes_to_neutral(routes)
@@ -744,6 +749,7 @@ def run_evaluate_routes(
             cfg["reference_weights"],
             driver_preferences=cfg["driver_preferences"],
             max_shift_hours=cfg["max_shift_hours"],
+            early_arrival_threshold_min=cfg["early_arrival_threshold_min"],
         )
         ref_cost = float(rc)
 

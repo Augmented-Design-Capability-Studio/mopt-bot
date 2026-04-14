@@ -21,7 +21,13 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "workload_balance": {"type": "number"},
         "worker_preference": {"type": "number"},
         "priority_penalty": {"type": "number"},
-        "waiting_time": {"type": "number"},
+        "waiting_time": {
+            "type": "number",
+            "description": (
+                "Penalty per minute a driver arrives more than early_arrival_threshold_min "
+                "minutes before a time window opens. Arrivals within the grace period are free."
+            ),
+        },
     },
     "additionalProperties": False,
 }
@@ -61,6 +67,13 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
             "items": _DRIVER_PREFERENCE_SCHEMA,
         },
         "max_shift_hours": {"type": "number"},
+        "early_arrival_threshold_min": {
+            "type": "number",
+            "description": (
+                "Grace period in minutes before the waiting_time penalty applies. "
+                "Arrivals within this window are not penalised. Default 30."
+            ),
+        },
         "locked_assignments": {
             "type": "object",
             "description": "Map task index string to vehicle index integer.",
