@@ -104,7 +104,7 @@ export function ProblemConfigBlocks({
     problem.early_stop_epsilon !== null;
   const hasHardStructural =
     extensionUi === "vrptw_extras" &&
-    (Object.keys(problem.locked_assignments).length > 0 || problem.max_shift_hours !== null);
+    (Object.keys(problem.locked_assignments).length > 0 || problem.max_shift_hours !== null || problem.early_arrival_threshold_min !== null);
   const hasSomething = displayWeightKeys.length > 0 || hasSearch || hasHardStructural;
 
   if (!hasSomething) {
@@ -161,6 +161,13 @@ export function ProblemConfigBlocks({
     } else if (removed.type === "max_shift") {
       updateProblem({
         max_shift_hours: removed.value,
+        locked_goal_terms: removed.locked
+          ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
+          : problem.locked_goal_terms,
+      });
+    } else if (removed.type === "early_arrival_threshold") {
+      updateProblem({
+        early_arrival_threshold_min: removed.value,
         locked_goal_terms: removed.locked
           ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
           : problem.locked_goal_terms,

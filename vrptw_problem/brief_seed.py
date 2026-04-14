@@ -101,8 +101,21 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
     "waiting_time": (
         re.compile(r"\bearly arrival\b", re.IGNORECASE),
-        re.compile(r"\barriv(?:e|ing) (?:too )?early\b", re.IGNORECASE),
-        re.compile(r"\bwait(?:ing)? time\b", re.IGNORECASE),
+        re.compile(r"\bearly arrival penalty\b", re.IGNORECASE),
+        re.compile(r"\barrive(?:s|d)?\s+(?:too\s+)?early\b", re.IGNORECASE),
+        re.compile(r"\barriving\s+(?:too\s+)?early\b", re.IGNORECASE),
+        re.compile(r"\bearly dwell\b", re.IGNORECASE),
+        re.compile(r"\bdwell before (?:the )?window\b", re.IGNORECASE),
+        re.compile(r"\bbefore (?:the )?time window\b", re.IGNORECASE),
+        re.compile(r"\bpre.?window\b", re.IGNORECASE),
+        re.compile(r"\bcannot arrive more than\b", re.IGNORECASE),
+    ),
+    "early_arrival_threshold_min": (
+        re.compile(r"\bcannot arrive more than\b", re.IGNORECASE),
+        re.compile(r"\bmore than\s+\d+\s*min(?:utes?)?\s+before\b", re.IGNORECASE),
+        re.compile(r"\bearly[- ]arrival\s+(?:limit|threshold|grace)\b", re.IGNORECASE),
+        re.compile(r"\bno more than\s+\d+\s*min(?:utes?)?\s+(?:before|early)\b", re.IGNORECASE),
+        re.compile(r"\barriv(?:e|es|ing)\s+(?:up to\s+)?\d+\s*min(?:utes?)?\s+(?:before|early)\b", re.IGNORECASE),
     ),
     "max_shift_hours": (
         re.compile(r"\bshift duration\b", re.IGNORECASE),
@@ -116,6 +129,11 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bmax_shift_hours\b", re.IGNORECASE),
     ),
 }
+_EARLY_ARRIVAL_MINUTES_RE = re.compile(
+    r"(?:more than|no more than|exceed(?:ing)?|beyond|over)\s+(\d+(?:\.\d+)?)\s*min(?:utes?)?",
+    re.IGNORECASE,
+)
+
 _EXPLICIT_VALUE_RE = re.compile(
     r"\b(?:"
     r"set to|"
@@ -381,6 +399,23 @@ def derive_problem_panel_from_brief(
     if priority_entries:
         weights["priority_penalty"] = _extract_explicit_value_for_key(priority_entries, "priority_penalty") or 100.0
 
+    early_arrival_entries = _mentions(fragments, "waiting_time")
+    early_arrival_threshold_entries = _mentions(fragments, "early_arrival_threshold_min")
+    early_arrival_threshold_min = None
+    if early_arrival_entries or early_arrival_threshold_entries:
+        weights["waiting_time"] = _extract_explicit_value_for_key(
+            early_arrival_entries or early_arrival_threshold_entries, "waiting_time"
+        ) or 100.0
+        # Extract the threshold value from phrasing like "cannot arrive more than 30 minutes before"
+        all_ea_texts = early_arrival_entries + early_arrival_threshold_entries
+        for text in reversed(all_ea_texts):
+            m = _EARLY_ARRIVAL_MINUTES_RE.search(text)
+            if m:
+                early_arrival_threshold_min = float(m.group(1))
+                break
+        if early_arrival_threshold_min is None:
+            early_arrival_threshold_min = 30.0
+
     shift_threshold_entries = _mentions(fragments, "max_shift_hours")
     max_shift_hours = None
     if shift_threshold_entries:
@@ -408,6 +443,7 @@ def derive_problem_panel_from_brief(
     if (
         not weights
         and max_shift_hours is None
+        and early_arrival_threshold_min is None
         and explicit_algorithm is None
         and not algorithm_params
         and epochs is None
@@ -432,4 +468,6 @@ def derive_problem_panel_from_brief(
     }
     if max_shift_hours is not None:
         problem["max_shift_hours"] = max_shift_hours
+    if early_arrival_threshold_min is not None:
+        problem["early_arrival_threshold_min"] = early_arrival_threshold_min
     return {"problem": problem}

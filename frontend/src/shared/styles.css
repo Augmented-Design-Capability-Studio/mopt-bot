@@ -1067,6 +1067,10 @@ select:focus-visible {
   gap: 0.35rem;
 }
 
+.results-visualization-scroll > * {
+  flex-shrink: 0;
+}
+
 .run-timeline-wrap {
   display: flex;
   flex-direction: column;

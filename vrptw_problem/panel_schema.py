@@ -11,7 +11,8 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
     "description": (
         "Only these participant-facing objective keys exist — omit keys the user did not discuss. "
         "Never invent names. Time, distance, fuel, or operating-time language maps to travel_time only. "
-        "Shift hours beyond the max_shift_hours limit → shift_limit."
+        "Shift hours beyond the max_shift_hours limit → shift_limit. "
+        "Early-arrival limit is configured via early_arrival_threshold_min, not as a weight here."
     ),
     "properties": {
         "travel_time": {"type": "number"},
@@ -21,13 +22,6 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "workload_balance": {"type": "number"},
         "worker_preference": {"type": "number"},
         "priority_penalty": {"type": "number"},
-        "waiting_time": {
-            "type": "number",
-            "description": (
-                "Penalty per minute a driver arrives more than early_arrival_threshold_min "
-                "minutes before a time window opens. Arrivals within the grace period are free."
-            ),
-        },
     },
     "additionalProperties": False,
 }
@@ -70,8 +64,9 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         "early_arrival_threshold_min": {
             "type": "number",
             "description": (
-                "Grace period in minutes before the waiting_time penalty applies. "
-                "Arrivals within this window are not penalised. Default 30."
+                "Early-arrival limit in minutes: drivers must not arrive more than this many minutes "
+                "before a time window opens. When set, the backend automatically applies an internal "
+                "penalty for violations. Default 30."
             ),
         },
         "locked_assignments": {

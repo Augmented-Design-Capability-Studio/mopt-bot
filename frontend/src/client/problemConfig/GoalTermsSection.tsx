@@ -1,12 +1,12 @@
 import { Fragment, type CSSProperties } from "react";
 
-import { MAX_SHIFT_HOURS_INFO, WEIGHT_INFO, WORKER_NAMES, PREFERENCE_CONDITIONS } from "./metadata";
+import { EARLY_ARRIVAL_THRESHOLD_INFO, MAX_SHIFT_HOURS_INFO, WEIGHT_INFO, WORKER_NAMES, PREFERENCE_CONDITIONS } from "./metadata";
 import { FieldRow } from "./layout";
 import type { DriverPref, ProblemBlock } from "./types";
 import type { MarkerKind } from "./useProblemConfigDiffMarkers";
 import { ConfigNumberInput, ConfigSelect, type ActivateHint } from "./controls";
 
-export type RemovedGoalTermEntry = { key: string; value: number; locked: boolean; type: "weight" | "shift" | "max_shift" };
+export type RemovedGoalTermEntry = { key: string; value: number; locked: boolean; type: "weight" | "shift" | "max_shift" | "early_arrival_threshold" };
 
 function workerOptionLabel(vehicleIdx: number): string {
   const name = WORKER_NAMES[vehicleIdx];
@@ -275,7 +275,9 @@ export function GoalTermsSection({
   addLockedRow,
 }: GoalTermsSectionProps) {
   const hasHardStructural =
-    extensionUi === "vrptw_extras" && Object.keys(problem.locked_assignments).length > 0;
+    extensionUi === "vrptw_extras" &&
+    (Object.keys(problem.locked_assignments).length > 0 ||
+      removedGoalTerms.some((e) => e.type === "early_arrival_threshold" || e.type === "max_shift"));
   const rules = problem.driver_preferences;
   const preferencePeekText =
     rules.length === 0
@@ -479,6 +481,78 @@ export function GoalTermsSection({
               markerKind={markerKindFor(`weight:${key}`)}
               onRememberRemoved={rememberRemovedGoalTerm}
             />
+            {key === "waiting_time" && problem.early_arrival_threshold_min !== null && (
+              <details className="driver-pref-details" open>
+                <summary
+                  style={{
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "0.82rem",
+                    userSelect: "none",
+                  }}
+                >
+                  <span className="field-row-label">
+                    {EARLY_ARRIVAL_THRESHOLD_INFO.label} threshold
+                    {markerKindFor("field:early_arrival_threshold_min") ? (
+                      <span
+                        className={`entry-diff-marker ${markerKindFor("field:early_arrival_threshold_min") === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
+                        title={markerKindFor("field:early_arrival_threshold_min") === "new" ? "New agent update" : "Updated by agent"}
+                        aria-label={markerKindFor("field:early_arrival_threshold_min") === "new" ? "New agent update" : "Updated by agent"}
+                      >
+                        {markerKindFor("field:early_arrival_threshold_min") === "new" ? "+" : "Δ"}
+                      </span>
+                    ) : null}
+                  </span>
+                </summary>
+                <div className="driver-pref-peek muted" aria-hidden>
+                  {problem.early_arrival_threshold_min} minutes
+                </div>
+                <div style={{ marginTop: "0.4rem", marginBottom: "0.4rem" }}>
+                  <GoalTermRow
+                    label={EARLY_ARRIVAL_THRESHOLD_INFO.label}
+                    description={EARLY_ARRIVAL_THRESHOLD_INFO.description}
+                    editable={editable}
+                    value={problem.early_arrival_threshold_min}
+                    min={0}
+                    step={5}
+                    valueCaption="minutes"
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value);
+                      if (Number.isNaN(value)) return;
+                      updateProblem({ early_arrival_threshold_min: value });
+                    }}
+                    onActivate={(hint) => ensureEditing(hint)}
+                    focusKey="early-arrival-threshold-min"
+                    markerKind={null} /* Already shown in summary */
+                    locked={problem.locked_goal_terms.includes("early_arrival_threshold_min")}
+                    showLock
+                    showRemove
+                    onToggleLock={() =>
+                      runEditingAction(() => {
+                        updateProblem({
+                          locked_goal_terms: toggleLockedGoalTerm(problem.locked_goal_terms, "early_arrival_threshold_min"),
+                        });
+                      })
+                    }
+                    onRemove={() =>
+                      runEditingAction(() => {
+                        rememberRemovedGoalTerm({
+                          key: "early_arrival_threshold_min",
+                          value: problem.early_arrival_threshold_min ?? 30,
+                          locked: problem.locked_goal_terms.includes("early_arrival_threshold_min"),
+                          type: "early_arrival_threshold",
+                        });
+                        updateProblem({
+                          early_arrival_threshold_min: null,
+                          locked_goal_terms: removeLockedGoalTerm(problem.locked_goal_terms, "early_arrival_threshold_min"),
+                        });
+                      })
+                    }
+                    inputStyle={{ width: "4rem" }}
+                  />
+                </div>
+              </details>
+            )}
             {key === "shift_limit" && problem.max_shift_hours !== null && (
               <details className="driver-pref-details" open>
                 <summary
@@ -577,6 +651,32 @@ export function GoalTermsSection({
                 <div className="definition-item-meta">
                   <span className="entry-diff-marker entry-diff-marker--removed">-</span>
                   <span className="muted">{MAX_SHIFT_HOURS_INFO.label} (removed)</span>
+                  <button
+                    type="button"
+                    className="definition-icon-btn definition-restore-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      runEditingAction(() => restoreRemovedGoalTerm(entry.key));
+                    }}
+                  >
+                    R
+                  </button>
+                </div>
+              </div>
+            ))}
+          {removedGoalTerms
+            .filter((entry) => entry.type === "early_arrival_threshold")
+            .map((entry) => (
+              <div
+                key={`removed-${entry.key}`}
+                className="definition-item definition-item-removed"
+                role="button"
+                tabIndex={0}
+                onClick={() => runEditingAction(() => restoreRemovedGoalTerm(entry.key))}
+              >
+                <div className="definition-item-meta">
+                  <span className="entry-diff-marker entry-diff-marker--removed">-</span>
+                  <span className="muted">{EARLY_ARRIVAL_THRESHOLD_INFO.label} (removed)</span>
                   <button
                     type="button"
                     className="definition-icon-btn definition-restore-btn"

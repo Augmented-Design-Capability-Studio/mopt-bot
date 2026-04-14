@@ -68,7 +68,7 @@ export function ConvergencePlot({ convergence, referenceCost }: ConvergencePlotP
     referenceCost != null && referenceCost >= yMin && referenceCost <= yMax;
 
   return (
-    <div style={{ width: "100%", height: 240, marginTop: "0.5rem" }}>
+    <div style={{ width: "100%", height: 240, minHeight: 240, flexShrink: 0, marginTop: "0.5rem" }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 16, bottom: 24, left: 16 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e0ddd8" />

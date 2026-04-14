@@ -33,13 +33,18 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
     description:
       "Penalizes each express (or emphasized priority) order delivered after its deadline window. Higher values protect SLA-style orders.",
   },
+  waiting_time: {
+    label: "Early Arrival Penalty",
+    description:
+      "Penalizes each excess minute a driver arrives before the early-arrival grace period. Configure the grace-period threshold below.",
+  },
 };
 
-/** Weight keys shown under “Goal terms” (routing / efficiency). */
+/** Weight keys shown under "Goal terms" (routing / efficiency). */
 const WEIGHT_GOAL_KEYS = ["travel_time", "shift_limit", "workload_balance"] as const;
 
-/** Weight keys shown under “Soft penalties” (violations / lateness), excluding worker_preference. */
-const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty"] as const;
+/** Weight keys shown under "Soft penalties" (violations / lateness), excluding worker_preference. */
+const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty", "waiting_time"] as const;
 
 /** Single panel order: routing, soft violations, then driver preference weight + rules. */
 const WEIGHT_DISPLAY_ORDER = [
@@ -53,6 +58,13 @@ const MAX_SHIFT_HOURS_INFO = {
   label: "Max Shift Hours",
   description:
     "The maximum allowed duration for a driver's shift (including travel and service time). Exceeding this triggers the penalty weight above.",
+} as const;
+
+/** Metadata for the early-arrival grace-period threshold. */
+const EARLY_ARRIVAL_THRESHOLD_INFO = {
+  label: "Early Arrival Threshold",
+  description:
+    "Grace period in minutes. Drivers arriving within this window before a time window opens are not penalised; only arrivals beyond this threshold accumulate the early-arrival penalty above.",
 } as const;
 
 const ALGORITHM_DESC: Record<string, string> = {
@@ -87,6 +99,7 @@ const PREFERENCE_CONDITIONS = [
 
 export {
   ALGORITHM_DESC,
+  EARLY_ARRIVAL_THRESHOLD_INFO,
   MAX_SHIFT_HOURS_INFO,
   WEIGHT_DISPLAY_ORDER,
   CONDITION_LABEL,

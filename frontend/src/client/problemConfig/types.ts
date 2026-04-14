@@ -27,6 +27,7 @@ export type ProblemBlock = {
   pop_size: number | null;
   random_seed: number | null;
   max_shift_hours: number | null;
+  early_arrival_threshold_min: number | null;
   locked_assignments: Record<string, number>;
   driver_preferences: DriverPref[];
 };

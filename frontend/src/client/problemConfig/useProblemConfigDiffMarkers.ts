@@ -49,6 +49,7 @@ function computeMarkers(prev: ProblemBlock, next: ProblemBlock): Record<string, 
 
   const scalarKeys: Array<keyof ProblemBlock> = [
     "max_shift_hours",
+    "early_arrival_threshold_min",
     "algorithm",
     "epochs",
     "pop_size",

@@ -94,8 +94,10 @@ export function ResultsPanel({
   const schedulePreferencesActive =
     driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
 
-  const wtw = Number(runWeights.waiting_time);
-  const scheduleEarlyArrivalActive = Number.isFinite(wtw) && wtw > 0;
+  const scheduleEarlyArrivalActive =
+    runProblem.early_arrival_threshold_min != null ||
+    // backward compat: old sessions that stored waiting_time as a weight
+    (Number.isFinite(Number(runWeights.waiting_time)) && Number(runWeights.waiting_time) > 0);
 
   useEffect(() => {
     setVizTab("schedule");

@@ -34,9 +34,10 @@ DEFAULT_DRIVER_PREFERENCES = [
 ]
 
 # Base platform constraints (unless overridden by problem configuration)
-DEFAULT_MAX_SHIFT_HOURS = 8.0            # hours
-DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN = 30.0  # minutes grace before w8 penalty applies
-SHIFT_HARD_PENALTY = 5000.0              # Deprecated alias to prevent ImportError
+DEFAULT_MAX_SHIFT_HOURS = 8.0              # hours
+DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN = 30.0 # minutes grace before w8 penalty applies
+DEFAULT_EARLY_ARRIVAL_PENALTY = 100.0      # auto w8 value when early_arrival_threshold_min is set without explicit waiting_time weight
+SHIFT_HARD_PENALTY = 5000.0               # Deprecated alias to prevent ImportError
 
 DEFAULT_USER_CONFIG_PATH = Path(__file__).parent / "data" / "user_config.json"
 
@@ -92,7 +93,6 @@ def _infer_constraint_definitions(
         "w5": "workload",
         "w6": "driver_prefs",
         "w7": "express_lateness",
-        "w8": "waiting_time",
     }
     for k, v in weights.items():
         if v and v != 0 and k in w_to_name:

@@ -132,7 +132,7 @@ Here `Svc` is the **per-stop service time in minutes**, determined by `priority`
 In route simulation:
 
 - Travel time comes from `get_travel_time(…)` and is added to the clock.
-- If the vehicle arrives **before** `Window Open`, it waits until `Window Open`. The actual wait is tracked per stop. If the wait exceeds `early_arrival_threshold_min` (default 30 minutes), the excess minutes are penalised via the **w8 waiting_time** weight term.
+- If the vehicle arrives **before** `Window Open`, it waits until `Window Open`. The actual wait is tracked per stop. If the wait exceeds `early_arrival_threshold_min` (default 30 minutes), the excess minutes are penalised via the internal **w8 early arrival** penalty (auto-activated; not user-configurable as a weight).
 - Then `Svc` is added to the clock to obtain the **departure** time.
 - **Time-window violations and express lateness are based on arrival vs. `Window Close` only** (not on when service finishes), but the service time contributes to shift duration and therefore to workload variance, **w2 shift overtime**, and hard shift penalties.
 

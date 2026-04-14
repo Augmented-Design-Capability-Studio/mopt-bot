@@ -31,6 +31,7 @@ WEIGHT_ALIASES: dict[str, str] = {
     "workload_balance":  "w5",
     "worker_preference": "w6",
     "priority_penalty":  "w7",
+    # waiting_time is kept only as a backward-compat alias; it is no longer a user-facing goal term.
     "waiting_time":      "w8",
 }
 
@@ -95,11 +96,12 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "vip":             "priority_penalty",
     "rush":            "priority_penalty",
     "critical":        "priority_penalty",
-    # waiting_time (w8) — early arrival excess
-    "wait":            "waiting_time",
-    "waiting":         "waiting_time",
-    "early_arrival":   "waiting_time",
-    "early":           "waiting_time",
+    # early arrival penalty (w8)
+    "early_arrival":         "waiting_time",
+    "early_arrival_penalty": "waiting_time",
+    "arrive_early":          "waiting_time",
+    "pre_window":            "waiting_time",
+    "early_dwell":           "waiting_time",
 }
 
 
@@ -531,7 +533,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     """
     ensure_vrptw_on_path()
     from vrptw_problem.optimizer import EARLY_STOP_DEFAULT_EPSILON, EARLY_STOP_DEFAULT_PATIENCE
-    from vrptw_problem.user_input import DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN, DEFAULT_MAX_SHIFT_HOURS, build_weights
+    from vrptw_problem.user_input import DEFAULT_EARLY_ARRIVAL_PENALTY, DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN, DEFAULT_MAX_SHIFT_HOURS, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
     # Default to explicit-only objective scoring when the field is omitted.
@@ -546,9 +548,13 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     driver_preferences = _validate_driver_preferences(driver_preferences_raw)
 
     shift_hard = float(raw.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS))
-    early_arrival_threshold_min = float(
-        raw.get("early_arrival_threshold_min", DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN)
-    )
+
+    eat_raw = raw.get("early_arrival_threshold_min")
+    early_arrival_threshold_min = float(eat_raw) if eat_raw is not None else DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN
+    # When an early-arrival threshold is explicitly provided and w8 is still zero
+    # (user never set waiting_time directly), activate the penalty automatically.
+    if eat_raw is not None and weights.get("w8", 0.0) == 0.0:
+        weights["w8"] = DEFAULT_EARLY_ARRIVAL_PENALTY
 
     locked = _validate_locked_assignments(raw.get("locked_assignments"))
 
