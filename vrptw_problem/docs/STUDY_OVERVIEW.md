@@ -30,7 +30,7 @@ Participants are given a computational optimization problem (e.g., a vehicle rou
 
 ## Experimental Factors
 The study may vary:
-- **Workflow style** (fast vs. structured problem formulation)
+- **Workflow style** (fast vs. structured problem formulation): **Agile** (iterative, early runs), **Waterfall** (specification-first, run gated on resolved questions), or **Demo** (blended — generates both assumptions and open questions, agile-style run gate, no open-questions banner; for live demonstrations)
 - **User agency** (manual vs. automated execution)
 - **Visualization type** (static vs. interactive)
 - **User expertise level** (novice to expert)

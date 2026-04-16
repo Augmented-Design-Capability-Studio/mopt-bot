@@ -49,8 +49,9 @@ For the concrete task instance and all fixed parameters, see [QuickBite Fleet Sc
 Possible between-/within-subject factors:
 
 - **Workflow style**
-  - **Waterfall**: structured; emphasize up-front articulation of objectives/constraints before long optimization runs.
-  - **Agile**: iterative; frequent runs with lightweight updates to objectives or constraints.
+  - **Waterfall**: structured; emphasize up-front articulation of objectives/constraints before long optimization runs. Run gated until all open questions are resolved.
+  - **Agile**: iterative; frequent runs with lightweight updates to objectives or constraints. Run enabled as soon as ≥1 goal weight and an algorithm are set.
+  - **Demo**: blended; freely generates both assumptions and open questions to showcase the full discovery experience, but uses the same lightweight run gate as agile. No open-questions warning banner. Intended for live demonstrations rather than study sessions.
 - **User agency**
   - **Manual execution**: user explicitly approves key steps (e.g., solver runs, major objective changes).
   - **More automated**: agent takes more initiative in proposing and executing runs once goals are inferred.
