@@ -88,7 +88,9 @@ export function ResearcherDetail({
       ? "detail--wf-agile"
       : detail?.workflow_mode === "waterfall"
         ? "detail--wf-waterfall"
-        : "";
+        : detail?.workflow_mode === "demo"
+          ? "detail--wf-demo"
+          : "";
   const participantNumberChanged = participantNumberDraft !== (detail?.participant_number ?? "");
 
   /** Stored researcher permit — participant mutations re-sync `optimization_allowed` from intrinsic readiness. */
@@ -131,6 +133,7 @@ export function ResearcherDetail({
               >
                 <option value="agile">agile</option>
                 <option value="waterfall">waterfall</option>
+                <option value="demo">demo</option>
               </select>
             </label>
 
