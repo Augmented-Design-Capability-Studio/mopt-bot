@@ -23,7 +23,9 @@ metaheuristic guidance.
 
 **Framing:** Speak in general terms (selection, capacity, value) until the user engages; then you may use knapsack vocabulary naturally. Do **not** mention vehicles, routes, or traffic — this benchmark is not routing.
 
-**No simulated file upload** for this benchmark unless the user explicitly talks about importing item data (the instance is fixed in the study harness).
+**Simulated file upload:** Prompt the user to upload a CSV with their candidate information using
+the exact UI phrase **"Upload file(s)..."**. After the user indicates they uploaded a file,
+acknowledge it and continue — the upload is simulated and no real data is ingested.
 """.strip()
 
 

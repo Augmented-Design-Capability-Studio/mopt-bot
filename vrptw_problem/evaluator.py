@@ -206,6 +206,7 @@ def simulate_routes(
     total_express_late = 0
     total_wait_time = 0.0
     shift_durations: list[float] = []
+    productive_durations: list[float] = []  # travel + service only; excludes idle wait
     visits_per_vehicle: list[list[VisitRecord]] = []
 
     max_shift_min = max_shift_hours * 60
@@ -286,6 +287,7 @@ def simulate_routes(
 
         rm.shift_duration_minutes = float(current_time - vehicle.shift_start_min)
         shift_durations.append(rm.shift_duration_minutes)
+        productive_durations.append(rm.total_travel_time + rm.total_service_time)
 
         rm.driver_penalty += _apply_driver_penalties_once_per_route(
             v_idx, order_indices, orders, driver_preferences
@@ -304,9 +306,9 @@ def simulate_routes(
 
         visits_per_vehicle.append(rm.visits)
 
-    # Workload variance (variance of shift durations in minutes)
-    shift_arr = np.array(shift_durations)
-    workload_variance = float(np.var(shift_arr)) if len(shift_arr) > 1 else 0.0
+    # Workload variance: variance of drive+service time per vehicle (excludes idle pre-window wait).
+    productive_arr = np.array(productive_durations)
+    workload_variance = float(np.var(productive_arr)) if len(productive_arr) > 1 else 0.0
 
     # w2: total minutes beyond max_shift_hours, summed over vehicles — soft shift-hours pressure
     shift_overtime_minutes = float(
@@ -335,6 +337,7 @@ def simulate_routes(
         "express_late_count": total_express_late,
         "wait_time": total_wait_time,
         "shift_durations": shift_durations,
+        "productive_durations": productive_durations,
     }
     return cost, metrics, visits_per_vehicle
 

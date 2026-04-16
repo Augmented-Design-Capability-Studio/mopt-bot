@@ -67,7 +67,7 @@ Five vehicles with different capacities, start locations, and shift start times:
 - **Capacity** is in units; total load per route must not exceed it (soft constraint via penalty).
 - **Shift start**: vehicle cannot depart before this time.
 - **Max hours**: shift duration threshold (e.g. 8h) beyond which penalties apply (controlled by `max_shift_hours`).
-- **Compensation and fairness**: drivers are assumed to be salaried (or compensated under a pooled/guaranteed-hours scheme), so the scheduler aims to keep routes operationally efficient while maintaining fair workloads across drivers.
+- **Compensation and fairness**: the scheduler aims to keep routes operationally efficient while maintaining fair workloads. Workload balance (w5) measures drive+service time; idle pre-window wait is excluded so that unavoidable wait at a stop doesn't distort fairness scores.
 - **Driver preferences**: some vehicles have soft preferences (see §1.6), such as Alice disliking Zone D stops, Carol disliking many express orders, and Dave disliking very long shifts.
 
 ### 1.5 Orders
@@ -134,7 +134,7 @@ In route simulation:
 - Travel time comes from `get_travel_time(…)` and is added to the clock.
 - If the vehicle arrives **before** `Window Open`, it waits until `Window Open`. The actual wait is tracked per stop. If the wait exceeds `early_arrival_threshold_min` (default 30 minutes), the excess minutes are penalised via the internal **w8 early arrival** penalty (auto-activated; not user-configurable as a weight).
 - Then `Svc` is added to the clock to obtain the **departure** time.
-- **Time-window violations and express lateness are based on arrival vs. `Window Close` only** (not on when service finishes), but the service time contributes to shift duration and therefore to workload variance, **w2 shift overtime**, and hard shift penalties.
+- **Time-window violations and express lateness are based on arrival vs. `Window Close` only** (not on when service finishes). Service time contributes to shift duration (**w2 shift overtime**) and to workload variance (**w5**). Idle pre-window wait counts toward shift duration (w2) but is excluded from workload variance (w5).
 
 ### 1.6 Objective Function
 
@@ -146,7 +146,7 @@ Cost is a weighted sum of:
 | w2 | 500.0 | Max Shift Penalty — penalty per minute beyond `max_shift_hours`, summed over vehicles |
 | w3 | 50.0 | Time-window violation penalty (per minute late) |
 | w4 | 1000.0 | Capacity overflow penalty (per unit) |
-| w5 | 10.0 | Workload fairness penalty (shift duration variance across vehicles) |
+| w5 | 10.0 | Workload fairness penalty (drive+service time variance across vehicles; idle pre-window wait excluded) |
 | w6 | 1.0 | Driver preference penalties |
 | w7 | 100.0 | Express lateness penalty (per late express order) |
 | w8 | 0.0 | Early arrival penalty — per minute a driver arrives more than `early_arrival_threshold_min` before a window opens (excess only; arrivals within the grace period are free) |
@@ -295,7 +295,7 @@ cost = w1×travel_time + w2×shift_limit_minutes + w3×tw_violation_min
      + w6×driver_penalty + w7×express_late_count
 ```
 
-**Shift limit (** `shift_limit_minutes` **):** for each vehicle, minutes by which that route’s shift length exceeds the configurable threshold (`max_shift_hours`); **w2** scales the **sum** of those overages across the fleet. This is a linear penalty. **w7** scales **express / priority-order deadline** lateness (per late express order), distinct from generic time-window minutes (**w3**).
+**Shift limit (** `shift_limit_minutes` **):** for each vehicle, minutes by which that route’s full shift length (including idle wait) exceeds `max_shift_hours`; **w2** scales the sum across the fleet. **Workload variance (** `workload_variance` **):** variance of drive+service time per vehicle, excluding idle pre-window wait. **w7** scales express/priority-order lateness (per late express order), distinct from generic time-window minutes (**w3**).
 
 ### 4.3 `evaluate_solution`
 
@@ -303,7 +303,7 @@ cost = w1×travel_time + w2×shift_limit_minutes + w3×tw_violation_min
 - Runs `simulate_routes` on those routes.
 - Returns `(cost, metrics_dict, visits_per_vehicle)`.
 
-`metrics_dict` includes: `travel_time`, `shift_overtime_minutes`, `tw_violation_min`, `tw_violation_count`, `capacity_overflow`, `workload_variance`, `driver_penalty`, `express_late_count`, `shift_durations`.
+`metrics_dict` includes: `travel_time`, `shift_overtime_minutes`, `tw_violation_min`, `tw_violation_count`, `capacity_overflow`, `workload_variance`, `driver_penalty`, `express_late_count`, `shift_durations` (full shift including idle wait), `productive_durations` (drive+service only, per vehicle).
 
 ---
 

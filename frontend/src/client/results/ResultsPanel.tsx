@@ -98,6 +98,9 @@ export function ResultsPanel({
     runProblem.early_arrival_threshold_min != null ||
     // backward compat: old sessions that stored waiting_time as a weight
     (Number.isFinite(Number(runWeights.waiting_time)) && Number(runWeights.waiting_time) > 0);
+  const scheduleEarlyArrivalThresholdMin = Number.isFinite(Number(runProblem.early_arrival_threshold_min))
+    ? Number(runProblem.early_arrival_threshold_min)
+    : 30;
 
   useEffect(() => {
     setVizTab("schedule");
@@ -245,6 +248,7 @@ export function ResultsPanel({
                 schedule={currentResult.schedule}
                 schedulePreferencesActive={schedulePreferencesActive}
                 scheduleEarlyArrivalActive={scheduleEarlyArrivalActive}
+                earlyArrivalThresholdMin={scheduleEarlyArrivalThresholdMin}
               />
             )}
           </div>

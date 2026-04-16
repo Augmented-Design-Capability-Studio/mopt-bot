@@ -22,7 +22,7 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
   workload_balance: {
     label: "Workload Balance",
     description:
-      "Penalizes unequal shift lengths across workers. Higher values produce a fairer distribution of work.",
+      "Penalizes unequal drive+service time across workers (idle pre-window wait excluded). Higher values produce a fairer distribution of actual work.",
   },
   worker_preference: {
     label: "Driver Preferences",

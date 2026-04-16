@@ -12,7 +12,7 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "Only these participant-facing objective keys exist — omit keys the user did not discuss. "
         "Never invent names. Time, distance, fuel, or operating-time language maps to travel_time only. "
         "Shift hours beyond the max_shift_hours limit → shift_limit. "
-        "Early-arrival limit is configured via early_arrival_threshold_min, not as a weight here."
+        "Early-arrival penalty → waiting_time (penalty weight) paired with early_arrival_threshold_min (grace-period threshold in minutes)."
     ),
     "properties": {
         "travel_time": {"type": "number"},
@@ -22,6 +22,13 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "workload_balance": {"type": "number"},
         "worker_preference": {"type": "number"},
         "priority_penalty": {"type": "number"},
+        "waiting_time": {
+            "type": "number",
+            "description": (
+                "Penalty per excess minute a driver arrives before the early-arrival grace period. "
+                "Always pair with early_arrival_threshold_min. Default 100."
+            ),
+        },
     },
     "additionalProperties": False,
 }
@@ -85,6 +92,13 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         "early_stop": {"type": "boolean"},
         "early_stop_patience": {"type": "integer"},
         "early_stop_epsilon": {"type": "number"},
+        "use_greedy_init": {
+            "type": "boolean",
+            "description": (
+                "When true (default), seeds a portion of the initial population with "
+                "time-window-aware greedy solutions instead of purely random ones."
+            ),
+        },
         "hard_constraints": {"type": "array", "items": {"type": "string"}},
         "soft_constraints": {"type": "array", "items": {"type": "string"}},
     },

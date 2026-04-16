@@ -38,7 +38,7 @@ export function intrinsicOptimizationReady(
   optimizationGateEngaged: boolean,
 ): boolean {
   const mode = (workflowMode ?? "").toLowerCase();
-  if (mode === "agile") {
+  if (mode === "agile" || mode === "demo") {
     return intrinsicOptimizationReadyAgile(configText);
   }
   if (mode === "waterfall" && problemBrief) {
@@ -81,7 +81,7 @@ export function runOptimizationDisabledHint(
   if (session.optimization_allowed) return "";
 
   const mode = (session.workflow_mode ?? "").toLowerCase();
-  if (mode === "agile") {
+  if (mode === "agile" || mode === "demo") {
     return "Add at least one objective term and choose a search algorithm in Problem Config, or ask the researcher to enable runs.";
   }
   if (mode === "waterfall") {

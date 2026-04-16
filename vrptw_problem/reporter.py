@@ -95,6 +95,7 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
 
     m = metrics
     shift_durations = m.get("shift_durations", [0.0] * 5)
+    productive_durations = m.get("productive_durations", shift_durations)
     variance = m.get("workload_variance", 0.0)
 
     print("\n=== QuickBite Optimization Result ===")
@@ -107,7 +108,7 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
     print(f"  TW Violations     : {m.get('tw_violation_count', 0)} orders, "
           f"{m.get('tw_violation_min', 0):.1f} min total")
     print(f"  Capacity Overflow : {m.get('capacity_overflow', 0)} units")
-    print(f"  Workload Variance : {m.get('workload_variance', 0):.1f}")
+    print(f"  Workload Variance : {m.get('workload_variance', 0):.1f} (drive+service)")
     print(f"  Driver Penalties  : {m.get('driver_penalty', 0):.1f} pref. units")
     print(f"  Express Lateness  : {m.get('express_late_count', 0)} orders")
     print("\n  --- Route Summary ---")
@@ -115,16 +116,19 @@ def print_report(result: SolveResult, random_seed: int = 42) -> None:
     for v_idx, (vehicle, route_order_ids) in enumerate(zip(VEHICLES, result.routes)):
         load = sum(orders[o].size for o in route_order_ids)
         shift_min = shift_durations[v_idx] if v_idx < len(shift_durations) else 0
+        productive_min = productive_durations[v_idx] if v_idx < len(productive_durations) else 0
         order_str = " ".join(f"O{o:02d}" for o in route_order_ids)
         zone_str = " ".join(ZONE_NAMES[orders[o].zone] for o in route_order_ids)
         print(f"  V{vehicle.vehicle_id} {vehicle.name:<6}: {order_str or '(empty)'}  "
               f"|  Load: {load}/{vehicle.capacity}")
-        print(f"               Shift: {_minutes_to_hours_str(shift_min)}  |  Zones: {zone_str or '-'}")
+        print(f"               Shift: {_minutes_to_hours_str(shift_min)}  "
+              f"|  Drive+Svc: {_minutes_to_hours_str(productive_min)}  "
+              f"|  Zones: {zone_str or '-'}")
 
-    print("\n  --- Workload Balance ---")
+    print("\n  --- Workload Balance (drive+service time) ---")
     balance = "  ".join(
-        f"{v.name}: {_minutes_to_hours_str(shift_durations[i])}"
-        for i, v in enumerate(VEHICLES) if i < len(shift_durations)
+        f"{v.name}: {_minutes_to_hours_str(productive_durations[i])}"
+        for i, v in enumerate(VEHICLES) if i < len(productive_durations)
     )
     print(f"  {balance}")
     print(f"  Variance: {variance:.2f}\n")

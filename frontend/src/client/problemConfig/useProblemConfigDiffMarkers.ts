@@ -57,6 +57,7 @@ function computeMarkers(prev: ProblemBlock, next: ProblemBlock): Record<string, 
     "early_stop",
     "early_stop_patience",
     "early_stop_epsilon",
+    "use_greedy_init",
     "driver_preferences",
     "locked_assignments",
   ];

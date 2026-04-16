@@ -91,3 +91,104 @@ def encode_random_solution(rng: np.random.RandomState) -> np.ndarray:
         Length-34 float array with values in [0, 34].
     """
     return rng.uniform(0.0, 34.0, size=VECTOR_LEN)
+
+
+def encode_routes_as_vector(routes: list[list[int]]) -> np.ndarray:
+    """
+    Encode specific vehicle routes into a position vector.
+
+    Assigns ascending position values so that argsort decodes back to the
+    exact routes in the given order.
+
+    Args:
+        routes: List of N_VEHICLES lists of order indices.
+
+    Returns:
+        Length-34 float array.
+    """
+    vec = np.full(VECTOR_LEN, float(VECTOR_LEN), dtype=float)
+    pos = 0.0
+    for v_idx, route in enumerate(routes):
+        for o_idx in route:
+            if 0 <= o_idx < N_ORDERS:
+                vec[o_idx] = pos
+                pos += 1.0
+        if v_idx < N_VEHICLES - 1:
+            sep_idx = N_ORDERS + v_idx
+            vec[sep_idx] = pos
+            pos += 1.0
+    return vec
+
+
+def encode_greedy_solution(
+    orders: list,
+    locked_assignments: Optional[dict[int, int]] = None,
+    rng: Optional[np.random.RandomState] = None,
+) -> np.ndarray:
+    """
+    Build a time-window-aware greedy solution and encode it as a position vector.
+
+    Sorts unassigned orders by (window_open, zone) to cluster temporally and
+    geographically coherent stops, then distributes them across vehicles using
+    a round-robin that respects estimated feasibility. Passing different ``rng``
+    seeds produces diverse starting points for population-based algorithms.
+
+    Args:
+        orders: List of Order objects (length N_ORDERS).
+        locked_assignments: Optional {order_idx: vehicle_idx} forced assignments.
+        rng: RandomState used for tie-breaking diversity; None uses seed 0.
+
+    Returns:
+        Length-34 float array suitable for use as a starting position.
+    """
+    from vrptw_problem.vehicles import VEHICLES
+    from vrptw_problem.traffic_api import BASE_TRAVEL_MATRIX
+
+    if locked_assignments is None:
+        locked_assignments = {}
+    if rng is None:
+        rng = np.random.RandomState(0)
+
+    routes: list[list[int]] = [[] for _ in range(N_VEHICLES)]
+
+    # Place locked orders first
+    for o_idx, v_idx in locked_assignments.items():
+        if 0 <= o_idx < N_ORDERS and 0 <= v_idx < N_VEHICLES:
+            routes[v_idx].append(o_idx)
+
+    locked_set = set(locked_assignments.keys())
+    unassigned = [i for i in range(N_ORDERS) if i not in locked_set]
+
+    # Sort by window_open then zone for time-coherent, geographically compact groups.
+    # Small random perturbation creates diversity across seeds.
+    noise = rng.uniform(0.0, 5.0, len(unassigned))  # up to 5-min jitter on window
+    unassigned.sort(key=lambda i: (orders[i].time_window_open + noise[unassigned.index(i)], orders[i].zone))
+
+    # Track each vehicle's current zone and earliest available time
+    v_zone = [v.start_zone for v in VEHICLES]
+    v_time = [float(v.shift_start_min) for v in VEHICLES]
+
+    for o_idx in unassigned:
+        order = orders[o_idx]
+        # Pick the vehicle that can serve this order with the least wait+lateness penalty
+        best_v = 0
+        best_score = float("inf")
+        for v_idx in range(N_VEHICLES):
+            base_tt = float(BASE_TRAVEL_MATRIX[v_zone[v_idx]][order.zone])
+            arrival = v_time[v_idx] + base_tt
+            wait = max(0.0, float(order.time_window_open) - arrival)
+            lateness = max(0.0, arrival - float(order.time_window_close))
+            score = arrival + wait * 0.1 + lateness * 200.0
+            if score < best_score:
+                best_score = score
+                best_v = v_idx
+
+        order_obj = orders[o_idx]
+        base_tt = float(BASE_TRAVEL_MATRIX[v_zone[best_v]][order_obj.zone])
+        arrival = v_time[best_v] + base_tt
+        service_start = max(arrival, float(order_obj.time_window_open))
+        v_time[best_v] = service_start + order_obj.service_time
+        v_zone[best_v] = order_obj.zone
+        routes[best_v].append(o_idx)
+
+    return encode_routes_as_vector(routes)

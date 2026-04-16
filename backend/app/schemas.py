@@ -12,12 +12,12 @@ def serialize_utc_datetime(value: datetime) -> str:
 
 class SessionCreate(BaseModel):
     # Participant apps omit this; researcher sets workflow via PATCH. Default is conservative (gated runs).
-    workflow_mode: Literal["agile", "waterfall"] = "waterfall"
+    workflow_mode: Literal["agile", "waterfall", "demo"] = "waterfall"
     participant_number: str | None = Field(default=None, max_length=64)
 
 
 class SessionPatch(BaseModel):
-    workflow_mode: Literal["agile", "waterfall"] | None = None
+    workflow_mode: Literal["agile", "waterfall", "demo"] | None = None
     participant_number: str | None = Field(default=None, max_length=64)
     test_problem_id: str | None = Field(default=None, max_length=64)
     panel_config: dict[str, Any] | None = None

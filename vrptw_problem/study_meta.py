@@ -16,7 +16,7 @@ VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
     ),
     ("deadline_penalty", "On-time delivery", "Lateness vs customer time windows (per minute late)."),
     ("capacity_penalty", "Load capacity", "Demand exceeding vehicle capacity (per overflow unit)."),
-    ("workload_balance", "Workload balance", "Fairness of shift lengths across drivers (variance)."),
+    ("workload_balance", "Workload balance", "Fairness of drive+service time across drivers (variance; excludes idle pre-window wait)."),
     ("worker_preference", "Worker preferences", "Soft assignment rules (zones, priorities, shift shape)."),
     (
         "priority_penalty",

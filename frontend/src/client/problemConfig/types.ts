@@ -30,4 +30,6 @@ export type ProblemBlock = {
   early_arrival_threshold_min: number | null;
   locked_assignments: Record<string, number>;
   driver_preferences: DriverPref[];
+  /** When true (default), seeds part of the initial population with greedy solutions. */
+  use_greedy_init: boolean;
 };

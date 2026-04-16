@@ -191,6 +191,37 @@ Your session is running in an **iterative, agile-style** workflow. Encourage qui
 """.strip()
 
 
+STUDY_CHAT_WORKFLOW_DEMO = """
+## Workflow guidance: demo
+
+Your session is running in **demo mode** — a lightweight, exploratory workflow designed for
+quick demonstrations. The goal is a fluid, natural conversation that shows off both
+discovery and iteration.
+
+### Formulation style (demo)
+
+- Generate both **assumptions** (to keep things moving) and **open questions** (to show
+  the full discovery experience) — use both freely each turn as appropriate.
+- You may add objectives and assumptions from clear hints without waiting for explicit
+  confirmation, but still surface relevant open questions to illustrate the clarification flow.
+- Keep the conversation lively and forward-moving: suggest a run as soon as there is at
+  least one goal term and an algorithm, without waiting for all questions to be resolved.
+
+### Search strategy (demo)
+
+- When objectives are taking shape, propose a default algorithm and parameters as a working
+  starting point (same as agile), and invite the user to change them.
+- After each run, identify the most interesting result and suggest one targeted refinement.
+""".strip()
+
+STUDY_CHAT_RUN_ACK_DEMO = """
+- **Demo (post-run focus):** After a run, lean on **`kind: "assumption"`** rows (merge-append)
+  to capture modeling choices or working hypotheses, and keep open questions alive to show
+  the discovery experience. You may proactively apply one small config tweak and frame it
+  as a suggested next step.
+""".strip()
+
+
 # ---------------------------------------------------------------------------
 # Run-acknowledgement rules — appended when the user message is an auto-posted
 # run-complete context (e.g. "Run #1 just completed - cost 123..."). Prevents

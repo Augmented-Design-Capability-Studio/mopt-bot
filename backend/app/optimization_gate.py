@@ -75,7 +75,7 @@ def intrinsic_optimization_ready(
 ) -> bool:
     brief = normalize_problem_brief(problem_brief)
     mode = str(workflow_mode or "").strip().lower()
-    if mode == "agile":
+    if mode in ("agile", "demo"):
         return intrinsic_optimization_ready_agile(panel_config)
     if mode == "waterfall":
         return intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged)

@@ -20,11 +20,13 @@ from app.prompts.study_chat import (
     STUDY_CHAT_PHASE_STRUCTURING,
     STUDY_CHAT_RUN_ACK_AGILE,
     STUDY_CHAT_RUN_ACK_BASE,
+    STUDY_CHAT_RUN_ACK_DEMO,
     STUDY_CHAT_RUN_ACK_WATERFALL,
     STUDY_CHAT_STRUCTURED_JSON_RULES,
     STUDY_CHAT_SYSTEM_PROMPT,
     STUDY_CHAT_VISIBLE_REPLY_TASK,
     STUDY_CHAT_WORKFLOW_AGILE,
+    STUDY_CHAT_WORKFLOW_DEMO,
     STUDY_CHAT_WORKFLOW_WATERFALL,
 )
 from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn, RunTriggerIntentTurn
@@ -148,6 +150,8 @@ def _history_to_contents(history_lines: list[tuple[str, str]]) -> list[types.Con
 def _workflow_prompt(workflow_mode: str) -> str:
     if workflow_mode == "agile":
         return STUDY_CHAT_WORKFLOW_AGILE
+    if workflow_mode == "demo":
+        return STUDY_CHAT_WORKFLOW_DEMO
     return STUDY_CHAT_WORKFLOW_WATERFALL
 
 
@@ -160,7 +164,12 @@ def _phase_prompt(phase: WorkflowPhase) -> str:
 
 
 def _run_ack_prompt(workflow_mode: str) -> str:
-    wf_addendum = STUDY_CHAT_RUN_ACK_AGILE if workflow_mode == "agile" else STUDY_CHAT_RUN_ACK_WATERFALL
+    if workflow_mode == "agile":
+        wf_addendum = STUDY_CHAT_RUN_ACK_AGILE
+    elif workflow_mode == "demo":
+        wf_addendum = STUDY_CHAT_RUN_ACK_DEMO
+    else:
+        wf_addendum = STUDY_CHAT_RUN_ACK_WATERFALL
     return f"{STUDY_CHAT_RUN_ACK_BASE}\n{wf_addendum}"
 
 
@@ -193,7 +202,7 @@ def resolve_workflow_phase(
     has_panel = bool(current_panel and isinstance(current_panel, dict))
     has_successful_run = any(bool(run.get("ok")) for run in (recent_runs_summary or []))
 
-    if workflow_mode == "agile":
+    if workflow_mode in ("agile", "demo"):
         if has_successful_run or has_panel:
             return "configuration"
         if goal_summary or non_system_items:
@@ -369,7 +378,7 @@ def _build_brief_update_system_instruction(
         parts.append(json.dumps(current_panel, indent=2, ensure_ascii=False))
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
-        if workflow_mode == "waterfall":
+        if workflow_mode not in ("agile", "demo"):
             parts.append(
                 "**Waterfall — hidden brief after run:** merge-append **`problem_brief_patch.open_questions`** "
                 "(omit `replace_open_questions` or set it false unless you intentionally replace the entire list). "

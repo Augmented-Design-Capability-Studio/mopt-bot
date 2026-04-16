@@ -1,0 +1,40 @@
+DEMO SCRIPT: SHORT INTRO TO THE MOPT INTERFACE
+
+Goal: Keep this to about 2 minutes. Use mostly slides, with a few brief live interface moments.
+
+Slide 1: Welcome and context
+Narration: "Hi, at Augmented Design Capability Studio, we created an AI agent aiming to create Metaheuristic Optimization programs for you. We are working with QuickBite and created a vehicle scheduling task for you. However, before you start we would like to introduce the interface to you. To demonstrate, we can try out a simple knapsack problem."
+ACTION: Show title slide with the three interface areas: Chat, Problem Setup, and Results/Visualization.
+
+Slide 2: Why knapsack first
+Narration: "The purpose of this knapsack example is to quickly show how the interface works. Knapsack is simple: choose items to maximize value while staying under a capacity limit."
+
+Slide 3: Show interface
+Narration: "In this toy setup, we have 22 candidate items and a capacity of 50 units. We may state our purpose in the chat and get started!" 
+ACTION: Point to chat and say: "I would like to create a program for a simple knapsack problem. We have 22 candidate items and a total capacity of 50 units. I want high total value, but avoid exceeding capacity."
+[After some loading]
+Narration: "The AI helps translate natural language goals into more structured problem definition, which gets converted into a problem configuration."
+
+Slide 4: Show concrete problem config numbers
+Narration: "Here is an example config the interface can produce: ..."
+Narration: "These numbers encode tradeoffs: reward value, strongly penalize overflow, and lightly prefer fewer selected items."
+
+ACTION: Point to the Problem Config panel and read the numeric values out loud.
+ACTION: Briefly show the Definition tab entries for objective and constraint language.
+
+Slide 4: Run and interpret output
+Narration: "Now I run optimization once. The results panel shows which items were selected and the resulting objective score."
+
+ACTION: Click Run optimization.
+ACTION: Point to the knapsack selection visualization and cost summary.
+
+Slide 5: Brief transition to participant task
+Narration: "The workflow you just saw is the same workflow you will use in the main study task."
+
+Narration: "Your actual task will be a QuickBite vehicle scheduling problem. We are not previewing that interface now so your decisions are based on your own interpretation during the study."
+
+ACTION: Stay on the knapsack summary slide.
+ACTION: End on a neutral "ready to begin" slide.
+
+Closing line:
+Narration: "This concludes quick demo. Remember, if you have any questions about the interface, feel free to ask our researcher during the process."

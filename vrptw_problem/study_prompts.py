@@ -28,7 +28,8 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | driver arriving too early, early arrival penalty, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per excess minute) + `early_arrival_threshold_min` set to X (grace-period threshold in minutes) |
 | maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
-| algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` |
+| algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` — when first introducing an algorithm, briefly mention that by default a portion of the initial population is seeded with time-window-aware greedy solutions (controlled by `use_greedy_init`, default on) rather than purely random starts |
+| greedy initialization, initial population quality, seeding, warm start | `use_greedy_init` boolean (default true) — seeds part of the population with time-window-aware solutions for a better starting point |
 | speed/budget, how long to run, iterations, stop when flat | `epochs` (max), `early_stop` / `early_stop_patience` / `early_stop_epsilon`, `pop_size` |
 
 Hard constraints (always enforced — only mention when the user asks):
@@ -54,7 +55,7 @@ All available fields under `"problem"`:
   - `"shift_limit"` — weight on total minutes routes exceed the Max Shift Hours limit (summed over vehicles)
   - `"deadline_penalty"` — penalty per minute and per stop arriving after the allowed window
   - `"capacity_penalty"` — penalty per unit loaded beyond vehicle capacity
-  - `"workload_balance"` — penalty for variance in shift durations across workers
+  - `"workload_balance"` — penalty for variance in drive+service time across workers (excludes idle pre-window wait)
   - `"worker_preference"` — soft preference violations per worker
   - `"priority_penalty"` — penalty per express / priority-order deadline miss (SLA-style orders)
   - `"waiting_time"` — penalty per excess minute a driver arrives before the early-arrival grace period (pair with `early_arrival_threshold_min`)
@@ -82,6 +83,7 @@ All available fields under `"problem"`:
     "mutation_rate": 0.1, "mutation_step_size": 0.1, "mutation_step_size_damp": 0.99}`
   - ACOR: `{"sample_count": 25, "intent_factor": 0.5, "zeta": 1.0}`
 - **Participant-visible discipline for `algorithm_params`:** Do **not** add gathered-info lines that name internal parameter keys (`pc`, `pm`, `c1`, etc.) unless the **user** discussed hyperparameter tuning or you are recording values that **differ from the defaults** above. If the user did not ask for tuning, prefer plain language (e.g. "using the default search operators for this algorithm") without listing `pc`/`pm`. The backend only honors the keys listed for the **current** `algorithm`; any other names are stripped and may confuse participants if mentioned in chat.
+- `"use_greedy_init"`: boolean (default `true`). When true, seeds a portion of the initial population with time-window-aware greedy solutions rather than purely random vectors, giving the search a better starting point. Set to `false` only if the user explicitly asks to disable it.
 - `"epochs"`: **maximum** search iterations (ceiling). By default the solver also **stops early** when the best cost stops improving beyond a small threshold for several epochs in a row (MEALpy early stopping); runs often finish before this cap.
 - `"early_stop"`, `"early_stop_patience"`, `"early_stop_epsilon"`: optional early-stop controls aligned with the participant panel.
 - `"pop_size"`: population/swarm size (typical: 20–150).
@@ -127,7 +129,8 @@ Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
 - For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, max_shift_hours,
-  early_arrival_threshold_min, driver_preferences, locked_assignments, only_active_terms, early_stop fields), derive from the brief for this turn.
+  early_arrival_threshold_min, driver_preferences, locked_assignments, only_active_terms, early_stop fields,
+  use_greedy_init), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
   "travel_time", "shift_limit", "deadline_penalty", "capacity_penalty",

@@ -28,6 +28,8 @@ type FleetScheduleVizProps = {
   schedulePreferencesActive?: boolean;
   /** When true, show early-arrival legend and highlight stops where the driver arrived more than the grace period early. */
   scheduleEarlyArrivalActive?: boolean;
+  /** Minutes before window open that are allowed before early-arrival excess is flagged. */
+  earlyArrivalThresholdMin?: number;
 };
 
 /** Per-vehicle Gantt-style schedule (fleet / VRPTW results), aligned with `schedule.ts` helpers. */
@@ -35,6 +37,7 @@ export function FleetScheduleViz({
   schedule,
   schedulePreferencesActive = false,
   scheduleEarlyArrivalActive = false,
+  earlyArrivalThresholdMin = 30,
 }: FleetScheduleVizProps) {
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
@@ -114,7 +117,7 @@ export function FleetScheduleViz({
       <div className="run-timeline-legend muted">
         <span className="timeline-legend-item">
           <span className="timeline-legend-swatch service" />
-          Stop service block
+          Drive &amp; service (blue) · Wait (white)
         </span>
         <span className="timeline-legend-item">
           <span className="timeline-legend-swatch tw-miss" />
@@ -137,7 +140,7 @@ export function FleetScheduleViz({
         {scheduleEarlyArrivalActive ? (
           <span className="timeline-legend-item">
             <span className="timeline-legend-swatch wait" />
-            Early arrival excess
+            Pre-window wait time
           </span>
         ) : null}
       </div>
@@ -168,17 +171,23 @@ export function FleetScheduleViz({
               </div>
               <div className="run-timeline-lane">
                 {vehicleStops.map((stop) => {
-                  const leftPct = ((stop.arrival_minutes - start) / duration) * 100;
-                  const widthPct = Math.max(
-                    ((stop.departure_minutes - stop.arrival_minutes) / duration) * 100,
-                    2,
-                  );
+                  const ctxKey = `${stop.vehicle_index}:${stop.task_index ?? stop.task_id}`;
+                  const driveMinutes = stopContext.get(ctxKey)?.driveMinutes ?? 0;
+                  const waitMinutes = stop.wait_minutes ?? 0;
+                  const totalBlockMin = driveMinutes + (stop.departure_minutes - stop.arrival_minutes);
+                  const barStartMinutes = stop.arrival_minutes - driveMinutes;
+                  const leftPct = ((barStartMinutes - start) / duration) * 100;
+                  const widthPct = Math.max((totalBlockMin / duration) * 100, 2);
+                  const driveFraction = totalBlockMin > 0 ? driveMinutes / totalBlockMin : 0;
+                  const waitFraction =
+                    waitMinutes > 0 && totalBlockMin > 0
+                      ? Math.min(1 - driveFraction, waitMinutes / totalBlockMin)
+                      : 0;
                   const selected =
                     selectedStop != null &&
                     selectedStop.vehicle_index === stop.vehicle_index &&
                     selectedStop.task_id === stop.task_id;
                   const prefHit = schedulePreferencesActive && stopPreferenceHit(stop);
-                  const waitHit = scheduleEarlyArrivalActive && (stop.wait_minutes ?? 0) > 0;
                   return (
                     <button
                       key={`${stop.vehicle_index}:${stop.task_id}`}
@@ -189,7 +198,6 @@ export function FleetScheduleViz({
                         stop.capacity_conflict ? "violation-capacity" : "",
                         isExpressStop(stop) ? "express" : "",
                         prefHit ? "violation-preference" : "",
-                        waitHit ? "violation-wait" : "",
                         selected ? "selected" : "",
                       ]
                         .filter(Boolean)
@@ -202,7 +210,16 @@ export function FleetScheduleViz({
                       }
                       title={`${stop.task_id} · ${formatClock(stop.arrival_minutes)}-${formatClock(stop.departure_minutes)}`}
                     >
-                      <span>{stopLabel(stop)}</span>
+                      {waitFraction > 0 && (
+                        <span
+                          className="stop-bar-wait-stripe"
+                          style={{
+                            left: `${driveFraction * 100}%`,
+                            width: `${waitFraction * 100}%`,
+                          }}
+                        />
+                      )}
+                      <span style={{ position: "relative", zIndex: 1 }}>{stopLabel(stop)}</span>
                     </button>
                   );
                 })}
@@ -228,10 +245,13 @@ export function FleetScheduleViz({
                 {stopContext.get(`${selectedStop.vehicle_index}:${selectedStop.task_index ?? selectedStop.task_id}`)?.destination ??
                   selectedStop.region_name}
               </div>
-              <div>time</div>
+              <div>fulfillment period</div>
               <div>
-                {formatClock(selectedStop.arrival_minutes)} - {formatClock(selectedStop.departure_minutes)}
+                {formatClock(selectedStop.arrival_minutes + (selectedStop.wait_minutes ?? 0))} -{" "}
+                {formatClock(selectedStop.departure_minutes)}
               </div>
+              <div>arrival</div>
+              <div>{formatClock(selectedStop.arrival_minutes)}</div>
               <div>window</div>
               <div>
                 {formatClock(selectedStop.window_open_minutes)} - {formatClock(selectedStop.window_close_minutes)}
@@ -261,8 +281,9 @@ export function FleetScheduleViz({
                   schedulePreferencesActive && stopPreferenceHit(selectedStop)
                     ? `preference +${(selectedStop.preference_penalty_units ?? 0).toFixed(1)} units`
                     : "",
-                  scheduleEarlyArrivalActive && (selectedStop.wait_minutes ?? 0) > 0
-                    ? `early +${selectedStop.wait_minutes.toFixed(0)}m`
+                  scheduleEarlyArrivalActive &&
+                  Math.max(0, (selectedStop.wait_minutes ?? 0) - earlyArrivalThresholdMin) > 0
+                    ? `early +${Math.max(0, (selectedStop.wait_minutes ?? 0) - earlyArrivalThresholdMin).toFixed(0)}m excess`
                     : "",
                 ]
                   .filter(Boolean)

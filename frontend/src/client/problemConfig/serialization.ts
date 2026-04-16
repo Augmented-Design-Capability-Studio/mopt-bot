@@ -88,6 +88,7 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
           ? (inner.locked_assignments as Record<string, number>)
           : {},
       driver_preferences: parseDriverPreferences(inner.driver_preferences),
+      use_greedy_init: typeof inner.use_greedy_init === "boolean" ? inner.use_greedy_init : true,
     },
   };
 }
@@ -126,6 +127,8 @@ export function serializeProblemConfig(
   if (problem.early_arrival_threshold_min !== null) problemObject.early_arrival_threshold_min = problem.early_arrival_threshold_min;
   else delete problemObject.early_arrival_threshold_min;
 
+  if (!problem.use_greedy_init) problemObject.use_greedy_init = false;
+  else delete problemObject.use_greedy_init;
   problemObject.driver_preferences = problem.driver_preferences;
   problemObject.locked_assignments = problem.locked_assignments;
 

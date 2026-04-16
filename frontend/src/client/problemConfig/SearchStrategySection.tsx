@@ -63,6 +63,28 @@ export function SearchStrategySection({
         </FieldRow>
       )}
 
+      {problem.algorithm && (
+        <FieldRow label="Greedy initialization" markerKind={markerKindFor("field:use_greedy_init")}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            <ConfigSelect
+              editable={editable}
+              value={problem.use_greedy_init ? "1" : "0"}
+              displayLabel={problem.use_greedy_init ? "On" : "Off"}
+              onChange={(e) => runEditingAction(() => updateProblem({ use_greedy_init: e.target.value === "1" }))}
+              onActivate={(hint) => ensureEditing(hint)}
+              focusKey="greedy-init"
+              style={{ fontFamily: "monospace", fontSize: "0.85rem", maxWidth: "8rem" }}
+            >
+              <option value="1">On</option>
+              <option value="0">Off</option>
+            </ConfigSelect>
+            <span className="muted" style={{ fontSize: "0.72rem" }}>
+              Seeds part of the initial population with time-window-aware solutions — much better than purely random starts. Recommended on.
+            </span>
+          </div>
+        </FieldRow>
+      )}
+
       {problem.algorithm &&
         (ALLOWED_ALGORITHM_PARAMS[problem.algorithm] ?? []).map((paramKey) => {
           const meta = ALGORITHM_PARAM_FIELD_META[problem.algorithm]?.[paramKey];

@@ -24,7 +24,7 @@ except ImportError as _mealpy_err:
     )
 
 from vrptw_problem.orders import get_orders, print_order_table
-from vrptw_problem.encoder import decode_solution, VECTOR_LEN, encode_random_solution
+from vrptw_problem.encoder import decode_solution, VECTOR_LEN, encode_random_solution, encode_greedy_solution
 from vrptw_problem.evaluator import evaluate_solution
 from vrptw_problem.user_input import DEFAULT_WEIGHTS, load_user_input
 from vrptw_problem.vehicles import VEHICLES
@@ -187,6 +187,7 @@ class QuickBiteOptimizer:
         cancel_event: Optional[threading.Event] = None,
         mode: str = "single",
         n_workers: Optional[int] = None,
+        use_greedy_init: bool = True,
     ) -> SolveResult:
         """
         Run the optimization.
@@ -297,6 +298,14 @@ class QuickBiteOptimizer:
             solve_kw["termination"] = effective_termination
         if n_workers is not None:
             solve_kw["n_workers"] = n_workers
+        if use_greedy_init:
+            n_greedy = min(max(1, pop_size // 5), 5)
+            starting_positions = []
+            for i in range(n_greedy):
+                greedy_rng = np.random.RandomState(self.seed + 1000 + i)
+                gv = encode_greedy_solution(self.orders, self.locked, greedy_rng)
+                starting_positions.append(gv)
+            solve_kw["starting_positions"] = starting_positions
         best = model.solve(problem, **solve_kw)
         runtime = time.perf_counter() - t0
 

@@ -18,7 +18,7 @@ DEFAULT_WEIGHTS = {
     "w2": 500.0,    # per minute over configurable max shift, summed across vehicles — panel alias `shift_limit`
     "w3": 50.0,     # per minute TW violation
     "w4": 1000.0,   # per unit capacity overflow
-    "w5": 10.0,     # workload variance
+    "w5": 10.0,     # drive+service time variance across vehicles (excludes idle pre-window wait)
     "w6": 1.0,      # driver preference penalties
     "w7": 100.0,    # per express order late
     "w8": 0.0,      # early-arrival excess: minutes a driver arrives more than early_arrival_threshold_min before window open (off by default)

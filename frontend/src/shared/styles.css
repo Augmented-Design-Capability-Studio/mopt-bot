@@ -1129,7 +1129,7 @@ select:focus-visible {
 
 .timeline-legend-swatch.wait {
   border-color: #506273;
-  background: linear-gradient(to bottom, #1e6b9a 45%, #8094a8 45%);
+  background: linear-gradient(to right, #8094a8 30%, rgba(255,255,255,0.88) 30%, rgba(255,255,255,0.88) 70%, #8094a8 70%);
 }
 
 .run-timeline-axis,
@@ -1179,7 +1179,7 @@ select:focus-visible {
   bottom: 0.2rem;
   border: 1px solid #506273;
   background: #8094a8;
-  color: #fff;
+  color: #1e2b38;
   padding: 0 0.15rem;
   font-size: 0.72rem;
   overflow: hidden;
@@ -1205,8 +1205,15 @@ select:focus-visible {
   box-shadow: 0 0 0 1px rgba(106, 27, 154, 0.25);
 }
 
-.run-stop-bar.violation-wait {
-  box-shadow: inset 0 0.45rem 0 #1e6b9a;
+.stop-bar-wait-stripe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 2px 0 0 2px;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .run-stop-bar.selected {

@@ -31,7 +31,6 @@ WEIGHT_ALIASES: dict[str, str] = {
     "workload_balance":  "w5",
     "worker_preference": "w6",
     "priority_penalty":  "w7",
-    # waiting_time is kept only as a backward-compat alias; it is no longer a user-facing goal term.
     "waiting_time":      "w8",
 }
 
@@ -610,6 +609,10 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         if early_stop_epsilon <= 0:
             raise ValueError("early_stop_epsilon must be > 0")
 
+    use_greedy_init = raw.get("use_greedy_init", True)
+    if not isinstance(use_greedy_init, bool):
+        use_greedy_init = bool(use_greedy_init)
+
     return {
         "weights": weights,
         "driver_preferences": driver_preferences,
@@ -624,6 +627,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         "early_stop": early_stop,
         "early_stop_patience": early_stop_patience,
         "early_stop_epsilon": early_stop_epsilon,
+        "use_greedy_init": use_greedy_init,
         "reference_weights": ref_weights,
         # Callers must pop this before passing cfg to the solver.
         "weight_warnings": weight_warnings,
@@ -654,6 +658,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             early_stop_patience=cfg["early_stop_patience"],
             early_stop_epsilon=cfg["early_stop_epsilon"],
             cancel_event=cancel_event,
+            use_greedy_init=cfg.get("use_greedy_init", True),
         )
 
     with ThreadPoolExecutor(max_workers=1) as ex:
