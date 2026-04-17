@@ -10,6 +10,7 @@ import {
   type RunResult,
   type Session,
   type SnapshotSummary,
+  type TestProblemMeta,
 } from "@shared/api";
 import { parseServerDate } from "@shared/dateTime";
 
@@ -59,6 +60,7 @@ type UseParticipantSessionActionsArgs = {
   invokeModel: boolean;
   configText: string;
   problemBrief: ProblemBrief | null;
+  problemMeta?: TestProblemMeta | null;
   scheduleText: string;
   modelKey: string;
   modelName: string;
@@ -104,6 +106,7 @@ export function useParticipantSessionActions({
   invokeModel,
   configText,
   problemBrief,
+  problemMeta,
   scheduleText,
   modelKey,
   modelName,
@@ -564,7 +567,7 @@ export function useParticipantSessionActions({
 
   const runOptimize = useCallback(
     async (options?: { agileAutorunStorageKey?: string }): Promise<void> => {
-    if (!token || !sessionId || !computeCanRunOptimization(session, configText, problemBrief)) return;
+    if (!token || !sessionId || !computeCanRunOptimization(session, configText, problemBrief, problemMeta)) return;
     let panel: Record<string, unknown>;
     try {
       panel = JSON.parse(configText) as Record<string, unknown>;

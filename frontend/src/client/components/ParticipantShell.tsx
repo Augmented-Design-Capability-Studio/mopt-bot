@@ -300,6 +300,7 @@ export function ParticipantShell({
             session={session}
             configText={configText}
             problemBrief={problemBrief}
+            problemMeta={testProblemMeta}
             sessionTerminated={sessionTerminated}
             onSetActiveRun={onSetActiveRun}
             onScheduleTextChange={onScheduleTextChange}

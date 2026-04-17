@@ -14,6 +14,8 @@ from vrptw_problem.study_meta import (
     VRPTW_WEIGHT_DEFINITIONS,
     weight_item_labels as meta_weight_item_labels,
     weight_slot_markers as meta_weight_slot_markers,
+    weight_display_keys as meta_weight_display_keys,
+    worker_preference_key as meta_worker_preference_key,
 )
 
 
@@ -35,6 +37,8 @@ class VrptwStudyPort:
             extension_ui="vrptw_extras",
             visualization_presets=["fleet_gantt"],
             primary_visualization="fleet_gantt",
+            weight_display_keys=meta_weight_display_keys(),
+            worker_preference_key=meta_worker_preference_key(),
         )
 
     def sanitize_panel_config(self, panel_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -61,6 +65,12 @@ class VrptwStudyPort:
 
     def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
         return meta_weight_slot_markers()
+
+    def weight_display_keys(self) -> list[str]:
+        return meta_weight_display_keys()
+
+    def worker_preference_key(self) -> str | None:
+        return meta_worker_preference_key()
 
     def study_prompt_appendix(self) -> str | None:
         from vrptw_problem.study_prompts import VRPTW_STUDY_PROMPT_APPENDIX

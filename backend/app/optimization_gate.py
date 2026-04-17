@@ -6,17 +6,6 @@ from typing import Any
 
 from app.problem_brief import _normalize_question_status, normalize_problem_brief
 
-# Mirrors frontend `WEIGHT_DISPLAY_ORDER` / ProblemConfigBlocks display keys.
-_WEIGHT_ORDER = (
-    "travel_time",
-    "shift_limit",
-    "workload_balance",
-    "deadline_penalty",
-    "capacity_penalty",
-    "priority_penalty",
-    "worker_preference",
-)
-
 
 def _inner_problem_from_panel(panel_config: dict[str, Any] | None) -> dict[str, Any]:
     if not panel_config or not isinstance(panel_config, dict):
@@ -26,8 +15,21 @@ def _inner_problem_from_panel(panel_config: dict[str, Any] | None) -> dict[str, 
     return panel_config
 
 
-def intrinsic_optimization_ready_agile(panel_config: dict[str, Any] | None) -> bool:
-    """At least one goal-term weight (display sense) and a non-empty algorithm on saved config."""
+def intrinsic_optimization_ready_agile(
+    panel_config: dict[str, Any] | None,
+    weight_display_keys: list[str],
+    worker_preference_key: str | None,
+) -> bool:
+    """At least one goal-term weight (display sense) and a non-empty algorithm on saved config.
+
+    ``weight_display_keys`` is the ordered list of keys that count toward the gate — supplied by
+    the active problem module so the check is problem-agnostic.  ``worker_preference_key`` names
+    the one key (if any) whose inclusion in the gate requires ``driver_preferences`` to be
+    non-empty; pass ``None`` for problems that have no such concept.
+
+    When ``weight_display_keys`` is empty the function falls back to any-weight logic (same
+    behaviour as ``intrinsic_optimization_ready_demo``).
+    """
     inner = _inner_problem_from_panel(panel_config)
     if not inner:
         return False
@@ -35,20 +37,28 @@ def intrinsic_optimization_ready_agile(panel_config: dict[str, Any] | None) -> b
     weights = inner.get("weights")
     if not isinstance(weights, dict):
         weights = {}
-    has_worker_weight = "worker_preference" in weights
-    driver_prefs = inner.get("driver_preferences")
-    prefs_list = driver_prefs if isinstance(driver_prefs, list) else []
-    show_worker_block = has_worker_weight or len(prefs_list) > 0
+
+    algo = str(inner.get("algorithm") or "").strip()
+
+    # Fallback: if no display keys defined by the module, accept any weight (demo-style).
+    if not weight_display_keys:
+        return bool(weights) and bool(algo)
+
+    show_worker_block = False
+    if worker_preference_key is not None:
+        has_worker_weight = worker_preference_key in weights
+        driver_prefs = inner.get("driver_preferences")
+        prefs_list = driver_prefs if isinstance(driver_prefs, list) else []
+        show_worker_block = has_worker_weight or len(prefs_list) > 0
 
     display_weight_keys: list[str] = []
-    for key in _WEIGHT_ORDER:
+    for key in weight_display_keys:
         if key not in weights:
             continue
-        if key == "worker_preference" and not show_worker_block:
+        if worker_preference_key is not None and key == worker_preference_key and not show_worker_block:
             continue
         display_weight_keys.append(key)
 
-    algo = str(inner.get("algorithm") or "").strip()
     return bool(display_weight_keys) and bool(algo)
 
 
@@ -67,16 +77,37 @@ def intrinsic_optimization_ready_waterfall(
     return True
 
 
+def intrinsic_optimization_ready_demo(panel_config: dict[str, Any] | None) -> bool:
+    """Demo: any goal-term weight (any key) and a non-empty algorithm — problem-agnostic."""
+    inner = _inner_problem_from_panel(panel_config)
+    if not inner:
+        return False
+    weights = inner.get("weights")
+    has_any_weight = isinstance(weights, dict) and len(weights) > 0
+    algo = str(inner.get("algorithm") or "").strip()
+    return has_any_weight and bool(algo)
+
+
 def intrinsic_optimization_ready(
     workflow_mode: str,
     panel_config: dict[str, Any] | None,
     problem_brief: Any,
     optimization_gate_engaged: bool = False,
+    problem_id: str | None = None,
 ) -> bool:
     brief = normalize_problem_brief(problem_brief)
     mode = str(workflow_mode or "").strip().lower()
-    if mode in ("agile", "demo"):
-        return intrinsic_optimization_ready_agile(panel_config)
+    if mode == "agile":
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(problem_id)
+        return intrinsic_optimization_ready_agile(
+            panel_config,
+            port.weight_display_keys(),
+            port.worker_preference_key(),
+        )
+    if mode == "demo":
+        return intrinsic_optimization_ready_demo(panel_config)
     if mode == "waterfall":
         return intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged)
     return False
@@ -89,6 +120,7 @@ def can_run_optimization(
     panel_config: dict[str, Any] | None,
     problem_brief: Any,
     optimization_gate_engaged: bool = False,
+    problem_id: str | None = None,
 ) -> bool:
     if optimization_runs_blocked_by_researcher:
         return False
@@ -99,4 +131,5 @@ def can_run_optimization(
         panel_config,
         problem_brief,
         optimization_gate_engaged=optimization_gate_engaged,
+        problem_id=problem_id,
     )

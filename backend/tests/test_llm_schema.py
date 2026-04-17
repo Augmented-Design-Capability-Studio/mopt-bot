@@ -23,6 +23,7 @@ def test_config_schema_constrains_problem_weights_to_object():
         "workload_balance",
         "worker_preference",
         "priority_penalty",
+        "waiting_time",
     }
     assert problem.get("additionalProperties") is False
     assert panel_patch.get("additionalProperties") is False

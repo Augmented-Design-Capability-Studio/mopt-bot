@@ -34,6 +34,23 @@ class StudyProblemPort(Protocol):
     def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
         """Substrings for atomizing brief lines into weight slots."""
 
+    def weight_display_keys(self) -> list[str]:
+        """Ordered weight keys used for the agile-mode gate check and config-panel display order.
+
+        Keys that appear in the saved panel weights and in this list count toward the 'at least one
+        goal term' requirement for agile optimization readiness.  The list should exclude purely
+        parametric keys (e.g. VRPTW ``waiting_time`` which is threshold-driven) that should not
+        independently satisfy the gate.  If the list is empty the gate falls back to any-weight
+        logic (same as demo mode).
+        """
+
+    def worker_preference_key(self) -> str | None:
+        """Weight key whose UI block is shown conditionally on driver_preferences being non-empty.
+
+        Returns None if the problem has no such concept (e.g. knapsack).
+        VRPTW returns ``"worker_preference"``.
+        """
+
     def study_prompt_appendix(self) -> str | None:
         """Extra structured-prompt text for the study chat model (problem-specific)."""
 

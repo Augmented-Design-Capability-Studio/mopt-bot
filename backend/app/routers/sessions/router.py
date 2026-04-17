@@ -51,7 +51,7 @@ def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any]) -> s
     mode = str(row.workflow_mode or "").strip().lower()
     if bool(row.optimization_runs_blocked_by_researcher):
         return "I can run optimization once the researcher re-enables runs for this session."
-    if mode == "agile":
+    if mode in ("agile", "demo"):
         return (
             "I can start a run once the configuration includes at least one objective weight "
             "and a selected search algorithm."
@@ -535,6 +535,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 panel_obj,
                 brief_obj,
                 optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+                problem_id=str(getattr(row, "test_problem_id", None) or "vrptw"),
             )
             if (
                 run_intent is not None
@@ -707,6 +708,7 @@ def post_run(
         panel_obj,
         brief_obj,
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+        problem_id=str(getattr(row, "test_problem_id", None) or "vrptw"),
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

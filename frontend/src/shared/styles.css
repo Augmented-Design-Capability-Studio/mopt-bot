@@ -919,6 +919,24 @@ select:focus-visible {
   gap: 0.3rem;
 }
 
+.direction-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.05rem 0.28rem;
+  cursor: default;
+}
+
+.direction-badge--maximize {
+  color: #1565c0;
+  border-color: rgba(21, 101, 192, 0.55);
+  background: rgba(33, 150, 243, 0.1);
+}
+
 .definition-item-removed {
   border-color: rgba(176, 0, 32, 0.4);
   background: rgba(176, 0, 32, 0.06);

@@ -45,6 +45,7 @@ export function removeLockedGoalTerm(list: string[], key: string): string[] {
 function GoalTermRow({
   label,
   description,
+  direction,
   editable,
   value,
   min,
@@ -64,6 +65,7 @@ function GoalTermRow({
 }: {
   label: string;
   description?: string;
+  direction?: "minimize" | "maximize";
   editable: boolean;
   value: number;
   min?: number;
@@ -94,6 +96,15 @@ function GoalTermRow({
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: "0.85rem" }} className="goal-term-row-label">
           <span>{label}</span>
+          {direction === "maximize" ? (
+            <span
+              className="direction-badge direction-badge--maximize"
+              title="This term is maximized — higher weight favors more of this objective"
+              aria-label="Maximize objective"
+            >
+              ↑ max
+            </span>
+          ) : null}
           {markerKind ? (
             <span
               className={`entry-diff-marker ${markerKind === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
@@ -179,7 +190,7 @@ function WeightRow({
   wkey: string;
   problem: ProblemBlock;
   editable: boolean;
-  weightCatalog: Record<string, { label: string; description: string }>;
+  weightCatalog: Record<string, { label: string; description: string; direction?: "minimize" | "maximize" }>;
   updateProblem: (patch: Partial<ProblemBlock>) => void;
   onActivate?: (event?: ActivateHint) => void;
   markerKind?: MarkerKind | null;
@@ -191,6 +202,7 @@ function WeightRow({
     <GoalTermRow
       label={info?.label ?? wkey}
       description={info?.description}
+      direction={info?.direction}
       editable={editable}
       value={problem.weights[wkey] ?? 0}
       min={0}
@@ -237,7 +249,7 @@ type GoalTermsSectionProps = {
   preferencesEditable: boolean;
   showWorkerBlock: boolean;
   extensionUi: string;
-  weightCatalog: Record<string, { label: string; description: string }>;
+  weightCatalog: Record<string, { label: string; description: string; direction?: "minimize" | "maximize" }>;
   displayWeightKeys: string[];
   removedGoalTerms: RemovedGoalTermEntry[];
   markerKindFor: (key: string) => MarkerKind | null;

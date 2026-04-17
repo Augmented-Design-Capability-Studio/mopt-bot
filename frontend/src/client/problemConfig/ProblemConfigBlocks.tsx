@@ -75,9 +75,9 @@ export function ProblemConfigBlocks({
   const weightCatalog = useMemo(() => {
     const defs = problemMeta?.weight_definitions;
     if (defs?.length) {
-      const o: Record<string, { label: string; description: string }> = {};
+      const o: Record<string, { label: string; description: string; direction?: "minimize" | "maximize" }> = {};
       for (const w of defs) {
-        o[w.key] = { label: w.label, description: w.description ?? "" };
+        o[w.key] = { label: w.label, description: w.description ?? "", direction: w.direction };
       }
       return o;
     }

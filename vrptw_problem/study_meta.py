@@ -35,6 +35,28 @@ def weight_item_labels() -> dict[str, str]:
     return {key: label for key, label, _desc in VRPTW_WEIGHT_DEFINITIONS}
 
 
+# Ordered weight keys that count toward the agile gate ("at least one goal term").
+# ``waiting_time`` is intentionally omitted: it is a threshold-driven penalty that should
+# not independently satisfy the gate without a primary routing or delivery objective.
+VRPTW_WEIGHT_DISPLAY_KEYS: tuple[str, ...] = (
+    "travel_time",
+    "shift_limit",
+    "workload_balance",
+    "deadline_penalty",
+    "capacity_penalty",
+    "priority_penalty",
+    "worker_preference",
+)
+
+
+def weight_display_keys() -> list[str]:
+    return list(VRPTW_WEIGHT_DISPLAY_KEYS)
+
+
+def worker_preference_key() -> str:
+    return "worker_preference"
+
+
 def weight_slot_markers() -> dict[str, tuple[str, ...]]:
     """Substrings for brief atomization / config seeding."""
     return {

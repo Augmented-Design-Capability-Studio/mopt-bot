@@ -40,19 +40,6 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
   },
 };
 
-/** Weight keys shown under "Goal terms" (routing / efficiency). */
-const WEIGHT_GOAL_KEYS = ["travel_time", "shift_limit", "workload_balance"] as const;
-
-/** Weight keys shown under "Soft penalties" (violations / lateness), excluding worker_preference. */
-const WEIGHT_SOFT_PENALTY_KEYS = ["deadline_penalty", "capacity_penalty", "priority_penalty", "waiting_time"] as const;
-
-/** Single panel order: routing, soft violations, then driver preference weight + rules. */
-const WEIGHT_DISPLAY_ORDER = [
-  ...WEIGHT_GOAL_KEYS,
-  ...WEIGHT_SOFT_PENALTY_KEYS,
-  "worker_preference",
-] as const;
-
 /** Metadata for the configurable maximum shift limit. */
 const MAX_SHIFT_HOURS_INFO = {
   label: "Max Shift Hours",
@@ -101,11 +88,8 @@ export {
   ALGORITHM_DESC,
   EARLY_ARRIVAL_THRESHOLD_INFO,
   MAX_SHIFT_HOURS_INFO,
-  WEIGHT_DISPLAY_ORDER,
   CONDITION_LABEL,
   PREFERENCE_CONDITIONS,
-  WEIGHT_GOAL_KEYS,
   WEIGHT_INFO,
-  WEIGHT_SOFT_PENALTY_KEYS,
   WORKER_NAMES,
 };

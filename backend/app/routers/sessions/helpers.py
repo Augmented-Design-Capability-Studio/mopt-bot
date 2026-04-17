@@ -112,7 +112,10 @@ def sync_optimization_allowed_after_participant_mutation(row: StudySession) -> b
     if maybe_mark_optimization_gate_engaged_from_brief(row, brief):
         changed = True
     engaged = bool(getattr(row, "optimization_gate_engaged", False))
-    want = intrinsic_optimization_ready(row.workflow_mode, panel, brief, optimization_gate_engaged=engaged)
+    problem_id = str(getattr(row, "test_problem_id", None) or "vrptw")
+    want = intrinsic_optimization_ready(
+        row.workflow_mode, panel, brief, optimization_gate_engaged=engaged, problem_id=problem_id
+    )
     if row.optimization_allowed != want:
         row.optimization_allowed = want
         changed = True

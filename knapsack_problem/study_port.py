@@ -26,13 +26,15 @@ class KnapsackStudyPort:
             id=self.id,
             label=self.label,
             weight_definitions=[
-                WeightDefinition("value_emphasis", "Total value", "Higher weight favors more packed value"),
+                WeightDefinition("value_emphasis", "Total value", "Higher weight favors more packed value", direction="maximize"),
                 WeightDefinition("capacity_overflow", "Capacity overflow", "Penalty when selection exceeds knapsack capacity"),
                 WeightDefinition("selection_sparsity", "Selection size", "Penalty for number of items picked"),
             ],
             extension_ui="none",
             visualization_presets=["knapsack_selection"],
             primary_visualization="knapsack_selection",
+            weight_display_keys=self.weight_display_keys(),
+            worker_preference_key=self.worker_preference_key(),
         )
 
     def sanitize_panel_config(self, panel_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -108,6 +110,12 @@ class KnapsackStudyPort:
             "capacity_overflow": "Knapsack capacity overflow",
             "selection_sparsity": "Number of selected items",
         }
+
+    def weight_display_keys(self) -> list[str]:
+        return ["value_emphasis", "capacity_overflow", "selection_sparsity"]
+
+    def worker_preference_key(self) -> str | None:
+        return None
 
     def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
         return {

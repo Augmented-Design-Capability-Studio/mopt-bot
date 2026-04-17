@@ -3,7 +3,12 @@
     "allow": [
       "Bash(xargs cat:*)",
       "Bash(grep -E \"\\\\.py$\")",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(venv/Scripts/python.exe:*)",
+      "Bash(npx tsc:*)",
+      "Bash(.venv/Scripts/python -m pytest backend/tests/ -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/ -q)",
+      "Bash(python -m pytest backend/tests/ -q)"
     ]
   }
 }

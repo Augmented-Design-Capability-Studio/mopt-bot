@@ -3,7 +3,7 @@ DEMO SCRIPT: SHORT INTRO TO THE MOPT INTERFACE
 Goal: Keep this to about 2 minutes. Use mostly slides, with a few brief live interface moments.
 
 Slide 1: Welcome and context
-Narration: "Hi, at Augmented Design Capability Studio, we created an AI agent aiming to create Metaheuristic Optimization programs for you. We are working with QuickBite and created a vehicle scheduling task for you. However, before you start we would like to introduce the interface to you. To demonstrate, we can try out a simple knapsack problem."
+Narration: "At Augmented Design Capability Studio, we designed an AI agent interface aiming to create Metaheuristic Optimization programs for you. We are working with QuickBite and created a vehicle scheduling task as our test problem. However, before you start, we would like to briefly introduce the interface. To demonstrate, we can try out a simple knapsack problem."
 ACTION: Show title slide with the three interface areas: Chat, Problem Setup, and Results/Visualization.
 
 Slide 2: Why knapsack first

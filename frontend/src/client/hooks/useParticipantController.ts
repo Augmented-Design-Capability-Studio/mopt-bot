@@ -19,6 +19,13 @@ import {
   computeCanRunOptimization,
   intrinsicOptimizationReadyAgile,
 } from "../lib/optimizationGate";
+
+// VRPTW weight display keys used as a fallback in the agile autorun check when TestProblemMeta
+// has not loaded yet (brief transient window at startup).
+const _VRPTW_AGILE_WDK = [
+  "travel_time", "shift_limit", "workload_balance",
+  "deadline_penalty", "capacity_penalty", "priority_penalty", "worker_preference",
+] as const;
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
 import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
@@ -250,6 +257,7 @@ export function useParticipantController() {
     invokeModel,
     configText,
     problemBrief,
+    problemMeta: testProblemMeta,
     scheduleText,
     modelKey,
     modelName,
@@ -283,8 +291,12 @@ export function useParticipantController() {
     if (!agileAutorunStorageKey) return;
     if (busy || optimizing) return;
     if (editMode !== "none") return;
-    if (!intrinsicOptimizationReadyAgile(configText)) return;
-    if (!computeCanRunOptimization(session, configText, problemBrief)) return;
+    if (!intrinsicOptimizationReadyAgile(
+      configText,
+      testProblemMeta?.weight_display_keys ?? _VRPTW_AGILE_WDK,
+      testProblemMeta !== null ? (testProblemMeta?.worker_preference_key ?? null) : null,
+    )) return;
+    if (!computeCanRunOptimization(session, configText, problemBrief, testProblemMeta)) return;
     const hasCommittedOptimize = runs.some((r) => !r.clientPending && r.run_type === "optimize");
     if (hasCommittedOptimize) return;
     try {

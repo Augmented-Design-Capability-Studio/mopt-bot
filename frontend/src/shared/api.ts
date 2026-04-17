@@ -94,6 +94,7 @@ export type WeightDefinitionMeta = {
   key: string;
   label: string;
   description: string | null;
+  direction: "minimize" | "maximize";
 };
 
 export type TestProblemMeta = {
@@ -103,6 +104,10 @@ export type TestProblemMeta = {
   extension_ui: string;
   visualization_presets: string[];
   primary_visualization: string | null;
+  /** Ordered weight keys that count toward the agile gate. Empty = any-weight fallback. */
+  weight_display_keys: string[];
+  /** Weight key whose block is conditional on driver_preferences (null = no such concept). */
+  worker_preference_key: string | null;
 };
 
 export type Session = {

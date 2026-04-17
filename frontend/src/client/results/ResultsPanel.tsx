@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { displayRunNumber, type ProblemBrief, type RunResult, type Session } from "@shared/api";
+import { displayRunNumber, type ProblemBrief, type RunResult, type Session, type TestProblemMeta } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
@@ -20,6 +20,7 @@ type ResultsPanelProps = {
   session: Session | null;
   configText: string;
   problemBrief: ProblemBrief | null;
+  problemMeta?: TestProblemMeta | null;
   sessionTerminated: boolean;
   className: string;
   onSetActiveRun: (index: number) => void;
@@ -41,6 +42,7 @@ export function ResultsPanel({
   session,
   configText,
   problemBrief,
+  problemMeta,
   sessionTerminated,
   className,
   onSetActiveRun,
@@ -50,8 +52,8 @@ export function ResultsPanel({
   onCancelOptimize,
   onRunEvaluateEdited,
 }: ResultsPanelProps) {
-  const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief);
-  const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief);
+  const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, problemMeta);
+  const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, problemMeta);
   const [showRaw, setShowRaw] = useState(false);
   const [vizTab, setVizTab] = useState<"schedule" | "convergence">("schedule");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
