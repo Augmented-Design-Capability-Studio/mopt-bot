@@ -346,3 +346,47 @@ The **reporter** (`reporter.py`) formats results for display and downstream visu
 | `researcher/official_evaluator.py` | Official evaluation: formulation + results |
 | `researcher/run_user_comparison.py` | Run optimizer for sample users, print official evaluation |
 | `researcher/visualize_zone_map.py` | Generate fake city map of delivery zones (demonstration) |
+| `study_port.py` | `StudyProblemPort` implementation (backend integration point) |
+| `study_meta.py` | Weight definitions, display keys, brief-atomization markers |
+| `study_prompts.py` | LLM prompt appendix and config-derivation system prompt |
+| `study_bridge.py` | Neutral JSON ↔ internal VRPTW translation (WEIGHT_ALIASES) |
+| `panel_schema.py` | Gemini JSON schema for structured panel patches |
+| `brief_seed.py` | Deterministic brief → panel derivation (fallback when LLM times out) |
+
+## 7. Frontend Module (`frontend/`)
+
+The `frontend/` sub-directory contains TypeScript/React code that belongs to this problem module.
+It is compiled as part of the main `frontend/` Vite build via the `@vrptw` path alias.
+
+| File | Role |
+|------|------|
+| `frontend/index.ts` | **Module entry point** — exports `MODULE: ProblemModule` consumed by `problemRegistry.ts`. Wires together `buildVrptwGoalTermsExtension`, `FleetScheduleViz`, and `ViolationSummary`. |
+| `frontend/metadata.ts` | VRPTW weight labels, driver-preference condition labels, `WORKER_NAMES`, threshold metadata |
+| `frontend/types.ts` | `ProblemBlock` (extends `BaseProblemBlock` with `driver_preferences`, `max_shift_hours`, etc.) and `DriverPref` |
+| `frontend/serialization.ts` | `parseProblemConfig` / `serializeProblemConfig` — parse/serialize the full VRPTW panel config JSON |
+| `frontend/VrptwExtras.tsx` | VRPTW-specific React UI: driver-preference rules, max-shift threshold, early-arrival threshold, locked-assignment rows. Exports `buildVrptwGoalTermsExtension(props)` |
+| `frontend/FleetScheduleViz.tsx` | Per-vehicle Gantt schedule visualization. Accepts `{ currentRun: RunResult }` and extracts VRPTW-specific fields internally. |
+| `frontend/ViolationSummary.tsx` | VRPTW violation and metric summary cards. Accepts `{ currentRun: RunResult }` and extracts weights/violations internally. |
+| `frontend/schedule.ts` | `parseRoutesForSolver` — converts schedule JSON to `number[][]` for the solver request body. Imported by `useParticipantSessionActions.ts` via `@vrptw/schedule`. |
+
+### Plugin registry integration
+
+This module is registered in `frontend/src/client/problemRegistry.ts` under the key `"vrptw"`.
+`getProblemModule("vrptw")` returns a `ProblemModule` descriptor with:
+- `buildGoalTermsExtension` → `buildVrptwGoalTermsExtension`
+- `vizTabs` → `[{ id: "fleet_gantt", label: "Schedule", component: FleetScheduleViz }]`
+- `ViolationSummary` → `ViolationSummary`
+
+The generic shells (`ProblemConfigBlocks`, `ResultsPanel`) import nothing from this module directly — all wiring goes through `getProblemModule(problemId)`.
+
+### GoalTerms extension API contract
+
+`buildVrptwGoalTermsExtension` receives only generic `GoalTermsExtensionBuilderProps` from `ProblemConfigBlocks`:
+
+- `configJson: string` — raw panel config JSON; VrptwExtras parses VRPTW-specific fields internally
+- `workerPreferenceKey: string | null` — from `problemMeta.worker_preference_key`
+- `editable`, `removedGoalTerms`, `markerKindFor`, `weightCatalog` — standard display props
+- `updateProblem: (patch: Record<string, unknown>) => void` — generic patch callback; accepts both base and VRPTW-specific fields
+- `rememberRemovedGoalTerm`, `restoreRemovedGoalTerm` — removed-term lifecycle callbacks
+
+All VRPTW-specific state (`driver_preferences`, `locked_assignments`, `max_shift_hours`, etc.) is parsed from `configJson` internally. All mutation helpers (`updatePreferenceAt`, `addPreference`, `updateLocked`, etc.) are defined as closures inside the builder. Non-weight removed entries (max shift, early arrival threshold) carry a `fieldName` field so `restoreRemovedGoalTerm` in `ProblemConfigBlocks` can restore them generically without knowing any VRPTW field names.

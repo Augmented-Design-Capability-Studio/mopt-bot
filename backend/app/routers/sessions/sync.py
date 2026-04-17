@@ -33,6 +33,7 @@ def _run_with_timeout(callable_obj, timeout_sec: float):
 def _canonicalize_locked_goal_terms(
     current_problem: dict,
     derived_problem: dict,
+    companion_fields: dict[str, str],
 ) -> dict:
     locked_raw = current_problem.get("locked_goal_terms")
     if not isinstance(locked_raw, list):
@@ -56,12 +57,13 @@ def _canonicalize_locked_goal_terms(
                 merged_weights[key] = float(current_weights[key])
         derived_problem["weights"] = merged_weights
 
-    if "worker_preference" in canonical_locked:
-        prefs = current_problem.get("driver_preferences")
-        if isinstance(prefs, list):
-            derived_problem["driver_preferences"] = deepcopy(prefs)
-        else:
-            derived_problem["driver_preferences"] = []
+    for locked_key, companion_field in companion_fields.items():
+        if locked_key in canonical_locked:
+            companion = current_problem.get(companion_field)
+            if isinstance(companion, list):
+                derived_problem[companion_field] = deepcopy(companion)
+            else:
+                derived_problem[companion_field] = []
 
     if canonical_locked:
         derived_problem["locked_goal_terms"] = canonical_locked
@@ -156,7 +158,8 @@ def sync_panel_from_problem_brief(
     for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size"):
         next_problem.pop(key, None)
     derived_problem = deepcopy(derived_panel["problem"])
-    derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem)
+    companion_fields = get_study_port(test_problem_id).locked_companion_fields()
+    derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem, companion_fields)
     if preserve_missing_managed_fields:
         derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
     next_problem.update(derived_problem)

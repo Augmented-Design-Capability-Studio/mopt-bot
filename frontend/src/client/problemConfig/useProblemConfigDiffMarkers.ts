@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { ProblemBlock } from "./types";
+import type { BaseProblemBlock } from "./types";
 
 export type MarkerKind = "new" | "upd";
 const CONFIG_MARKERS_STORAGE_KEY = "mopt:config-diff-markers";
@@ -16,11 +16,11 @@ function readStoredMarkers(): Record<string, MarkerKind> {
   }
 }
 
-function readStoredBaseline(): ProblemBlock | null {
+function readStoredBaseline(): BaseProblemBlock | null {
   try {
     const raw = sessionStorage.getItem(CONFIG_BASELINE_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as ProblemBlock;
+    return JSON.parse(raw) as BaseProblemBlock;
   } catch {
     return null;
   }
@@ -36,7 +36,7 @@ function classifyMarker(prevValue: unknown, nextValue: unknown): MarkerKind {
   return wasEmpty && isPresent ? "new" : "upd";
 }
 
-function computeMarkers(prev: ProblemBlock, next: ProblemBlock): Record<string, MarkerKind> {
+function computeMarkers(prev: BaseProblemBlock, next: BaseProblemBlock): Record<string, MarkerKind> {
   const markers: Record<string, MarkerKind> = {};
 
   const weightKeys = new Set([...Object.keys(prev.weights), ...Object.keys(next.weights)]);
@@ -47,9 +47,7 @@ function computeMarkers(prev: ProblemBlock, next: ProblemBlock): Record<string, 
     markers[`weight:${key}`] = classifyMarker(prevVal, nextVal);
   }
 
-  const scalarKeys: Array<keyof ProblemBlock> = [
-    "max_shift_hours",
-    "early_arrival_threshold_min",
+  const scalarKeys: ReadonlyArray<keyof BaseProblemBlock> = [
     "algorithm",
     "epochs",
     "pop_size",
@@ -58,12 +56,12 @@ function computeMarkers(prev: ProblemBlock, next: ProblemBlock): Record<string, 
     "early_stop_patience",
     "early_stop_epsilon",
     "use_greedy_init",
-    "driver_preferences",
-    "locked_assignments",
   ];
+  const prevAny = prev as Record<string, unknown>;
+  const nextAny = next as Record<string, unknown>;
   for (const key of scalarKeys) {
-    const prevVal = prev[key];
-    const nextVal = next[key];
+    const prevVal = prevAny[key];
+    const nextVal = nextAny[key];
     if (!valueChanged(prevVal, nextVal) || nextVal == null) continue;
     markers[`field:${String(key)}`] = classifyMarker(prevVal, nextVal);
   }
@@ -82,8 +80,8 @@ function computeMarkers(prev: ProblemBlock, next: ProblemBlock): Record<string, 
   return markers;
 }
 
-export function useProblemConfigDiffMarkers(problem: ProblemBlock, editable: boolean) {
-  const prevRef = useRef<ProblemBlock | null>(readStoredBaseline());
+export function useProblemConfigDiffMarkers(problem: BaseProblemBlock, editable: boolean) {
+  const prevRef = useRef<BaseProblemBlock | null>(readStoredBaseline());
   const [markers, setMarkers] = useState<Record<string, MarkerKind>>(readStoredMarkers);
 
   useEffect(() => {

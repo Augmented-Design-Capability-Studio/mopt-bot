@@ -5,7 +5,12 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { "@shared": path.resolve(__dirname, "src/shared") },
+    alias: {
+      "@shared": path.resolve(__dirname, "src/shared"),
+      "@vrptw": path.resolve(__dirname, "../vrptw_problem/frontend"),
+      "@knapsack": path.resolve(__dirname, "../knapsack_problem/frontend"),
+      "@problemConfig": path.resolve(__dirname, "src/client/problemConfig"),
+    },
   },
   server: {
     port: 5173,

@@ -137,6 +137,25 @@ class KnapsackStudyPort:
     def panel_patch_response_json_schema(self) -> dict:
         return panel_patch_response_json_schema()
 
+    def locked_companion_fields(self) -> dict[str, str]:
+        return {}
+
+    def mediocre_participant_starter_config(self) -> dict:
+        from copy import deepcopy
+        return deepcopy({
+            "problem": {
+                "weights": {
+                    "value_emphasis": 1.0,
+                    "capacity_overflow": 40.0,
+                },
+                "only_active_terms": True,
+                "algorithm": "GA",
+                "epochs": 24,
+                "pop_size": 16,
+                "random_seed": 42,
+            }
+        })
+
     def problem_brief_template_fields(self) -> dict[str, str]:
         return {
             "solver_scope": "general_metaheuristic_translation",

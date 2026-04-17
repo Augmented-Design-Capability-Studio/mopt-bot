@@ -4,22 +4,26 @@ import type { TestProblemMeta } from "@shared/api";
 
 import { defaultParamsForAlgorithm } from "./algorithmCatalog";
 import { BlockSection } from "./layout";
-import { parseProblemConfig, serializeProblemConfig } from "./serialization";
-import type { DriverPref, ProblemBlock } from "./types";
+import { GoalTermsSection, type RemovedGoalTermEntry } from "./GoalTermsSection";
+import { SearchStrategySection } from "./SearchStrategySection";
 import { useProblemConfigDiffMarkers } from "./useProblemConfigDiffMarkers";
 import { useLockedEditFocus } from "../lib/useLockedEditFocus";
-import { GoalTermsSection, type RemovedGoalTermEntry } from "./GoalTermsSection";
-import { WEIGHT_INFO } from "./metadata";
-import { SearchStrategySection } from "./SearchStrategySection";
 import type { ActivateHint } from "./controls";
+
+import { parseBaseProblemConfig, serializeBaseProblemConfig } from "@problemConfig/baseSerialization";
+import type { BaseProblemBlock } from "@problemConfig/types";
+import { getProblemModule } from "../problemRegistry";
 
 function orderedDisplayWeightKeys(
   weights: Record<string, number>,
   definitionOrder: string[],
   showWorkerBlock: boolean,
+  workerPreferenceKey: string | null,
 ): string[] {
   const keys = Object.keys(weights);
-  if (showWorkerBlock && !keys.includes("worker_preference")) keys.push("worker_preference");
+  if (showWorkerBlock && workerPreferenceKey && !keys.includes(workerPreferenceKey)) {
+    keys.push(workerPreferenceKey);
+  }
   const seen = new Set<string>();
   const out: string[] = [];
   for (const k of definitionOrder) {
@@ -47,7 +51,7 @@ export type ProblemConfigBlocksProps = {
   editable: boolean;
   /** When not editable, first pointer interaction enters config edit mode */
   onInteractionStart?: () => void;
-  /** From GET /meta/test-problems for `session.test_problem_id`; null uses VRPTW labels/order. */
+  /** From GET /meta/test-problems for `session.test_problem_id`; null uses empty labels. */
   problemMeta?: TestProblemMeta | null;
 };
 
@@ -64,7 +68,7 @@ export function ProblemConfigBlocks({
     editable,
     focusSelector: ".problem-config-input, .problem-config-select",
   });
-  const { outerRaw, hasProblemKey, problem } = parseProblemConfig(configJson);
+  const { outerRaw, hasProblemKey, problem } = parseBaseProblemConfig(configJson);
   const { markerKindFor } = useProblemConfigDiffMarkers(problem, editable);
   const [removedGoalTerms, setRemovedGoalTerms] = useState<RemovedGoalTermEntry[]>([]);
   useEffect(() => {
@@ -72,6 +76,8 @@ export function ProblemConfigBlocks({
     setRemovedGoalTerms([]);
   }, [editable]);
 
+  // Weight labels and order come from the backend's GET /meta/test-problems response.
+  // No problem-specific fallback here — each problem module configures its own weight_definitions.
   const weightCatalog = useMemo(() => {
     const defs = problemMeta?.weight_definitions;
     if (defs?.length) {
@@ -81,19 +87,28 @@ export function ProblemConfigBlocks({
       }
       return o;
     }
-    return WEIGHT_INFO;
+    return {} as Record<string, { label: string; description: string; direction?: "minimize" | "maximize" }>;
   }, [problemMeta]);
 
   const definitionKeyOrder = problemMeta?.weight_definitions?.map((w) => w.key) ?? [];
-  const extensionUi = problemMeta?.extension_ui ?? "vrptw_extras";
+  const workerPreferenceKey = problemMeta?.worker_preference_key ?? null;
+  const problemId = problemMeta?.id ?? "";
 
-  const hasWorkerWeight = "worker_preference" in problem.weights;
+  // showWorkerBlock: show the worker_preference key in the weight list when either
+  // the key is present in problem.weights OR driver_preferences are configured.
+  // Access driver_preferences from outerRaw since BaseProblemBlock does not include it.
+  const innerRaw = (hasProblemKey ? outerRaw.problem : outerRaw) as Record<string, unknown>;
   const showWorkerBlock =
-    extensionUi === "vrptw_extras" && (hasWorkerWeight || problem.driver_preferences.length > 0);
-  const workerPrefLocked = problem.locked_goal_terms.includes("worker_preference");
-  const preferencesEditable = editable && !workerPrefLocked;
+    workerPreferenceKey !== null &&
+    ((workerPreferenceKey in problem.weights) ||
+      (Array.isArray(innerRaw.driver_preferences) && (innerRaw.driver_preferences as unknown[]).length > 0));
 
-  const displayWeightKeys = orderedDisplayWeightKeys(problem.weights, definitionKeyOrder, showWorkerBlock);
+  const displayWeightKeys = orderedDisplayWeightKeys(
+    problem.weights,
+    definitionKeyOrder,
+    showWorkerBlock,
+    workerPreferenceKey,
+  );
 
   const hasSearch =
     problem.algorithm !== "" ||
@@ -102,10 +117,7 @@ export function ProblemConfigBlocks({
     problem.early_stop === false ||
     problem.early_stop_patience !== null ||
     problem.early_stop_epsilon !== null;
-  const hasHardStructural =
-    extensionUi === "vrptw_extras" &&
-    (Object.keys(problem.locked_assignments).length > 0 || problem.max_shift_hours !== null || problem.early_arrival_threshold_min !== null);
-  const hasSomething = displayWeightKeys.length > 0 || hasSearch || hasHardStructural;
+  const hasSomething = displayWeightKeys.length > 0 || hasSearch;
 
   if (!hasSomething) {
     return (
@@ -116,18 +128,27 @@ export function ProblemConfigBlocks({
     );
   }
 
-  function updateProblem(patch: Partial<ProblemBlock>) {
+  function updateProblem(patch: Record<string, unknown>) {
+    const algoPatch = patch.algorithm as string | undefined;
+    const paramsPatch = patch.algorithm_params as Record<string, number> | undefined;
     let algorithm_params = problem.algorithm_params;
-    if (patch.algorithm !== undefined && patch.algorithm !== problem.algorithm) {
+    if (algoPatch !== undefined && algoPatch !== problem.algorithm) {
       algorithm_params =
-        patch.algorithm_params !== undefined
-          ? patch.algorithm_params
-          : defaultParamsForAlgorithm(patch.algorithm);
-    } else if (patch.algorithm_params !== undefined) {
-      algorithm_params = { ...problem.algorithm_params, ...patch.algorithm_params };
+        paramsPatch !== undefined ? paramsPatch : defaultParamsForAlgorithm(algoPatch);
+    } else if (paramsPatch !== undefined) {
+      algorithm_params = { ...problem.algorithm_params, ...paramsPatch };
     }
-    const nextProblem: ProblemBlock = { ...problem, ...patch, algorithm_params };
-    onChange(serializeProblemConfig(outerRaw, hasProblemKey, nextProblem));
+    const nextProblem: BaseProblemBlock = {
+      ...problem,
+      ...(patch as Partial<BaseProblemBlock>),
+      algorithm_params,
+    };
+    // Merge all patch fields (including non-base, problem-module-specific ones) into outerRaw
+    // so serializeBaseProblemConfig preserves them unchanged in the output JSON.
+    const updatedOuterRaw = hasProblemKey
+      ? { ...outerRaw, problem: { ...(outerRaw.problem as Record<string, unknown>), ...patch } }
+      : { ...outerRaw, ...patch };
+    onChange(serializeBaseProblemConfig(updatedOuterRaw, hasProblemKey, nextProblem));
   }
 
   function ensureEditing(event?: ActivateHint) {
@@ -158,16 +179,10 @@ export function ProblemConfigBlocks({
           ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
           : problem.locked_goal_terms,
       });
-    } else if (removed.type === "max_shift") {
+    } else if (removed.fieldName) {
+      // Non-weight removable field — uses fieldName stored by the problem-module extension.
       updateProblem({
-        max_shift_hours: removed.value,
-        locked_goal_terms: removed.locked
-          ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
-          : problem.locked_goal_terms,
-      });
-    } else if (removed.type === "early_arrival_threshold") {
-      updateProblem({
-        early_arrival_threshold_min: removed.value,
+        [removed.fieldName]: removed.value,
         locked_goal_terms: removed.locked
           ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
           : problem.locked_goal_terms,
@@ -176,47 +191,22 @@ export function ProblemConfigBlocks({
     setRemovedGoalTerms((current) => current.filter((entry) => entry.key !== key));
   }
 
-  function updatePreferenceAt(index: number, pref: DriverPref) {
-    const next = [...problem.driver_preferences];
-    next[index] = pref;
-    updateProblem({ driver_preferences: next });
-  }
-
-  function removePreference(index: number) {
-    updateProblem({
-      driver_preferences: problem.driver_preferences.filter((_, i) => i !== index),
-    });
-  }
-
-  function addPreference() {
-    const w = { ...problem.weights };
-    if (w.worker_preference === undefined) w.worker_preference = 1;
-    updateProblem({
-      weights: w,
-      driver_preferences: [
-        ...problem.driver_preferences,
-        { vehicle_idx: 0, condition: "avoid_zone", penalty: 1, zone: 4 },
-      ],
-    });
-  }
-
-  function updateLocked(taskKey: string, worker: number | "") {
-    const next = { ...problem.locked_assignments };
-    if (worker === "") {
-      delete next[taskKey];
-    } else {
-      next[taskKey] = worker;
-    }
-    updateProblem({ locked_assignments: next });
-  }
-
-  function addLockedRow() {
-    const used = new Set(Object.keys(problem.locked_assignments).map((k) => parseInt(k, 10)));
-    let t = 0;
-    while (used.has(t) && t < 30) t += 1;
-    if (t >= 30) return;
-    updateLocked(String(t), 0);
-  }
+  // Build the problem-specific GoalTermsExtension via the registry.
+  // No problem-specific imports — the registry resolves them by problemId.
+  const mod = getProblemModule(problemId);
+  const extension = mod.buildGoalTermsExtension?.({
+    configJson,
+    workerPreferenceKey,
+    editable,
+    removedGoalTerms,
+    markerKindFor,
+    weightCatalog,
+    updateProblem,
+    runEditingAction,
+    ensureEditing,
+    rememberRemovedGoalTerm,
+    restoreRemovedGoalTerm,
+  });
 
   return (
     <div
@@ -228,9 +218,6 @@ export function ProblemConfigBlocks({
         <GoalTermsSection
           problem={problem}
           editable={editable}
-          preferencesEditable={preferencesEditable}
-          showWorkerBlock={showWorkerBlock}
-          extensionUi={extensionUi}
           weightCatalog={weightCatalog}
           displayWeightKeys={displayWeightKeys}
           removedGoalTerms={removedGoalTerms}
@@ -240,11 +227,7 @@ export function ProblemConfigBlocks({
           ensureEditing={ensureEditing}
           rememberRemovedGoalTerm={rememberRemovedGoalTerm}
           restoreRemovedGoalTerm={restoreRemovedGoalTerm}
-          updatePreferenceAt={updatePreferenceAt}
-          removePreference={removePreference}
-          addPreference={addPreference}
-          updateLocked={updateLocked}
-          addLockedRow={addLockedRow}
+          extension={extension}
         />
       </BlockSection>
 

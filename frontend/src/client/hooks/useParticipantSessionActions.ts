@@ -20,7 +20,7 @@ import { configChangeSummary } from "../problemConfig/configSummary";
 import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
-import { parseRoutesForSolver } from "../results/schedule";
+import { parseRoutesForSolver } from "@vrptw/schedule";
 import type { ParticipantOpsState } from "../lib/participantOps";
 import { buildSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 

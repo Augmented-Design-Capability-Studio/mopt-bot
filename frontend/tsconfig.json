@@ -16,7 +16,13 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
-    "paths": { "@shared/*": ["src/shared/*"] }
+    "typeRoots": ["./node_modules/@types"],
+    "paths": {
+      "@shared/*": ["src/shared/*"],
+      "@vrptw/*": ["../vrptw_problem/frontend/*"],
+      "@knapsack/*": ["../knapsack_problem/frontend/*"],
+      "@problemConfig/*": ["src/client/problemConfig/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "../vrptw_problem/frontend", "../knapsack_problem/frontend"]
 }

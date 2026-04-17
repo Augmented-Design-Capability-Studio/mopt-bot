@@ -63,5 +63,23 @@ class StudyProblemPort(Protocol):
     def default_problem_brief_system_items(self) -> list[dict[str, Any]]:
         """Optional system items inserted into default_problem_brief for this problem."""
 
+    def locked_companion_fields(self) -> dict[str, str]:
+        """Map of weight key → companion field preserved when that key is locked.
+
+        When a weight key is in ``locked_goal_terms``, the corresponding companion
+        field (if any) should also be copied from the current config into the derived
+        config so the lock is effective end-to-end.
+
+        Return an empty dict for problems without weight-companion coupling.
+        Example: VRPTW returns ``{"worker_preference": "driver_preferences"}``.
+        """
+
+    def mediocre_participant_starter_config(self) -> dict:
+        """Return a deliberately sparse panel config for new study sessions.
+
+        Should leave obvious room for improvement so participants can explore
+        meaningful changes through chat.  Returned dict is a deep-copy (safe to mutate).
+        """
+
     def problem_brief_template_fields(self) -> dict[str, str]:
         """solver_scope, backend_template, etc. for new sessions."""

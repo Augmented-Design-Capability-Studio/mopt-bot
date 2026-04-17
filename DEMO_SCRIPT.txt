@@ -7,7 +7,7 @@ Narration: "At Augmented Design Capability Studio, we designed an AI agent inter
 ACTION: Show title slide with the three interface areas: Chat, Problem Setup, and Results/Visualization.
 
 Slide 2: Why knapsack first
-Narration: "The purpose of this knapsack example is to quickly show how the interface works. Knapsack is simple: choose items to maximize value while staying under a capacity limit."
+Narration: "Knapsack is simple: choose items to maximize value while staying under a capacity limit."
 
 Slide 3: Show interface
 Narration: "In this toy setup, we have 22 candidate items and a capacity of 50 units. We may state our purpose in the chat and get started!" 

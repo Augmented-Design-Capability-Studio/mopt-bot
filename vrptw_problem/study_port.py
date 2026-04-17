@@ -85,6 +85,26 @@ class VrptwStudyPort:
     def panel_patch_response_json_schema(self) -> dict:
         return panel_patch_response_json_schema()
 
+    def locked_companion_fields(self) -> dict[str, str]:
+        return {"worker_preference": "driver_preferences"}
+
+    def mediocre_participant_starter_config(self) -> dict:
+        from copy import deepcopy
+        return deepcopy({
+            "problem": {
+                "weights": {
+                    "travel_time": 1.0,
+                    "workload_balance": 4.0,
+                },
+                "only_active_terms": True,
+                "algorithm": "SA",
+                "algorithm_params": {"temp_init": 40, "cooling_rate": 0.92},
+                "epochs": 18,
+                "pop_size": 12,
+                "random_seed": 42,
+            }
+        })
+
     def problem_brief_template_fields(self) -> dict[str, str]:
         return {
             "solver_scope": "general_metaheuristic_translation",

@@ -1,21 +1,21 @@
 import {
+  ALGORITHM_DESC,
   ALLOWED_ALGORITHM_PARAMS,
   ALGORITHM_PARAM_FIELD_META,
   DEFAULT_EPOCHS,
   DEFAULT_POP_SIZE,
   defaultParamsForAlgorithm,
 } from "./algorithmCatalog";
-import { ALGORITHM_DESC } from "./metadata";
 import { FieldRow } from "./layout";
-import type { ProblemBlock } from "./types";
+import type { BaseProblemBlock } from "./types";
 import type { MarkerKind } from "./useProblemConfigDiffMarkers";
 import { ConfigNumberInput, ConfigSelect, type ActivateHint } from "./controls";
 
 type SearchStrategySectionProps = {
-  problem: ProblemBlock;
+  problem: BaseProblemBlock;
   editable: boolean;
   markerKindFor: (key: string) => MarkerKind | null;
-  updateProblem: (patch: Partial<ProblemBlock>) => void;
+  updateProblem: (patch: Record<string, unknown>) => void;
   runEditingAction: (action: () => void, event?: ActivateHint) => void;
   ensureEditing: (event?: ActivateHint) => void;
 };

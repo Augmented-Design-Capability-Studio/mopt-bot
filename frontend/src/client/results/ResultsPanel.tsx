@@ -5,9 +5,7 @@ import { displayRunNumber, type ProblemBrief, type RunResult, type Session, type
 import type { EditMode } from "../lib/participantTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { ConvergencePlot } from "./ConvergencePlot";
-import { KnapsackSelectionViz } from "./KnapsackSelectionViz";
-import { FleetScheduleViz } from "./FleetScheduleViz";
-import { ViolationSummary } from "./ViolationSummary";
+import { getProblemModule } from "../problemRegistry";
 
 type ResultsPanelProps = {
   runs: RunResult[];
@@ -55,7 +53,7 @@ export function ResultsPanel({
   const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, problemMeta);
   const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, problemMeta);
   const [showRaw, setShowRaw] = useState(false);
-  const [vizTab, setVizTab] = useState<"schedule" | "convergence">("schedule");
+  const [vizTabId, setVizTabId] = useState<string>("__convergence__");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
   const prevRunsLenRef = useRef<number | null>(null);
 
@@ -82,31 +80,15 @@ export function ResultsPanel({
   const convergence = currentResult?.convergence ?? [];
   const runActiveWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
 
-  const sessionProblemId = (session?.test_problem_id ?? "vrptw").trim().toLowerCase();
-  const viz = currentResult?.visualization;
-  const vizPreset =
-    viz && typeof viz.preset === "string" && viz.preset.trim()
-      ? viz.preset.trim()
-      : sessionProblemId === "knapsack"
-        ? "knapsack_selection"
-        : "fleet_gantt";
+  const problemId = (session?.test_problem_id ?? "").trim().toLowerCase();
+  const mod = getProblemModule(problemId);
 
-  const driverPrefs = Array.isArray(runProblem.driver_preferences) ? runProblem.driver_preferences : [];
-  const wpw = Number(runWeights.worker_preference);
-  const schedulePreferencesActive =
-    driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
-
-  const scheduleEarlyArrivalActive =
-    runProblem.early_arrival_threshold_min != null ||
-    // backward compat: old sessions that stored waiting_time as a weight
-    (Number.isFinite(Number(runWeights.waiting_time)) && Number(runWeights.waiting_time) > 0);
-  const scheduleEarlyArrivalThresholdMin = Number.isFinite(Number(runProblem.early_arrival_threshold_min))
-    ? Number(runProblem.early_arrival_threshold_min)
-    : 30;
+  // Default viz tab: first problem tab, or convergence if no problem tabs
+  const defaultVizTab = mod.vizTabs[0]?.id ?? "__convergence__";
 
   useEffect(() => {
-    setVizTab("schedule");
-  }, [activeRun]);
+    setVizTabId(defaultVizTab);
+  }, [activeRun, defaultVizTab]);
 
   useEffect(() => {
     const n = runs.length;
@@ -128,6 +110,11 @@ export function ResultsPanel({
       setUnreadRunIndex(null);
     }
   }, [activeRun, unreadRunIndex]);
+
+  const allVizTabs = [
+    ...mod.vizTabs,
+    ...(convergence.length > 0 ? [{ id: "__convergence__", label: "Convergence" }] : []),
+  ];
 
   return (
     <section className={className}>
@@ -215,44 +202,36 @@ export function ResultsPanel({
                 </div>
               </div>
             </div>
-            <ViolationSummary
-              violations={currentResult.violations}
-              metrics={currentResult.metrics}
-              referenceCost={currentRun?.reference_cost ?? null}
-              runtimeSeconds={currentResult.runtime_seconds}
-              activeWeightKeys={runActiveWeightKeys}
-              runWeights={runWeights}
-            />
-            {convergence.length > 0 && (
+
+            {mod.ViolationSummary && currentRun ? (
+              <mod.ViolationSummary currentRun={currentRun} />
+            ) : null}
+
+            {allVizTabs.length > 1 && (
               <div className="tabs" style={{ marginTop: "0.6rem" }}>
-                <button
-                  type="button"
-                  className={`tab ${vizTab === "schedule" ? "active" : ""}`}
-                  onClick={() => setVizTab("schedule")}
-                >
-                  Main Visualization
-                </button>
-                <button
-                  type="button"
-                  className={`tab ${vizTab === "convergence" ? "active" : ""}`}
-                  onClick={() => setVizTab("convergence")}
-                >
-                  Convergence
-                </button>
+                {allVizTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`tab ${vizTabId === tab.id ? "active" : ""}`}
+                    onClick={() => setVizTabId(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
             )}
-            {vizTab === "convergence" && convergence.length > 0 ? (
+
+            {vizTabId === "__convergence__" && convergence.length > 0 ? (
               <ConvergencePlot convergence={convergence} referenceCost={currentRun?.reference_cost} />
-            ) : vizPreset === "knapsack_selection" && viz ? (
-              <KnapsackSelectionViz visualization={viz} />
-            ) : (
-              <FleetScheduleViz
-                schedule={currentResult.schedule}
-                schedulePreferencesActive={schedulePreferencesActive}
-                scheduleEarlyArrivalActive={scheduleEarlyArrivalActive}
-                earlyArrivalThresholdMin={scheduleEarlyArrivalThresholdMin}
-              />
-            )}
+            ) : currentRun ? (
+              (() => {
+                const tab = mod.vizTabs.find((t) => t.id === vizTabId) ?? mod.vizTabs[0];
+                if (!tab) return null;
+                const VizComponent = tab.component;
+                return <VizComponent currentRun={currentRun} />;
+              })()
+            ) : null}
           </div>
         ) : (
           <div className="muted">Run optimization to populate a timeline view and schedule details.</div>
@@ -277,8 +256,8 @@ export function ResultsPanel({
             <pre className="mono run-json-preview" style={{ marginTop: "0.35rem" }}>
               {JSON.stringify(
                 {
-                  schedule: currentResult.schedule,
-                  violations: currentResult.violations,
+                  schedule: currentResult?.schedule,
+                  violations: currentResult?.violations,
                 },
                 null,
                 2,

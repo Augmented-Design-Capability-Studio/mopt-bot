@@ -8,7 +8,17 @@
       "Bash(npx tsc:*)",
       "Bash(.venv/Scripts/python -m pytest backend/tests/ -q)",
       "Bash(.venv/Scripts/python.exe -m pytest backend/tests/ -q)",
-      "Bash(python -m pytest backend/tests/ -q)"
+      "Bash(python -m pytest backend/tests/ -q)",
+      "Bash(npx vite:*)",
+      "Bash(node_modules/.bin/vite build:*)",
+      "Bash(find:*)",
+      "Bash(python3 -c \"from backend.app.problems.registry import register_study_ports; reg = register_study_ports\\(\\); print\\('Registered:', sorted\\(reg.keys\\(\\)\\)\\); print\\('VRPTW meta:', reg.get\\('vrptw'\\).meta\\(\\) if 'vrptw' in reg else 'NOT FOUND'\\); print\\('Knapsack meta:', reg.get\\('knapsack'\\).meta\\(\\) if 'knapsack' in reg else 'NOT FOUND'\\)\")",
+      "Bash(python3)",
+      "Bash(python -m pytest backend/ knapsack_problem/tests/ -x -q)",
+      "Bash(.venv/Scripts/python -m pytest backend/ knapsack_problem/tests/ -x -q)",
+      "Bash(sed -n '100,115p' /c/Users/whyhowie/git-repo/mopt-bot/frontend/src/shared/api.ts)",
+      "Bash(sed -n '330,410p' /c/Users/whyhowie/git-repo/mopt-bot/frontend/src/shared/api.ts)",
+      "Bash(npm run:*)"
     ]
   }
 }

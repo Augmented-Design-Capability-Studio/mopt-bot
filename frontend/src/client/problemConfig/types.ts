@@ -1,22 +1,15 @@
-/** One soft preference rule; optional fields depend on condition (backend validates). */
-export type DriverPref = {
-  vehicle_idx: number;
-  condition: string;
-  penalty: number;
-  zone?: number;
-  order_priority?: string;
-  limit_minutes?: number;
-  hours?: number;
-  aggregation?: string;
-};
-
-export type ProblemBlock = {
+/**
+ * Generic solver configuration fields shared by all problem modules.
+ * Problem-specific extensions live in their own module's frontend/ directory.
+ * For example, the VRPTW extension is at vrptw_problem/frontend/types.ts.
+ */
+export type BaseProblemBlock = {
   weights: Record<string, number>;
   /** Goal-term keys locked against chat/definition-driven backend sync changes. */
   locked_goal_terms: string[];
   only_active_terms: boolean;
   algorithm: string;
-  /** Current algorithm’s hyperparameters (defaults merged from JSON). */
+  /** Current algorithm's hyperparameters (defaults merged from JSON). */
   algorithm_params: Record<string, number>;
   epochs: number | null;
   /** Default true when omitted from JSON. */
@@ -26,10 +19,6 @@ export type ProblemBlock = {
   early_stop_epsilon: number | null;
   pop_size: number | null;
   random_seed: number | null;
-  max_shift_hours: number | null;
-  early_arrival_threshold_min: number | null;
-  locked_assignments: Record<string, number>;
-  driver_preferences: DriverPref[];
   /** When true (default), seeds part of the initial population with greedy solutions. */
   use_greedy_init: boolean;
 };

@@ -16,7 +16,7 @@ from app.auth import Principal, require_any_study_user, require_client, require_
 from app.config import get_settings
 from app.crypto_util import encrypt_secret
 from app.database import get_db
-from app.default_config import mediocre_participant_starter_config
+from app.problems.registry import get_study_port as _get_study_port
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
@@ -135,7 +135,7 @@ def push_participant_starter_panel(
     row = db.get(StudySession, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    row.panel_config_json = json.dumps(mediocre_participant_starter_config(row.test_problem_id))
+    row.panel_config_json = json.dumps(_get_study_port(row.test_problem_id).mediocre_participant_starter_config())
     helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()

@@ -2,6 +2,17 @@
  * Mirrors backend/app/algorithm_catalog.py and vrptw_problem/optimizer.py.
  * Keep keys and defaults aligned when the solver changes.
  */
+
+/** Short human descriptions for the supported MEALpy algorithms (all problems). */
+export const ALGORITHM_DESC: Record<string, string> = {
+  GA: "Genetic Algorithm - evolves a population of candidate solutions through selection, crossover, and mutation.",
+  PSO: "Particle Swarm - a swarm of candidates converge collaboratively toward promising search regions.",
+  SA: "Simulated Annealing - cools the search gradually to escape local optima and converge to good solutions.",
+  SwarmSA:
+    "Swarm Simulated Annealing - combines swarm-based exploration with annealing-style cooling.",
+  ACOR: "Ant Colony Optimization (Continuous) - guides search by modelling pheromone accumulation along good paths.",
+};
+
 export const DEFAULT_EPOCHS = 100;
 export const DEFAULT_POP_SIZE = 50;
 

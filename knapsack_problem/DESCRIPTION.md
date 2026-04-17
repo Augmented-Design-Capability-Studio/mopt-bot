@@ -72,3 +72,30 @@ In the 2×2 user study, participants interact with a chatbot to refine these wei
 | [panel_schema.py](file:///c:/Users/whyhowie/git-repo/mopt-bot/knapsack_problem/panel_schema.py) | JSON schema for structured updates to the knapsack problem settings. |
 | [study_prompts.py](file:///c:/Users/whyhowie/git-repo/mopt-bot/knapsack_problem/study_prompts.py) | LLM instructions for context-aware chat about knapsack optimization. |
 | [brief_seed.py](file:///c:/Users/whyhowie/git-repo/mopt-bot/knapsack_problem/brief_seed.py) | Logic meant to parse a "Problem Brief" into an initial solver configuration. |
+| [study_port.py](file:///c:/Users/whyhowie/git-repo/mopt-bot/knapsack_problem/study_port.py) | `StudyProblemPort` implementation (backend integration point). Returns `extension_ui="none"`, `worker_preference_key=None`, and `locked_companion_fields={}`. |
+| [study_bridge.py](file:///c:/Users/whyhowie/git-repo/mopt-bot/knapsack_problem/study_bridge.py) | Neutral JSON ↔ internal knapsack format translation. |
+
+## 5. Frontend
+
+The `frontend/` subdirectory contains all knapsack-specific React/TypeScript code and is compiled
+as part of the main `frontend/` Vite build via the `@knapsack` path alias.
+
+| File | Description |
+|------|-------------|
+| `frontend/index.ts` | **Module entry point** — exports `MODULE: ProblemModule` consumed by `problemRegistry.ts`. Registers `KnapsackSelectionViz` as the `"knapsack_selection"` viz tab. |
+| `frontend/types.ts` | Re-exports `BaseProblemBlock` as `ProblemBlock` — knapsack uses no problem-specific config fields. |
+| `frontend/serialization.ts` | Re-exports the generic `parseProblemConfig` / `serializeProblemConfig` from `@problemConfig/baseSerialization`. |
+| `frontend/KnapsackSelectionViz.tsx` | Item-selection visualization table. Accepts `{ currentRun: RunResult }` and extracts visualization payload internally. |
+
+### Plugin registry integration
+
+This module is registered in `frontend/src/client/problemRegistry.ts` under the key `"knapsack"`.
+`getProblemModule("knapsack")` returns a `ProblemModule` descriptor with:
+- `vizTabs` → `[{ id: "knapsack_selection", label: "Item Selection", component: KnapsackSelectionViz }]`
+
+This problem uses `extension_ui = "none"` — no `buildGoalTermsExtension` is provided, and no
+`ViolationSummary` is registered. Weight labels and display order are provided entirely through the
+backend's `GET /meta/test-problems` response.
+
+If knapsack-specific config UI is ever needed, add a `KnapsackExtras.tsx` that exports
+`buildKnapsackGoalTermsExtension(...): GoalTermsExtension`, and wire it through `index.ts`.

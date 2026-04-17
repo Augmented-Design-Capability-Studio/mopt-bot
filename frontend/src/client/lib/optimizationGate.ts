@@ -1,6 +1,6 @@
 import type { ProblemBrief, Session, TestProblemMeta } from "@shared/api";
 
-import { parseProblemConfig } from "../problemConfig/serialization";
+import { parseBaseProblemConfig } from "@problemConfig/baseSerialization";
 
 /**
  * Matches backend `optimization_gate.intrinsic_optimization_ready_demo`:
@@ -35,7 +35,7 @@ export function intrinsicOptimizationReadyAgile(
   weightDisplayKeys: readonly string[],
   workerPreferenceKey: string | null,
 ): boolean {
-  const { problem } = parseProblemConfig(configText);
+  const { outerRaw, hasProblemKey, problem } = parseBaseProblemConfig(configText);
   const weights = problem.weights;
   const algo = (problem.algorithm ?? "").trim();
 
@@ -47,7 +47,10 @@ export function intrinsicOptimizationReadyAgile(
   let showWorkerBlock = false;
   if (workerPreferenceKey !== null) {
     const hasWorkerWeight = workerPreferenceKey in weights;
-    showWorkerBlock = hasWorkerWeight || problem.driver_preferences.length > 0;
+    // driver_preferences is VRPTW-specific; access via raw JSON to stay problem-agnostic
+    const inner = (hasProblemKey ? outerRaw.problem : outerRaw) as Record<string, unknown>;
+    const hasDriverPrefs = Array.isArray(inner.driver_preferences) && inner.driver_preferences.length > 0;
+    showWorkerBlock = hasWorkerWeight || hasDriverPrefs;
   }
 
   const displayWeightKeys = weightDisplayKeys.filter((k) => {
