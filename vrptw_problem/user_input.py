@@ -21,7 +21,7 @@ DEFAULT_WEIGHTS = {
     "w5": 10.0,     # drive+service time variance across vehicles (excludes idle pre-window wait)
     "w6": 1.0,      # driver preference penalties
     "w7": 100.0,    # per express order late
-    "w8": 0.0,      # early-arrival excess: minutes a driver arrives more than early_arrival_threshold_min before window open (off by default)
+    "w8": 0.0,      # idle wait time: total minutes a driver waits before window open (off by default)
 }
 
 # Driver preference rules (preference cost units before w6; not travel-time minutes):
@@ -35,8 +35,7 @@ DEFAULT_DRIVER_PREFERENCES = [
 
 # Base platform constraints (unless overridden by problem configuration)
 DEFAULT_MAX_SHIFT_HOURS = 8.0              # hours
-DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN = 30.0 # minutes grace before w8 penalty applies
-DEFAULT_EARLY_ARRIVAL_PENALTY = 100.0      # auto w8 value when early_arrival_threshold_min is set without explicit waiting_time weight
+DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN = 0.0  # deprecated; all wait treated as idle time
 SHIFT_HARD_PENALTY = 5000.0               # Deprecated alias to prevent ImportError
 
 DEFAULT_USER_CONFIG_PATH = Path(__file__).parent / "data" / "user_config.json"

@@ -18,7 +18,8 @@
       "Bash(.venv/Scripts/python -m pytest backend/ knapsack_problem/tests/ -x -q)",
       "Bash(sed -n '100,115p' /c/Users/whyhowie/git-repo/mopt-bot/frontend/src/shared/api.ts)",
       "Bash(sed -n '330,410p' /c/Users/whyhowie/git-repo/mopt-bot/frontend/src/shared/api.ts)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(python -m pytest backend/tests/test_problem_config_seed.py -x -q)"
     ]
   }
 }

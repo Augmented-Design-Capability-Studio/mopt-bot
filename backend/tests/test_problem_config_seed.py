@@ -182,7 +182,7 @@ def test_seed_requires_explicit_early_arrival_language_for_waiting_time():
     assert panel is not None
     problem = panel["problem"]
     assert problem["weights"]["waiting_time"] == 100.0
-    assert problem["early_arrival_threshold_min"] == 30.0
+    assert "early_arrival_threshold_min" not in problem
 
 
 def test_seed_ignores_numeric_goal_summary_for_weights():

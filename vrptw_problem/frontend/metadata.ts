@@ -39,9 +39,9 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
       "Penalizes each express (or emphasized priority) order delivered after its deadline window. Higher values protect SLA-style orders.",
   },
   waiting_time: {
-    label: "Early Arrival / Wait Time",
+    label: "Idle Wait Time",
     description:
-      "Penalizes each excess minute a driver arrives too early. Use only for explicit early-arrival or grace-period constraints, and configure the grace-period threshold below.",
+      "Penalizes total idle minutes a driver waits before a time window opens. Use this to minimize schedule slack and discourage routes where drivers arrive far ahead of their service window.",
   },
 };
 
@@ -52,11 +52,11 @@ const MAX_SHIFT_HOURS_INFO = {
     "The maximum allowed duration for a driver's shift (including travel and service time). Exceeding this triggers the penalty weight above.",
 } as const;
 
-/** Metadata for the early-arrival grace-period threshold. */
+/** @deprecated early_arrival_threshold_min is no longer applied; kept for legacy UI references. */
 const EARLY_ARRIVAL_THRESHOLD_INFO = {
-  label: "Early Arrival Threshold",
+  label: "Early Arrival Threshold (deprecated)",
   description:
-    "Grace period in minutes. Drivers arriving within this window before a time window opens are not penalised; only arrivals beyond this threshold accumulate the early-arrival penalty above.",
+    "This field is no longer used. All wait time is penalized uniformly via the Idle Wait Time weight above.",
 } as const;
 
 const CONDITION_LABEL: Record<string, string> = {

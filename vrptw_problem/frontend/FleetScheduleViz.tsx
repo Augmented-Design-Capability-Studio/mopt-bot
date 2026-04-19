@@ -36,11 +36,7 @@ export function FleetScheduleViz({ currentRun }: ProblemVizProps) {
   const wpw = Number(runWeights.worker_preference);
   const schedulePreferencesActive = driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
   const scheduleEarlyArrivalActive =
-    runProblem.early_arrival_threshold_min != null ||
-    (Number.isFinite(Number(runWeights.waiting_time)) && Number(runWeights.waiting_time) > 0);
-  const earlyArrivalThresholdMin = Number.isFinite(Number(runProblem.early_arrival_threshold_min))
-    ? Number(runProblem.early_arrival_threshold_min)
-    : 30;
+    Number.isFinite(Number(runWeights.waiting_time)) && Number(runWeights.waiting_time) > 0;
 
   const schedule = currentResult?.schedule;
   if (!schedule) {
@@ -52,7 +48,6 @@ export function FleetScheduleViz({ currentRun }: ProblemVizProps) {
       schedule={schedule}
       schedulePreferencesActive={schedulePreferencesActive}
       scheduleEarlyArrivalActive={scheduleEarlyArrivalActive}
-      earlyArrivalThresholdMin={earlyArrivalThresholdMin}
       visualization={currentResult?.visualization ?? null}
     />
   );
@@ -62,7 +57,6 @@ type FleetScheduleVizInnerProps = {
   schedule: NonNullable<NonNullable<import("@shared/api").RunResult["result"]>["schedule"]>;
   schedulePreferencesActive: boolean;
   scheduleEarlyArrivalActive: boolean;
-  earlyArrivalThresholdMin: number;
   visualization: RunVisualization | null | undefined;
 };
 
@@ -70,7 +64,6 @@ function FleetScheduleVizInner({
   schedule,
   schedulePreferencesActive,
   scheduleEarlyArrivalActive,
-  earlyArrivalThresholdMin,
 }: FleetScheduleVizInnerProps) {
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
@@ -150,7 +143,7 @@ function FleetScheduleVizInner({
       <div className="run-timeline-legend muted">
         <span className="timeline-legend-item">
           <span className="timeline-legend-swatch service" />
-          Drive &amp; service (blue) · Wait (white)
+          Drive &amp; service (blue) · Gaps = driver free time (departs later)
         </span>
         <span className="timeline-legend-item">
           <span className="timeline-legend-swatch tw-miss" />
@@ -172,8 +165,7 @@ function FleetScheduleVizInner({
         ) : null}
         {scheduleEarlyArrivalActive ? (
           <span className="timeline-legend-item">
-            <span className="timeline-legend-swatch wait" />
-            Pre-window wait time
+            Total idle wait penalized (w8)
           </span>
         ) : null}
       </div>
@@ -207,15 +199,11 @@ function FleetScheduleVizInner({
                   const ctxKey = `${stop.vehicle_index}:${stop.task_index ?? stop.task_id}`;
                   const driveMinutes = stopContext.get(ctxKey)?.driveMinutes ?? 0;
                   const waitMinutes = stop.wait_minutes ?? 0;
-                  const totalBlockMin = driveMinutes + (stop.departure_minutes - stop.arrival_minutes);
-                  const barStartMinutes = stop.arrival_minutes - driveMinutes;
+                  // Shift block start forward by wait time: driver departs later, arrives at window open
+                  const barStartMinutes = stop.arrival_minutes - driveMinutes + waitMinutes;
+                  const adjustedBlockMin = driveMinutes + (stop.departure_minutes - stop.arrival_minutes) - waitMinutes;
                   const leftPct = ((barStartMinutes - start) / duration) * 100;
-                  const widthPct = Math.max((totalBlockMin / duration) * 100, 2);
-                  const driveFraction = totalBlockMin > 0 ? driveMinutes / totalBlockMin : 0;
-                  const waitFraction =
-                    waitMinutes > 0 && totalBlockMin > 0
-                      ? Math.min(1 - driveFraction, waitMinutes / totalBlockMin)
-                      : 0;
+                  const widthPct = Math.max((adjustedBlockMin / duration) * 100, 2);
                   const selected =
                     selectedStop != null &&
                     selectedStop.vehicle_index === stop.vehicle_index &&
@@ -241,17 +229,8 @@ function FleetScheduleVizInner({
                           `${stop.vehicle_index}:${stop.task_index ?? stop.task_id}`,
                         )
                       }
-                      title={`${stop.task_id} · ${formatClock(stop.arrival_minutes)}-${formatClock(stop.departure_minutes)}`}
+                      title={`${stop.task_id} · ${formatClock(stop.arrival_minutes + waitMinutes)}-${formatClock(stop.departure_minutes)}`}
                     >
-                      {waitFraction > 0 && (
-                        <span
-                          className="stop-bar-wait-stripe"
-                          style={{
-                            left: `${driveFraction * 100}%`,
-                            width: `${waitFraction * 100}%`,
-                          }}
-                        />
-                      )}
                       <span style={{ position: "relative", zIndex: 1 }}>{stopLabel(stop)}</span>
                     </button>
                   );
@@ -283,13 +262,13 @@ function FleetScheduleVizInner({
                 {formatClock(selectedStop.arrival_minutes + (selectedStop.wait_minutes ?? 0))} -{" "}
                 {formatClock(selectedStop.departure_minutes)}
               </div>
-              <div>arrival</div>
-              <div>{formatClock(selectedStop.arrival_minutes)}</div>
+              <div>arrival (adjusted)</div>
+              <div>{formatClock(selectedStop.window_open_minutes)}</div>
               <div>window</div>
               <div>
                 {formatClock(selectedStop.window_open_minutes)} - {formatClock(selectedStop.window_close_minutes)}
               </div>
-              <div>drive / wait / service</div>
+              <div>drive / free / service</div>
               <div>
                 {(
                   stopContext.get(`${selectedStop.vehicle_index}:${selectedStop.task_index ?? selectedStop.task_id}`)
@@ -314,9 +293,8 @@ function FleetScheduleVizInner({
                   schedulePreferencesActive && stopPreferenceHit(selectedStop)
                     ? `preference +${(selectedStop.preference_penalty_units ?? 0).toFixed(1)} units`
                     : "",
-                  scheduleEarlyArrivalActive &&
-                  Math.max(0, (selectedStop.wait_minutes ?? 0) - earlyArrivalThresholdMin) > 0
-                    ? `early +${Math.max(0, (selectedStop.wait_minutes ?? 0) - earlyArrivalThresholdMin).toFixed(0)}m excess`
+                  scheduleEarlyArrivalActive && (selectedStop.wait_minutes ?? 0) > 0
+                    ? `idle ${(selectedStop.wait_minutes ?? 0).toFixed(0)}m`
                     : "",
                 ]
                   .filter(Boolean)

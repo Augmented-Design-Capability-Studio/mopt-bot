@@ -532,7 +532,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     """
     ensure_vrptw_on_path()
     from vrptw_problem.optimizer import EARLY_STOP_DEFAULT_EPSILON, EARLY_STOP_DEFAULT_PATIENCE
-    from vrptw_problem.user_input import DEFAULT_EARLY_ARRIVAL_PENALTY, DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN, DEFAULT_MAX_SHIFT_HOURS, build_weights
+    from vrptw_problem.user_input import DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN, DEFAULT_MAX_SHIFT_HOURS, build_weights
 
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
     # Default to explicit-only objective scoring when the field is omitted.
@@ -550,10 +550,6 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
 
     eat_raw = raw.get("early_arrival_threshold_min")
     early_arrival_threshold_min = float(eat_raw) if eat_raw is not None else DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN
-    # When an early-arrival threshold is explicitly provided and w8 is still zero
-    # (user never set waiting_time directly), activate the penalty automatically.
-    if eat_raw is not None and weights.get("w8", 0.0) == 0.0:
-        weights["w8"] = DEFAULT_EARLY_ARRIVAL_PENALTY
 
     locked = _validate_locked_assignments(raw.get("locked_assignments"))
 

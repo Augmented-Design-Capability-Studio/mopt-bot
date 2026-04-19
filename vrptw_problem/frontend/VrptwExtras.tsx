@@ -763,19 +763,7 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
           </Fragment>
         ),
       },
-      waiting_time: {
-        appendAfterRow: () => (
-          <EarlyArrivalThresholdDetails
-            problem={problem}
-            editable={p.editable}
-            markerKindFor={p.markerKindFor}
-            updateProblem={p.updateProblem}
-            runEditingAction={p.runEditingAction}
-            ensureEditing={p.ensureEditing}
-            rememberRemovedGoalTerm={p.rememberRemovedGoalTerm}
-          />
-        ),
-      },
+      waiting_time: {},
       shift_limit: {
         appendAfterRow: () => (
           <MaxShiftHoursDetails

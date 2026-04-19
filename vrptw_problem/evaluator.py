@@ -180,8 +180,7 @@ def simulate_routes(
         weights: Weight dict (w1..w8). Partial dicts supported; missing keys use 0.
         driver_preferences: List of rule dicts. Default [] (no driver penalties).
         max_shift_hours: Threshold in hours beyond which w2 penalty applies.
-        early_arrival_threshold_min: Grace period in minutes before w8 penalty kicks in.
-            Arrivals within this many minutes early are free; only the excess is penalised.
+        early_arrival_threshold_min: Deprecated — no longer applied. All wait minutes count toward w8.
 
     Returns:
         (total_cost, metrics_dict, visits_per_vehicle)
@@ -252,8 +251,7 @@ def simulate_routes(
             rm.driver_penalty += pv
 
             wait_minutes = max(0.0, float(order.time_window_open) - arrival)
-            # Only penalise early arrivals that exceed the grace period threshold.
-            rm.total_wait_time += max(0.0, wait_minutes - early_arrival_threshold_min)
+            rm.total_wait_time += wait_minutes
 
             rm.visits.append(VisitRecord(
                 vehicle_id=vehicle.vehicle_id,

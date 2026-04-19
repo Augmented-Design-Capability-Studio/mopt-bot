@@ -72,9 +72,8 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         "early_arrival_threshold_min": {
             "type": "number",
             "description": (
-                "Early-arrival limit in minutes: drivers must not arrive more than this many minutes "
-                "before a time window opens. Use this only when the brief explicitly mentions arriving too early "
-                "or a grace period. When set, the backend automatically applies an internal penalty for violations. Default 30."
+                "Deprecated — no longer applies a grace period. All wait time is now penalized via the "
+                "waiting_time weight (w8) with no threshold. Omit this field; set waiting_time instead."
             ),
         },
         "locked_assignments": {
