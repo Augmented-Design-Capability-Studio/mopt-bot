@@ -237,6 +237,7 @@ export function ParticipantShell({
             chatAttentionKey={chatAttentionKey}
             fileRef={fileRef}
             simulatedUploadChips={simulatedUploadChips}
+            problemId={session?.test_problem_id ?? undefined}
             onInvokeModelChange={onInvokeModelChange}
             onChatInputChange={onChatInputChange}
             onSendChat={onSendChat}

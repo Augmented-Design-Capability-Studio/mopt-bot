@@ -1,0 +1,6 @@
+driver_id,name,capacity,start_zone,shift_start,max_hours
+0,Alice,22,Depot,08:00,8.0
+1,Bob,20,Depot,08:00,8.0
+2,Carol,20,Depot,09:00,8.0
+3,Dave,22,Depot,08:00,8.0
+4,Eve,20,Zone E (Northgate),09:30,8.0

@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
+const _removedChipsKey = (sid: string) => `mopt_removed_chips_${sid}`;
+function _loadRemovedChips(sid: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(_removedChipsKey(sid));
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch { return new Set(); }
+}
+function _saveRemovedChip(sid: string, name: string): void {
+  try {
+    const s = _loadRemovedChips(sid);
+    s.add(name);
+    sessionStorage.setItem(_removedChipsKey(sid), JSON.stringify([...s]));
+  } catch { /* ignore */ }
+}
+function _clearRemovedChips(sid: string): void {
+  try { sessionStorage.removeItem(_removedChipsKey(sid)); } catch { /* ignore */ }
+}
+
 import {
   createSessionSnapshotBookmark,
   fetchSnapshots,
@@ -194,9 +212,12 @@ export function useParticipantController() {
     setParticipantOps(DEFAULT_PARTICIPANT_OPS_STATE);
     setSimulatedUploadChips([]);
     processedUploadMessageIdsRef.current = new Set();
+    if (sessionId) _clearRemovedChips(sessionId);
   }, [sessionId]);
 
   useEffect(() => {
+    if (!sessionId) return;
+    const removed = _loadRemovedChips(sessionId);
     for (const m of messages) {
       if (m.role !== "user" || processedUploadMessageIdsRef.current.has(m.id)) continue;
       const names = parseFilenamesFromSimulatedUploadMessage(m.content);
@@ -205,16 +226,17 @@ export function useParticipantController() {
       setSimulatedUploadChips((prev) => {
         const next = [...prev];
         for (const n of names) {
-          if (!next.includes(n)) next.push(n);
+          if (!next.includes(n) && !removed.has(n)) next.push(n);
         }
         return next;
       });
     }
-  }, [messages]);
+  }, [messages, sessionId]);
 
   const removeSimulatedUploadChip = useCallback((fileName: string) => {
+    if (sessionId) _saveRemovedChip(sessionId, fileName);
     setSimulatedUploadChips((prev) => prev.filter((n) => n !== fileName));
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     const p = session?.participant_number?.trim();

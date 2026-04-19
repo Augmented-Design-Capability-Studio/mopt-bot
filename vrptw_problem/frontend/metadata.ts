@@ -52,13 +52,6 @@ const MAX_SHIFT_HOURS_INFO = {
     "The maximum allowed duration for a driver's shift (including travel and service time). Exceeding this triggers the penalty weight above.",
 } as const;
 
-/** @deprecated early_arrival_threshold_min is no longer applied; kept for legacy UI references. */
-const EARLY_ARRIVAL_THRESHOLD_INFO = {
-  label: "Early Arrival Threshold (deprecated)",
-  description:
-    "This field is no longer used. All wait time is penalized uniformly via the Idle Wait Time weight above.",
-} as const;
-
 const CONDITION_LABEL: Record<string, string> = {
   zone_d: "avoid zone D (Westgate) stops",
   avoid_zone: "avoid a delivery zone (set zone A–E)",
@@ -82,7 +75,6 @@ const PREFERENCE_CONDITIONS = [
 
 export {
   CONDITION_LABEL,
-  EARLY_ARRIVAL_THRESHOLD_INFO,
   MAX_SHIFT_HOURS_INFO,
   PREFERENCE_CONDITIONS,
   WEIGHT_INFO,

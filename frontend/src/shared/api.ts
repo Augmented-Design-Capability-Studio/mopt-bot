@@ -90,6 +90,25 @@ export async function fetchPublicConfig(): Promise<PublicConfig> {
 }
 
 
+/** Fetch filenames available in a problem's upload folder (no auth required). Falls back to []. */
+export async function fetchProblemFiles(problemId: string): Promise<string[]> {
+  const url = buildApiUrl(`/meta/problem-files/${encodeURIComponent(problemId)}`);
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.files) ? (data.files as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Build a download URL for a problem upload file (no auth required). */
+export function buildProblemFileUrl(problemId: string, filename: string): string {
+  return buildApiUrl(`/meta/problem-files/${encodeURIComponent(problemId)}/${encodeURIComponent(filename)}`);
+}
+
+
 export type WeightDefinitionMeta = {
   key: string;
   label: string;

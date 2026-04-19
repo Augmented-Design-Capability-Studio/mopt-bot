@@ -69,7 +69,6 @@ All available fields under `"problem"`:
   - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
   - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
 - `"max_shift_hours"`: numeric threshold (e.g. 8.0) beyond which `shift_limit` penalty applies.
-- `"early_arrival_threshold_min"`: deprecated — no longer applies a grace period. Omit this field; use only `waiting_time` to penalize idle wait time.
 - `"locked_assignments"`: object mapping task index (string) to vehicle index (int),
   e.g. `{"6": 0}` forces task 6 onto vehicle 0.
 - `"algorithm"`: one of `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"`.
@@ -127,7 +126,7 @@ Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
 - For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, max_shift_hours,
-  early_arrival_threshold_min, driver_preferences, locked_assignments, only_active_terms, early_stop fields,
+  driver_preferences, locked_assignments, only_active_terms, early_stop fields,
   use_greedy_init), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
@@ -140,7 +139,7 @@ Rules:
   Use a default of 8.0 if a limit is mentioned without a specific duration.
   Default `shift_limit` weight to 500.0 if the user asks for a strict limit.
 - Early arrival / arrive-too-early / idle wait → `waiting_time` weight (default 100.0).
-  Emit whenever the user discusses early arrival, excessive waiting, or a "cannot arrive too early" constraint. Do not emit `early_arrival_threshold_min`.
+  Emit whenever the user discusses early arrival, excessive waiting, or a "cannot arrive too early" constraint.
 - When the brief names worker-specific soft preferences, emit "driver_preferences" with
   vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
   shift_over_limit (or legacy zone_d, express_order, shift_over_hours); include "limit_minutes" or

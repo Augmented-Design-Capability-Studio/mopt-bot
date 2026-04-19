@@ -34,9 +34,8 @@ DEFAULT_DRIVER_PREFERENCES = [
 ]
 
 # Base platform constraints (unless overridden by problem configuration)
-DEFAULT_MAX_SHIFT_HOURS = 8.0              # hours
-DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN = 0.0  # deprecated; all wait treated as idle time
-SHIFT_HARD_PENALTY = 5000.0               # Deprecated alias to prevent ImportError
+DEFAULT_MAX_SHIFT_HOURS = 8.0  # hours
+SHIFT_HARD_PENALTY = 5000.0    # Deprecated alias to prevent ImportError
 
 DEFAULT_USER_CONFIG_PATH = Path(__file__).parent / "data" / "user_config.json"
 
@@ -154,16 +153,9 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
                 weights, locked, driver_prefs
             )
 
-        eat = data.get("early_arrival_threshold_min")
-        if eat is None:
-            eat = DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN
-        else:
-            eat = float(eat)
-
         return {
             "weights": weights,
             "max_shift_hours": msh,
-            "early_arrival_threshold_min": eat,
             "driver_preferences": driver_prefs,
             "locked_assignments": locked,
             "algorithm": data.get("algorithm", "GA"),
@@ -176,7 +168,6 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
     return {
         "weights": dict(DEFAULT_WEIGHTS),
         "max_shift_hours": DEFAULT_MAX_SHIFT_HOURS,
-        "early_arrival_threshold_min": DEFAULT_EARLY_ARRIVAL_THRESHOLD_MIN,
         "driver_preferences": [],
         "locked_assignments": {},
         "algorithm": "GA",

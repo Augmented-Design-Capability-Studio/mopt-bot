@@ -502,6 +502,17 @@ select:focus-visible {
   min-width: 0;
 }
 
+.chat-upload-chip-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.chat-upload-chip-link:hover {
+  text-decoration: underline;
+  color: var(--accent, #1a73e8);
+}
+
 .chat-upload-chip-remove {
   flex-shrink: 0;
   line-height: 1;

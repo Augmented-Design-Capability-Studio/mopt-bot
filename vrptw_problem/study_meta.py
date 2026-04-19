@@ -21,12 +21,12 @@ VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
     (
         "priority_penalty",
         "Express & priority deadlines",
-        "Per late express (or emphasized priority) order after its window close — protects SLA-style orders.",
+        "Per late express (or emphasized priority) order after its window close.",
     ),
     (
         "waiting_time",
-        "Early Arrival / Wait Time",
-        "Explicit early-arrival grace-period penalty only; per excess minute a driver arrives too early (configure threshold below).",
+        "Idle Wait Time",
+        "Penalty per idle minute a driver waits before a time window opens.",
     ),
 ]
 
@@ -36,7 +36,7 @@ def weight_item_labels() -> dict[str, str]:
 
 
 # Ordered weight keys that count toward the agile gate ("at least one goal term").
-# ``waiting_time`` is intentionally omitted: it is a threshold-driven penalty that should
+# ``waiting_time`` is intentionally omitted: it penalizes idle wait time but should
 # not independently satisfy the gate without a primary routing or delivery objective.
 VRPTW_WEIGHT_DISPLAY_KEYS: tuple[str, ...] = (
     "travel_time",
@@ -130,10 +130,13 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "arrives early",
             "arriving early",
             "arrived early",
+            "idle wait",
+            "idle time",
+            "waiting time",
+            "wait before window",
             "early dwell",
             "dwell before window",
             "pre-window",
             "too early",
-            "grace period",
         ),
     }

@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 
 import type { Message } from "@shared/api";
+import { buildProblemFileUrl } from "@shared/api";
 import { ChatAiPendingBubble, ChatPanel } from "@shared/chat/ChatPanel";
 import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
 
@@ -17,6 +18,7 @@ type ChatSectionProps = {
   chatAttentionKey?: string | number;
   fileRef: RefObject<HTMLInputElement>;
   simulatedUploadChips: string[];
+  problemId?: string;
   onInvokeModelChange: (value: boolean) => void;
   onChatInputChange: (value: string) => void;
   onSendChat: () => void | Promise<void>;
@@ -35,6 +37,7 @@ export function ChatSection({
   chatAttentionKey,
   fileRef,
   simulatedUploadChips,
+  problemId,
   onInvokeModelChange,
   onChatInputChange,
   onSendChat,
@@ -85,20 +88,34 @@ export function ChatSection({
             Upload file(s)...
           </button>
           <div className="chat-upload-chips" aria-label="Simulated uploads">
-            {simulatedUploadChips.map((name) => (
-              <span key={name} className="chat-upload-chip" title={name}>
-                <span className="chat-upload-chip-name">{name}</span>
-                <button
-                  type="button"
-                  className="chat-upload-chip-remove"
-                  aria-label={`Remove ${name} from upload list`}
-                  disabled={editMode !== "none" || chatLocked}
-                  onClick={() => onRemoveSimulatedUploadChip(name)}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+            {simulatedUploadChips.map((name) => {
+              const downloadUrl = problemId ? buildProblemFileUrl(problemId, name) : null;
+              return (
+                <span key={name} className="chat-upload-chip" title={name}>
+                  {downloadUrl ? (
+                    <a
+                      href={downloadUrl}
+                      download={name}
+                      className="chat-upload-chip-name chat-upload-chip-link"
+                      title={`Download ${name}`}
+                    >
+                      {name}
+                    </a>
+                  ) : (
+                    <span className="chat-upload-chip-name">{name}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="chat-upload-chip-remove"
+                    aria-label={`Remove ${name} from upload list`}
+                    disabled={editMode !== "none" || chatLocked}
+                    onClick={() => onRemoveSimulatedUploadChip(name)}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
           </div>
         </div>
       }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   apiFetch,
   displayRunNumber,
+  fetchProblemFiles,
   fetchTestProblemsMeta,
   type Message,
   type RunResult,
@@ -302,9 +303,12 @@ export function useResearcherController() {
     detailPollGen.current += 1;
     setBusy(true);
     try {
+      const problemId = detail?.test_problem_id ?? "vrptw";
+      const availableFiles = await fetchProblemFiles(problemId);
+      const fileNames = availableFiles.length > 0 ? availableFiles : undefined;
       await apiFetch(`/sessions/${selected}/researcher/simulate-participant-upload`, savedToken.trim(), {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ invoke_model: true, ...(fileNames ? { file_names: fileNames } : {}) }),
       });
       await loadDetail();
       await refreshList();

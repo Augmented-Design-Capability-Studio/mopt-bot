@@ -85,7 +85,6 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
       pop_size: typeof inner.pop_size === "number" ? inner.pop_size : null,
       random_seed: typeof inner.random_seed === "number" ? inner.random_seed : null,
       max_shift_hours: typeof inner.max_shift_hours === "number" ? inner.max_shift_hours : null,
-      early_arrival_threshold_min: typeof inner.early_arrival_threshold_min === "number" ? inner.early_arrival_threshold_min : null,
       locked_assignments:
         inner.locked_assignments !== null &&
         typeof inner.locked_assignments === "object" &&
@@ -129,8 +128,7 @@ export function serializeProblemConfig(
   else delete problemObject.random_seed;
   if (problem.max_shift_hours !== null) problemObject.max_shift_hours = problem.max_shift_hours;
   else delete problemObject.max_shift_hours;
-  if (problem.early_arrival_threshold_min !== null) problemObject.early_arrival_threshold_min = problem.early_arrival_threshold_min;
-  else delete problemObject.early_arrival_threshold_min;
+  delete problemObject.early_arrival_threshold_min;
 
   if (!problem.use_greedy_init) problemObject.use_greedy_init = false;
   else delete problemObject.use_greedy_init;

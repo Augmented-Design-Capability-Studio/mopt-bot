@@ -168,7 +168,6 @@ def simulate_routes(
     weights: dict,
     driver_preferences: Optional[list[dict]] = None,
     max_shift_hours: float = 8.0,
-    early_arrival_threshold_min: float = 30.0,
 ) -> tuple[float, dict, list[list[VisitRecord]]]:
     """
     Simulate route execution and compute cost components.
@@ -180,7 +179,6 @@ def simulate_routes(
         weights: Weight dict (w1..w8). Partial dicts supported; missing keys use 0.
         driver_preferences: List of rule dicts. Default [] (no driver penalties).
         max_shift_hours: Threshold in hours beyond which w2 penalty applies.
-        early_arrival_threshold_min: Deprecated — no longer applied. All wait minutes count toward w8.
 
     Returns:
         (total_cost, metrics_dict, visits_per_vehicle)
@@ -348,7 +346,6 @@ def evaluate_solution(
     locked_assignments: Optional[dict[int, int]] = None,
     driver_preferences: Optional[list[dict]] = None,
     max_shift_hours: float = 8.0,
-    early_arrival_threshold_min: float = 30.0,
 ) -> tuple[float, dict, list[list[VisitRecord]]]:
     """
     Decode position vector, simulate routes, and return cost + metrics.
@@ -361,7 +358,6 @@ def evaluate_solution(
         locked_assignments: Optional {order_idx: vehicle_idx}.
         driver_preferences: Optional list of rule dicts.
         max_shift_hours: Threshold in hours beyond which w2 penalty applies.
-        early_arrival_threshold_min: Grace period before w8 early-arrival penalty applies.
 
     Returns:
         (cost, metrics, visits_per_vehicle)
@@ -377,5 +373,4 @@ def evaluate_solution(
         weights,
         driver_preferences=driver_preferences,
         max_shift_hours=max_shift_hours,
-        early_arrival_threshold_min=early_arrival_threshold_min,
     )

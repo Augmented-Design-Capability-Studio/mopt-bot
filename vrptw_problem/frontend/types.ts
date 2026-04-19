@@ -19,7 +19,6 @@ export type DriverPref = {
 
 export type ProblemBlock = BaseProblemBlock & {
   max_shift_hours: number | null;
-  early_arrival_threshold_min: number | null;
   /** Fixed task-index → vehicle-index assignments (override decoded routes). */
   locked_assignments: Record<string, number>;
   driver_preferences: DriverPref[];

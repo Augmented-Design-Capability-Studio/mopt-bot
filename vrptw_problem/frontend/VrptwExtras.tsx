@@ -3,7 +3,7 @@
  *
  * Exports `buildVrptwGoalTermsExtension(props)` which returns a GoalTermsExtension
  * consumed by the generic GoalTermsSection. This keeps all VRPTW-specific rendering
- * (driver preferences, max-shift threshold, early-arrival threshold, locked assignments)
+ * (driver preferences, max-shift threshold, locked assignments)
  * and all VRPTW-specific state mutations co-located with the vrptw_problem module.
  *
  * ProblemConfigBlocks passes only generic props (configJson, editable, callbacks) —
@@ -19,7 +19,6 @@ import { ConfigNumberInput, ConfigSelect, type ActivateHint } from "@problemConf
 import { FieldRow } from "@problemConfig/layout";
 
 import {
-  EARLY_ARRIVAL_THRESHOLD_INFO,
   MAX_SHIFT_HOURS_INFO,
   PREFERENCE_CONDITIONS,
   WORKER_NAMES,
@@ -88,16 +87,6 @@ type WorkerPreferenceExtrasProps = {
   updatePreferenceAt: (index: number, pref: DriverPref) => void;
   removePreference: (index: number) => void;
   addPreference: () => void;
-};
-
-type EarlyArrivalThresholdDetailsProps = {
-  problem: ProblemBlock;
-  editable: boolean;
-  markerKindFor: (key: string) => MarkerKind | null;
-  updateProblem: (patch: Record<string, unknown>) => void;
-  runEditingAction: (action: () => void, event?: ActivateHint) => void;
-  ensureEditing: (event?: ActivateHint) => void;
-  rememberRemovedGoalTerm: (entry: RemovedGoalTermEntry) => void;
 };
 
 type MaxShiftHoursDetailsProps = {
@@ -318,121 +307,6 @@ function WorkerPreferenceExtras({
   );
 }
 
-function EarlyArrivalThresholdDetails({
-  problem,
-  editable,
-  markerKindFor,
-  updateProblem,
-  runEditingAction,
-  ensureEditing,
-  rememberRemovedGoalTerm,
-}: EarlyArrivalThresholdDetailsProps) {
-  if (problem.early_arrival_threshold_min === null) return null;
-
-  return (
-    <details className="driver-pref-details" open>
-      <summary
-        style={{
-          cursor: "pointer",
-          fontWeight: 600,
-          fontSize: "0.82rem",
-          userSelect: "none",
-        }}
-      >
-        <span className="field-row-label">
-          {EARLY_ARRIVAL_THRESHOLD_INFO.label} threshold
-          {markerKindFor("field:early_arrival_threshold_min") ? (
-            <span
-              className={`entry-diff-marker ${markerKindFor("field:early_arrival_threshold_min") === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-              title={markerKindFor("field:early_arrival_threshold_min") === "new" ? "New agent update" : "Updated by agent"}
-              aria-label={markerKindFor("field:early_arrival_threshold_min") === "new" ? "New agent update" : "Updated by agent"}
-            >
-              {markerKindFor("field:early_arrival_threshold_min") === "new" ? "+" : "Δ"}
-            </span>
-          ) : null}
-        </span>
-      </summary>
-      <div className="driver-pref-peek muted" aria-hidden>
-        {problem.early_arrival_threshold_min} minutes
-      </div>
-      <div style={{ marginTop: "0.4rem", marginBottom: "0.4rem" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: "0.6rem",
-            padding: "0.4rem 0",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{EARLY_ARRIVAL_THRESHOLD_INFO.label}</div>
-            <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
-              {EARLY_ARRIVAL_THRESHOLD_INFO.description}
-            </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
-            <div className="definition-inline-actions" style={{ marginBottom: "0.2rem" }}>
-              <button
-                type="button"
-                className="definition-icon-btn"
-                title={problem.locked_goal_terms.includes("early_arrival_threshold_min") ? "Unlock this goal term" : "Lock this goal term"}
-                aria-label={problem.locked_goal_terms.includes("early_arrival_threshold_min") ? "Unlock goal term" : "Lock goal term"}
-                onClick={() =>
-                  runEditingAction(() => {
-                    updateProblem({
-                      locked_goal_terms: toggleLockedGoalTerm(problem.locked_goal_terms, "early_arrival_threshold_min"),
-                    });
-                  })
-                }
-              >
-                {problem.locked_goal_terms.includes("early_arrival_threshold_min") ? "🔒" : "🔓"}
-              </button>
-              <button
-                type="button"
-                className="definition-icon-btn definition-remove-btn"
-                title="Remove this goal term"
-                aria-label="Remove goal term"
-                onClick={() =>
-                  runEditingAction(() => {
-                    rememberRemovedGoalTerm({
-                      key: "early_arrival_threshold_min",
-                      value: problem.early_arrival_threshold_min ?? 30,
-                      locked: problem.locked_goal_terms.includes("early_arrival_threshold_min"),
-                      type: "early_arrival_threshold",
-                      fieldName: "early_arrival_threshold_min",
-                    });
-                    updateProblem({
-                      early_arrival_threshold_min: null,
-                      locked_goal_terms: removeLockedGoalTerm(problem.locked_goal_terms, "early_arrival_threshold_min"),
-                    });
-                  })
-                }
-              >
-                X
-              </button>
-            </div>
-            <ConfigNumberInput
-              editable={editable}
-              value={problem.early_arrival_threshold_min}
-              min={0}
-              step={5}
-              onValueChange={(value) => {
-                if (value == null) return;
-                updateProblem({ early_arrival_threshold_min: value });
-              }}
-              onActivate={(hint) => ensureEditing(hint)}
-              focusKey="early-arrival-threshold-min"
-              style={{ width: "4rem", textAlign: "right", fontFamily: "monospace" }}
-            />
-            <span className="muted" style={{ fontSize: "0.7rem", marginTop: "0.1rem" }}>minutes</span>
-          </div>
-        </div>
-      </div>
-    </details>
-  );
-}
-
 function MaxShiftHoursDetails({
   problem,
   editable,
@@ -561,7 +435,7 @@ function VrptwFooterRows({
 }: VrptwFooterRowsProps) {
   const hasHardStructural =
     Object.keys(problem.locked_assignments).length > 0 ||
-    removedGoalTerms.some((e) => e.type === "max_shift" || e.type === "early_arrival_threshold");
+    removedGoalTerms.some((e) => e.type === "max_shift");
 
   if (!hasHardStructural) return null;
 
@@ -593,33 +467,6 @@ function VrptwFooterRows({
             </div>
           </div>
         ))}
-      {removedGoalTerms
-        .filter((entry) => entry.type === "early_arrival_threshold")
-        .map((entry) => (
-          <div
-            key={`removed-${entry.key}`}
-            className="definition-item definition-item-removed"
-            role="button"
-            tabIndex={0}
-            onClick={() => runEditingAction(() => restoreRemovedGoalTerm(entry.key))}
-          >
-            <div className="definition-item-meta">
-              <span className="entry-diff-marker entry-diff-marker--removed">-</span>
-              <span className="muted">{EARLY_ARRIVAL_THRESHOLD_INFO.label} (removed)</span>
-              <button
-                type="button"
-                className="definition-icon-btn definition-restore-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  runEditingAction(() => restoreRemovedGoalTerm(entry.key));
-                }}
-              >
-                R
-              </button>
-            </div>
-          </div>
-        ))}
-
       {Object.keys(problem.locked_assignments).length > 0 && (
         <FieldRow label="Fixed task → worker assignments" markerKind={markerKindFor("field:locked_assignments")}>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
@@ -763,19 +610,7 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
           </Fragment>
         ),
       },
-      waiting_time: {
-        appendAfterRow: () => (
-          <EarlyArrivalThresholdDetails
-            problem={problem}
-            editable={p.editable}
-            markerKindFor={p.markerKindFor}
-            updateProblem={p.updateProblem}
-            runEditingAction={p.runEditingAction}
-            ensureEditing={p.ensureEditing}
-            rememberRemovedGoalTerm={p.rememberRemovedGoalTerm}
-          />
-        ),
-      },
+      waiting_time: {},
       shift_limit: {
         appendAfterRow: () => (
           <MaxShiftHoursDetails

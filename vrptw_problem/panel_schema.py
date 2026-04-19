@@ -12,7 +12,7 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "Only these participant-facing objective keys exist — omit keys the user did not discuss. "
         "Never invent names. Time, distance, fuel, or operating-time language maps to travel_time only. "
         "Shift hours beyond the max_shift_hours limit → shift_limit. "
-        "Early-arrival penalty → waiting_time (penalty weight) paired with early_arrival_threshold_min (grace-period threshold in minutes)."
+        "Idle wait time penalty → waiting_time (penalty per minute a driver waits before a window opens)."
     ),
     "properties": {
         "travel_time": {"type": "number"},
@@ -25,9 +25,8 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "waiting_time": {
             "type": "number",
             "description": (
-                "Penalty per excess minute a driver arrives too early. Use only when the user explicitly "
-                "describes an early-arrival or grace-period constraint; always pair with early_arrival_threshold_min. "
-                "Default 100."
+                "Penalty per idle minute a driver waits before a time window opens (total wait, no grace period). "
+                "Use when the user wants to minimize idle time or schedule slack. Default 100."
             ),
         },
     },
@@ -69,13 +68,6 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
             "items": _DRIVER_PREFERENCE_SCHEMA,
         },
         "max_shift_hours": {"type": "number"},
-        "early_arrival_threshold_min": {
-            "type": "number",
-            "description": (
-                "Deprecated — no longer applies a grace period. All wait time is now penalized via the "
-                "waiting_time weight (w8) with no threshold. Omit this field; set waiting_time instead."
-            ),
-        },
         "locked_assignments": {
             "type": "object",
             "description": "Map task index string to vehicle index integer.",

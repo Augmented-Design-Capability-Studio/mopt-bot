@@ -35,7 +35,7 @@ export type RemovedGoalTermEntry = {
   value: number;
   locked: boolean;
   /** "weight" for standard goal-term rows; problem modules may add their own types. */
-  type: "weight" | "shift" | "max_shift" | "early_arrival_threshold" | string;
+  type: "weight" | "shift" | "max_shift" | string;
   /**
    * For non-"weight" types: the JSON field name to write back when restoring.
    * Set by the problem-module extension; used by ProblemConfigBlocks.restoreRemovedGoalTerm.
