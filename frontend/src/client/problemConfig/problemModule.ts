@@ -50,4 +50,15 @@ export type ProblemModule = {
   vizTabs: ProblemVizTab[];
   /** Optional: problem-specific violation/metric summary rendered above the viz tabs. */
   ViolationSummary?: React.ComponentType<ViolationSummaryProps>;
+  /**
+   * Optional: parse an edited schedule/solution JSON into solver input routes.
+   * Returns null when the JSON is invalid or the problem does not support manual evaluation.
+   * Presence of this method also controls whether the schedule editor is shown.
+   */
+  parseEvalRoutes?: (json: unknown) => number[][] | null;
+  /**
+   * Optional: format a plain-text violation summary from a run result for the AI chat message.
+   * Returns null to omit violation details from the message.
+   */
+  formatRunViolationSummary?: (result: unknown) => string | null;
 };

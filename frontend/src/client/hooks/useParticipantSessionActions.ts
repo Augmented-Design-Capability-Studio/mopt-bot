@@ -20,7 +20,7 @@ import { configChangeSummary } from "../problemConfig/configSummary";
 import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
-import { parseRoutesForSolver } from "@vrptw/schedule";
+import { getProblemModule } from "../problemRegistry";
 import type { ParticipantOpsState } from "../lib/participantOps";
 import { buildSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 
@@ -390,7 +390,7 @@ export function useParticipantSessionActions({
         });
       }
       void refetchSnapshots?.();
-      await syncSession();
+      void syncSession();
       return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : "Save failed");
@@ -614,16 +614,8 @@ export function useParticipantSessionActions({
       void syncMessages();
       void refetchSnapshots?.();
       if (invokeModel && run.ok) {
-        const violations = (run.result as Record<string, unknown> | null | undefined)?.violations as
-          | Record<string, unknown>
-          | undefined;
-        const violationSummary = violations
-          ? [
-              violations.time_window_stop_count ? `${violations.time_window_stop_count} time-window stops late` : "",
-              violations.priority_deadline_misses ? `${violations.priority_deadline_misses} priority misses` : "",
-              violations.capacity_units_over ? `${violations.capacity_units_over} units over capacity` : "",
-            ].filter(Boolean).join(", ") || "no violations"
-          : "unknown";
+        const module = getProblemModule(session?.test_problem_id ?? "");
+        const violationSummary = module.formatRunViolationSummary?.(run.result) ?? "—";
         void postContextMessage(
           `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). Please interpret these results, compare to any previous runs, and suggest what to adjust next.`,
           true,
@@ -663,15 +655,17 @@ export function useParticipantSessionActions({
 
   const runEvaluateEdited = useCallback(async () => {
     if (!token || !sessionId) return;
+    const module = getProblemModule(session?.test_problem_id ?? "");
+    if (!module.parseEvalRoutes) return;
     let routes: number[][] | null;
     try {
-      routes = parseRoutesForSolver(JSON.parse(scheduleText) as unknown);
+      routes = module.parseEvalRoutes(JSON.parse(scheduleText) as unknown);
     } catch {
       setError("Schedule JSON is invalid.");
       return;
     }
-    if (!routes || routes.length !== 5) {
-      setError("Provide five vehicle routes (or neutral route objects from a run).");
+    if (!routes || routes.length === 0) {
+      setError("Schedule JSON did not produce valid routes.");
       return;
     }
     let panel: Record<string, unknown>;
@@ -700,7 +694,7 @@ export function useParticipantSessionActions({
     } finally {
       setBusy(false);
     }
-  }, [configText, refetchSnapshots, scheduleText, sessionId, setActiveRun, setBusy, setError, setRuns, syncMessages, token]);
+  }, [configText, refetchSnapshots, scheduleText, session, sessionId, setActiveRun, setBusy, setError, setRuns, syncMessages, token]);
 
   const saveModelSettings = useCallback(async () => {
     if (!token || !sessionId) return;

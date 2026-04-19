@@ -12,7 +12,8 @@ from app.config import get_settings
 log = logging.getLogger(__name__)
 
 _REGISTRY: dict[str, Any] | None = None
-_DEFAULT_ID = "vrptw"
+DEFAULT_PROBLEM_ID: str = "vrptw"
+_DEFAULT_ID = DEFAULT_PROBLEM_ID
 
 _BUILTIN_REL_DIRS = ("knapsack_problem", "vrptw_problem")
 

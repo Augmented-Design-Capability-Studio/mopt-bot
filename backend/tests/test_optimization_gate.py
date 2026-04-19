@@ -45,13 +45,33 @@ def test_intrinsic_agile_empty_display_keys_falls_back_to_any_weight():
 def test_intrinsic_waterfall_requires_engagement():
     brief = normalize_problem_brief(default_problem_brief())
     assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=False) is False
-    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True) is True
+    assert intrinsic_optimization_ready_waterfall(
+        brief,
+        optimization_gate_engaged=True,
+        panel_config={"problem": {"weights": {"travel_time": 10}}},
+    ) is True
+
+
+def test_intrinsic_waterfall_requires_config_or_strategy():
+    brief = normalize_problem_brief(default_problem_brief())
+    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config=None) is False
+    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config={}) is False
+    assert intrinsic_optimization_ready_waterfall(
+        brief,
+        optimization_gate_engaged=True,
+        panel_config={"problem": {"weights": {"travel_time": 10}}},
+    ) is True
+    assert intrinsic_optimization_ready_waterfall(
+        brief,
+        optimization_gate_engaged=True,
+        panel_config={"problem": {"algorithm": "GA"}},
+    ) is True
 
 
 def test_intrinsic_waterfall_engaged_empty_oq_no_panel_fallback():
     brief = normalize_problem_brief(default_problem_brief())
-    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True) is True
     panel = json.loads(json.dumps({"problem": {"weights": {"travel_time": 10}}}))
+    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config=panel) is True
     assert can_run_optimization("waterfall", False, False, panel, brief, optimization_gate_engaged=True) is True
 
 
@@ -120,7 +140,7 @@ def test_waterfall_participant_sync_sets_true_when_intrinsic_ready():
     row = SimpleNamespace(
         workflow_mode="waterfall",
         test_problem_id="vrptw",
-        panel_config_json=None,
+        panel_config_json=json.dumps({"problem": {"weights": {"travel_time": 10}}}),
         problem_brief_json=json.dumps(brief),
         optimization_allowed=False,
         optimization_gate_engaged=True,
@@ -135,7 +155,7 @@ def test_waterfall_participant_sync_no_op_when_already_allowed_and_ready():
     row = SimpleNamespace(
         workflow_mode="waterfall",
         test_problem_id="vrptw",
-        panel_config_json=None,
+        panel_config_json=json.dumps({"problem": {"weights": {"travel_time": 10}}}),
         problem_brief_json=json.dumps(brief),
         optimization_allowed=True,
         optimization_gate_engaged=True,

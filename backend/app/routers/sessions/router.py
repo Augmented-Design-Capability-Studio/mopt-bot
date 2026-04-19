@@ -16,7 +16,7 @@ from app.auth import Principal, require_any_study_user, require_client, require_
 from app.config import get_settings
 from app.crypto_util import encrypt_secret
 from app.database import get_db
-from app.problems.registry import get_study_port as _get_study_port
+from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
@@ -76,7 +76,7 @@ def create_session(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
         participant_number=helpers.clean_participant_number(body.participant_number),
-        test_problem_id="vrptw",
+        test_problem_id=DEFAULT_PROBLEM_ID,
         status="active",
         panel_config_json=None,
         problem_brief_json=json.dumps(default_problem_brief()),
@@ -256,7 +256,7 @@ def patch_session(
     if body.workflow_mode is not None:
         row.workflow_mode = body.workflow_mode
     if body.test_problem_id is not None:
-        row.test_problem_id = str(body.test_problem_id).strip().lower()[:64] or "vrptw"
+        row.test_problem_id = str(body.test_problem_id).strip().lower()[:64] or DEFAULT_PROBLEM_ID
     if "participant_number" in body.model_fields_set:
         row.participant_number = helpers.clean_participant_number(body.participant_number)
     if body.panel_config is not None:
@@ -535,7 +535,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 panel_obj,
                 brief_obj,
                 optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
-                problem_id=str(getattr(row, "test_problem_id", None) or "vrptw"),
+                problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
             )
             if (
                 run_intent is not None
@@ -708,7 +708,7 @@ def post_run(
         panel_obj,
         brief_obj,
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
-        problem_id=str(getattr(row, "test_problem_id", None) or "vrptw"),
+        problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1066,7 +1066,7 @@ def export_session(
             "updated_at": serialize_utc_datetime(row.updated_at),
             "workflow_mode": row.workflow_mode,
             "participant_number": row.participant_number,
-            "test_problem_id": str(getattr(row, "test_problem_id", None) or "vrptw"),
+            "test_problem_id": str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
             "status": row.status,
             "panel_config": helpers.panel_dict(row),
             "problem_brief": helpers.problem_brief_dict(row),

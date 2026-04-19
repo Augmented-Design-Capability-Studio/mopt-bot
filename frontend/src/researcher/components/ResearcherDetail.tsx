@@ -157,13 +157,7 @@ export function ResearcherDetail({
                 }}
                 className="researcher-workflow-select"
               >
-                {(testProblemsMeta.length > 0
-                  ? testProblemsMeta
-                  : ([
-                      { id: "vrptw", label: "Fleet scheduling (VRPTW)" },
-                      { id: "knapsack", label: "0/1 knapsack (toy)" },
-                    ] satisfies Pick<TestProblemMeta, "id" | "label">[])
-                ).map((p) => (
+                {testProblemsMeta.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label} ({p.id})
                   </option>

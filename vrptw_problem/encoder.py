@@ -162,7 +162,8 @@ def encode_greedy_solution(
     # Sort by window_open then zone for time-coherent, geographically compact groups.
     # Small random perturbation creates diversity across seeds.
     noise = rng.uniform(0.0, 5.0, len(unassigned))  # up to 5-min jitter on window
-    unassigned.sort(key=lambda i: (orders[i].time_window_open + noise[unassigned.index(i)], orders[i].zone))
+    order_noise = {order_idx: noise[pos] for pos, order_idx in enumerate(unassigned)}
+    unassigned.sort(key=lambda i: (orders[i].time_window_open + order_noise[i], orders[i].zone))
 
     # Track each vehicle's current zone and earliest available time
     v_zone = [v.start_zone for v in VEHICLES]

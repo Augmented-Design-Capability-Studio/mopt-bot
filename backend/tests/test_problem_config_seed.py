@@ -137,6 +137,54 @@ def test_seed_parses_snake_case_alias_terms():
     assert panel["problem"]["weights"]["shift_limit"] == 1000.0
 
 
+def test_seed_does_not_infer_waiting_time_from_on_time_and_priority_language():
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-timing",
+                    "text": "We care about on-time delivery and priority orders.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+        }
+    )
+
+    assert panel is not None
+    weights = panel["problem"]["weights"]
+    assert weights["deadline_penalty"] == 75.0
+    assert weights["priority_penalty"] == 100.0
+    assert "waiting_time" not in weights
+    assert "early_arrival_threshold_min" not in panel["problem"]
+
+
+def test_seed_requires_explicit_early_arrival_language_for_waiting_time():
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-early-arrival",
+                    "text": "Drivers cannot arrive more than 30 minutes early; that early arrival penalty should be 100.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+        }
+    )
+
+    assert panel is not None
+    problem = panel["problem"]
+    assert problem["weights"]["waiting_time"] == 100.0
+    assert problem["early_arrival_threshold_min"] == 30.0
+
+
 def test_seed_ignores_numeric_goal_summary_for_weights():
     panel = derive_problem_panel_from_brief(
         {

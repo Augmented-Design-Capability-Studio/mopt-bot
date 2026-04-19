@@ -1,0 +1,4 @@
+# MOPT problem manifest — discovered automatically by backend/app/problems/registry.py.
+# Rename this directory (e.g. myproblem_problem/) and update the fields below.
+port_module = "template_problem.study_port"
+port_attr = "STUDY_PORT"

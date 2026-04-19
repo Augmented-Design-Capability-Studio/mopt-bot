@@ -25,8 +25,8 @@ VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
     ),
     (
         "waiting_time",
-        "Early Arrival Penalty",
-        "Per excess minute a driver arrives before the early-arrival grace period (configure threshold below).",
+        "Early Arrival / Wait Time",
+        "Explicit early-arrival grace-period penalty only; per excess minute a driver arrives too early (configure threshold below).",
     ),
 ]
 
@@ -132,8 +132,8 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "arrived early",
             "early dwell",
             "dwell before window",
-            "before time window",
             "pre-window",
             "too early",
+            "grace period",
         ),
     }

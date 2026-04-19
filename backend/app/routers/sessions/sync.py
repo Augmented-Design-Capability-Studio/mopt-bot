@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import StudySession
 from app.problem_brief import sync_problem_brief_from_panel as merge_brief_from_panel
+from app.problems.registry import DEFAULT_PROBLEM_ID
 
 from . import helpers
 
@@ -112,7 +113,7 @@ def sync_panel_from_problem_brief(
     from app.problems.registry import get_study_port
     from app.services.llm import generate_config_from_brief
 
-    test_problem_id = getattr(row, "test_problem_id", None) or "vrptw"
+    test_problem_id = getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
 
     current_panel = helpers.panel_dict(row)
     derived_panel = None
@@ -182,7 +183,7 @@ def sync_problem_brief_from_panel(
     panel_config: dict,
 ) -> dict:
     current_problem_brief = helpers.problem_brief_dict(row)
-    tpid = getattr(row, "test_problem_id", None) or "vrptw"
+    tpid = getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
     next_problem_brief = merge_brief_from_panel(
         current_problem_brief, panel_config, test_problem_id=tpid
     )

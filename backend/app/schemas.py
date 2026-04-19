@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+from app.problems.registry import DEFAULT_PROBLEM_ID
+
 
 def serialize_utc_datetime(value: datetime) -> str:
     """Emit API datetimes as explicit UTC (Z) for stable client parsing."""
@@ -71,7 +73,7 @@ class SessionOut(BaseModel):
     updated_at: datetime
     workflow_mode: str
     participant_number: str | None
-    test_problem_id: str = "vrptw"
+    test_problem_id: str = DEFAULT_PROBLEM_ID
     status: str
     panel_config: dict[str, Any] | None
     problem_brief: ProblemBrief

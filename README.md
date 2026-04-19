@@ -1,6 +1,6 @@
 # MOPT study stack
 
-Participant and researcher web apps plus a FastAPI backend for the workflow study described in `AI_INSTRUCTIONS.md`. **Solver domains** ship as sibling directories **`vrptw_problem/`** (fleet VRPTW) and **`knapsack_problem/`** (toy 0/1 knapsack). Each domain exposes a **study port** (see `mopt_manifest.toml` in that folder) loaded by **`backend/app/problems/registry.py`**. Per-session **`test_problem_id`** (default **`vrptw`**) selects the port. **`GET /meta/test-problems`** lists ids, labels, weight definitions, and UI extension keys for clients. Pulling new code **adds SQLite columns idempotently** on API startup (`ensure_database_shape`).
+Participant and researcher web apps plus a FastAPI backend for the workflow study described in `AI_INSTRUCTIONS.md`. **Solver domains** ship as sibling **`*_problem/`** directories — currently **`vrptw_problem/`** (fleet routing) and **`knapsack_problem/`** (toy benchmark). Each exposes a **study port** via `mopt_manifest.toml`, loaded by **`backend/app/problems/registry.py`**. Per-session **`test_problem_id`** (default `vrptw`, set by `DEFAULT_PROBLEM_ID` in `registry.py`) selects the active port. **`GET /meta/test-problems`** lists ids, labels, weight definitions, and UI extension keys for clients. Pulling new code **adds SQLite columns idempotently** on API startup (`ensure_database_shape`).
 
 ## Table of contents
 
@@ -131,19 +131,23 @@ While background brief/config derivation is pending, **Problem Config** and **Ra
 
 ## Problem modules (adding a benchmark)
 
-1. **Directory:** Add a repo-root folder named **`{name}_problem/`** (underscore, valid as a Python-style identifier). Keep solver code and study-facing modules in that tree.
+**Quick start:** copy **`template_problem/`** (repo root) and follow **`template_problem/TEMPLATE_INSTRUCTIONS.md`**. The steps below summarize what the template covers.
 
-2. **Manifest:** Add **`mopt_manifest.toml`** at the domain root with:
-   - **`port_module`** — Python module name to import after the domain root is on `sys.path` (e.g. `myproblem_study_port`).
-   - **`port_attr`** — Attribute holding the port instance (default **`STUDY_PORT`**).
+1. **Directory:** Create a repo-root folder named **`{name}_problem/`**. The registry adds `repo_root` to `sys.path`, so module paths are `{name}_problem.study_port` etc. — no domain-prefixed filenames needed.
 
-3. **Study port:** Implement the contract in **`backend/app/problems/port.py`** (`StudyProblemPort`): `meta`, `sanitize_panel_config`, `parse_problem_config`, `solve_request_to_result`, brief/prompt hooks, `panel_patch_response_json_schema`, etc. Prefer **domain-prefixed** filenames (`{name}_study_port.py`, `{name}_study_bridge.py`, `{name}_panel_schema.py`, …) so multiple domains can coexist on `sys.path` without shadowing generic names like `study_port.py` / `evaluator.py`.
+2. **Manifest:** Add **`mopt_manifest.toml`** at the domain root:
+   ```toml
+   port_module = "{name}_problem.study_port"
+   port_attr   = "STUDY_PORT"
+   ```
 
-4. **Registration:** Add the directory name to **`_BUILTIN_REL_DIRS`** in **`backend/app/problems/registry.py`**, or expose the module via **`MOPT_PROBLEM_PATHS`** (manifest-driven) without editing the registry.
+3. **Study port:** Implement `StudyProblemPort` (see `backend/app/problems/port.py`): `meta`, `sanitize_panel_config`, `parse_problem_config`, `solve_request_to_result`, brief/prompt hooks, `panel_patch_response_json_schema`, etc. Modularity changes (prompts, panel schema, weight definitions, frontend wiring) are encouraged. Solver logic changes (optimizer, evaluator, instance data) need maintainer sign-off.
 
-5. **Frontend:** If the benchmark needs extra UI, set `extension_ui` and visualization preset ids in `meta()` and implement matching client handling (see existing `vrptw_extras` / `fleet_gantt` and knapsack presets).
+4. **Registration:** Add the directory name to **`_BUILTIN_REL_DIRS`** in **`backend/app/problems/registry.py`**, or register via **`MOPT_PROBLEM_PATHS`** without editing the registry.
 
-6. **Tests:** Add tests under **`{name}_problem/tests/`** and include that path in **`pytest.ini`** (`testpaths` / `pythonpath`) if imports need the domain root.
+5. **Frontend:** Add a `frontend/index.ts` that exports `MODULE: ProblemModule` (see `backend/app/problems/port.py` for available hooks). Register it in **`frontend/src/client/problemRegistry.ts`** (the only file that names problem folders by ID) and add a Vite path alias in `vite.config.ts`.
+
+6. **Tests:** Add tests under **`{name}_problem/tests/`** and include that path in **`pytest.ini`**.
 
 ## Frontend
 

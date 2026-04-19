@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.problems.registry import DEFAULT_PROBLEM_ID
 
 
 def utcnow():
@@ -35,7 +36,7 @@ class StudySession(Base):
     optimization_gate_engaged: Mapped[bool] = mapped_column(Boolean, default=False)
     gemini_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gemini_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
-    test_problem_id: Mapped[str] = mapped_column(String(64), default="vrptw")
+    test_problem_id: Mapped[str] = mapped_column(String(64), default=DEFAULT_PROBLEM_ID)
 
     messages: Mapped[list["ChatMessage"]] = relationship(
         "ChatMessage", back_populates="session", cascade="all, delete-orphan"

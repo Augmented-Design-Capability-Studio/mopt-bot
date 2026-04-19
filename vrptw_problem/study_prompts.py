@@ -25,7 +25,7 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
 | priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `priority_penalty` |
-| driver arriving too early, early arrival penalty, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per excess minute) + `early_arrival_threshold_min` set to X (grace-period threshold in minutes) |
+| driver arriving too early, early arrival penalty, explicit grace period, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per excess minute) + `early_arrival_threshold_min` set to X (grace-period threshold in minutes) |
 | maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
 | algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` — when first introducing an algorithm, briefly mention that by default a portion of the initial population is seeded with time-window-aware greedy solutions (controlled by `use_greedy_init`, default on) rather than purely random starts |
@@ -58,7 +58,7 @@ All available fields under `"problem"`:
   - `"workload_balance"` — penalty for variance in drive+service time across workers (excludes idle pre-window wait)
   - `"worker_preference"` — soft preference violations per worker
   - `"priority_penalty"` — penalty per express / priority-order deadline miss (SLA-style orders)
-  - `"waiting_time"` — penalty per excess minute a driver arrives before the early-arrival grace period (pair with `early_arrival_threshold_min`)
+  - `"waiting_time"` — penalty per excess minute a driver arrives before the early-arrival grace period; use only for explicit early-arrival / grace-period wording (pair with `early_arrival_threshold_min`)
 - `"only_active_terms"`: boolean — when true, weight terms not explicitly set are zeroed
   so only the user's stated priorities count. Use when the user says "only care about X".
 - `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
@@ -69,7 +69,7 @@ All available fields under `"problem"`:
   - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
   - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
 - `"max_shift_hours"`: numeric threshold (e.g. 8.0) beyond which `shift_limit` penalty applies.
-- `"early_arrival_threshold_min"`: grace-period threshold in minutes (default 30). Drivers may arrive up to this many minutes before a window opens without penalty; only the excess beyond this threshold is penalised by the `waiting_time` weight.
+- `"early_arrival_threshold_min"`: grace-period threshold in minutes (default 30). Drivers may arrive up to this many minutes before a window opens without penalty; only the excess beyond this threshold is penalised by the `waiting_time` weight. Do not emit it for generic on-time or priority-delivery language.
   Emit alongside `waiting_time` whenever the user states a specific limit, e.g. "cannot arrive more than 30 minutes early" → `"waiting_time": 100, "early_arrival_threshold_min": 30`.
   Omit if the user never discussed early-arrival behaviour.
 - `"locked_assignments"`: object mapping task index (string) to vehicle index (int),

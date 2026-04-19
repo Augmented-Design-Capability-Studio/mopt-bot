@@ -106,7 +106,6 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\barriving\s+(?:too\s+)?early\b", re.IGNORECASE),
         re.compile(r"\bearly dwell\b", re.IGNORECASE),
         re.compile(r"\bdwell before (?:the )?window\b", re.IGNORECASE),
-        re.compile(r"\bbefore (?:the )?time window\b", re.IGNORECASE),
         re.compile(r"\bpre.?window\b", re.IGNORECASE),
         re.compile(r"\bcannot arrive more than\b", re.IGNORECASE),
     ),

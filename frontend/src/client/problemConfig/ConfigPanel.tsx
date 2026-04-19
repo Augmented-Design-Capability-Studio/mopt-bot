@@ -108,6 +108,7 @@ export function ConfigPanel({
   isConfigDirty = false,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
+  const [pendingDefinitionOpenQuestionsScroll, setPendingDefinitionOpenQuestionsScroll] = useState(false);
   const [defSnapshotMenuOpen, setDefSnapshotMenuOpen] = useState(false);
   const [defMoreMenuOpen, setDefMoreMenuOpen] = useState(false);
   const [configSnapshotMenuOpen, setConfigSnapshotMenuOpen] = useState(false);
@@ -155,6 +156,14 @@ export function ConfigPanel({
       setDefinitionUnread(false);
     }
   }, [activeTab, editMode]);
+
+  useEffect(() => {
+    if (activeTab !== "definition" || !pendingDefinitionOpenQuestionsScroll) return;
+    const target = document.getElementById("definition-open-questions");
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setPendingDefinitionOpenQuestionsScroll(false);
+  }, [activeTab, pendingDefinitionOpenQuestionsScroll]);
 
   useEffect(() => {
     if (prevBriefPending.current && !backgroundBriefPending && activeTab !== "definition") {
@@ -284,12 +293,11 @@ export function ConfigPanel({
             <button
               type="button"
               className="config-panel-waterfall-alert-jump"
-              onClick={() =>
-                document.getElementById("definition-open-questions")?.scrollIntoView({
-                  behavior: "smooth",
-                  block: "nearest",
-                })
-              }
+              onClick={() => {
+                setPendingDefinitionOpenQuestionsScroll(true);
+                setActiveTab("definition");
+                setDefinitionUnread(false);
+              }}
             >
               Scroll to open questions
             </button>

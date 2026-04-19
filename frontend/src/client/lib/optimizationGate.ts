@@ -66,7 +66,12 @@ export function intrinsicOptimizationReadyAgile(
 export function intrinsicOptimizationReadyWaterfall(
   brief: ProblemBrief,
   optimizationGateEngaged: boolean,
+  configText: string,
 ): boolean {
+  const { problem } = parseBaseProblemConfig(configText);
+  const hasGoalTerm = Object.keys(problem.weights).length > 0;
+  const hasSearchStrategy = problem.algorithm.trim().length > 0;
+  if (!hasGoalTerm && !hasSearchStrategy) return false;
   if (!optimizationGateEngaged) return false;
   for (const q of brief.open_questions) {
     if (q.status === "open") return false;
@@ -93,7 +98,7 @@ export function intrinsicOptimizationReady(
     return intrinsicOptimizationReadyDemo(configText);
   }
   if (mode === "waterfall" && problemBrief) {
-    return intrinsicOptimizationReadyWaterfall(problemBrief, optimizationGateEngaged);
+    return intrinsicOptimizationReadyWaterfall(problemBrief, optimizationGateEngaged, configText);
   }
   return false;
 }
@@ -139,10 +144,22 @@ export function runOptimizationDisabledHint(
     return "Add at least one objective term and choose a search algorithm in Problem Config, or ask the researcher to enable runs.";
   }
   if (mode === "waterfall") {
+    const { problem } = parseBaseProblemConfig(configText);
+    const hasGoalTerm = Object.keys(problem.weights).length > 0;
+    const hasSearchStrategy = problem.algorithm.trim().length > 0;
+    const hasWaterfallConfig = hasGoalTerm || hasSearchStrategy;
+    const hasOpenQuestions = problemBrief?.open_questions.some((q) => q.status === "open") ?? false;
+
+    if (!hasWaterfallConfig && hasOpenQuestions) {
+      return "Add at least one goal term or choose a search strategy in Problem Config, then answer all open questions in the Definition tab.";
+    }
+    if (!hasWaterfallConfig) {
+      return "Add at least one goal term or choose a search strategy in Problem Config before optimization can run.";
+    }
     if (!session.optimization_gate_engaged) {
       return "Send a chat message or wait until open questions appear in the Definition tab before optimization can run.";
     }
-    if (problemBrief?.open_questions.some((q) => q.status === "open")) {
+    if (hasOpenQuestions) {
       return "Answer all open questions in the Definition tab, or ask the researcher to enable runs.";
     }
     return "Resolve open questions in the Definition tab, or ask the researcher to enable runs.";

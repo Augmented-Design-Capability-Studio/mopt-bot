@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import OptimizationRun, StudySession
 from app.problem_brief import default_problem_brief, normalize_problem_brief
+from app.problems.registry import DEFAULT_PROBLEM_ID
 from app.schemas import RunOut, SessionOut, SessionProcessingState
 from app.config import get_settings
 
@@ -112,7 +113,7 @@ def sync_optimization_allowed_after_participant_mutation(row: StudySession) -> b
     if maybe_mark_optimization_gate_engaged_from_brief(row, brief):
         changed = True
     engaged = bool(getattr(row, "optimization_gate_engaged", False))
-    problem_id = str(getattr(row, "test_problem_id", None) or "vrptw")
+    problem_id = str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID)
     want = intrinsic_optimization_ready(
         row.workflow_mode, panel, brief, optimization_gate_engaged=engaged, problem_id=problem_id
     )
@@ -132,7 +133,7 @@ def session_to_out(row: StudySession) -> SessionOut:
         updated_at=row.updated_at,
         workflow_mode=row.workflow_mode,
         participant_number=row.participant_number,
-        test_problem_id=str(getattr(row, "test_problem_id", None) or "vrptw"),
+        test_problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
         status=row.status,
         panel_config=panel_dict(row),
         problem_brief=problem_brief_dict(row),

@@ -39,9 +39,9 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
       "Penalizes each express (or emphasized priority) order delivered after its deadline window. Higher values protect SLA-style orders.",
   },
   waiting_time: {
-    label: "Early Arrival Penalty",
+    label: "Early Arrival / Wait Time",
     description:
-      "Penalizes each excess minute a driver arrives before the early-arrival grace period. Configure the grace-period threshold below.",
+      "Penalizes each excess minute a driver arrives too early. Use only for explicit early-arrival or grace-period constraints, and configure the grace-period threshold below.",
   },
 };
 

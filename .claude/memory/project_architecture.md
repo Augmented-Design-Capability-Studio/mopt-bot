@@ -57,7 +57,8 @@ type: project
 - Backend URL: override (VITE_API_BASE env) → env → default
 
 ## Why this matters for code changes:
-- Never import vrptw/knapsack internals from backend; go through the port interface
+- Never import `*_problem/` internals from backend or generic frontend — go through `get_study_port()` / `getProblemModule(id)`. The one exception is `frontend/src/client/problemRegistry.ts`, which is the explicit registry.
+- Modularity changes *within* a problem package (prompts, panel schema, frontend module, weights) are encouraged. Solver/evaluator/instance-data changes need maintainer approval.
 - Chat fast-path = visible reply first, derivation in background (preserve this latency optimization)
 - Brief is authoritative; config is always derived from brief (don't write config directly)
 - Workflow mode must remain a first-class session variable (not collapsed to one behavior)

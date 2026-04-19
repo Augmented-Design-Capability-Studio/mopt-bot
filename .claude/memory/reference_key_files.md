@@ -43,20 +43,21 @@ type: reference
 - `backend/app/routers/sessions/intent.py` — run-trigger intent classification
 - `backend/app/routers/sessions/sync.py` — brief ↔ panel sync
 
-## VRPTW Domain (primary solver)
-- `vrptw_problem/mopt_manifest.toml` — registration manifest
-- `vrptw_problem/study_port.py` — `StudyProblemPort` implementation
-- `vrptw_problem/study_bridge.py` — neutral JSON ↔ internal VRPTW translation (WEIGHT_ALIASES)
-- `vrptw_problem/study_meta.py` — weight definitions, metadata, UI presets
-- `vrptw_problem/study_prompts.py` — domain-specific chat appendix + config derivation text
-- `vrptw_problem/panel_schema.py` — Gemini JSON schema for panel patches
-- `vrptw_problem/optimizer.py` — MEALpy wrapper (GA/PSO/SA/SwarmSA/ACOR)
-- `vrptw_problem/evaluator.py` — cost + constraint violation computation
+## Problem Domains (`*_problem/` pattern)
+Each domain follows the same layout (see `template_problem/` for a copy-and-fill template):
+- `{name}_problem/mopt_manifest.toml` — registry manifest (`port_module`, `port_attr`)
+- `{name}_problem/study_port.py` — `StudyProblemPort` implementation
+- `{name}_problem/study_bridge.py` — neutral JSON ↔ internal solver translation
+- `{name}_problem/study_meta.py` — weight definitions, metadata, UI presets
+- `{name}_problem/study_prompts.py` — domain-specific chat appendix + config derivation text
+- `{name}_problem/panel_schema.py` — Gemini JSON schema for panel patches
+- `{name}_problem/optimizer.py` — MEALpy wrapper
+- `{name}_problem/frontend/index.ts` — `MODULE: ProblemModule` export for the React shell
 
-## Knapsack Domain (toy benchmark)
-- `knapsack_problem/mopt_manifest.toml` — registration manifest
-- `knapsack_problem/study_port.py` — `StudyProblemPort` implementation
-- `knapsack_problem/mealpy_solve.py` — MEALpy solver integration
+Specific current domains:
+- `vrptw_problem/` — fleet routing (primary study problem); `evaluator.py` = cost + violations
+- `knapsack_problem/` — 0/1 knapsack (toy benchmark); solver in `mealpy_solve.py`
+- `template_problem/` — copy-and-fill template; see `TEMPLATE_INSTRUCTIONS.md`
 
 ## Frontend
 - `frontend/src/client/ClientApp.tsx` — participant root (chat + setup + results)

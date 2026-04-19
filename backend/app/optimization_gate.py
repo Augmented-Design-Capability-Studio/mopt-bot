@@ -65,8 +65,15 @@ def intrinsic_optimization_ready_agile(
 def intrinsic_optimization_ready_waterfall(
     normalized_brief: dict[str, Any],
     optimization_gate_engaged: bool,
+    panel_config: dict[str, Any] | None = None,
 ) -> bool:
     """Waterfall: session must be past cold start; no open questions (list may be empty or all answered)."""
+    inner = _inner_problem_from_panel(panel_config)
+    weights = inner.get("weights")
+    has_goal_term = isinstance(weights, dict) and len(weights) > 0
+    has_search_strategy = bool(str(inner.get("algorithm") or "").strip())
+    if not has_goal_term and not has_search_strategy:
+        return False
     if not optimization_gate_engaged:
         return False
     questions_raw = normalized_brief.get("open_questions") or []
@@ -109,7 +116,7 @@ def intrinsic_optimization_ready(
     if mode == "demo":
         return intrinsic_optimization_ready_demo(panel_config)
     if mode == "waterfall":
-        return intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged)
+        return intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged, panel_config)
     return False
 
 

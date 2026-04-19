@@ -25,8 +25,9 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
         "waiting_time": {
             "type": "number",
             "description": (
-                "Penalty per excess minute a driver arrives before the early-arrival grace period. "
-                "Always pair with early_arrival_threshold_min. Default 100."
+                "Penalty per excess minute a driver arrives too early. Use only when the user explicitly "
+                "describes an early-arrival or grace-period constraint; always pair with early_arrival_threshold_min. "
+                "Default 100."
             ),
         },
     },
@@ -72,8 +73,8 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
             "type": "number",
             "description": (
                 "Early-arrival limit in minutes: drivers must not arrive more than this many minutes "
-                "before a time window opens. When set, the backend automatically applies an internal "
-                "penalty for violations. Default 30."
+                "before a time window opens. Use this only when the brief explicitly mentions arriving too early "
+                "or a grace period. When set, the backend automatically applies an internal penalty for violations. Default 30."
             ),
         },
         "locked_assignments": {

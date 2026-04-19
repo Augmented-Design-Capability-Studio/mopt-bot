@@ -299,13 +299,19 @@ class QuickBiteOptimizer:
         if n_workers is not None:
             solve_kw["n_workers"] = n_workers
         if use_greedy_init:
-            n_greedy = min(max(1, pop_size // 5), 5)
-            starting_positions = []
+            n_greedy = min(max(1, pop_size // 5), pop_size)
+            starting_solutions = []
             for i in range(n_greedy):
                 greedy_rng = np.random.RandomState(self.seed + 1000 + i)
                 gv = encode_greedy_solution(self.orders, self.locked, greedy_rng)
-                starting_positions.append(gv)
-            solve_kw["starting_positions"] = starting_positions
+                starting_solutions.append(gv)
+            random_rng = np.random.RandomState(self.seed + 2000)
+            random_count = pop_size - n_greedy
+            if random_count > 0:
+                starting_solutions.extend(
+                    [random_rng.uniform(0.0, 34.0, size=VECTOR_LEN) for _ in range(random_count)]
+                )
+            solve_kw["starting_solutions"] = starting_solutions
         best = model.solve(problem, **solve_kw)
         runtime = time.perf_counter() - t0
 
