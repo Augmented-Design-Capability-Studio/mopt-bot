@@ -135,11 +135,11 @@ export function useParticipantSessionLifecycle({
     }
   }, [participantNumber, setError, setRecentBusy, setRecentRows, token]);
 
-  const resumePastSession = useCallback(async (resumeId: string) => {
+  const resumePastSession = useCallback(async (resumeId: string): Promise<boolean> => {
     const trimmed = token.trim();
     if (!trimmed) {
       setError("Save your access token first.");
-      return;
+      return false;
     }
     setBusy(true);
     setError(null);
@@ -178,6 +178,7 @@ export function useParticipantSessionLifecycle({
       setActiveRun(runList.length ? runList.length - 1 : 0);
 
       upsertSessionHistoryFromServer(nextSession);
+      return true;
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 410)) {
         removeSessionHistoryEntry(resumeId);
@@ -186,6 +187,7 @@ export function useParticipantSessionLifecycle({
       } else {
         setError(error instanceof Error ? error.message : "Could not open session");
       }
+      return false;
     } finally {
       setBusy(false);
     }

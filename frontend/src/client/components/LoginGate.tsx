@@ -5,6 +5,7 @@ import { parseServerDate } from "@shared/dateTime";
 type LoginGateProps = {
   token: string;
   participantNumber: string;
+  pendingUrlSessionId: string;
   busy: boolean;
   error: string | null;
   recentBusy: boolean;
@@ -21,6 +22,7 @@ type LoginGateProps = {
 export function LoginGate({
   token,
   participantNumber,
+  pendingUrlSessionId,
   busy,
   error,
   recentBusy,
@@ -58,6 +60,11 @@ export function LoginGate({
           Enter the access token for this station, then start. Workflow (for example agile vs waterfall) is set by the
           researcher for your session - you do not choose it here.
         </p>
+        {pendingUrlSessionId && (
+          <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
+            This link targets a specific session. Enter the access token to open it automatically.
+          </p>
+        )}
         <label>
           Participant number
           <input

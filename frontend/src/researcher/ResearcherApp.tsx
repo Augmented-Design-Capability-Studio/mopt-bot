@@ -17,6 +17,7 @@ export function ResearcherApp() {
         onRefreshList={researcher.refreshList}
       />
       {researcher.error && <div className="banner-warn">{researcher.error}</div>}
+      {researcher.notice && <div className="muted">{researcher.notice}</div>}
       <div className="researcher-layout">
         <ResearcherSessionList
           sessions={researcher.sessions}
@@ -50,6 +51,7 @@ export function ResearcherApp() {
           onPushDummyParticipantUpload={researcher.pushDummyParticipantUpload}
           onPushGeminiKey={researcher.pushGeminiKey}
           onExportJson={researcher.exportJson}
+          onCopySessionLink={researcher.copySessionLink}
           onTerminate={researcher.terminate}
           onRemoveSession={researcher.removeSession}
           onSendSteer={researcher.sendSteer}

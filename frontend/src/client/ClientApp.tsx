@@ -9,13 +9,14 @@ export function ClientApp() {
     return (
       <LoginGate
         token={controller.token}
-          participantNumber={controller.participantNumber}
+        participantNumber={controller.participantNumber}
+        pendingUrlSessionId={controller.pendingUrlSessionId}
         busy={controller.busy}
         error={controller.error}
         recentBusy={controller.recentBusy}
         recentRows={controller.recentRows}
         onTokenChange={controller.setToken}
-          onParticipantNumberChange={controller.setParticipantNumber}
+        onParticipantNumberChange={controller.setParticipantNumber}
         onLogin={controller.login}
         onStartSession={controller.startSession}
         onRefreshRecentSessions={controller.refreshRecentSessionsList}

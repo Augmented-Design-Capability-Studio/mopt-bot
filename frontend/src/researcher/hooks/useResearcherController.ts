@@ -34,6 +34,7 @@ export function useResearcherController() {
   const [geminiModel, setGeminiModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [pushKeySuccess, setPushKeySuccess] = useState<string | null>(null);
   const [testProblemsMeta, setTestProblemsMeta] = useState<TestProblemMeta[]>([]);
 
@@ -52,6 +53,7 @@ export function useResearcherController() {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "List failed");
+      setNotice(null);
     }
   }, [savedToken]);
 
@@ -77,6 +79,7 @@ export function useResearcherController() {
     } catch (e) {
       if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
       setError(e instanceof Error ? e.message : "Load failed");
+      setNotice(null);
     }
   }, [savedToken, selected]);
 
@@ -369,6 +372,25 @@ export function useResearcherController() {
     }
   }
 
+  async function copySessionLink() {
+    if (!selected) return;
+    const url = new URL("/client", window.location.origin);
+    url.searchParams.set("session", selected);
+    const link = url.toString();
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(link);
+      } else {
+        window.prompt("Copy session link", link);
+      }
+      setError(null);
+      setNotice("Session link copied.");
+    } catch (e) {
+      setNotice(null);
+      setError(e instanceof Error ? e.message : "Could not copy session link");
+    }
+  }
+
   const tokenDirty = useMemo(() => tokenInput.trim() !== savedToken.trim(), [savedToken, tokenInput]);
 
   const toggleSessionSelected = useCallback((sessionId: string, checked: boolean) => {
@@ -398,6 +420,7 @@ export function useResearcherController() {
     geminiModel,
     busy,
     error,
+    notice,
     pushKeySuccess,
     tokenDirty,
     setTokenInput,
@@ -406,6 +429,7 @@ export function useResearcherController() {
     setGeminiKey,
     setGeminiModel,
     setPushKeySuccess,
+    setNotice,
     toggleSessionSelected,
     toggleAllSessionsSelected,
     refreshList,
@@ -421,6 +445,7 @@ export function useResearcherController() {
     setOnlyActiveTerms,
     exportJson,
     pushGeminiKey,
+    copySessionLink,
     getOnlyActiveTerms,
     testProblemsMeta,
   };

@@ -54,6 +54,12 @@ import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle
 import { useParticipantSessionSync } from "./useParticipantSessionSync";
 
 export function useParticipantController() {
+  const [pendingUrlSessionId, setPendingUrlSessionId] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const raw = new URLSearchParams(window.location.search).get("session");
+    return (raw ?? "").trim();
+  });
+  const [lastAutoResumeKey, setLastAutoResumeKey] = useState("");
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [participantNumber, setParticipantNumber] = useState(
     () => sessionStorage.getItem(PARTICIPANT_NUMBER_KEY) ?? "",
@@ -194,6 +200,27 @@ export function useParticipantController() {
     setRecentBusy,
     setParticipantNumber,
   });
+
+  useEffect(() => {
+    if (!pendingUrlSessionId) return;
+    if (!token.trim()) return;
+    if (busy) return;
+    if (sessionId === pendingUrlSessionId) {
+      setPendingUrlSessionId("");
+      setLastAutoResumeKey("");
+      return;
+    }
+    const key = `${pendingUrlSessionId}::${token.trim()}`;
+    if (lastAutoResumeKey === key) return;
+    setLastAutoResumeKey(key);
+    void (async () => {
+      const ok = await lifecycle.resumePastSession(pendingUrlSessionId);
+      if (ok) {
+        setPendingUrlSessionId("");
+        setLastAutoResumeKey("");
+      }
+    })();
+  }, [busy, lastAutoResumeKey, lifecycle, pendingUrlSessionId, sessionId, token]);
 
   const enterConfigEdit = useCallback(() => {
     flushSync(() => {
@@ -435,6 +462,7 @@ export function useParticipantController() {
     aiPending,
     recentRows,
     recentBusy,
+    pendingUrlSessionId,
     authed,
     testProblemMeta,
     fileRef,
@@ -454,7 +482,7 @@ export function useParticipantController() {
     setModelName,
     login: lifecycle.login,
     refreshRecentSessionsList: lifecycle.refreshRecentSessionsList,
-    resumePastSession: lifecycle.resumePastSession,
+    resumePastSession: (id: string) => void lifecycle.resumePastSession(id),
     startSession: lifecycle.startSession,
     sendChat: actions.sendChat,
     requestDefinitionCleanup: actions.requestDefinitionCleanup,
