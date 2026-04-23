@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import type { ProblemVizProps } from "@problemConfig/problemModule";
 
 type ItemRow = {
@@ -6,6 +7,9 @@ type ItemRow = {
   value: number;
   selected: boolean;
 };
+
+type SortKey = "id" | "weight" | "value" | "density" | "selected";
+type SortDirection = "asc" | "desc";
 
 export function KnapsackSelectionViz({ currentRun }: ProblemVizProps) {
   const visualization = currentRun.result?.visualization;
@@ -33,11 +37,45 @@ export function KnapsackSelectionViz({ currentRun }: ProblemVizProps) {
     })
     .filter((r): r is ItemRow => r !== null);
 
+  const [sortKey, setSortKey] = useState<SortKey>("selected");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
   const selectedCount = rows.filter((r) => r.selected).length;
-  const sortedRows = [...rows].sort((a, b) => {
-    if (a.selected !== b.selected) return a.selected ? -1 : 1;
-    return a.id - b.id;
-  });
+  const sortedRows = useMemo(() => {
+    const compareByKey = (a: ItemRow, b: ItemRow, key: SortKey): number => {
+      if (key === "selected") return Number(a.selected) - Number(b.selected);
+      if (key === "density") {
+        const densityA = a.weight > 0 ? a.value / a.weight : Number.NEGATIVE_INFINITY;
+        const densityB = b.weight > 0 ? b.value / b.weight : Number.NEGATIVE_INFINITY;
+        return densityA - densityB;
+      }
+      if (key === "id") return a.id - b.id;
+      if (key === "weight") return a.weight - b.weight;
+      return a.value - b.value;
+    };
+
+    const sorted = [...rows].sort((a, b) => {
+      const diff = compareByKey(a, b, sortKey);
+      if (diff !== 0) return sortDirection === "asc" ? diff : -diff;
+      return a.id - b.id;
+    });
+
+    return sorted;
+  }, [rows, sortDirection, sortKey]);
+
+  const handleSort = (nextKey: SortKey) => {
+    if (sortKey === nextKey) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === "selected" ? "desc" : "asc");
+  };
+
+  const sortLabel = (key: SortKey): string => {
+    if (sortKey !== key) return "↕";
+    return sortDirection === "asc" ? "↑" : "↓";
+  };
   const hasCapacityAndWeight = capacity != null && totalWeight != null;
   const usageRaw = hasCapacityAndWeight && capacity > 0 ? (totalWeight / capacity) * 100 : null;
   const usagePct = usageRaw != null ? Math.max(0, Math.min(usageRaw, 100)) : null;
@@ -113,11 +151,31 @@ export function KnapsackSelectionViz({ currentRun }: ProblemVizProps) {
         <table className="mono" style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-              <th style={{ padding: "0.25rem 0.4rem" }}>Item</th>
-              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>Weight</th>
-              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>Value</th>
-              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>Value/Weight</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>Selected</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>
+                <button type="button" onClick={() => handleSort("id")} style={{ all: "unset", cursor: "pointer" }}>
+                  Item {sortLabel("id")}
+                </button>
+              </th>
+              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>
+                <button type="button" onClick={() => handleSort("weight")} style={{ all: "unset", cursor: "pointer" }}>
+                  Weight {sortLabel("weight")}
+                </button>
+              </th>
+              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>
+                <button type="button" onClick={() => handleSort("value")} style={{ all: "unset", cursor: "pointer" }}>
+                  Value {sortLabel("value")}
+                </button>
+              </th>
+              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>
+                <button type="button" onClick={() => handleSort("density")} style={{ all: "unset", cursor: "pointer" }}>
+                  Value/Wt. Ratio {sortLabel("density")}
+                </button>
+              </th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>
+                <button type="button" onClick={() => handleSort("selected")} style={{ all: "unset", cursor: "pointer" }}>
+                  Selected {sortLabel("selected")}
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>
