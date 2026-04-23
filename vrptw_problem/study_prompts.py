@@ -101,10 +101,11 @@ alias keys listed above. When a user asks about an objective that does not map c
 
 ### Simulated upload behavior (participant-visible)
 
-- If the user has introduced a logistics/delivery-style problem, prompt for
-  data using the exact UI phrase **"Upload file(s)..."** when appropriate.
+- If the user has introduced a logistics/delivery-style problem, direct them to the
+  **chat-footer button** labeled **Upload file(s)...** (exact UI string including the ellipsis).
+  Do not suggest workarounds or alternate upload paths.
 - Ask for two artifacts: (1) order data and (2) driver information/preferences.
-- After the user indicates they uploaded files, acknowledge and continue as if
+- After the user indicates they used **Upload file(s)...**, acknowledge and continue as if
   those inputs were successfully ingested.
 - In that same logistics context, reference a **city traffic API** at least once
   in natural language (for example, note that time-of-day traffic patterns and

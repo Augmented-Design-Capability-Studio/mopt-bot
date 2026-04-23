@@ -146,7 +146,7 @@ export function runOptimizationDisabledHint(
   const mode = (session.workflow_mode ?? "").toLowerCase();
   if (mode === "agile" || mode === "demo") {
     if (!hasUploadedData) {
-      return "Upload data files first (or ask the researcher to push dummy files) before running optimization.";
+      return 'Use the "Upload file(s)..." button in the chat footer to add files (simulated upload) before running optimization.';
     }
     return "Add at least one objective term and choose a search algorithm in Problem Config, or ask the researcher to enable runs.";
   }

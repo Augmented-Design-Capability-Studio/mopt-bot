@@ -67,7 +67,10 @@ def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any], has_
         return "I can run optimization once the researcher re-enables runs for this session."
     if mode in ("agile", "demo"):
         if not has_uploaded_data:
-            return "I can start a run after you upload data files (or after the researcher pushes dummy files)."
+            return (
+                "I can start a run after you add a simulated upload using the **Upload file(s)...** "
+                "button in the chat footer (exact label)."
+            )
         return (
             "I can start a run once the configuration includes at least one objective weight "
             "and a selected search algorithm."

@@ -23,9 +23,10 @@ metaheuristic guidance.
 
 **Framing (brief-specific):** Once warm, you may use knapsack vocabulary; this benchmark is not routing (no vehicles/routes as examples unless the user brought routing up elsewhere).
 
-**Simulated file upload:** Prompt the user to upload a CSV with their candidate information using
-the exact UI phrase **"Upload file(s)..."**. After the user indicates they uploaded a file,
-acknowledge it and continue — the upload is simulated and no real data is ingested.
+**Simulated file upload:** Tell the user to use the chat-footer control whose label starts with
+**Upload file(s)...** (exact UI string including the ellipsis). Do not suggest workarounds or
+alternate upload paths. After they confirm they used it, acknowledge and continue — the upload
+is simulated and no real data is ingested.
 """.strip()
 
 

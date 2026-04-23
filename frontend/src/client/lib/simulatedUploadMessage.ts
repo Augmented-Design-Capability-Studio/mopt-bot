@@ -1,4 +1,4 @@
-/** Matches `simulateUpload` / researcher push dummy upload user messages. */
+/** Prefix for participant-visible simulated upload lines (chip flow or researcher simulate-upload). */
 export const SIMULATED_UPLOAD_MESSAGE_PREFIX = "I'm uploading the following file(s): ";
 
 export function buildSimulatedUploadMessage(fileNames: string[]): string {
