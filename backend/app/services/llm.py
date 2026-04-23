@@ -9,7 +9,11 @@ from typing import Any, Literal
 from google import genai
 from google.genai import types
 
-from app.problem_brief import locked_goal_terms_prompt_section
+from app.problem_brief import (
+    is_chat_cold_start,
+    locked_goal_terms_prompt_section,
+    surface_problem_brief_for_chat_prompt,
+)
 from app.problems.registry import get_study_port
 
 from app.prompts.study_chat import (
@@ -173,8 +177,12 @@ def _run_ack_prompt(workflow_mode: str) -> str:
     return f"{STUDY_CHAT_RUN_ACK_BASE}\n{wf_addendum}"
 
 
-def _system_prompt_openers(test_problem_id: str | None) -> list[str]:
+def _system_prompt_openers(
+    test_problem_id: str | None, current_problem_brief: dict[str, Any] | None
+) -> list[str]:
     parts = [STUDY_CHAT_SYSTEM_PROMPT]
+    if is_chat_cold_start(current_problem_brief):
+        return parts
     apx = _study_benchmark_appendix(test_problem_id)
     if apx:
         parts.append(apx)
@@ -233,13 +241,17 @@ def _build_structured_system_instruction(
         current_panel=current_panel,
         recent_runs_summary=recent_runs_summary,
     )
+    cold = is_chat_cold_start(current_problem_brief)
+    brief_for_prompt = surface_problem_brief_for_chat_prompt(
+        current_problem_brief, cold=cold
+    )
     brief_blob = (
-        json.dumps(current_problem_brief, indent=2, ensure_ascii=False)
-        if current_problem_brief
+        json.dumps(brief_for_prompt, indent=2, ensure_ascii=False)
+        if brief_for_prompt is not None
         else "{}"
     )
     parts = [
-        *_system_prompt_openers(test_problem_id),
+        *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_STRUCTURED_JSON_RULES,
@@ -293,13 +305,17 @@ def _build_visible_chat_system_instruction(
         current_panel=current_panel,
         recent_runs_summary=recent_runs_summary,
     )
+    cold = is_chat_cold_start(current_problem_brief)
+    brief_for_prompt = surface_problem_brief_for_chat_prompt(
+        current_problem_brief, cold=cold
+    )
     brief_blob = (
-        json.dumps(current_problem_brief, indent=2, ensure_ascii=False)
-        if current_problem_brief
+        json.dumps(brief_for_prompt, indent=2, ensure_ascii=False)
+        if brief_for_prompt is not None
         else "{}"
     )
     parts = [
-        *_system_prompt_openers(test_problem_id),
+        *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_VISIBLE_REPLY_TASK,
@@ -349,13 +365,17 @@ def _build_brief_update_system_instruction(
         current_panel=current_panel,
         recent_runs_summary=recent_runs_summary,
     )
+    cold = is_chat_cold_start(current_problem_brief)
+    brief_for_prompt = surface_problem_brief_for_chat_prompt(
+        current_problem_brief, cold=cold
+    )
     brief_blob = (
-        json.dumps(current_problem_brief, indent=2, ensure_ascii=False)
-        if current_problem_brief
+        json.dumps(brief_for_prompt, indent=2, ensure_ascii=False)
+        if brief_for_prompt is not None
         else "{}"
     )
     parts = [
-        *_system_prompt_openers(test_problem_id),
+        *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_BRIEF_UPDATE_TASK,

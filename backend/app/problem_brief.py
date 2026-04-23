@@ -116,6 +116,62 @@ def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
     }
 
 
+# Placeholders for prompt JSON only (cold chat); database brief keeps real template strings.
+CHAT_PROMPT_COLD_BACKEND_TEMPLATE = "deferred"
+CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT = (
+    "Session uses a fixed benchmark-backed solver; benchmark details appear once goals are stated."
+)
+
+
+def is_chat_cold_start(brief: dict[str, Any] | None) -> bool:
+    """
+    True when the participant-facing definition is still empty: no goal summary, no open
+    questions, and no non-system items. Matches server-side gating of the benchmark appendix.
+    """
+    if not brief or not isinstance(brief, dict):
+        return True
+    if str(brief.get("goal_summary") or "").strip():
+        return False
+    oq = brief.get("open_questions")
+    if isinstance(oq, list) and len(oq) > 0:
+        return False
+    items = brief.get("items")
+    if not isinstance(items, list):
+        return True
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().lower() == "rejected":
+            continue
+        if str(item.get("kind") or "").strip().lower() != "system" and str(item.get("text") or "").strip():
+            return False
+    return True
+
+
+def surface_problem_brief_for_chat_prompt(brief: dict[str, Any] | None, *, cold: bool) -> dict[str, Any] | None:
+    """
+    Return a copy of the brief for LLM system instructions. When cold, mask template fields
+    and neutralize system row text so the model is not primed with benchmark-specific nouns
+    (DB row is unchanged).
+    """
+    if brief is None:
+        return None
+    if not cold:
+        return brief
+    surf = deepcopy(brief) if isinstance(brief, dict) else {}
+    surf["backend_template"] = CHAT_PROMPT_COLD_BACKEND_TEMPLATE
+    if "solver_scope" in surf:
+        surf["solver_scope"] = "general_metaheuristic_translation"
+    items = surf.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("kind") or "").strip().lower() == "system":
+                item["text"] = CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT
+    return surf
+
+
 def _clean_question_fragment(text: str) -> str:
     return re.sub(r"^\s*(?:[-*•]\s+|\d+[\.\)]\s*)", "", text).strip()
 

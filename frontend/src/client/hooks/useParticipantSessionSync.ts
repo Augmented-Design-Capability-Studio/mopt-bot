@@ -4,7 +4,7 @@ import { apiFetch, type RunResult, type Session } from "@shared/api";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { resolveProblemPanelFromServer } from "../problemConfig/problemPanelHydration";
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
-import { SESSION_KEY } from "../lib/sessionKeys";
+import { CONTENT_RESET_REV_PREFIX, SESSION_KEY } from "../lib/sessionKeys";
 import {
   coerceParticipantMessages,
   isAbortError,
@@ -131,6 +131,20 @@ export function useParticipantSessionSync({
         if (sessionIdRef.current !== requestedId) return;
         if (signal?.aborted) return;
         if (isOlderSessionSnapshot(nextSession, sessionRef.current)) return;
+
+        const revKey = `${CONTENT_RESET_REV_PREFIX}${requestedId}`;
+        const serverRev = nextSession.content_reset_revision ?? 0;
+        const prevRaw = sessionStorage.getItem(revKey);
+        if (prevRaw !== null) {
+          const prev = Number(prevRaw);
+          if (Number.isFinite(serverRev) && serverRev > prev) {
+            sessionStorage.setItem(revKey, String(serverRev));
+            window.location.reload();
+            return;
+          }
+        }
+        sessionStorage.setItem(revKey, String(serverRev));
+
         setSession(nextSession);
         const resolved = resolveProblemPanelFromServer(problemPanelHydrationRef.current, nextSession.panel_config);
         problemPanelHydrationRef.current = resolved.mode;

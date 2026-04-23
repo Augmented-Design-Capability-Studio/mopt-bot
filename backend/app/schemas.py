@@ -83,6 +83,7 @@ class SessionOut(BaseModel):
     optimization_gate_engaged: bool = False
     gemini_model: str | None
     gemini_key_configured: bool = False
+    content_reset_revision: int = 0
 
     @field_serializer("created_at", "updated_at")
     def _serialize_datetimes(self, value: datetime) -> str:

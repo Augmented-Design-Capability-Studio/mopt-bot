@@ -21,6 +21,7 @@ def ensure_database_shape() -> None:
     _ensure_sessions_processing_columns()
     _ensure_sessions_optimization_runs_blocked_column()
     _ensure_sessions_optimization_gate_engaged_column()
+    _ensure_sessions_content_reset_revision_column()
     _backfill_optimization_gate_engaged()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
@@ -105,6 +106,20 @@ def _ensure_sessions_optimization_runs_blocked_column() -> None:
             )
         )
     log.info("Added sessions.optimization_runs_blocked_by_researcher column")
+
+
+def _ensure_sessions_content_reset_revision_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "content_reset_revision" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE sessions ADD COLUMN content_reset_revision INTEGER NOT NULL DEFAULT 0")
+        )
+    log.info("Added sessions.content_reset_revision column")
 
 
 def _ensure_sessions_optimization_gate_engaged_column() -> None:

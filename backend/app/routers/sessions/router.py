@@ -325,7 +325,9 @@ def reset_session(
     db.query(SessionSnapshot).filter(SessionSnapshot.session_id == session_id).delete()
     row.status = "active"
     row.panel_config_json = None
-    row.problem_brief_json = json.dumps(default_problem_brief())
+    pid = str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID)
+    row.problem_brief_json = json.dumps(default_problem_brief(pid))
+    row.content_reset_revision = int(getattr(row, "content_reset_revision", 0) or 0) + 1
     row.optimization_allowed = False
     row.optimization_runs_blocked_by_researcher = False
     row.optimization_gate_engaged = False
@@ -1129,6 +1131,7 @@ def export_session(
             "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
             "gemini_key_configured": bool(row.gemini_key_encrypted),
+            "content_reset_revision": int(getattr(row, "content_reset_revision", 0) or 0),
         },
         "messages": [
             {

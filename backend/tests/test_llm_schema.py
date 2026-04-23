@@ -92,9 +92,14 @@ def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_m
     assert "Mandatory:" in system and "Constraint handling" in system
 
 
+def _warm_brief() -> dict:
+    """Warm = appendix and full brief are injected; empty dict is cold."""
+    return {"goal_summary": "User stated goals", "open_questions": [], "items": []}
+
+
 def test_system_instruction_includes_vrptw_benchmark_appendix():
     system = _build_structured_system_instruction(
-        current_problem_brief={},
+        current_problem_brief=_warm_brief(),
         workflow_mode="waterfall",
         test_problem_id="vrptw",
     )
@@ -104,7 +109,7 @@ def test_system_instruction_includes_vrptw_benchmark_appendix():
 
 def test_system_instruction_includes_knapsack_benchmark_appendix():
     system = _build_structured_system_instruction(
-        current_problem_brief={},
+        current_problem_brief=_warm_brief(),
         workflow_mode="waterfall",
         test_problem_id="knapsack",
     )

@@ -21,7 +21,7 @@ metaheuristic guidance.
 
 **Search:** Same algorithm catalog as other study benchmarks: `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"` with the usual `algorithm_params`, `epochs`, `pop_size`, `random_seed`, and early-stop fields.
 
-**Framing:** Speak in general terms (selection, capacity, value) until the user engages; then you may use knapsack vocabulary naturally. Do **not** mention vehicles, routes, or traffic — this benchmark is not routing.
+**Framing (brief-specific):** Once warm, you may use knapsack vocabulary; this benchmark is not routing (no vehicles/routes as examples unless the user brought routing up elsewhere).
 
 **Simulated file upload:** Prompt the user to upload a CSV with their candidate information using
 the exact UI phrase **"Upload file(s)..."**. After the user indicates they uploaded a file,

@@ -2181,6 +2181,7 @@ def test_researcher_reset_session_clears_activity_but_keeps_identity_and_model(m
         )
         assert reset.status_code == 200
         body = reset.json()
+        assert body.get("content_reset_revision", 0) >= 1
         assert body["status"] == "active"
         assert body["participant_number"] == "007"
         assert body["gemini_key_configured"] is True

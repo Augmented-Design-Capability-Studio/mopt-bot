@@ -148,6 +148,8 @@ export type Session = {
   optimization_gate_engaged?: boolean;
   gemini_model: string | null;
   gemini_key_configured: boolean;
+  /** Incremented on researcher reset; client may reload when this increases. */
+  content_reset_revision?: number;
 };
 
 export type SessionProcessingStatus = "idle" | "pending" | "ready" | "failed";

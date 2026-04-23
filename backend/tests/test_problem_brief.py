@@ -1,10 +1,15 @@
 """Unit tests for problem brief normalization and merge helpers."""
 
 from app.problem_brief import (
+    CHAT_PROMPT_COLD_BACKEND_TEMPLATE,
+    CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT,
     _brief_items_from_panel,
+    default_problem_brief,
+    is_chat_cold_start,
     locked_goal_terms_prompt_section,
     merge_problem_brief_patch,
     normalize_problem_brief,
+    surface_problem_brief_for_chat_prompt,
     sync_problem_brief_from_panel,
 )
 
@@ -229,3 +234,44 @@ def test_normalize_atomizes_constraint_handling_gathered_item():
     assert any(t.startswith("Constraint handling:") and "Capacity" in t for t in texts)
     assert any("deadline" in t.lower() and "miss" in t.lower() for t in texts)
     assert any("8h" in t and "shift" in t.lower() for t in texts)
+
+
+def test_is_chat_cold_start_default_brief_knapsack():
+    b = default_problem_brief("knapsack")
+    assert is_chat_cold_start(b) is True
+    b2 = {**b, "goal_summary": "Maximize value"}
+    assert is_chat_cold_start(b2) is False
+
+
+def test_is_chat_cold_start_gathered_makes_warm():
+    b = _minimal_brief_payload(
+        goal_summary="",
+        open_questions=[],
+        items=[
+            {
+                "id": "g1",
+                "text": "User wants sparsity",
+                "kind": "gathered",
+                "source": "user",
+                "status": "confirmed",
+                "editable": True,
+            }
+        ],
+    )
+    assert is_chat_cold_start(b) is False
+
+
+def test_surface_problem_brief_for_chat_prompt_cold_masks():
+    b = default_problem_brief("knapsack")
+    surf = surface_problem_brief_for_chat_prompt(b, cold=True)
+    assert surf is not b
+    assert surf["backend_template"] == CHAT_PROMPT_COLD_BACKEND_TEMPLATE
+    for it in surf["items"]:
+        if it.get("kind") == "system":
+            assert it["text"] == CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT
+
+
+def test_surface_problem_brief_warm_unmodified_reference():
+    b = default_problem_brief("vrptw")
+    out = surface_problem_brief_for_chat_prompt(b, cold=False)
+    assert out is b
