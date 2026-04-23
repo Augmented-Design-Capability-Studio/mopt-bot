@@ -374,7 +374,7 @@ export function useResearcherController() {
 
   async function copySessionLink() {
     if (!selected) return;
-    const url = new URL("/client", window.location.origin);
+    const url = new URL("/client.html", window.location.origin);
     url.searchParams.set("session", selected);
     const link = url.toString();
     try {
