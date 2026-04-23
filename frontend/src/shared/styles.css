@@ -1294,9 +1294,42 @@ select:focus-visible {
 }
 
 .researcher-new-session {
-  padding: 0.55rem 0.6rem;
+  padding: 0;
   border-bottom: 1px solid var(--border);
   background: #f8f8f6;
+}
+
+.researcher-new-session-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.researcher-new-session-toggle:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.researcher-new-session-toggle-chevron {
+  display: inline-block;
+  width: 1em;
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  line-height: 1;
+  color: var(--muted, #666);
+}
+
+.researcher-new-session-body {
+  padding: 0 0.6rem 0.55rem;
 }
 
 .researcher-new-session-label {

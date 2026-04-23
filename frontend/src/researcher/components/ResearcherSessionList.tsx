@@ -34,6 +34,7 @@ export function ResearcherSessionList({
   canCreateSession,
   busy,
 }: ResearcherSessionListProps) {
+  const [createExpanded, setCreateExpanded] = useState(false);
   const [participantNumber, setParticipantNumber] = useState("");
   const [workflowMode, setWorkflowMode] = useState("waterfall");
   const [testProblemId, setTestProblemId] = useState("vrptw");
@@ -56,62 +57,74 @@ export function ResearcherSessionList({
   return (
     <aside className="session-list">
       <div className="researcher-new-session">
-        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.35rem" }}>
-          New session
-        </div>
-        <label className="researcher-new-session-label">
-          Participant #
-          <input
-            type="text"
-            value={participantNumber}
-            onChange={(e) => setParticipantNumber(e.target.value)}
-            placeholder="optional"
-            disabled={busy || !canCreateSession}
-            maxLength={64}
-            autoComplete="off"
-          />
-        </label>
-        <label className="researcher-new-session-label">
-          Workflow
-          <select
-            value={workflowMode}
-            onChange={(e) => setWorkflowMode(e.target.value)}
-            disabled={busy || !canCreateSession}
-          >
-            <option value="waterfall">Waterfall</option>
-            <option value="agile">Agile</option>
-            <option value="demo">Demo</option>
-          </select>
-        </label>
-        <label className="researcher-new-session-label">
-          Test problem
-          <select
-            value={testProblemId}
-            onChange={(e) => setTestProblemId(e.target.value)}
-            disabled={busy || !canCreateSession || testProblemsMeta.length === 0}
-          >
-            {testProblemsMeta.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label} ({m.id})
-              </option>
-            ))}
-          </select>
-        </label>
         <button
           type="button"
-          className="btn-primary"
-          style={{ width: "100%", marginTop: "0.35rem" }}
-          disabled={busy || !canCreateSession || testProblemsMeta.length === 0}
-          onClick={() =>
-            void onCreateSession({
-              participant_number: participantNumber,
-              workflow_mode: workflowMode,
-              test_problem_id: testProblemId,
-            })
-          }
+          className="researcher-new-session-toggle"
+          aria-expanded={createExpanded}
+          onClick={() => setCreateExpanded((open) => !open)}
         >
-          Create session
+          <span className="researcher-new-session-toggle-chevron" aria-hidden>
+            {createExpanded ? "▴" : "▾"}
+          </span>
+          Create session…
         </button>
+        {createExpanded ? (
+          <div className="researcher-new-session-body">
+            <label className="researcher-new-session-label">
+              Participant #
+              <input
+                type="text"
+                value={participantNumber}
+                onChange={(e) => setParticipantNumber(e.target.value)}
+                placeholder="optional"
+                disabled={busy || !canCreateSession}
+                maxLength={64}
+                autoComplete="off"
+              />
+            </label>
+            <label className="researcher-new-session-label">
+              Workflow
+              <select
+                value={workflowMode}
+                onChange={(e) => setWorkflowMode(e.target.value)}
+                disabled={busy || !canCreateSession}
+              >
+                <option value="waterfall">Waterfall</option>
+                <option value="agile">Agile</option>
+                <option value="demo">Demo</option>
+              </select>
+            </label>
+            <label className="researcher-new-session-label">
+              Test problem
+              <select
+                value={testProblemId}
+                onChange={(e) => setTestProblemId(e.target.value)}
+                disabled={busy || !canCreateSession || testProblemsMeta.length === 0}
+              >
+                {testProblemsMeta.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label} ({m.id})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: "100%", marginTop: "0.35rem" }}
+              disabled={busy || !canCreateSession || testProblemsMeta.length === 0}
+              onClick={() =>
+                void onCreateSession({
+                  participant_number: participantNumber,
+                  workflow_mode: workflowMode,
+                  test_problem_id: testProblemId,
+                })
+              }
+            >
+              Create session
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.6rem" }}>
