@@ -541,6 +541,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 run_intent is not None
                 and run_intent.should_trigger_run
                 and run_intent.intent_type in {"affirm_invite", "direct_request"}
+                and not intent.assistant_reply_is_asking_about_run(text)
             ):
                 if can_run_now:
                     has_recent_run_reply = (

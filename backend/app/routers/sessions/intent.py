@@ -58,6 +58,23 @@ def is_definition_clear_request(content: str) -> bool:
     return any(pattern.search(text) for pattern in _CLEAR_INTENT_PATTERNS)
 
 
+_ASSISTANT_RUN_INVITATION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bshould\s+i\s+(trigger|start|kick\s*off|begin|launch)\s+(a\s+)?(new\s+)?run\b", re.IGNORECASE),
+    re.compile(r"\bshall\s+i\s+(trigger|start|kick\s*off|begin|launch)\s+(a\s+)?(new\s+)?run\b", re.IGNORECASE),
+    re.compile(r"\b(want|would\s+you\s+like)\s+(me\s+to\s+)?(trigger|start|kick\s*off|launch)\s+(a\s+)?(new\s+)?(optimization\s+)?run\b", re.IGNORECASE),
+    re.compile(r"\b(trigger|start)\s+(a\s+)?(new\s+)?run\s+(now|with\s+these).*\?", re.IGNORECASE),
+    re.compile(r"\bready\s+to\s+(trigger|start|kick\s*off|launch)\s+(a\s+)?(new\s+)?run\b.*\?", re.IGNORECASE),
+)
+
+
+def assistant_reply_is_asking_about_run(text: str) -> bool:
+    """True if the assistant reply is soliciting the user's confirmation before starting a run."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return any(p.search(stripped) for p in _ASSISTANT_RUN_INVITATION_PATTERNS)
+
+
 def sanitize_visible_assistant_reply(text: str) -> str:
     cleaned = text.strip()
     if not cleaned:
