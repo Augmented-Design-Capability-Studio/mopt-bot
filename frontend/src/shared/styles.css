@@ -1309,7 +1309,8 @@ select:focus-visible {
   border: none;
   background: transparent;
   font: inherit;
-  font-size: 0.85rem;
+  /* Same scale as participant config Snapshot ▲/▼ (default button / root font size) */
+  font-size: 1rem;
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -1319,11 +1320,11 @@ select:focus-visible {
   background: rgba(0, 0, 0, 0.04);
 }
 
+/* Match participant ConfigPanel snapshot control: full-size ▲ / ▼ at control font size */
 .researcher-new-session-toggle-chevron {
   display: inline-block;
-  width: 1em;
   flex-shrink: 0;
-  font-size: 0.65rem;
+  font-size: 1em;
   line-height: 1;
   color: var(--muted, #666);
 }

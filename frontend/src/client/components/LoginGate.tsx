@@ -42,6 +42,12 @@ export function LoginGate({
     return `Started ${parsed.toLocaleString()}`;
   }
 
+  function submitSaveToken(e: React.FormEvent) {
+    e.preventDefault();
+    void onLogin();
+    void onRefreshRecentSessions();
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -60,57 +66,46 @@ export function LoginGate({
           Enter the access token for this station, then start. Workflow (for example agile vs waterfall) is set by the
           researcher for your session - you do not choose it here.
         </p>
-        {pendingUrlSessionId && (
-          <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
-            This link targets a specific session. Enter the access token to open it automatically.
-          </p>
-        )}
-        {pendingUrlSessionId ? (
-          <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
-            Accessing through a session link. Participant number is set from that session.
-          </p>
-        ) : (
+        <form onSubmit={submitSaveToken}>
+          {pendingUrlSessionId ? (
+            <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
+              Accessed through a session link. Enter the access token and start to join.
+            </p>
+          ) : (
+            <label>
+              Participant number
+              <input
+                type="text"
+                value={participantNumber}
+                onChange={(e) => onParticipantNumberChange(e.target.value)}
+                placeholder="Optional, e.g. 007"
+                autoComplete="off"
+              />
+            </label>
+          )}
           <label>
-            Participant number
+            Access token
             <input
-              type="text"
-              value={participantNumber}
-              onChange={(e) => onParticipantNumberChange(e.target.value)}
-              placeholder="Optional, e.g. 007"
+              type="password"
+              value={token}
+              onChange={(e) => onTokenChange(e.target.value)}
               autoComplete="off"
             />
           </label>
-        )}
-        <label>
-          Access token
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => onTokenChange(e.target.value)}
-            autoComplete="off"
-          />
-        </label>
-        <div
-          style={{
-            marginTop: "1rem",
-            display: "flex",
-            gap: "0.5rem",
-            flexWrap: "wrap",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              onLogin();
-              void onRefreshRecentSessions();
+          <div
+            style={{
+              marginTop: "1rem",
+              display: "flex",
+              gap: "0.5rem",
+              flexWrap: "wrap",
             }}
           >
-            Save token
-          </button>
-          <button type="button" disabled={busy || !token.trim()} onClick={() => void onStartSession()}>
-            Start session
-          </button>
-        </div>
+            <button type="submit">Save token</button>
+            <button type="button" disabled={busy || !token.trim()} onClick={() => void onStartSession()}>
+              Start session
+            </button>
+          </div>
+        </form>
         <details style={{ marginTop: "1.25rem" }} className="login-recent-sessions">
           <summary style={{ cursor: "pointer", fontWeight: 600 }}>Past sessions on this browser</summary>
           <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
