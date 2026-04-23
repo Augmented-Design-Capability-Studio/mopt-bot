@@ -59,7 +59,12 @@ in that appendix when it is present.
   as requirements evolve.
 - **Open questions vs gathered:** use `open_questions` only for outstanding clarifications;
   never put resolved answers in question text. When the user answers, add a `gathered` item
-  and remove the question (`replace_open_questions=true` when replacing the full list).
+  and remove that question (`replace_open_questions=true` with the **full** list you still want).
+  You may also **retire** questions that are **no longer relevant** (moot, superseded by a new
+  participant direction, or narrowed away) the same way: `replace_open_questions=true` and
+  include **every** question that should **remain** open—**omit** dropped ids. **Keep** any
+  question whose answer is still needed for a sound specification (and in **waterfall**, for
+  run readiness while the gate is engaged).
 - **Only** surface a configuration field when the user (or the brief) gives something to map.
   Elicit rather than dump options. **At most one** new objective or constraint per turn
   unless the user lists several. Workflow mode (below) refines how much confirmation to seek.
@@ -227,11 +232,13 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   or run-budget numbers. Put those details in `items` (`gathered`/`assumption`) instead.
 - `"replace_editable_items"`: boolean. Set true only when performing holistic cleanup or
   reorganization of gathered/assumption rows.
-- `"replace_open_questions"`: boolean. Set true only when `problem_brief_patch.open_questions`
-  carries the **full** replacement list you intend to store. On cleanup/consolidation turns,
-  usually leave this **false** and **omit** `open_questions` from the patch so existing
-  questions are preserved unless you are intentionally rewriting the whole list (or clearing
-  it with `open_questions: []`).
+- `"replace_open_questions"`: boolean. Set **true** when `problem_brief_patch.open_questions`
+  carries the **complete** list you intend to store after this turn (whether shorter, longer,
+  or unchanged length). Set **false** and **omit** `open_questions` from the patch when you
+  are **not** changing the question list. Use a **full replacement** to **prune** obsolete or
+  moot questions—not only on cleanup turns, whenever dialogue shows a question no longer applies.
+  On holistic cleanup of **items** only, you may still **omit** `open_questions` to leave the
+  list unchanged, or send a deliberate replacement if you are also curating questions.
 - **Open questions must stay truly open.** Do not add entries that restate an answer the user
   already gave (no `(Answered: …)` or similar in `open_questions[].text`). Put resolved Q&A in
   `items` as `kind: "gathered"` instead, and omit closed questions from `open_questions`.
@@ -255,10 +262,10 @@ active and mark the superseded one `"rejected"` instead of leaving both active.
 **Rule 4 — Cleanup requests must be holistic.** If the user asks to clean up, consolidate,
 deduplicate, reorganize, or remove definition entries, set `cleanup_mode=true` and
 `replace_editable_items=true`, then emit a coherent final editable list across gathered +
-assumption rows instead of incremental append-style edits. **Do not drop open questions**
-on cleanup: omit `open_questions` from the patch, or send a deliberate full replacement
-list with `replace_open_questions=true` (use `open_questions: []` only when intentionally
-clearing every question).
+assumption rows instead of incremental append-style edits. For **open questions** on cleanup,
+either **omit** `open_questions` (leave the list as-is) or send a **deliberate** full list with
+`replace_open_questions=true`—including to **drop** moot questions or to clear with
+`open_questions: []` only when intentionally clearing **all** questions.
 
 **Rule 5 — One goal term per row (objectives and constraint handling).** Treat each soft
 objective term and each constraint-handling term (capacity-style penalties, deadline/priority
@@ -345,9 +352,9 @@ Rules:
 - Omit untouched fields.
 - Cleanup requests must be holistic: set `cleanup_mode=true`, `replace_editable_items=true`,
   and emit a coherent editable snapshot when the user asks to clean up, consolidate,
-  deduplicate, reorganize, or clear definition content. **Leave `replace_open_questions=false`
-  and omit `open_questions` from the patch** unless you are intentionally replacing the
-  entire question list (then include every question and set `replace_open_questions=true`).
+  deduplicate, reorganize, or clear definition content. For **open questions**, either omit
+  them (unchanged) or set `replace_open_questions=true` with the **full** list you want
+  (including **removing** stale or moot questions by omitting their ids from that list).
 - On cleanup turns, you may rephrase **a single** gathered row (e.g. from answered open
   questions, id prefix `gathered-oq-`, or `Question — Answer` text) into clearer declarative wording.
   Do **not** merge **multiple goal terms** into one row while doing so.
@@ -372,7 +379,7 @@ Your JSON has **no** `assistant_message`; only `problem_brief_patch`, `replace_e
 
 **Rule 3 — Only include keys you are changing.**
 
-**Rule 4 — Holistic cleanup.** On clean-up / consolidate / deduplicate requests, set `cleanup_mode=true`, `replace_editable_items=true`, and emit the **full** replacement gathered + assumption list. Preserve open questions by omitting `open_questions` from the patch, unless you intentionally replace the whole list (`replace_open_questions=true`).
+**Rule 4 — Holistic cleanup.** On clean-up / consolidate / deduplicate requests, set `cleanup_mode=true`, `replace_editable_items=true`, and emit the **full** replacement gathered + assumption list. For **open questions**, omit `open_questions` to leave them unchanged, **or** set `replace_open_questions=true` with the **complete** list to keep (use this to **prune** obsolete questions on cleanup or on a normal turn whenever justified).
 
 **Rule 5 — One goal term per row (objectives and constraint handling).** Each soft objective term and each constraint-handling term (capacity-style penalties, deadline/priority penalties, shift hard limits, etc.) must be its **own** `gathered` row with weight or penalty text. Do **not** collapse several terms into one comma-separated line, one long `Constraint handling:` sentence, or one bundled “Active objectives:” sentence — **split into separate rows**, including on cleanup turns.
 

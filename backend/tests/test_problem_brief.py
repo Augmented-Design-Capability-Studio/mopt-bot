@@ -78,6 +78,27 @@ def test_merge_replace_open_questions_true_without_open_questions_key_preserves(
     assert [q["id"] for q in merged["open_questions"]] == ["q-keep"]
 
 
+def test_merge_replace_open_questions_true_prunes_stale_questions():
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            open_questions=[
+                {"id": "q-a", "text": "Stale?", "status": "open", "answer_text": None},
+                {"id": "q-b", "text": "Still matters?", "status": "open", "answer_text": None},
+            ],
+        )
+    )
+    merged = merge_problem_brief_patch(
+        base,
+        {
+            "replace_open_questions": True,
+            "open_questions": [
+                {"id": "q-b", "text": "Still matters?", "status": "open", "answer_text": None},
+            ],
+        },
+    )
+    assert [q["id"] for q in merged["open_questions"]] == ["q-b"]
+
+
 def test_merge_moves_answered_suffix_open_question_to_gathered():
     base = normalize_problem_brief(
         _minimal_brief_payload(
