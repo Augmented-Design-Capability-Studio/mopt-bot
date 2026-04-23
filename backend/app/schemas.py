@@ -16,6 +16,7 @@ class SessionCreate(BaseModel):
     # Participant apps omit this; researcher sets workflow via PATCH. Default is conservative (gated runs).
     workflow_mode: Literal["agile", "waterfall", "demo"] = "waterfall"
     participant_number: str | None = Field(default=None, max_length=64)
+    test_problem_id: str | None = Field(default=None, max_length=64)
 
 
 class SessionPatch(BaseModel):

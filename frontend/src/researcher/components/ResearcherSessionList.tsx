@@ -1,4 +1,6 @@
-import type { Session } from "@shared/api";
+import { useEffect, useState } from "react";
+
+import type { Session, TestProblemMeta } from "@shared/api";
 import { parseServerDate } from "@shared/dateTime";
 
 type ResearcherSessionListProps = {
@@ -9,6 +11,13 @@ type ResearcherSessionListProps = {
   onToggleSelect: (sessionId: string, checked: boolean) => void;
   onToggleSelectAll: (checked: boolean) => void;
   onRemoveSelected: () => void | Promise<void>;
+  onCreateSession: (body: {
+    participant_number: string;
+    workflow_mode: string;
+    test_problem_id: string;
+  }) => void | Promise<void>;
+  testProblemsMeta: TestProblemMeta[];
+  canCreateSession: boolean;
   busy: boolean;
 };
 
@@ -20,8 +29,22 @@ export function ResearcherSessionList({
   onToggleSelect,
   onToggleSelectAll,
   onRemoveSelected,
+  onCreateSession,
+  testProblemsMeta,
+  canCreateSession,
   busy,
 }: ResearcherSessionListProps) {
+  const [participantNumber, setParticipantNumber] = useState("");
+  const [workflowMode, setWorkflowMode] = useState("waterfall");
+  const [testProblemId, setTestProblemId] = useState("vrptw");
+
+  useEffect(() => {
+    if (testProblemsMeta.length === 0) return;
+    setTestProblemId((current) =>
+      testProblemsMeta.some((m) => m.id === current) ? current : testProblemsMeta[0].id,
+    );
+  }, [testProblemsMeta]);
+
   function formatStart(value: string): string {
     const parsed = parseServerDate(value);
     if (Number.isNaN(parsed.getTime())) return "Unknown start";
@@ -32,6 +55,65 @@ export function ResearcherSessionList({
 
   return (
     <aside className="session-list">
+      <div className="researcher-new-session">
+        <div className="muted" style={{ fontSize: "0.8rem", marginBottom: "0.35rem" }}>
+          New session
+        </div>
+        <label className="researcher-new-session-label">
+          Participant #
+          <input
+            type="text"
+            value={participantNumber}
+            onChange={(e) => setParticipantNumber(e.target.value)}
+            placeholder="optional"
+            disabled={busy || !canCreateSession}
+            maxLength={64}
+            autoComplete="off"
+          />
+        </label>
+        <label className="researcher-new-session-label">
+          Workflow
+          <select
+            value={workflowMode}
+            onChange={(e) => setWorkflowMode(e.target.value)}
+            disabled={busy || !canCreateSession}
+          >
+            <option value="waterfall">Waterfall</option>
+            <option value="agile">Agile</option>
+            <option value="demo">Demo</option>
+          </select>
+        </label>
+        <label className="researcher-new-session-label">
+          Test problem
+          <select
+            value={testProblemId}
+            onChange={(e) => setTestProblemId(e.target.value)}
+            disabled={busy || !canCreateSession || testProblemsMeta.length === 0}
+          >
+            {testProblemsMeta.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label} ({m.id})
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn-primary"
+          style={{ width: "100%", marginTop: "0.35rem" }}
+          disabled={busy || !canCreateSession || testProblemsMeta.length === 0}
+          onClick={() =>
+            void onCreateSession({
+              participant_number: participantNumber,
+              workflow_mode: workflowMode,
+              test_problem_id: testProblemId,
+            })
+          }
+        >
+          Create session
+        </button>
+      </div>
+
       <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.6rem" }}>
         <label className="muted" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
           <input
@@ -77,7 +159,9 @@ export function ResearcherSessionList({
           <div className="muted">
             {session.workflow_mode} · {session.status}
           </div>
-          <div className="muted">Participant #{session.participant_number ?? "n/a"}</div>
+          <div className="muted">
+            {session.test_problem_id} · Participant #{session.participant_number ?? "n/a"}
+          </div>
           <div className="muted">Started {formatStart(session.created_at)}</div>
         </div>
       ))}

@@ -23,6 +23,7 @@ def test_create_session_returns_null_panel_config(monkeypatch):
         assert data.get("panel_config") is None
         assert data["problem_brief"]["solver_scope"] == "general_metaheuristic_translation"
         assert any(item["kind"] == "system" for item in data["problem_brief"]["items"])
+        assert data.get("test_problem_id") == "vrptw"
         sid = data["id"]
         r2 = client.get(
             f"/sessions/{sid}",
@@ -37,6 +38,40 @@ def test_create_session_returns_null_panel_config(monkeypatch):
             "config_status": "idle",
             "processing_error": None,
         }
+
+
+def test_create_session_researcher_token_and_knapsack_problem(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-create-1")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-create-1")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/sessions",
+            json={
+                "workflow_mode": "agile",
+                "participant_number": " 42 ",
+                "test_problem_id": "knapsack",
+            },
+            headers={"Authorization": "Bearer test-researcher-create-1"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["workflow_mode"] == "agile"
+        assert data["participant_number"] == "42"
+        assert data["test_problem_id"] == "knapsack"
+        assert data["problem_brief"]["backend_template"] == "zero_one_knapsack"
+
+
+def test_create_session_unknown_test_problem_id_400(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-create-2")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/sessions",
+            json={"test_problem_id": "not_a_real_problem"},
+            headers={"Authorization": "Bearer test-client-create-2"},
+        )
+        assert r.status_code == 400
 
 
 def test_message_response_marks_processing_pending_before_background_finishes(monkeypatch):

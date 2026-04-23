@@ -16,7 +16,7 @@ from app.auth import Principal, require_any_study_user, require_client, require_
 from app.config import get_settings
 from app.crypto_util import encrypt_secret
 from app.database import get_db
-from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port
+from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port, register_study_ports
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
@@ -85,20 +85,30 @@ def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any], has_
     return "I can start a run once run prerequisites are satisfied."
 
 
+def _resolve_new_session_test_problem_id(raw: str | None) -> str:
+    if raw is None or not str(raw).strip():
+        return DEFAULT_PROBLEM_ID
+    pid = str(raw).strip().lower()
+    if pid not in register_study_ports():
+        raise HTTPException(status_code=400, detail=f"Unknown test_problem_id: {pid}")
+    return pid
+
+
 @router.post("", response_model=SessionOut)
 def create_session(
     body: SessionCreate,
     db: Session = Depends(get_db),
-    _: Principal = Depends(require_client),
+    _: Principal = Depends(require_any_study_user),
 ):
+    tpid = _resolve_new_session_test_problem_id(body.test_problem_id)
     row = StudySession(
         id=str(uuid.uuid4()),
         workflow_mode=body.workflow_mode,
         participant_number=helpers.clean_participant_number(body.participant_number),
-        test_problem_id=DEFAULT_PROBLEM_ID,
+        test_problem_id=tpid,
         status="active",
         panel_config_json=None,
-        problem_brief_json=json.dumps(default_problem_brief()),
+        problem_brief_json=json.dumps(default_problem_brief(tpid)),
         processing_revision=0,
         brief_status="ready",
         config_status="idle",

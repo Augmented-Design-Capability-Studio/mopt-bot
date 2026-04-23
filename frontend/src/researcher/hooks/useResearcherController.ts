@@ -57,6 +57,35 @@ export function useResearcherController() {
     }
   }, [savedToken]);
 
+  const createNewSession = useCallback(
+    async (body: { participant_number: string; workflow_mode: string; test_problem_id: string }) => {
+      if (!savedToken.trim()) return;
+      detailPollGen.current += 1;
+      setBusy(true);
+      setNotice(null);
+      try {
+        const session = await apiFetch<Session>("/sessions", savedToken.trim(), {
+          method: "POST",
+          body: JSON.stringify({
+            workflow_mode: body.workflow_mode,
+            participant_number: body.participant_number.trim() || null,
+            test_problem_id: body.test_problem_id,
+          }),
+        });
+        await refreshList();
+        setSelected(session.id);
+        setSelectedIds([]);
+        setError(null);
+        setNotice(`Created session ${session.id.slice(0, 8)}…`);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Create session failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshList, savedToken],
+  );
+
   const loadDetail = useCallback(async () => {
     if (!savedToken.trim() || !selected) return;
     const sessionId = selected;
@@ -456,6 +485,7 @@ export function useResearcherController() {
     toggleSessionSelected,
     toggleAllSessionsSelected,
     refreshList,
+    createNewSession,
     saveToken,
     patchSession,
     sendSteer,

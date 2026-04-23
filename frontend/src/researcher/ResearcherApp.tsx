@@ -27,6 +27,9 @@ export function ResearcherApp() {
           onToggleSelect={researcher.toggleSessionSelected}
           onToggleSelectAll={researcher.toggleAllSessionsSelected}
           onRemoveSelected={researcher.removeSelectedSessions}
+          onCreateSession={researcher.createNewSession}
+          testProblemsMeta={researcher.testProblemsMeta}
+          canCreateSession={Boolean(researcher.savedToken.trim())}
           busy={researcher.busy}
         />
         <ResearcherDetail
