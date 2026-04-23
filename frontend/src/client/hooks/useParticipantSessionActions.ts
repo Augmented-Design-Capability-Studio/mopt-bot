@@ -53,6 +53,7 @@ function makeOptimisticOptimizeRun(problem: Record<string, unknown>, existing: R
 
 type UseParticipantSessionActionsArgs = {
   token: string;
+  hasUploadedData: boolean;
   participantNumber?: string;
   sessionId: string;
   session: Session | null;
@@ -99,6 +100,7 @@ type PostContextMessageOptions = {
 
 export function useParticipantSessionActions({
   token,
+  hasUploadedData,
   participantNumber: _participantNumber,
   sessionId,
   session,
@@ -567,7 +569,7 @@ export function useParticipantSessionActions({
 
   const runOptimize = useCallback(
     async (options?: { agileAutorunStorageKey?: string }): Promise<void> => {
-    if (!token || !sessionId || !computeCanRunOptimization(session, configText, problemBrief, problemMeta)) return;
+    if (!token || !sessionId || !computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, problemMeta)) return;
     let panel: Record<string, unknown>;
     try {
       panel = JSON.parse(configText) as Record<string, unknown>;
@@ -643,6 +645,7 @@ export function useParticipantSessionActions({
     problemBrief,
     session,
     sessionId,
+    hasUploadedData,
     setActiveRun,
     setBusy,
     setError,

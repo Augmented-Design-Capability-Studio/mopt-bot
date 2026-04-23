@@ -13,3 +13,7 @@ export function parseFilenamesFromSimulatedUploadMessage(content: string): strin
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+export function hasSimulatedUploadMessage(content: string): boolean {
+  return content.startsWith(SIMULATED_UPLOAD_MESSAGE_PREFIX);
+}

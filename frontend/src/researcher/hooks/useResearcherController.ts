@@ -208,6 +208,29 @@ export function useResearcherController() {
     }
   }
 
+  async function resetSession() {
+    if (!selected || !savedToken.trim()) return;
+    if (!window.confirm("Reset this session? This clears chat, runs, and snapshots, but keeps participant number and model settings.")) {
+      return;
+    }
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      const next = await apiFetch<Session>(`/sessions/${selected}/reset`, savedToken.trim(), { method: "POST" });
+      setDetail(next);
+      setMessages([]);
+      setRuns([]);
+      await refreshList();
+      setError(null);
+      setNotice("Session reset.");
+    } catch (e) {
+      setNotice(null);
+      setError(e instanceof Error ? e.message : "Reset failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeSession() {
     if (!selected || !savedToken.trim()) return;
     if (!window.confirm("Delete this session and all logs?")) return;
@@ -437,6 +460,7 @@ export function useResearcherController() {
     patchSession,
     sendSteer,
     terminate,
+    resetSession,
     removeSession,
     removeSelectedSessions,
     removeRun,

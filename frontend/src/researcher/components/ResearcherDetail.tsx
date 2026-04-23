@@ -38,6 +38,7 @@ type ResearcherDetailProps = {
   onPushGeminiKey: () => void | Promise<void>;
   onExportJson: () => void | Promise<void>;
   onCopySessionLink: () => void | Promise<void>;
+  onResetSession: () => void | Promise<void>;
   onTerminate: () => void | Promise<void>;
   onRemoveSession: () => void | Promise<void>;
   onSendSteer: () => void | Promise<void>;
@@ -68,6 +69,7 @@ export function ResearcherDetail({
   onPushGeminiKey,
   onExportJson,
   onCopySessionLink,
+  onResetSession,
   onTerminate,
   onRemoveSession,
   onSendSteer,
@@ -119,6 +121,9 @@ export function ResearcherDetail({
             </button>
             <button type="button" disabled={busy} onClick={() => void onCopySessionLink()}>
               Copy session link
+            </button>
+            <button type="button" disabled={busy} onClick={() => void onResetSession()}>
+              Reset session
             </button>
             <button type="button" disabled={busy} onClick={() => void onTerminate()}>
               Terminate session

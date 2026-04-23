@@ -48,7 +48,7 @@ import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
 import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
 import { DEFAULT_PARTICIPANT_OPS_STATE } from "../lib/participantOps";
-import { parseFilenamesFromSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
+import { hasSimulatedUploadMessage, parseFilenamesFromSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 import { useParticipantSessionActions } from "./useParticipantSessionActions";
 import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle";
 import { useParticipantSessionSync } from "./useParticipantSessionSync";
@@ -267,6 +267,11 @@ export function useParticipantController() {
     setSimulatedUploadChips((prev) => prev.filter((n) => n !== fileName));
   }, [sessionId]);
 
+  const hasUploadedData = useMemo(
+    () => messages.some((m) => m.role === "user" && hasSimulatedUploadMessage(m.content)),
+    [messages],
+  );
+
   useEffect(() => {
     const p = session?.participant_number?.trim();
     if (!p) return;
@@ -302,6 +307,7 @@ export function useParticipantController() {
 
   const actions = useParticipantSessionActions({
     token: savedToken,
+    hasUploadedData,
     sessionId,
     session,
     chatInputRef,
@@ -347,7 +353,7 @@ export function useParticipantController() {
       testProblemMeta?.weight_display_keys ?? _VRPTW_AGILE_WDK,
       testProblemMeta !== null ? (testProblemMeta?.worker_preference_key ?? null) : null,
     )) return;
-    if (!computeCanRunOptimization(session, configText, problemBrief, testProblemMeta)) return;
+    if (!computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, testProblemMeta)) return;
     const hasCommittedOptimize = runs.some((r) => !r.clientPending && r.run_type === "optimize");
     if (hasCommittedOptimize) return;
     try {
@@ -364,6 +370,7 @@ export function useParticipantController() {
     editMode,
     optimizing,
     problemBrief,
+    hasUploadedData,
     runs,
     session,
   ]);
@@ -458,6 +465,7 @@ export function useParticipantController() {
     invokeModel,
     configText,
     problemBrief,
+    hasUploadedData,
     scheduleText,
     editMode,
     busy,

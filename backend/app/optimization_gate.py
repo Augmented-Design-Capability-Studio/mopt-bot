@@ -126,9 +126,13 @@ def can_run_optimization(
     optimization_runs_blocked_by_researcher: bool,
     panel_config: dict[str, Any] | None,
     problem_brief: Any,
+    has_uploaded_data: bool = True,
     optimization_gate_engaged: bool = False,
     problem_id: str | None = None,
 ) -> bool:
+    mode = str(workflow_mode or "").strip().lower()
+    if mode in ("agile", "demo") and not has_uploaded_data:
+        return False
     if optimization_runs_blocked_by_researcher:
         return False
     if optimization_allowed:

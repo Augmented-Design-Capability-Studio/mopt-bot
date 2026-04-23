@@ -52,6 +52,7 @@ export function ResearcherApp() {
           onPushGeminiKey={researcher.pushGeminiKey}
           onExportJson={researcher.exportJson}
           onCopySessionLink={researcher.copySessionLink}
+          onResetSession={researcher.resetSession}
           onTerminate={researcher.terminate}
           onRemoveSession={researcher.removeSession}
           onSendSteer={researcher.sendSteer}

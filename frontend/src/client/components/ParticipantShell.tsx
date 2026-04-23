@@ -38,6 +38,7 @@ type ParticipantShellProps = {
   invokeModel: boolean;
   configText: string;
   problemBrief: ProblemBrief | null;
+  hasUploadedData: boolean;
   scheduleText: string;
   editMode: EditMode;
   busy: boolean;
@@ -105,6 +106,7 @@ export function ParticipantShell({
   invokeModel,
   configText,
   problemBrief,
+  hasUploadedData,
   scheduleText,
   editMode,
   busy,
@@ -301,6 +303,7 @@ export function ParticipantShell({
             session={session}
             configText={configText}
             problemBrief={problemBrief}
+            hasUploadedData={hasUploadedData}
             problemMeta={testProblemMeta}
             sessionTerminated={sessionTerminated}
             onSetActiveRun={onSetActiveRun}

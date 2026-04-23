@@ -111,9 +111,12 @@ export function computeCanRunOptimization(
   session: Session | null,
   configText: string,
   problemBrief: ProblemBrief | null,
+  hasUploadedData: boolean,
   problemMeta?: TestProblemMeta | null,
 ): boolean {
   if (!session) return false;
+  const mode = (session.workflow_mode ?? "").toLowerCase();
+  if ((mode === "agile" || mode === "demo") && !hasUploadedData) return false;
   if (session.optimization_runs_blocked_by_researcher) return false;
   if (session.optimization_allowed) return true;
   return intrinsicOptimizationReady(
@@ -130,10 +133,11 @@ export function runOptimizationDisabledHint(
   session: Session | null,
   configText: string,
   problemBrief: ProblemBrief | null,
+  hasUploadedData: boolean,
   problemMeta?: TestProblemMeta | null,
 ): string {
   if (!session) return "";
-  if (computeCanRunOptimization(session, configText, problemBrief, problemMeta)) return "";
+  if (computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, problemMeta)) return "";
   if (session.optimization_runs_blocked_by_researcher) {
     return "The researcher has disabled the Run button for this session.";
   }
@@ -141,6 +145,9 @@ export function runOptimizationDisabledHint(
 
   const mode = (session.workflow_mode ?? "").toLowerCase();
   if (mode === "agile" || mode === "demo") {
+    if (!hasUploadedData) {
+      return "Upload data files first (or ask the researcher to push dummy files) before running optimization.";
+    }
     return "Add at least one objective term and choose a search algorithm in Problem Config, or ask the researcher to enable runs.";
   }
   if (mode === "waterfall") {

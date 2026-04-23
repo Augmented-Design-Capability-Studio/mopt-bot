@@ -40,6 +40,7 @@ export function ClientApp() {
       invokeModel={controller.invokeModel}
       configText={controller.configText}
       problemBrief={controller.problemBrief}
+      hasUploadedData={controller.hasUploadedData}
       scheduleText={controller.scheduleText}
       editMode={controller.editMode}
       busy={controller.busy}

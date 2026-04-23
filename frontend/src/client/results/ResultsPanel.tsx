@@ -18,6 +18,7 @@ type ResultsPanelProps = {
   session: Session | null;
   configText: string;
   problemBrief: ProblemBrief | null;
+  hasUploadedData: boolean;
   problemMeta?: TestProblemMeta | null;
   sessionTerminated: boolean;
   className: string;
@@ -40,6 +41,7 @@ export function ResultsPanel({
   session,
   configText,
   problemBrief,
+  hasUploadedData,
   problemMeta,
   sessionTerminated,
   className,
@@ -50,8 +52,8 @@ export function ResultsPanel({
   onCancelOptimize,
   onRunEvaluateEdited,
 }: ResultsPanelProps) {
-  const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, problemMeta);
-  const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, problemMeta);
+  const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, problemMeta);
+  const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, hasUploadedData, problemMeta);
   const [showRaw, setShowRaw] = useState(false);
   const [vizTabId, setVizTabId] = useState<string>("__convergence__");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);

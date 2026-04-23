@@ -205,6 +205,13 @@ def test_direct_run_request_triggers_autorun_when_gate_open(monkeypatch):
         )
         assert patch.status_code == 200
 
+        upload = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "I'm uploading the following file(s): ORDERS.csv", "invoke_model": False},
+            headers={"Authorization": "Bearer test-client-chat-autorun-open-secret"},
+        )
+        assert upload.status_code == 200
+
         send = client.post(
             f"/sessions/{sid}/messages",
             json={"content": "Can we run now?", "invoke_model": True},
@@ -2075,3 +2082,133 @@ def test_researcher_simulate_participant_upload_posts_default_file_names(monkeyp
         )
         assert visible.status_code == 200
         assert any("DRIVER_INFO.csv" in m["content"] for m in visible.json())
+
+
+def test_researcher_simulated_upload_unblocks_agile_run_gate(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-researcher-upload-gate")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-upload-gate")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "agile"},
+            headers={"Authorization": "Bearer test-client-researcher-upload-gate"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/panel",
+            json={"panel_config": {"problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}}},
+            headers={"Authorization": "Bearer test-client-researcher-upload-gate"},
+        )
+        assert patch.status_code == 200
+
+        blocked = client.post(
+            f"/sessions/{sid}/runs",
+            json={"type": "optimize", "problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}},
+            headers={"Authorization": "Bearer test-client-researcher-upload-gate"},
+        )
+        assert blocked.status_code == 409
+
+        upload = client.post(
+            f"/sessions/{sid}/researcher/simulate-participant-upload",
+            json={"invoke_model": False},
+            headers={"Authorization": "Bearer test-researcher-upload-gate"},
+        )
+        assert upload.status_code == 200
+
+        allowed = client.post(
+            f"/sessions/{sid}/runs",
+            json={"type": "optimize", "problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}},
+            headers={"Authorization": "Bearer test-client-researcher-upload-gate"},
+        )
+        assert allowed.status_code == 200
+
+
+def test_researcher_reset_session_clears_activity_but_keeps_identity_and_model(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-reset-session")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-reset-session")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "agile", "participant_number": "007"},
+            headers={"Authorization": "Bearer test-client-reset-session"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch_settings = client.patch(
+            f"/sessions/{sid}",
+            json={"gemini_model": "gemini-3.1-flash-lite-preview", "gemini_api_key": "abc123"},
+            headers={"Authorization": "Bearer test-researcher-reset-session"},
+        )
+        assert patch_settings.status_code == 200
+        assert patch_settings.json()["gemini_key_configured"] is True
+
+        patch_panel = client.patch(
+            f"/sessions/{sid}/panel",
+            json={"panel_config": {"problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}}},
+            headers={"Authorization": "Bearer test-client-reset-session"},
+        )
+        assert patch_panel.status_code == 200
+
+        upload = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "I'm uploading the following file(s): ORDERS.csv", "invoke_model": False},
+            headers={"Authorization": "Bearer test-client-reset-session"},
+        )
+        assert upload.status_code == 200
+
+        run = client.post(
+            f"/sessions/{sid}/runs",
+            json={"type": "optimize", "problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}},
+            headers={"Authorization": "Bearer test-client-reset-session"},
+        )
+        assert run.status_code == 200
+
+        terminate = client.post(
+            f"/sessions/{sid}/terminate",
+            headers={"Authorization": "Bearer test-researcher-reset-session"},
+        )
+        assert terminate.status_code == 200
+        assert terminate.json()["status"] == "terminated"
+
+        reset = client.post(
+            f"/sessions/{sid}/reset",
+            headers={"Authorization": "Bearer test-researcher-reset-session"},
+        )
+        assert reset.status_code == 200
+        body = reset.json()
+        assert body["status"] == "active"
+        assert body["participant_number"] == "007"
+        assert body["gemini_key_configured"] is True
+        assert body["gemini_model"] == "gemini-3.1-flash-lite-preview"
+        assert body["panel_config"] is None
+        assert all(item.get("kind") == "system" for item in body["problem_brief"]["items"])
+        assert body["problem_brief"]["open_questions"] == []
+        assert body["optimization_allowed"] is False
+        assert body["optimization_runs_blocked_by_researcher"] is False
+        assert body["optimization_gate_engaged"] is False
+
+        msgs = client.get(
+            f"/sessions/{sid}/messages/researcher?after_id=0",
+            headers={"Authorization": "Bearer test-researcher-reset-session"},
+        )
+        assert msgs.status_code == 200
+        assert msgs.json() == []
+
+        runs = client.get(
+            f"/sessions/{sid}/runs",
+            headers={"Authorization": "Bearer test-researcher-reset-session"},
+        )
+        assert runs.status_code == 200
+        assert runs.json() == []
+
+        snaps = client.get(
+            f"/sessions/{sid}/snapshots",
+            headers={"Authorization": "Bearer test-client-reset-session"},
+        )
+        assert snaps.status_code == 200
+        assert snaps.json() == []

@@ -45,13 +45,29 @@ from . import context, derivation, helpers, intent, sync
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 log = logging.getLogger(__name__)
+SIMULATED_UPLOAD_MESSAGE_PREFIX = "I'm uploading the following file(s): "
 
 
-def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any]) -> str:
+def _session_has_uploaded_data(db: Session, session_id: str) -> bool:
+    return (
+        db.query(ChatMessage.id)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "user",
+            ChatMessage.content.like(f"{SIMULATED_UPLOAD_MESSAGE_PREFIX}%"),
+        )
+        .first()
+        is not None
+    )
+
+
+def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any], has_uploaded_data: bool) -> str:
     mode = str(row.workflow_mode or "").strip().lower()
     if bool(row.optimization_runs_blocked_by_researcher):
         return "I can run optimization once the researcher re-enables runs for this session."
     if mode in ("agile", "demo"):
+        if not has_uploaded_data:
+            return "I can start a run after you upload data files (or after the researcher pushes dummy files)."
         return (
             "I can start a run once the configuration includes at least one objective weight "
             "and a selected search algorithm."
@@ -288,6 +304,33 @@ def terminate_session(
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
     row.status = "terminated"
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return helpers.session_to_out(row)
+
+
+@router.post("/{session_id}/reset", response_model=SessionOut)
+def reset_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Clear session activity while preserving participant id and model/key settings."""
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+    db.query(OptimizationRun).filter(OptimizationRun.session_id == session_id).delete()
+    db.query(SessionSnapshot).filter(SessionSnapshot.session_id == session_id).delete()
+    row.status = "active"
+    row.panel_config_json = None
+    row.problem_brief_json = json.dumps(default_problem_brief())
+    row.optimization_allowed = False
+    row.optimization_runs_blocked_by_researcher = False
+    row.optimization_gate_engaged = False
+    helpers.settle_processing_state(row, cancel_revision=True)
+    row.config_status = "idle"
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
@@ -534,6 +577,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 row.optimization_runs_blocked_by_researcher,
                 panel_obj,
                 brief_obj,
+                has_uploaded_data=_session_has_uploaded_data(db, session_id),
                 optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
                 problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
             )
@@ -579,7 +623,11 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                         except HTTPException:
                             log.info("Auto-run trigger skipped due to run endpoint guard for session %s", session_id)
                 elif run_intent.intent_type == "direct_request":
-                    blocked_msg = _run_gate_blocked_message(row, brief_obj)
+                    blocked_msg = _run_gate_blocked_message(
+                        row,
+                        brief_obj,
+                        _session_has_uploaded_data(db, session_id),
+                    )
                     bm = derivation.append_message(db, session_id, "assistant", blocked_msg, True)
                     out.append(MessageOut.model_validate(bm))
 
@@ -708,6 +756,7 @@ def post_run(
         row.optimization_runs_blocked_by_researcher,
         panel_obj,
         brief_obj,
+        has_uploaded_data=_session_has_uploaded_data(db, session_id),
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
         problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
     ):
