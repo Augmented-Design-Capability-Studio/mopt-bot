@@ -33,64 +33,134 @@ export function KnapsackSelectionViz({ currentRun }: ProblemVizProps) {
     })
     .filter((r): r is ItemRow => r !== null);
 
+  const selectedCount = rows.filter((r) => r.selected).length;
+  const sortedRows = [...rows].sort((a, b) => {
+    if (a.selected !== b.selected) return a.selected ? -1 : 1;
+    return a.id - b.id;
+  });
+  const hasCapacityAndWeight = capacity != null && totalWeight != null;
+  const usageRaw = hasCapacityAndWeight && capacity > 0 ? (totalWeight / capacity) * 100 : null;
+  const usagePct = usageRaw != null ? Math.max(0, Math.min(usageRaw, 100)) : null;
+  const isOverCapacity = hasCapacityAndWeight ? totalWeight > capacity : false;
+
   return (
     <div className="knapsack-viz" style={{ marginTop: "0.5rem" }}>
-      <div className="muted" style={{ fontSize: "0.82rem", marginBottom: "0.35rem" }}>
-        {capacity != null ? (
-          <>
-            Capacity <span className="mono">{capacity}</span>
-            {totalWeight != null ? (
-              <>
-                {" "}
-                · packed weight <span className="mono">{totalWeight.toFixed(1)}</span>
-              </>
-            ) : null}
-            {totalValue != null ? (
-              <>
-                {" "}
-                · total value <span className="mono">{totalValue.toFixed(1)}</span>
-              </>
-            ) : null}
-            {feasible != null ? (
-              <>
-                {" "}
-                · <span className="mono">{feasible ? "feasible" : "infeasible"}</span>
-              </>
-            ) : null}
-          </>
-        ) : (
-          "Knapsack selection"
-        )}
+      {feasible != null ? (
+        <div
+          style={{
+            marginBottom: "0.6rem",
+            padding: "0.6rem 0.75rem",
+            borderRadius: "8px",
+            border: `1px solid ${feasible ? "rgba(47, 128, 90, 0.7)" : "rgba(190, 60, 60, 0.75)"}`,
+            background: feasible ? "rgba(47, 128, 90, 0.16)" : "rgba(190, 60, 60, 0.16)",
+          }}
+        >
+          <div className="mono" style={{ fontSize: "0.95rem", fontWeight: 700 }}>
+            {feasible ? "FEASIBLE" : "INFEASIBLE"}
+          </div>
+          <div style={{ fontSize: "0.8rem", marginTop: "0.2rem" }}>
+            {feasible ? "Total weight is within capacity." : "Total weight exceeds capacity."}
+          </div>
+        </div>
+      ) : null}
+
+      {hasCapacityAndWeight && usagePct != null ? (
+        <div style={{ marginBottom: "0.65rem" }}>
+          <div
+            style={{
+              width: "100%",
+              height: "9px",
+              borderRadius: "999px",
+              background: "rgba(255, 255, 255, 0.08)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${usagePct}%`,
+                height: "100%",
+                borderRadius: "999px",
+                background: isOverCapacity ? "rgba(190, 60, 60, 0.95)" : "rgba(47, 128, 90, 0.95)",
+              }}
+            />
+          </div>
+          <div className="mono muted" style={{ fontSize: "0.72rem", marginTop: "0.2rem" }}>
+            {totalWeight.toFixed(1)} / {capacity.toFixed(1)} ({usageRaw != null ? usageRaw.toFixed(1) : "0.0"}%)
+          </div>
+        </div>
+      ) : null}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "0.45rem", marginBottom: "0.6rem" }}>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.45rem" }}>
+          <div className="muted" style={{ fontSize: "0.68rem" }}>Capacity</div>
+          <div className="mono" style={{ fontSize: "0.82rem" }}>{capacity != null ? capacity.toFixed(1) : "n/a"}</div>
+        </div>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.45rem" }}>
+          <div className="muted" style={{ fontSize: "0.68rem" }}>Packed Weight</div>
+          <div className="mono" style={{ fontSize: "0.82rem" }}>{totalWeight != null ? totalWeight.toFixed(1) : "n/a"}</div>
+        </div>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.45rem" }}>
+          <div className="muted" style={{ fontSize: "0.68rem" }}>Total Value</div>
+          <div className="mono" style={{ fontSize: "0.82rem" }}>{totalValue != null ? totalValue.toFixed(1) : "n/a"}</div>
+        </div>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.45rem" }}>
+          <div className="muted" style={{ fontSize: "0.68rem" }}>Selected</div>
+          <div className="mono" style={{ fontSize: "0.82rem" }}>{selectedCount} / {rows.length}</div>
+        </div>
       </div>
+
       <div style={{ overflowX: "auto" }}>
         <table className="mono" style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-              <th style={{ padding: "0.25rem 0.4rem" }}>Item #</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>Weight</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>Value</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>Selected?</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>Item</th>
+              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>Weight</th>
+              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>Value</th>
+              <th style={{ padding: "0.25rem 0.4rem", textAlign: "right" }}>Value/Weight</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>Selected</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {sortedRows.map((r, idx) => (
               <tr
                 key={r.id}
                 style={{
                   borderBottom: "1px solid var(--border)",
-                  background: r.selected ? "rgba(80, 160, 120, 0.12)" : undefined,
+                  background: r.selected
+                    ? "rgba(80, 160, 120, 0.16)"
+                    : idx % 2 === 1
+                      ? "rgba(255, 255, 255, 0.02)"
+                      : undefined,
                 }}
               >
                 <td style={{ padding: "0.2rem 0.4rem" }}>{r.id}</td>
-                <td style={{ padding: "0.2rem 0.4rem" }}>{r.weight}</td>
-                <td style={{ padding: "0.2rem 0.4rem" }}>{r.value}</td>
-                <td style={{ padding: "0.2rem 0.4rem" }}>{r.selected ? "yes" : "no"}</td>
+                <td style={{ padding: "0.2rem 0.4rem", textAlign: "right" }}>{r.weight.toFixed(1)}</td>
+                <td style={{ padding: "0.2rem 0.4rem", textAlign: "right" }}>{r.value.toFixed(1)}</td>
+                <td style={{ padding: "0.2rem 0.4rem", textAlign: "right" }}>
+                  {r.weight > 0 ? (r.value / r.weight).toFixed(2) : "n/a"}
+                </td>
+                <td style={{ padding: "0.2rem 0.4rem" }}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      minWidth: "2.2rem",
+                      textAlign: "center",
+                      borderRadius: "999px",
+                      padding: "0.05rem 0.42rem",
+                      background: r.selected ? "rgba(47, 128, 90, 0.25)" : "rgba(120, 120, 120, 0.2)",
+                    }}
+                  >
+                    {r.selected ? "yes" : "no"}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {rows.length === 0 ? <p className="muted">No item rows in visualization payload.</p> : null}
+      {rows.length === 0 ? (
+        <p className="muted">No items found in visualization payload. Check solver output format.</p>
+      ) : null}
     </div>
   );
 }
