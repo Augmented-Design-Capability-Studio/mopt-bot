@@ -66,10 +66,10 @@ export function KnapsackSelectionViz({ currentRun }: ProblemVizProps) {
         <table className="mono" style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-              <th style={{ padding: "0.25rem 0.4rem" }}>#</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>w</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>v</th>
-              <th style={{ padding: "0.25rem 0.4rem" }}>sel</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>Item #</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>Weight</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>Value</th>
+              <th style={{ padding: "0.25rem 0.4rem" }}>Selected?</th>
             </tr>
           </thead>
           <tbody>
@@ -84,7 +84,7 @@ export function KnapsackSelectionViz({ currentRun }: ProblemVizProps) {
                 <td style={{ padding: "0.2rem 0.4rem" }}>{r.id}</td>
                 <td style={{ padding: "0.2rem 0.4rem" }}>{r.weight}</td>
                 <td style={{ padding: "0.2rem 0.4rem" }}>{r.value}</td>
-                <td style={{ padding: "0.2rem 0.4rem" }}>{r.selected ? "1" : "0"}</td>
+                <td style={{ padding: "0.2rem 0.4rem" }}>{r.selected ? "yes" : "no"}</td>
               </tr>
             ))}
           </tbody>
