@@ -1,2 +1,17 @@
-venv
+venv/
 .DS_Store
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+*.egg
+
+# Local env files
+.env
+.env.*

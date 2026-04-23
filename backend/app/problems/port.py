@@ -26,6 +26,17 @@ class StudyProblemPort(Protocol):
     ) -> dict[str, Any]:
         """Same contract as historical solve_request_to_result (optimize / evaluate)."""
 
+    def format_optimization_run_chat_summary(
+        self,
+        *,
+        session_run_number: int,
+        run_ok: bool,
+        cost: float | None,
+        result: dict[str, Any] | None,
+        error_message: str | None,
+    ) -> str:
+        """Participant-visible assistant line after an optimization run (chat kind ``run``)."""
+
     def derive_problem_panel_from_brief(self, problem_brief: dict[str, Any]) -> dict[str, Any] | None: ...
 
     def weight_item_labels(self) -> dict[str, str]:

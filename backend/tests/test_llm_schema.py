@@ -1,4 +1,6 @@
+from app.problem_brief import default_problem_brief
 from app.problems.registry import get_study_port
+from app.services import llm
 from app.services.llm import (
     CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
@@ -115,3 +117,18 @@ def test_system_instruction_includes_knapsack_benchmark_appendix():
     )
     assert "Active benchmark — 0/1 knapsack" in system
     assert "value_emphasis" in system
+
+
+def test_system_prompt_openers_skip_appendix_when_cold_knapsack():
+    apx = get_study_port("knapsack").study_prompt_appendix() or ""
+    assert "0/1 knapsack" in apx
+    parts = llm._system_prompt_openers("knapsack", default_problem_brief("knapsack"))
+    assert len(parts) == 1
+    assert "0/1 knapsack" not in "\n\n".join(parts)
+
+
+def test_system_prompt_openers_includes_appendix_when_warm_knapsack():
+    b = {**default_problem_brief("knapsack"), "goal_summary": "Pack high value under capacity."}
+    parts = llm._system_prompt_openers("knapsack", b)
+    assert len(parts) == 2
+    assert "0/1 knapsack" in parts[1]

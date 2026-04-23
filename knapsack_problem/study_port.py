@@ -190,5 +190,50 @@ class KnapsackStudyPort:
             },
         ]
 
+    def format_optimization_run_chat_summary(
+        self,
+        *,
+        session_run_number: int,
+        run_ok: bool,
+        cost: float | None,
+        result: dict[str, Any] | None,
+        error_message: str | None,
+    ) -> str:
+        if not run_ok:
+            return f"Run #{session_run_number} failed: {error_message or 'error'}."
+        if cost is None:
+            return f"Run #{session_run_number} finished (cost not recorded)."
+        summary_parts = [f"Run #{session_run_number} finished — cost {cost:.2f}"]
+        if not result:
+            return summary_parts[0] + "."
+        vis = (result.get("visualization") or {}).get("payload") or {}
+        m = result.get("metrics") or {}
+        total_value = float(vis.get("total_value") or 0.0)
+        total_weight = float(vis.get("total_weight") or m.get("workload_variance") or 0.0)
+        capacity = float(vis.get("capacity") or 0.0)
+        feasible = bool(vis.get("feasible", m.get("knapsack_feasible", False)))
+        overflow = float(m.get("knapsack_overflow", 0.0))
+        selected = int(m.get("driver_preference_units", 0))
+        v = result.get("violations") or {}
+        cap_flag = int(v.get("capacity_units_over", 0))
+        cap_suffix = f" / capacity {capacity:.1f}" if capacity > 0 else ""
+        detail_bits: list[str] = [
+            f"{selected} items selected",
+            f"packed value {total_value:.1f}",
+            f"packed weight {total_weight:.1f}{cap_suffix}",
+        ]
+        if feasible and overflow <= 0 and not cap_flag:
+            detail_bits.append("feasible packing")
+        else:
+            if overflow > 0 or cap_flag:
+                detail_bits.append("over capacity (penalty in cost)")
+            else:
+                detail_bits.append("infeasible or penalized layout")
+        summary_parts.append(" · ".join(detail_bits))
+        weight_warnings = result.get("weight_warnings") or []
+        for w in weight_warnings:
+            summary_parts.append(f"Note: {w}")
+        return ". ".join(summary_parts) + "."
+
 
 STUDY_PORT = KnapsackStudyPort()

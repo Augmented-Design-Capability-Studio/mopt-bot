@@ -235,5 +235,20 @@ class TemplateProblemPort:
             },
         ]
 
+    def format_optimization_run_chat_summary(
+        self,
+        *,
+        session_run_number: int,
+        run_ok: bool,
+        cost: float | None,
+        result: dict[str, Any] | None,
+        error_message: str | None,
+    ) -> str:
+        if not run_ok:
+            return f"Run #{session_run_number} failed: {error_message or 'error'}."
+        if cost is None:
+            return f"Run #{session_run_number} finished (cost not recorded)."
+        return f"Run #{session_run_number} finished — cost {cost:.2f}."
+
 
 STUDY_PORT = TemplateProblemPort()

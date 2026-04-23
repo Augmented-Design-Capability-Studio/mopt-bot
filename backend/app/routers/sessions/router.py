@@ -821,44 +821,21 @@ def post_run(
     db.commit()
     db.refresh(run_row)
 
-    if run_row.ok and run_row.cost is not None:
-        summary_parts = [f"Run #{session_run_number} finished — cost {run_row.cost:.2f}"]
-        if run_row.result_json:
-            try:
-                rd = json.loads(run_row.result_json)
-                v = rd.get("violations") or {}
-                tw_stops = int(v.get("time_window_stop_count", 0))
-                tw_mins = float(v.get("time_window_minutes_over", 0))
-                cap_over = int(v.get("capacity_units_over", 0))
-                prio_miss = int(v.get("priority_deadline_misses", 0))
-                shift_pen = float(v.get("shift_limit_penalty", 0))
-                m = rd.get("metrics") or {}
-                travel = float(m.get("total_travel_minutes", 0))
-                wl_var = float(m.get("workload_variance", 0))
-                viol_strs = []
-                if tw_stops:
-                    viol_strs.append(f"{tw_stops} time-window stops late ({tw_mins:.1f} min over)")
-                if cap_over:
-                    viol_strs.append(f"{cap_over} units over capacity")
-                if prio_miss:
-                    viol_strs.append(f"{prio_miss} priority-order deadline misses")
-                if shift_pen:
-                    viol_strs.append("shift limit exceeded")
-                if viol_strs:
-                    summary_parts.append("Violations: " + "; ".join(viol_strs))
-                else:
-                    summary_parts.append("No constraint violations")
-                summary_parts.append(
-                    f"Travel: {travel:.1f} min · workload variance: {wl_var:.1f}"
-                )
-                weight_warnings = rd.get("weight_warnings") or []
-                for w in weight_warnings:
-                    summary_parts.append(f"Note: {w}")
-            except (json.JSONDecodeError, KeyError, TypeError):
-                pass
-        summary = ". ".join(summary_parts) + "."
-    else:
-        summary = f"Run #{session_run_number} failed: {run_row.error_message or 'error'}."
+    result_dict: dict[str, Any] | None = None
+    if run_row.result_json:
+        try:
+            parsed = json.loads(run_row.result_json)
+            result_dict = parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            result_dict = None
+    summary_port = get_study_port(row.test_problem_id)
+    summary = summary_port.format_optimization_run_chat_summary(
+        session_run_number=session_run_number,
+        run_ok=bool(run_row.ok),
+        cost=float(run_row.cost) if run_row.cost is not None else None,
+        result=result_dict,
+        error_message=run_row.error_message,
+    )
     derivation.append_message(db, session_id, "assistant", summary, True, kind="run")
     return helpers.run_to_out(run_row)
 
