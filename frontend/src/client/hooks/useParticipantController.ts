@@ -54,6 +54,7 @@ import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle
 import { useParticipantSessionSync } from "./useParticipantSessionSync";
 
 export function useParticipantController() {
+  const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [pendingUrlSessionId, setPendingUrlSessionId] = useState(() => {
     if (typeof window === "undefined") return "";
     const raw = new URLSearchParams(window.location.search).get("session");
@@ -117,7 +118,7 @@ export function useParticipantController() {
     [],
   );
 
-  const authed = useMemo(() => Boolean(token && sessionId), [token, sessionId]);
+  const authed = useMemo(() => Boolean(savedToken && sessionId), [savedToken, sessionId]);
 
   const [testProblemsMeta, setTestProblemsMeta] = useState<TestProblemMeta[]>([]);
 
@@ -145,7 +146,7 @@ export function useParticipantController() {
   }, [session?.test_problem_id, testProblemsMeta]);
 
   const sync = useParticipantSessionSync({
-    token,
+    token: savedToken,
     sessionId,
     authed,
     lastMsgId,
@@ -176,12 +177,13 @@ export function useParticipantController() {
   });
 
   const lifecycle = useParticipantSessionLifecycle({
-    token,
+    token: savedToken,
+    tokenInput: token,
     participantNumber,
     session,
     sessionIdRef,
     problemPanelHydrationRef,
-    setToken,
+    setToken: setSavedToken,
     setSessionId,
     setSession,
     setMessages,
@@ -203,14 +205,14 @@ export function useParticipantController() {
 
   useEffect(() => {
     if (!pendingUrlSessionId) return;
-    if (!token.trim()) return;
+    if (!savedToken.trim()) return;
     if (busy) return;
     if (sessionId === pendingUrlSessionId) {
       setPendingUrlSessionId("");
       setLastAutoResumeKey("");
       return;
     }
-    const key = `${pendingUrlSessionId}::${token.trim()}`;
+    const key = `${pendingUrlSessionId}::${savedToken.trim()}`;
     if (lastAutoResumeKey === key) return;
     setLastAutoResumeKey(key);
     void (async () => {
@@ -220,7 +222,7 @@ export function useParticipantController() {
         setLastAutoResumeKey("");
       }
     })();
-  }, [busy, lastAutoResumeKey, lifecycle, pendingUrlSessionId, sessionId, token]);
+  }, [busy, lastAutoResumeKey, lifecycle, pendingUrlSessionId, savedToken, sessionId]);
 
   const enterConfigEdit = useCallback(() => {
     flushSync(() => {
@@ -276,30 +278,30 @@ export function useParticipantController() {
   }, [session?.participant_number]);
 
   const loadSnapshots = useCallback(async () => {
-    if (!token || !sessionId || session?.status !== "active") return;
+    if (!savedToken || !sessionId || session?.status !== "active") return;
     setSnapshotsLoading(true);
     try {
-      const list = await fetchSnapshots(sessionId, token);
+      const list = await fetchSnapshots(sessionId, savedToken);
       setSnapshots(list);
     } catch {
       setSnapshots([]);
     } finally {
       setSnapshotsLoading(false);
     }
-  }, [token, sessionId, session?.status]);
+  }, [savedToken, sessionId, session?.status]);
 
   useEffect(() => {
-    if (token && sessionId && session?.status === "active") {
+    if (savedToken && sessionId && session?.status === "active") {
       void loadSnapshots();
     } else {
       setSnapshots([]);
     }
-  }, [token, sessionId, session?.status, loadSnapshots]);
+  }, [savedToken, sessionId, session?.status, loadSnapshots]);
 
   const agileAutorunStorageKey = sessionId ? `mopt-agile-autorun-dispatched:${sessionId}` : "";
 
   const actions = useParticipantSessionActions({
-    token,
+    token: savedToken,
     sessionId,
     session,
     chatInputRef,
@@ -403,14 +405,22 @@ export function useParticipantController() {
   );
 
   const bookmarkSnapshot = useCallback(async () => {
-    if (!token || !sessionId) return;
+    if (!savedToken || !sessionId) return;
     try {
-      await createSessionSnapshotBookmark(sessionId, token);
+      await createSessionSnapshotBookmark(sessionId, savedToken);
       await loadSnapshots();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Snapshot failed");
     }
-  }, [loadSnapshots, sessionId, setError, token]);
+  }, [loadSnapshots, savedToken, sessionId, setError]);
+
+  const startSession = useCallback(async () => {
+    await lifecycle.startSession(token);
+  }, [lifecycle, token]);
+
+  const resumePastSession = useCallback(async (id: string) => {
+    await lifecycle.resumePastSession(id, token);
+  }, [lifecycle, token]);
 
   const loadConfigFromLastRun = useCallback(() => {
     const latest = runs[runs.length - 1];
@@ -468,7 +478,10 @@ export function useParticipantController() {
     fileRef,
     simulatedUploadChips,
     onRemoveSimulatedUploadChip: removeSimulatedUploadChip,
-    setToken,
+    setToken: (value: string) => {
+      setToken(value);
+      if (error) setError(null);
+    },
     setParticipantNumber,
     setActiveRun,
     setChatInput,
@@ -482,8 +495,8 @@ export function useParticipantController() {
     setModelName,
     login: lifecycle.login,
     refreshRecentSessionsList: lifecycle.refreshRecentSessionsList,
-    resumePastSession: (id: string) => void lifecycle.resumePastSession(id),
-    startSession: lifecycle.startSession,
+    resumePastSession,
+    startSession,
     sendChat: actions.sendChat,
     requestDefinitionCleanup: actions.requestDefinitionCleanup,
     simulateUpload: actions.simulateUpload,

@@ -65,16 +65,22 @@ export function LoginGate({
             This link targets a specific session. Enter the access token to open it automatically.
           </p>
         )}
-        <label>
-          Participant number
-          <input
-            type="text"
-            value={participantNumber}
-            onChange={(e) => onParticipantNumberChange(e.target.value)}
-            placeholder="Optional, e.g. 007"
-            autoComplete="off"
-          />
-        </label>
+        {pendingUrlSessionId ? (
+          <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
+            Accessing through a session link. Participant number is set from that session.
+          </p>
+        ) : (
+          <label>
+            Participant number
+            <input
+              type="text"
+              value={participantNumber}
+              onChange={(e) => onParticipantNumberChange(e.target.value)}
+              placeholder="Optional, e.g. 007"
+              autoComplete="off"
+            />
+          </label>
+        )}
         <label>
           Access token
           <input

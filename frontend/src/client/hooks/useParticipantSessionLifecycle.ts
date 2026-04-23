@@ -19,6 +19,7 @@ import { readSessionHistory, removeSessionHistoryEntry, upsertSessionHistoryFrom
 
 type UseParticipantSessionLifecycleArgs = {
   token: string;
+  tokenInput: string;
   participantNumber: string;
   session: Session | null;
   sessionIdRef: MutableRefObject<string>;
@@ -45,6 +46,7 @@ type UseParticipantSessionLifecycleArgs = {
 
 export function useParticipantSessionLifecycle({
   token,
+  tokenInput,
   participantNumber,
   session,
   sessionIdRef,
@@ -69,14 +71,15 @@ export function useParticipantSessionLifecycle({
   setParticipantNumber,
 }: UseParticipantSessionLifecycleArgs) {
   const login = useCallback(() => {
-    sessionStorage.setItem(TOKEN_KEY, token.trim());
-    setToken(token.trim());
+    const trimmed = tokenInput.trim();
+    sessionStorage.setItem(TOKEN_KEY, trimmed);
+    setToken(trimmed);
     const pn = participantNumber.trim();
     if (pn) {
       sessionStorage.setItem(PARTICIPANT_NUMBER_KEY, pn);
     }
     setError(null);
-  }, [participantNumber, setError, setToken, token]);
+  }, [participantNumber, setError, setToken, tokenInput]);
 
   const refreshRecentSessionsList = useCallback(async () => {
     const trimmed = token.trim();
@@ -135,8 +138,8 @@ export function useParticipantSessionLifecycle({
     }
   }, [participantNumber, setError, setRecentBusy, setRecentRows, token]);
 
-  const resumePastSession = useCallback(async (resumeId: string): Promise<boolean> => {
-    const trimmed = token.trim();
+  const resumePastSession = useCallback(async (resumeId: string, tokenOverride?: string): Promise<boolean> => {
+    const trimmed = (tokenOverride ?? token).trim();
     if (!trimmed) {
       setError("Save your access token first.");
       return false;
@@ -147,6 +150,7 @@ export function useParticipantSessionLifecycle({
       const nextSession = await apiFetch<Session>(`/sessions/${resumeId}`, trimmed);
       sessionIdRef.current = resumeId;
       setSessionId(resumeId);
+      setToken(trimmed);
       sessionStorage.setItem(TOKEN_KEY, trimmed);
       sessionStorage.setItem(SESSION_KEY, resumeId);
       setSession(nextSession);
@@ -208,12 +212,13 @@ export function useParticipantSessionLifecycle({
     setScheduleText,
     setSession,
     setSessionId,
+    setToken,
     token,
     setParticipantNumber,
   ]);
 
-  const startSession = useCallback(async () => {
-    const trimmed = token.trim();
+  const startSession = useCallback(async (tokenOverride?: string) => {
+    const trimmed = (tokenOverride ?? token).trim();
     if (!trimmed) {
       setError("Enter access token first.");
       return;
@@ -236,6 +241,7 @@ export function useParticipantSessionLifecycle({
       });
       sessionIdRef.current = nextSession.id;
       setSessionId(nextSession.id);
+      setToken(trimmed);
       sessionStorage.setItem(TOKEN_KEY, trimmed);
       sessionStorage.setItem(SESSION_KEY, nextSession.id);
       setSession(nextSession);
@@ -272,6 +278,7 @@ export function useParticipantSessionLifecycle({
     setScheduleText,
     setSession,
     setSessionId,
+    setToken,
     token,
     participantNumber,
     setParticipantNumber,
