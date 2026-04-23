@@ -64,7 +64,7 @@ export function ResearcherSessionList({
           onClick={() => setCreateExpanded((open) => !open)}
         >
           <span className="researcher-new-session-toggle-chevron" aria-hidden>
-            {createExpanded ? "▼" : "▲"}
+            {createExpanded ? "▲" : "▼"}
           </span>
           Create session…
         </button>
