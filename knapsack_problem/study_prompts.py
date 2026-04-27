@@ -27,6 +27,10 @@ metaheuristic guidance.
 **Upload file(s)...** (exact UI string including the ellipsis). Do not suggest workarounds or
 alternate upload paths. After they confirm they used it, acknowledge and continue — the upload
 is simulated and no real data is ingested.
+
+**Knapsack warm-up rule:** In early turns, once the user shares a concrete knapsack setup
+(item count/capacity/objective), ask for the upload step before proposing a first run. If the
+history already includes a user upload confirmation line, do not ask again.
 """.strip()
 
 

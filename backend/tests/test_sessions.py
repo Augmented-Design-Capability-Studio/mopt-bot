@@ -20,6 +20,7 @@ def test_create_session_returns_null_panel_config(monkeypatch):
         data = r.json()
         assert data.get("optimization_allowed") is False
         assert data.get("optimization_runs_blocked_by_researcher") is False
+        assert data.get("participant_tutorial_enabled") is False
         assert data.get("panel_config") is None
         assert data["problem_brief"]["solver_scope"] == "general_metaheuristic_translation"
         assert any(item["kind"] == "system" for item in data["problem_brief"]["items"])
@@ -2226,6 +2227,7 @@ def test_researcher_reset_session_clears_activity_but_keeps_identity_and_model(m
         assert body["problem_brief"]["open_questions"] == []
         assert body["optimization_allowed"] is False
         assert body["optimization_runs_blocked_by_researcher"] is False
+        assert body["participant_tutorial_enabled"] is False
         assert body["optimization_gate_engaged"] is False
 
         msgs = client.get(
@@ -2248,3 +2250,33 @@ def test_researcher_reset_session_clears_activity_but_keeps_identity_and_model(m
         )
         assert snaps.status_code == 200
         assert snaps.json() == []
+
+
+def test_researcher_can_toggle_participant_tutorial_flag(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-tutorial-flag")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-tutorial-flag")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-tutorial-flag"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+        assert create.json()["participant_tutorial_enabled"] is False
+
+        patch_on = client.patch(
+            f"/sessions/{sid}",
+            json={"participant_tutorial_enabled": True},
+            headers={"Authorization": "Bearer test-researcher-tutorial-flag"},
+        )
+        assert patch_on.status_code == 200
+        assert patch_on.json()["participant_tutorial_enabled"] is True
+
+        fetched = client.get(
+            f"/sessions/{sid}",
+            headers={"Authorization": "Bearer test-client-tutorial-flag"},
+        )
+        assert fetched.status_code == 200
+        assert fetched.json()["participant_tutorial_enabled"] is True

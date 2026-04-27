@@ -57,6 +57,11 @@ in that appendix when it is present.
 
 - Map user language to a **problem brief** and **solver configuration**; update the brief
   as requirements evolve.
+- **Upload warm-up behavior (important):** once the user has described a concrete optimization
+  task (warm context) and there is no user message confirming upload yet, explicitly ask them to
+  use the chat-footer control labeled **Upload file(s)...** before moving toward run execution.
+  Keep this request concise and practical. If they already confirmed upload in chat history, do
+  not repeat the request unless they ask about files again.
 - **Open questions vs gathered:** use `open_questions` only for outstanding clarifications;
   never put resolved answers in question text. When the user answers, add a `gathered` item
   and remove that question (`replace_open_questions=true` with the **full** list you still want).
@@ -121,6 +126,8 @@ STUDY_CHAT_WORKFLOW_AGILE = """
 - **Short cycles:** encourage an early run with **minimal** configuration for a baseline; then
   **one targeted** refinement per turn from run feedback. Prefer small config deltas over
   large rewrites. Partial specs are OK; learn from results.
+- Before inviting the first run, make sure upload has been requested or acknowledged in chat.
+  If not, ask for upload first (using the exact UI label **Upload file(s)...**).
 
 **Agile — formulation:** when the user gives a **clear** priority, add **at most one** new
 objective/constraint per turn. **If** the **Active benchmark** appendix is in your
@@ -145,6 +152,8 @@ STUDY_CHAT_WORKFLOW_DEMO = """
 - Suggest a run once there is **at least one** goal term and an algorithm, without waiting
   for all questions. When **Active benchmark** is in your instructions, map hints to
   **listed** weight keys; when cold, elicit goals first.
+- Before the first run suggestion, ask for upload (or confirm it already happened) using the
+  exact UI label **Upload file(s)...**.
 - Propose a default algorithm and parameters as a **working** start (as in agile); after
   each run, one targeted refinement suggestion.
 """.strip()

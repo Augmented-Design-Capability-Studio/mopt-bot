@@ -1426,6 +1426,12 @@ select:focus-visible {
   justify-content: center;
 }
 
+.researcher-action-button-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -1521,6 +1527,64 @@ select:focus-visible {
 .results-panel-actions {
   margin-top: auto;
   padding-top: 0.5rem;
+}
+
+.participant-tutorial-bubble {
+  position: fixed;
+  width: min(24rem, calc(100vw - 2rem));
+  z-index: 40;
+  border: 1px solid var(--border);
+  background: #fffdf9;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  padding: 0.6rem 0.7rem;
+  border-radius: 2px;
+  cursor: move;
+  user-select: none;
+}
+
+.tutorial-target-highlight {
+  outline: 3px solid rgba(47, 79, 111, 0.9);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgba(47, 79, 111, 0.2);
+}
+
+.participant-tutorial-bubble p {
+  margin: 0.35rem 0 0;
+  font-size: 0.87rem;
+}
+
+.participant-tutorial-title {
+  font-size: 0.82rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.participant-tutorial-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.participant-tutorial-head .definition-icon-btn {
+  flex-shrink: 0;
+  background: #fff;
+}
+
+.participant-tutorial-head .definition-icon-btn:hover:not(:disabled) {
+  background: #f2f2ef;
+}
+
+.participant-tutorial-head + p {
+  margin-top: 0.45rem;
+}
+
+.participant-tutorial-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* Indeterminate progress bar shown while an optimization run is in-flight */

@@ -45,6 +45,7 @@ type ConfigPanelProps = {
   canLoadFromLastRun?: boolean;
   canLoadFromSnapshot?: boolean;
   isConfigDirty?: boolean;
+  onActiveTabChange?: (tab: PanelTab) => void;
 };
 
 type PanelTab = "definition" | "config" | "raw";
@@ -106,6 +107,7 @@ export function ConfigPanel({
   canLoadFromLastRun = false,
   canLoadFromSnapshot = false,
   isConfigDirty = false,
+  onActiveTabChange,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
   const [pendingDefinitionOpenQuestionsScroll, setPendingDefinitionOpenQuestionsScroll] = useState(false);
@@ -156,6 +158,10 @@ export function ConfigPanel({
       setDefinitionUnread(false);
     }
   }, [activeTab, editMode]);
+
+  useEffect(() => {
+    onActiveTabChange?.(activeTab);
+  }, [activeTab, onActiveTabChange]);
 
   useEffect(() => {
     if (activeTab !== "definition" || !pendingDefinitionOpenQuestionsScroll) return;
@@ -335,6 +341,7 @@ export function ConfigPanel({
                 if (tabId === "definition") setDefinitionUnread(false);
                 if (tabId === "config") setConfigUnread(false);
               }}
+              data-tutorial-anchor={tabId === "definition" ? "definition-tab" : tabId === "config" ? "config-tab" : undefined}
               disabled={tabLocked && activeTab !== tabId}
             >
               {label}
@@ -424,6 +431,7 @@ export function ConfigPanel({
                   type="button"
                   className={isDefinitionDirty ? "btn-save-attention" : undefined}
                   onClick={() => void onSaveDefinitionEdit()}
+                  data-tutorial-anchor="definition-save"
                   disabled={busy || sessionTerminated || !problemBrief || !isDefinitionDirty}
                   title="Save definition and notify the assistant"
                 >
@@ -532,6 +540,7 @@ export function ConfigPanel({
                   type="button"
                   className={isConfigDirty ? "btn-save-attention" : undefined}
                   onClick={() => void onSaveConfig()}
+                  data-tutorial-anchor="config-save"
                   disabled={busy || sessionTerminated || !isConfigDirty}
                 >
                   Save

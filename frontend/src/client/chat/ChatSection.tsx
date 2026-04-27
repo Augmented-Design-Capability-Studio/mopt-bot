@@ -82,6 +82,7 @@ export function ChatSection({
           />
           <button
             type="button"
+            data-tutorial-anchor="upload-button"
             disabled={editMode !== "none" || chatLocked}
             onClick={() => fileRef.current?.click()}
           >
@@ -129,6 +130,7 @@ export function ChatSection({
         placeholder: "Message... (Enter to send, Shift+Enter for newline)",
         inputRowClassName: chatLocked ? "chat-input-locked" : undefined,
         attentionKey: chatAttentionKey,
+        textareaDataAnchor: "chat-composer",
       }}
     />
   );

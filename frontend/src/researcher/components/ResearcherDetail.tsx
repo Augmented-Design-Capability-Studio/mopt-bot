@@ -204,12 +204,14 @@ export function ResearcherDetail({
             <div className="muted researcher-control-group">
               <span>More actions & settings</span>
               <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
-                <button type="button" disabled={busy} onClick={() => void onPushParticipantStarterPanel()}>
-                  Push starter problem config
-                </button>
-                <button type="button" disabled={busy} onClick={() => void onPushDummyParticipantUpload()}>
-                  Push dummy files
-                </button>
+                <div className="researcher-action-button-column">
+                  <button type="button" disabled={busy} onClick={() => void onPushParticipantStarterPanel()}>
+                    Push starter problem config
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => void onPushDummyParticipantUpload()}>
+                    Push dummy files
+                  </button>
+                </div>
                 <div className="researcher-toggle-column">
                   <label title="Sets the stored run permit on the session. Uncheck to block runs. Participant definition/chat updates re-align the permit with intrinsic readiness (waterfall open questions, etc.); check again to override until the next participant update.">
                     <input
@@ -250,6 +252,15 @@ export function ResearcherDetail({
                       onChange={(e) => void onSetOnlyActiveTerms(e.target.checked)}
                     />{" "}
                     Only score explicitly listed objectives
+                  </label>
+                  <label title="When enabled, the participant can see and replay the step-by-step tutorial bubbles for this session.">
+                    <input
+                      type="checkbox"
+                      checked={detail.participant_tutorial_enabled}
+                      disabled={busy}
+                      onChange={(e) => void onPatchSession({ participant_tutorial_enabled: e.target.checked })}
+                    />{" "}
+                    Show participant tutorial
                   </label>
                 </div>
               </div>

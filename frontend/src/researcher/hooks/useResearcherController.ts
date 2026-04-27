@@ -16,6 +16,7 @@ import { getOnlyActiveTerms } from "../lib/sessionConfig";
 
 const TOKEN_KEY = "mopt_researcher_token";
 const RESEARCHER_DETAIL_POLL_MS = 10000;
+const TUTORIAL_REFRESH_SIGNAL_KEY = "mopt_participant_tutorial_refresh";
 
 export function useResearcherController() {
   /** Value in the input; not sent to the API until "Save token". */
@@ -179,6 +180,17 @@ export function useResearcherController() {
           body: JSON.stringify(patch),
         });
         setDetail(session);
+        if ("participant_tutorial_enabled" in patch) {
+          try {
+            const enabled = Boolean(patch.participant_tutorial_enabled);
+            localStorage.setItem(
+              TUTORIAL_REFRESH_SIGNAL_KEY,
+              JSON.stringify({ session_id: selected, enabled, ts: Date.now() }),
+            );
+          } catch {
+            // ignore storage errors
+          }
+        }
         await refreshList();
         setError(null);
         return true;

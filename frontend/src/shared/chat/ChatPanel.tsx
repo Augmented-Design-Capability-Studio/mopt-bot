@@ -34,6 +34,8 @@ export type ChatComposerProps = {
   textareaStyle?: CSSProperties;
   /** When this key changes, move focus to the composer and show a subtle pulse. */
   attentionKey?: string | number;
+  /** Optional data anchor for guided tutorial targeting. */
+  textareaDataAnchor?: string;
 };
 
 export function ChatComposer({
@@ -47,6 +49,7 @@ export function ChatComposer({
   textareaDisabled,
   textareaStyle,
   attentionKey,
+  textareaDataAnchor,
 }: ChatComposerProps) {
   const textareaIsDisabled = textareaDisabled ?? sendDisabled;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -78,6 +81,7 @@ export function ChatComposer({
     >
       <textarea
         ref={textareaRef}
+        data-tutorial-anchor={textareaDataAnchor}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => onChatSendKeyDown(e, () => void onSend(), { disabled: sendDisabled })}

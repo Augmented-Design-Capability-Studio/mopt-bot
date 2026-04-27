@@ -27,6 +27,7 @@ class SessionPatch(BaseModel):
     problem_brief: dict[str, Any] | None = None
     optimization_allowed: bool | None = None
     optimization_runs_blocked_by_researcher: bool | None = None
+    participant_tutorial_enabled: bool | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
 
@@ -81,6 +82,7 @@ class SessionOut(BaseModel):
     processing: SessionProcessingState = Field(default_factory=SessionProcessingState)
     optimization_allowed: bool
     optimization_runs_blocked_by_researcher: bool
+    participant_tutorial_enabled: bool = False
     optimization_gate_engaged: bool = False
     gemini_model: str | None
     gemini_key_configured: bool = False

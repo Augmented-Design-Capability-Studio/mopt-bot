@@ -20,6 +20,7 @@ def ensure_database_shape() -> None:
     _ensure_sessions_participant_number_column()
     _ensure_sessions_processing_columns()
     _ensure_sessions_optimization_runs_blocked_column()
+    _ensure_sessions_participant_tutorial_enabled_column()
     _ensure_sessions_optimization_gate_engaged_column()
     _ensure_sessions_content_reset_revision_column()
     _backfill_optimization_gate_engaged()
@@ -106,6 +107,22 @@ def _ensure_sessions_optimization_runs_blocked_column() -> None:
             )
         )
     log.info("Added sessions.optimization_runs_blocked_by_researcher column")
+
+
+def _ensure_sessions_participant_tutorial_enabled_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "participant_tutorial_enabled" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE sessions ADD COLUMN participant_tutorial_enabled BOOLEAN NOT NULL DEFAULT 0"
+            )
+        )
+    log.info("Added sessions.participant_tutorial_enabled column")
 
 
 def _ensure_sessions_content_reset_revision_column() -> None:

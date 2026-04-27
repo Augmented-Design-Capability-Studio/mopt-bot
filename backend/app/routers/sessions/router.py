@@ -296,6 +296,8 @@ def patch_session(
         row.optimization_allowed = body.optimization_allowed
     if body.optimization_runs_blocked_by_researcher is not None:
         row.optimization_runs_blocked_by_researcher = body.optimization_runs_blocked_by_researcher
+    if body.participant_tutorial_enabled is not None:
+        row.participant_tutorial_enabled = body.participant_tutorial_enabled
     if body.gemini_model is not None:
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
@@ -1118,6 +1120,7 @@ def export_session(
             "processing_error": row.processing_error,
             "optimization_allowed": row.optimization_allowed,
             "optimization_runs_blocked_by_researcher": row.optimization_runs_blocked_by_researcher,
+            "participant_tutorial_enabled": bool(getattr(row, "participant_tutorial_enabled", False)),
             "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
             "gemini_key_configured": bool(row.gemini_key_encrypted),

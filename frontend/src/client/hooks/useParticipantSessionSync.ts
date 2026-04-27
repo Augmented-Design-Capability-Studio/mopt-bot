@@ -21,6 +21,7 @@ const EAGER_POLL_INTERVAL_MS = 2000;
 const EAGER_POLL_DURATION_MS = 10000;
 /** Session GET while definition/config derivation is pending (faster than SESSION_POLL_MS). */
 const PROCESSING_PENDING_SESSION_POLL_MS = 2500;
+const TUTORIAL_REFRESH_SIGNAL_KEY = "mopt_participant_tutorial_refresh";
 
 type UseParticipantSessionSyncArgs = {
   token: string;
@@ -348,6 +349,23 @@ export function useParticipantSessionSync({
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [authed, syncMessages, syncRuns, syncSession]);
+
+  useEffect(() => {
+    if (!authed) return;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== TUTORIAL_REFRESH_SIGNAL_KEY || !event.newValue) return;
+      try {
+        const payload = JSON.parse(event.newValue) as { session_id?: string };
+        if (!payload?.session_id) return;
+        if (payload.session_id !== sessionIdRef.current) return;
+        void syncSession();
+      } catch {
+        // ignore malformed storage payloads
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [authed, sessionIdRef, syncSession]);
 
   useEffect(() => {
     if (runs.length === 0) {

@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from "react";
 
 import type {
   Message,
@@ -22,6 +22,89 @@ function workflowAccentClass(mode: string | undefined): string {
   if (mode === "agile") return "app-header--wf-agile";
   if (mode === "waterfall") return "app-header--wf-waterfall";
   return "";
+}
+
+type TutorialStepId =
+  | "chat-info"
+  | "upload-files"
+  | "inspect-definition"
+  | "update-definition"
+  | "inspect-config"
+  | "first-run"
+  | "update-config"
+  | "second-run";
+
+type TutorialStep = {
+  id: TutorialStepId;
+  title: string;
+  body: string;
+};
+
+type BubbleStyle = {
+  top?: number;
+  left?: number;
+  right?: number;
+  bottom?: number;
+};
+
+function tutorialStepsForMode(mode: string | undefined): TutorialStep[] {
+  const normalized = (mode ?? "demo").toLowerCase();
+  const isAgile = normalized === "agile";
+  const isWaterfall = normalized === "waterfall";
+  return [
+    {
+      id: "chat-info",
+      title: "Step 1 - Start in chat",
+      body: isAgile
+        ? "Share your first framing in chat. The agent should gather information from you and help you make quick assumptions."
+        : isWaterfall
+          ? "Share your first framing in chat. The agent should gather information from you and start asking questions."
+          : "Share your first framing in chat so the assistant can initialize the problem context.",
+    },
+    {
+      id: "upload-files",
+      title: "Step 2 - Upload files",
+      body: "Use Upload file(s)... to add inputs before your first optimization run.",
+    },
+    {
+      id: "inspect-definition",
+      title: "Step 3 - Inspect Definition",
+      body: isAgile
+        ? "Review the Definition tab and check whether key assumptions are captured."
+        : isWaterfall
+          ? "Review the Definition tab, especially open questions and missing clarifications."
+          : "Review the Definition tab before editing.",
+    },
+    {
+      id: "update-definition",
+      title: "Step 4 - Update definition",
+      body: isAgile
+        ? "Adjust assumptions or gathered facts in Definition, then Save."
+        : isWaterfall
+          ? "Update Definition and resolve clarifications/open questions where possible, then Save."
+          : "Update Definition content and click Save.",
+    },
+    {
+      id: "inspect-config",
+      title: "Step 5 - Inspect Problem Config",
+      body: "Once config is generated, open Problem Config and review what will be run.",
+    },
+    {
+      id: "first-run",
+      title: "Step 6 - Trigger first run",
+      body: "Start optimization with the Run button (or by asking in chat).",
+    },
+    {
+      id: "update-config",
+      title: "Step 7 - Edit problem config",
+      body: "Open Problem Config, edit values directly, and Save to test a targeted change.",
+    },
+    {
+      id: "second-run",
+      title: "Step 8 - Run again",
+      body: "Run optimization again and compare against your first run.",
+    },
+  ];
 }
 
 type ParticipantShellProps = {
@@ -176,6 +259,256 @@ export function ParticipantShell({
   const serverPn = (session?.participant_number ?? "").trim();
   const localPn = participantLabel.trim();
   const displayParticipant = serverPn || localPn;
+  const tutorialEnabled = Boolean(session?.participant_tutorial_enabled) && !sessionTerminated;
+  const tutorialKeyBase = `${sessionId}:participant-tutorial`;
+  const [definitionTabVisited, setDefinitionTabVisited] = useState(false);
+  const [configTabVisited, setConfigTabVisited] = useState(false);
+  const [definitionSavedCount, setDefinitionSavedCount] = useState(0);
+  const [configSavedCount, setConfigSavedCount] = useState(0);
+  const [manuallyDismissed, setManuallyDismissed] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [bubbleStyle, setBubbleStyle] = useState<BubbleStyle>({ right: 16, bottom: 16 });
+  const [bubblePinned, setBubblePinned] = useState(false);
+  const bubbleRef = useRef<HTMLElement | null>(null);
+  const dragStateRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
+  const prevTutorialEnabledRef = useRef<boolean>(tutorialEnabled);
+
+  useEffect(() => {
+    setDefinitionTabVisited(false);
+    setConfigTabVisited(false);
+    setDefinitionSavedCount(0);
+    setConfigSavedCount(0);
+    if (!sessionId) return;
+    try {
+      const dismissed = sessionStorage.getItem(`${tutorialKeyBase}:dismissed`) === "1";
+      setManuallyDismissed(dismissed);
+    } catch {
+      setManuallyDismissed(false);
+    }
+  }, [sessionId, tutorialKeyBase]);
+
+  const optimizeRunsCommitted = useMemo(
+    () => runs.filter((r) => !r.clientPending && r.run_type === "optimize").length,
+    [runs],
+  );
+  const hasParticipantChat = useMemo(() => messages.some((m) => m.role === "user"), [messages]);
+  const assistantPromptedUpload = useMemo(
+    () =>
+      messages.some(
+        (m) =>
+          m.role === "assistant" &&
+          /upload file\(s\)\.\.\.|upload/i.test(m.content),
+      ),
+    [messages],
+  );
+  const hasMaterialConfig = useMemo(() => configText.trim().length > 0, [configText]);
+
+  const completedByStepId = useMemo(
+    () => ({
+      "chat-info": hasParticipantChat,
+      "upload-files": hasUploadedData,
+      "inspect-definition": definitionTabVisited,
+      "update-definition": definitionSavedCount > 0,
+      "inspect-config": configTabVisited,
+      "first-run": optimizeRunsCommitted >= 1,
+      "update-config": configSavedCount > 0,
+      "second-run": optimizeRunsCommitted >= 2,
+    }),
+    [configSavedCount, configTabVisited, definitionSavedCount, definitionTabVisited, hasParticipantChat, hasUploadedData, optimizeRunsCommitted],
+  );
+
+  const tutorialSteps = useMemo(() => tutorialStepsForMode(session?.workflow_mode), [session?.workflow_mode]);
+  const activeTutorialStep = useMemo(
+    () =>
+      tutorialSteps.find((step) => {
+        if (step.id === "upload-files" && !hasUploadedData && !assistantPromptedUpload) return false;
+        if (step.id === "inspect-config" && !hasMaterialConfig) return false;
+        return !completedByStepId[step.id];
+      }),
+    [assistantPromptedUpload, completedByStepId, hasMaterialConfig, hasUploadedData, tutorialSteps],
+  );
+  const tutorialDone = activeTutorialStep == null;
+
+  const activeTutorialAnchor = useMemo(() => {
+    if (!activeTutorialStep) return null;
+    switch (activeTutorialStep.id) {
+      case "chat-info":
+        return "chat-composer";
+      case "upload-files":
+        return "upload-button";
+      case "inspect-definition":
+        return "definition-tab";
+      case "update-definition":
+        return editMode === "definition" ? "definition-save" : "definition-tab";
+      case "inspect-config":
+        return "config-tab";
+      case "first-run":
+        return "run-optimize";
+      case "update-config":
+        return editMode === "config" ? "config-save" : "config-tab";
+      case "second-run":
+        return "run-optimize";
+      default:
+        return null;
+    }
+  }, [activeTutorialStep, configTabVisited, definitionTabVisited, editMode]);
+
+  useEffect(() => {
+    if (!tutorialEnabled) {
+      setShowTutorial(false);
+      return;
+    }
+    if (tutorialDone) {
+      setShowTutorial(false);
+      try {
+        sessionStorage.setItem(`${tutorialKeyBase}:dismissed`, "1");
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    setShowTutorial(!manuallyDismissed);
+  }, [manuallyDismissed, tutorialDone, tutorialEnabled, tutorialKeyBase]);
+
+  const handleDismissTutorial = useCallback(() => {
+    setShowTutorial(false);
+    setManuallyDismissed(true);
+    try {
+      sessionStorage.setItem(`${tutorialKeyBase}:dismissed`, "1");
+    } catch {
+      // ignore
+    }
+  }, [tutorialKeyBase]);
+
+  const handleShowTutorial = useCallback(() => {
+    setManuallyDismissed(false);
+    setShowTutorial(true);
+    try {
+      sessionStorage.removeItem(`${tutorialKeyBase}:dismissed`);
+    } catch {
+      // ignore
+    }
+  }, [tutorialKeyBase]);
+
+  useEffect(() => {
+    if (!tutorialEnabled || !showTutorial || !activeTutorialAnchor) {
+      setBubbleStyle({ right: 16, bottom: 16 });
+      return;
+    }
+    if (bubblePinned) return;
+    const computePosition = () => {
+      const target = document.querySelector<HTMLElement>(`[data-tutorial-anchor="${activeTutorialAnchor}"]`);
+      const bubble = bubbleRef.current;
+      if (!target || !bubble) {
+        setBubbleStyle({ right: 16, bottom: 16 });
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+      const bubbleW = bubble.offsetWidth || 340;
+      const bubbleH = bubble.offsetHeight || 120;
+      const margin = 10;
+      const targetGap = 18;
+      let left = rect.right + targetGap;
+      let top = rect.top;
+
+      // Prefer placing to the right of target; fallback left when there is not enough room.
+      if (left + bubbleW > viewportW - margin) {
+        left = rect.left - bubbleW - targetGap;
+      }
+      // If horizontal placement is still clipped, clamp and place below target with offset.
+      if (left < margin || left + bubbleW > viewportW - margin) {
+        left = Math.max(margin, Math.min(rect.left, viewportW - bubbleW - margin));
+        top = rect.bottom + targetGap;
+      }
+      // If below is clipped, place above with offset.
+      if (top + bubbleH > viewportH - margin) {
+        top = rect.top - bubbleH - targetGap;
+      }
+      // Final viewport clamp.
+      top = Math.max(margin, Math.min(top, viewportH - bubbleH - margin));
+      left = Math.max(margin, Math.min(left, viewportW - bubbleW - margin));
+      setBubbleStyle({ left, top });
+    };
+
+    computePosition();
+    window.addEventListener("resize", computePosition);
+    window.addEventListener("scroll", computePosition, true);
+    return () => {
+      window.removeEventListener("resize", computePosition);
+      window.removeEventListener("scroll", computePosition, true);
+    };
+  }, [activeTutorialAnchor, bubblePinned, showTutorial, tutorialEnabled]);
+
+  useEffect(() => {
+    const prev = prevTutorialEnabledRef.current;
+    // Researcher toggled tutorial back on for this session: clear local dismissal.
+    if (!prev && tutorialEnabled) {
+      setManuallyDismissed(false);
+      setShowTutorial(true);
+      try {
+        sessionStorage.removeItem(`${tutorialKeyBase}:dismissed`);
+      } catch {
+        // ignore
+      }
+    }
+    prevTutorialEnabledRef.current = tutorialEnabled;
+  }, [tutorialEnabled, tutorialKeyBase]);
+
+  useEffect(() => {
+    if (!tutorialEnabled || !showTutorial || !activeTutorialAnchor) return;
+    const target = document.querySelector<HTMLElement>(`[data-tutorial-anchor="${activeTutorialAnchor}"]`);
+    if (!target) return;
+    target.classList.add("tutorial-target-highlight");
+    return () => target.classList.remove("tutorial-target-highlight");
+  }, [activeTutorialAnchor, showTutorial, tutorialEnabled]);
+
+  const handleSaveDefinitionEdit = useCallback(async () => {
+    await onSaveDefinitionEdit();
+    setDefinitionSavedCount((v) => v + 1);
+  }, [onSaveDefinitionEdit]);
+
+  const handleSaveConfig = useCallback(async () => {
+    await onSaveConfig();
+    setConfigSavedCount((v) => v + 1);
+  }, [onSaveConfig]);
+
+  const handleBubblePointerDown = useCallback((e: PointerEvent<HTMLElement>) => {
+    const bubble = bubbleRef.current;
+    if (!bubble) return;
+    const rect = bubble.getBoundingClientRect();
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      dx: e.clientX - rect.left,
+      dy: e.clientY - rect.top,
+    };
+    bubble.setPointerCapture(e.pointerId);
+    setBubblePinned(true);
+  }, []);
+
+  const handleBubblePointerMove = useCallback((e: PointerEvent<HTMLElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const bubble = bubbleRef.current;
+    if (!bubble) return;
+    const bubbleW = bubble.offsetWidth || 340;
+    const bubbleH = bubble.offsetHeight || 120;
+    const margin = 8;
+    const left = Math.max(margin, Math.min(e.clientX - drag.dx, window.innerWidth - bubbleW - margin));
+    const top = Math.max(margin, Math.min(e.clientY - drag.dy, window.innerHeight - bubbleH - margin));
+    setBubbleStyle({ left, top });
+  }, []);
+
+  const handleBubblePointerUp = useCallback((e: PointerEvent<HTMLElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const bubble = bubbleRef.current;
+    if (bubble?.hasPointerCapture(e.pointerId)) {
+      bubble.releasePointerCapture(e.pointerId);
+    }
+    dragStateRef.current = null;
+  }, []);
 
   return (
     <div className="app-shell">
@@ -195,6 +528,11 @@ export function ParticipantShell({
           Session {sessionId.slice(0, 8)}…{sessionTerminated ? " · ended" : ""}
         </span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+          {tutorialEnabled ? (
+            <button type="button" onClick={handleShowTutorial}>
+              Show tutorial
+            </button>
+          ) : null}
           <StatusChip
             label="Model / API key"
             status={modelKeyStatus}
@@ -269,8 +607,8 @@ export function ParticipantShell({
             onConfigTextChange={onConfigTextChange}
             onProblemBriefChange={onProblemBriefChange}
             onSetEditMode={onSetEditMode}
-            onSaveConfig={onSaveConfig}
-            onSaveDefinitionEdit={onSaveDefinitionEdit}
+            onSaveConfig={handleSaveConfig}
+            onSaveDefinitionEdit={handleSaveDefinitionEdit}
             onCancelDefinitionEdit={onCancelDefinitionEdit}
             onEnsureDefinitionEditing={onEnsureDefinitionEditing}
             isDefinitionDirty={isDefinitionDirty}
@@ -287,6 +625,10 @@ export function ParticipantShell({
             canLoadFromLastRun={canLoadFromLastRun}
             canLoadFromSnapshot={canLoadFromSnapshot}
             isConfigDirty={isConfigDirty}
+            onActiveTabChange={(tab) => {
+              if (tab === "definition") setDefinitionTabVisited(true);
+              if (tab === "config") setConfigTabVisited(true);
+            }}
           />
         )}
 
@@ -327,6 +669,34 @@ export function ParticipantShell({
         onClose={onCloseModelDialog}
         onSave={onSaveModelSettings}
       />
+      {tutorialEnabled && showTutorial && activeTutorialStep ? (
+        <aside
+          ref={bubbleRef}
+          className="participant-tutorial-bubble"
+          role="status"
+          aria-live="polite"
+          style={bubbleStyle}
+          onPointerDown={handleBubblePointerDown}
+          onPointerMove={handleBubblePointerMove}
+          onPointerUp={handleBubblePointerUp}
+          onPointerCancel={handleBubblePointerUp}
+        >
+          <div className="participant-tutorial-head">
+            <div className="participant-tutorial-title">{activeTutorialStep.title}</div>
+            <button
+              type="button"
+              className="definition-icon-btn"
+              aria-label="Hide tutorial"
+              title="Hide tutorial"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={handleDismissTutorial}
+            >
+              X
+            </button>
+          </div>
+          <p>{activeTutorialStep.body}</p>
+        </aside>
+      ) : null}
     </div>
   );
 }

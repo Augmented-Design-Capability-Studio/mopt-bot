@@ -144,6 +144,8 @@ export type Session = {
   optimization_allowed: boolean;
   /** When true, participant Run stays off even if intrinsic readiness or permit would allow it. */
   optimization_runs_blocked_by_researcher: boolean;
+  /** Researcher-controlled tutorial visibility toggle for participant UI. */
+  participant_tutorial_enabled: boolean;
   /** Waterfall: true after first participant chat or once the brief lists open questions (cold start gate). */
   optimization_gate_engaged?: boolean;
   gemini_model: string | null;

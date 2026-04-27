@@ -33,6 +33,7 @@ class StudySession(Base):
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     optimization_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     optimization_runs_blocked_by_researcher: Mapped[bool] = mapped_column(Boolean, default=False)
+    participant_tutorial_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     optimization_gate_engaged: Mapped[bool] = mapped_column(Boolean, default=False)
     gemini_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gemini_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

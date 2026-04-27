@@ -272,6 +272,7 @@ export function ResultsPanel({
           <button
             type="button"
             className="btn-primary"
+            data-tutorial-anchor="run-optimize"
             disabled={busy || !canRunOptimization || editMode !== "none" || sessionTerminated}
             title={
               !canRunOptimization && !sessionTerminated && editMode === "none"
