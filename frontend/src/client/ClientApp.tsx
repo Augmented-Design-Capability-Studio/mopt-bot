@@ -69,6 +69,7 @@ export function ClientApp() {
       onStartSession={controller.startSession}
       onSendChat={controller.sendChat}
       onRequestDefinitionCleanup={controller.requestDefinitionCleanup}
+      onRequestOpenQuestionCleanup={controller.requestOpenQuestionCleanup}
       onSimulateUpload={controller.simulateUpload}
       onRemoveSimulatedUploadChip={controller.onRemoveSimulatedUploadChip}
       onSaveConfig={controller.saveConfig}
@@ -93,6 +94,7 @@ export function ClientApp() {
       onRunEvaluateEdited={controller.runEvaluateEdited}
       onCloseModelDialog={controller.closeModelDialog}
       onSaveModelSettings={controller.saveModelSettings}
+      onSetParticipantTutorialState={controller.setParticipantTutorialState}
     />
   );
 }

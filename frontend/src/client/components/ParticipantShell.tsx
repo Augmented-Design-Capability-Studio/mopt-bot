@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from "react";
 
+import { type TutorialStepId } from "@shared/api";
 import type {
   Message,
   ProblemBrief,
@@ -10,6 +11,10 @@ import type {
 } from "@shared/api";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 import { StatusChip } from "@shared/status/StatusChip";
+import { anchorForTutorialStep } from "../../tutorial/anchors";
+import { patchForTutorialEvent, type ParticipantTutorialPatch } from "../../tutorial/events";
+import { completionFromSession, getTutorialStepOverride, tutorialStepsForMode } from "../../tutorial/state";
+import { resolveActiveTutorialStep } from "../../tutorial/transitions";
 
 import { ChatSection } from "../chat/ChatSection";
 import { type EditMode } from "../lib/participantTypes";
@@ -24,88 +29,12 @@ function workflowAccentClass(mode: string | undefined): string {
   return "";
 }
 
-type TutorialStepId =
-  | "chat-info"
-  | "upload-files"
-  | "inspect-definition"
-  | "update-definition"
-  | "inspect-config"
-  | "first-run"
-  | "update-config"
-  | "second-run";
-
-type TutorialStep = {
-  id: TutorialStepId;
-  title: string;
-  body: string;
-};
-
 type BubbleStyle = {
   top?: number;
   left?: number;
   right?: number;
   bottom?: number;
 };
-
-function tutorialStepsForMode(mode: string | undefined): TutorialStep[] {
-  const normalized = (mode ?? "demo").toLowerCase();
-  const isAgile = normalized === "agile";
-  const isWaterfall = normalized === "waterfall";
-  return [
-    {
-      id: "chat-info",
-      title: "Step 1 - Start in chat",
-      body: isAgile
-        ? "Share your first framing in chat. The agent should gather information from you and help you make quick assumptions."
-        : isWaterfall
-          ? "Share your first framing in chat. The agent should gather information from you and start asking questions."
-          : "Share your first framing in chat so the assistant can initialize the problem context.",
-    },
-    {
-      id: "upload-files",
-      title: "Step 2 - Upload files",
-      body: "Use Upload file(s)... to add inputs before your first optimization run.",
-    },
-    {
-      id: "inspect-definition",
-      title: "Step 3 - Inspect Definition",
-      body: isAgile
-        ? "Review the Definition tab and check whether key assumptions are captured."
-        : isWaterfall
-          ? "Review the Definition tab, especially open questions and missing clarifications."
-          : "Review the Definition tab before editing.",
-    },
-    {
-      id: "update-definition",
-      title: "Step 4 - Update definition",
-      body: isAgile
-        ? "Adjust assumptions or gathered facts in Definition, then Save."
-        : isWaterfall
-          ? "Update Definition and resolve clarifications/open questions where possible, then Save."
-          : "Update Definition content and click Save.",
-    },
-    {
-      id: "inspect-config",
-      title: "Step 5 - Inspect Problem Config",
-      body: "Once config is generated, open Problem Config and review what will be run.",
-    },
-    {
-      id: "first-run",
-      title: "Step 6 - Trigger first run",
-      body: "Start optimization with the Run button (or by asking in chat).",
-    },
-    {
-      id: "update-config",
-      title: "Step 7 - Edit problem config",
-      body: "Open Problem Config, edit values directly, and Save to test a targeted change.",
-    },
-    {
-      id: "second-run",
-      title: "Step 8 - Run again",
-      body: "Run optimization again and compare against your first run.",
-    },
-  ];
-}
 
 type ParticipantShellProps = {
   sessionId: string;
@@ -150,6 +79,7 @@ type ParticipantShellProps = {
   onStartSession: () => void | Promise<void>;
   onSendChat: () => void | Promise<void>;
   onRequestDefinitionCleanup: () => void | Promise<void>;
+  onRequestOpenQuestionCleanup: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
   onRemoveSimulatedUploadChip: (fileName: string) => void;
   onSaveConfig: () => void | Promise<void>;
@@ -174,6 +104,7 @@ type ParticipantShellProps = {
   onRunEvaluateEdited: () => void | Promise<void>;
   onCloseModelDialog: () => void;
   onSaveModelSettings: () => void | Promise<void>;
+  onSetParticipantTutorialState?: (patch: ParticipantTutorialPatch) => void | Promise<void>;
 };
 
 export function ParticipantShell({
@@ -218,6 +149,7 @@ export function ParticipantShell({
   onStartSession,
   onSendChat,
   onRequestDefinitionCleanup,
+  onRequestOpenQuestionCleanup,
   onSimulateUpload,
   onRemoveSimulatedUploadChip,
   onSaveConfig,
@@ -242,6 +174,7 @@ export function ParticipantShell({
   onRunEvaluateEdited,
   onCloseModelDialog,
   onSaveModelSettings,
+  onSetParticipantTutorialState,
 }: ParticipantShellProps) {
   const panelClass = (name: EditMode) => (editMode !== "none" && editMode !== name ? "panel panel-locked" : "panel");
 
@@ -260,11 +193,8 @@ export function ParticipantShell({
   const localPn = participantLabel.trim();
   const displayParticipant = serverPn || localPn;
   const tutorialEnabled = Boolean(session?.participant_tutorial_enabled) && !sessionTerminated;
-  const tutorialKeyBase = `${sessionId}:participant-tutorial`;
-  const [definitionTabVisited, setDefinitionTabVisited] = useState(false);
-  const [configTabVisited, setConfigTabVisited] = useState(false);
-  const [definitionSavedCount, setDefinitionSavedCount] = useState(0);
-  const [configSavedCount, setConfigSavedCount] = useState(0);
+  const tutorialResetRevision = session?.content_reset_revision ?? 0;
+  const tutorialKeyBase = `${sessionId}:participant-tutorial:${tutorialResetRevision}`;
   const [manuallyDismissed, setManuallyDismissed] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [bubbleStyle, setBubbleStyle] = useState<BubbleStyle>({ right: 16, bottom: 16 });
@@ -272,12 +202,8 @@ export function ParticipantShell({
   const bubbleRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
   const prevTutorialEnabledRef = useRef<boolean>(tutorialEnabled);
-
+  const prevTutorialOverrideRef = useRef<TutorialStepId | null>(null);
   useEffect(() => {
-    setDefinitionTabVisited(false);
-    setConfigTabVisited(false);
-    setDefinitionSavedCount(0);
-    setConfigSavedCount(0);
     if (!sessionId) return;
     try {
       const dismissed = sessionStorage.getItem(`${tutorialKeyBase}:dismissed`) === "1";
@@ -287,71 +213,19 @@ export function ParticipantShell({
     }
   }, [sessionId, tutorialKeyBase]);
 
-  const optimizeRunsCommitted = useMemo(
-    () => runs.filter((r) => !r.clientPending && r.run_type === "optimize").length,
-    [runs],
-  );
-  const hasParticipantChat = useMemo(() => messages.some((m) => m.role === "user"), [messages]);
-  const assistantPromptedUpload = useMemo(
-    () =>
-      messages.some(
-        (m) =>
-          m.role === "assistant" &&
-          /upload file\(s\)\.\.\.|upload/i.test(m.content),
-      ),
-    [messages],
-  );
-  const hasMaterialConfig = useMemo(() => configText.trim().length > 0, [configText]);
-
-  const completedByStepId = useMemo(
-    () => ({
-      "chat-info": hasParticipantChat,
-      "upload-files": hasUploadedData,
-      "inspect-definition": definitionTabVisited,
-      "update-definition": definitionSavedCount > 0,
-      "inspect-config": configTabVisited,
-      "first-run": optimizeRunsCommitted >= 1,
-      "update-config": configSavedCount > 0,
-      "second-run": optimizeRunsCommitted >= 2,
-    }),
-    [configSavedCount, configTabVisited, definitionSavedCount, definitionTabVisited, hasParticipantChat, hasUploadedData, optimizeRunsCommitted],
-  );
-
+  const completedByStepId = useMemo(() => completionFromSession(session), [session]);
   const tutorialSteps = useMemo(() => tutorialStepsForMode(session?.workflow_mode), [session?.workflow_mode]);
+  const tutorialSessionStepId = useMemo(() => getTutorialStepOverride(session), [session]);
   const activeTutorialStep = useMemo(
-    () =>
-      tutorialSteps.find((step) => {
-        if (step.id === "upload-files" && !hasUploadedData && !assistantPromptedUpload) return false;
-        if (step.id === "inspect-config" && !hasMaterialConfig) return false;
-        return !completedByStepId[step.id];
-      }),
-    [assistantPromptedUpload, completedByStepId, hasMaterialConfig, hasUploadedData, tutorialSteps],
+    () => resolveActiveTutorialStep(tutorialSteps, completedByStepId, tutorialSessionStepId),
+    [completedByStepId, tutorialSessionStepId, tutorialSteps],
   );
   const tutorialDone = activeTutorialStep == null;
 
   const activeTutorialAnchor = useMemo(() => {
     if (!activeTutorialStep) return null;
-    switch (activeTutorialStep.id) {
-      case "chat-info":
-        return "chat-composer";
-      case "upload-files":
-        return "upload-button";
-      case "inspect-definition":
-        return "definition-tab";
-      case "update-definition":
-        return editMode === "definition" ? "definition-save" : "definition-tab";
-      case "inspect-config":
-        return "config-tab";
-      case "first-run":
-        return "run-optimize";
-      case "update-config":
-        return editMode === "config" ? "config-save" : "config-tab";
-      case "second-run":
-        return "run-optimize";
-      default:
-        return null;
-    }
-  }, [activeTutorialStep, configTabVisited, definitionTabVisited, editMode]);
+    return anchorForTutorialStep(activeTutorialStep.id, editMode);
+  }, [activeTutorialStep, editMode]);
 
   useEffect(() => {
     if (!tutorialEnabled) {
@@ -378,7 +252,8 @@ export function ParticipantShell({
     } catch {
       // ignore
     }
-  }, [tutorialKeyBase]);
+    void onSetParticipantTutorialState?.({ participant_tutorial_enabled: false });
+  }, [onSetParticipantTutorialState, tutorialKeyBase]);
 
   const handleShowTutorial = useCallback(() => {
     setManuallyDismissed(false);
@@ -442,6 +317,11 @@ export function ParticipantShell({
   }, [activeTutorialAnchor, bubblePinned, showTutorial, tutorialEnabled]);
 
   useEffect(() => {
+    // Step changes should re-anchor to the new focus target rather than preserving dragged pin position.
+    setBubblePinned(false);
+  }, [activeTutorialAnchor]);
+
+  useEffect(() => {
     const prev = prevTutorialEnabledRef.current;
     // Researcher toggled tutorial back on for this session: clear local dismissal.
     if (!prev && tutorialEnabled) {
@@ -457,6 +337,28 @@ export function ParticipantShell({
   }, [tutorialEnabled, tutorialKeyBase]);
 
   useEffect(() => {
+    const prev = prevTutorialOverrideRef.current;
+    const next = tutorialSessionStepId;
+    // Researcher selected a new step: re-open bubble even if participant had previously dismissed it.
+    if (tutorialEnabled && next && next !== prev) {
+      setManuallyDismissed(false);
+      setShowTutorial(true);
+      try {
+        sessionStorage.removeItem(`${tutorialKeyBase}:dismissed`);
+      } catch {
+        // ignore
+      }
+    }
+    prevTutorialOverrideRef.current = next;
+  }, [tutorialEnabled, tutorialKeyBase, tutorialSessionStepId]);
+
+  useEffect(() => {
+    if (!tutorialEnabled || !activeTutorialStep) return;
+    if (tutorialSessionStepId === activeTutorialStep.id) return;
+    void onSetParticipantTutorialState?.({ tutorial_step_override: activeTutorialStep.id });
+  }, [activeTutorialStep, onSetParticipantTutorialState, tutorialEnabled, tutorialSessionStepId]);
+
+  useEffect(() => {
     if (!tutorialEnabled || !showTutorial || !activeTutorialAnchor) return;
     const target = document.querySelector<HTMLElement>(`[data-tutorial-anchor="${activeTutorialAnchor}"]`);
     if (!target) return;
@@ -466,12 +368,10 @@ export function ParticipantShell({
 
   const handleSaveDefinitionEdit = useCallback(async () => {
     await onSaveDefinitionEdit();
-    setDefinitionSavedCount((v) => v + 1);
   }, [onSaveDefinitionEdit]);
 
   const handleSaveConfig = useCallback(async () => {
     await onSaveConfig();
-    setConfigSavedCount((v) => v + 1);
   }, [onSaveConfig]);
 
   const handleBubblePointerDown = useCallback((e: PointerEvent<HTMLElement>) => {
@@ -613,6 +513,7 @@ export function ParticipantShell({
             onEnsureDefinitionEditing={onEnsureDefinitionEditing}
             isDefinitionDirty={isDefinitionDirty}
             onRequestDefinitionCleanup={onRequestDefinitionCleanup}
+            onRequestOpenQuestionCleanup={onRequestOpenQuestionCleanup}
             onSyncProblemConfig={onSyncProblemConfig}
             onEnterConfigEdit={onEnterConfigEdit}
             onCancelConfigEdit={onCancelConfigEdit}
@@ -625,9 +526,14 @@ export function ParticipantShell({
             canLoadFromLastRun={canLoadFromLastRun}
             canLoadFromSnapshot={canLoadFromSnapshot}
             isConfigDirty={isConfigDirty}
-            onActiveTabChange={(tab) => {
-              if (tab === "definition") setDefinitionTabVisited(true);
-              if (tab === "config") setConfigTabVisited(true);
+            onUserTabClick={(tab) => {
+              const tutorialPatch =
+                tab === "definition"
+                  ? patchForTutorialEvent("definition-tab-clicked", session)
+                  : tab === "config"
+                    ? patchForTutorialEvent("config-tab-clicked", session)
+                    : null;
+              if (tutorialPatch) void onSetParticipantTutorialState?.(tutorialPatch);
             }}
           />
         )}

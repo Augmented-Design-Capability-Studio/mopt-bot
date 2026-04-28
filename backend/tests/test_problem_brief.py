@@ -4,6 +4,7 @@ from app.problem_brief import (
     CHAT_PROMPT_COLD_BACKEND_TEMPLATE,
     CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT,
     _brief_items_from_panel,
+    cleanup_open_questions,
     default_problem_brief,
     is_chat_cold_start,
     locked_goal_terms_prompt_section,
@@ -120,6 +121,47 @@ def test_merge_moves_answered_suffix_open_question_to_gathered():
     assert not any("(answered" in q["text"].lower() for q in merged["open_questions"])
     gathered_texts = [i["text"] for i in merged["items"] if i.get("kind") == "gathered"]
     assert any("8h cap" in t for t in gathered_texts)
+
+
+def test_cleanup_open_questions_deduplicates_without_inferred_pruning():
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            open_questions=[
+                {"id": "q1", "text": "Do we allow overtime?", "status": "open", "answer_text": None},
+                {"id": "q2", "text": "do we allow overtime?", "status": "open", "answer_text": None},
+                {"id": "q3", "text": "Any priority orders?", "status": "open", "answer_text": None},
+            ]
+        )
+    )
+    cleaned, meta = cleanup_open_questions(brief, infer_resolved=False)
+    assert [q["id"] for q in cleaned["open_questions"]] == ["q1", "q3"]
+    assert meta["removed_duplicates"] == 1
+    assert meta["removed_inferred"] == 0
+
+
+def test_cleanup_open_questions_infers_resolved_when_fact_overlap_is_high():
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            goal_summary="Dispatching and overtime policy are now specified.",
+            items=[
+                {
+                    "id": "g1",
+                    "text": "Overtime policy allows up to 2 extra hours per worker.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+            open_questions=[
+                {"id": "q1", "text": "Do we allow overtime per worker?", "status": "open", "answer_text": None},
+                {"id": "q2", "text": "Which depot should serve zone B?", "status": "open", "answer_text": None},
+            ],
+        )
+    )
+    cleaned, meta = cleanup_open_questions(brief, infer_resolved=True)
+    assert [q["id"] for q in cleaned["open_questions"]] == ["q2"]
+    assert meta["removed_inferred"] == 1
 
 
 def test_brief_items_from_panel_always_shows_strategy_if_algorithm_present():

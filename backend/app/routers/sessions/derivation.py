@@ -14,11 +14,114 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
-from app.problem_brief import merge_problem_brief_patch, normalize_problem_brief, sync_problem_brief_from_panel
+from app.problem_brief import (
+    cleanup_open_questions,
+    merge_problem_brief_patch,
+    normalize_problem_brief,
+    sync_problem_brief_from_panel,
+)
 
 from . import helpers, sync
 
 log = logging.getLogger(__name__)
+OPEN_QUESTION_CLEANUP_MESSAGE = (
+    "Clean up open questions only: remove resolved or duplicate questions, keep still-ambiguous ones open."
+)
+
+
+def apply_open_question_cleanup_pass(
+    *,
+    problem_brief: dict[str, Any],
+    history_lines: list[tuple[str, str]],
+    user_text: str,
+    api_key: str,
+    model_name: str,
+    workflow_mode: str,
+    current_panel: dict[str, Any] | None,
+    recent_runs_summary: list[dict[str, Any]],
+    researcher_steers: list[str],
+    test_problem_id: str | None,
+    infer_resolved: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    LLM-first open-question cleanup with conservative deterministic fallback.
+    """
+    base = normalize_problem_brief(problem_brief)
+    llm_used = False
+    llm_pruned = False
+    if infer_resolved and api_key.strip():
+        try:
+            from app.services.llm import generate_problem_brief_update
+
+            turn = generate_problem_brief_update(
+                user_text=user_text,
+                history_lines=history_lines,
+                api_key=api_key,
+                model_name=model_name,
+                current_problem_brief=base,
+                workflow_mode=workflow_mode,
+                current_panel=current_panel,
+                recent_runs_summary=recent_runs_summary or None,
+                researcher_steers=researcher_steers or None,
+                cleanup_mode=True,
+                test_problem_id=test_problem_id,
+            )
+            llm_used = True
+            patch = turn.problem_brief_patch if isinstance(turn.problem_brief_patch, dict) else None
+            if patch is not None and "open_questions" in patch:
+                candidate = merge_problem_brief_patch(
+                    base,
+                    {"open_questions": patch.get("open_questions"), "replace_open_questions": True},
+                )
+                if len(candidate.get("open_questions") or []) <= len(base.get("open_questions") or []):
+                    base = candidate
+                    llm_pruned = True
+        except Exception:
+            log.exception("Open-question cleanup model pass failed")
+    cleaned, cleanup_meta = cleanup_open_questions(
+        base, infer_resolved=(infer_resolved and not llm_pruned)
+    )
+    return cleaned, {
+        "llm_used": llm_used,
+        "llm_pruned": llm_pruned,
+        **cleanup_meta,
+    }
+
+
+def apply_brief_patch_with_cleanup(
+    *,
+    base_problem_brief: dict[str, Any],
+    patch_payload: dict[str, Any],
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    workflow_mode: str,
+    current_panel: dict[str, Any] | None,
+    recent_runs_summary: list[dict[str, Any]],
+    researcher_steers: list[str],
+    test_problem_id: str | None,
+    enable_auto_open_question_cleanup: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
+    """
+    merged = merge_problem_brief_patch(base_problem_brief, patch_payload)
+    if not enable_auto_open_question_cleanup or merged == base_problem_brief:
+        return merged, {"removed_total": 0}
+    cleaned, meta = apply_open_question_cleanup_pass(
+        problem_brief=merged,
+        history_lines=history_lines,
+        user_text=OPEN_QUESTION_CLEANUP_MESSAGE,
+        api_key=api_key,
+        model_name=model_name,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        test_problem_id=test_problem_id,
+        infer_resolved=True,
+    )
+    return cleaned, meta
 
 
 def _run_with_timeout(callable_obj, timeout_sec: float):
@@ -123,7 +226,21 @@ def _run_background_derivation(
                 patch_payload["replace_open_questions"] = True
             elif brief_turn.replace_open_questions:
                 patch_payload["replace_open_questions"] = True
-            effective_problem_brief = merge_problem_brief_patch(base_problem_brief, patch_payload)
+            effective_problem_brief, meta = apply_brief_patch_with_cleanup(
+                base_problem_brief=base_problem_brief,
+                patch_payload=patch_payload,
+                history_lines=history_lines,
+                api_key=api_key,
+                model_name=model_name,
+                workflow_mode=workflow_mode,
+                current_panel=base_panel,
+                recent_runs_summary=recent_runs_summary,
+                researcher_steers=researcher_steers,
+                test_problem_id=test_problem_id,
+                enable_auto_open_question_cleanup=True,
+            )
+            if int(meta.get("removed_total", 0)) > 0:
+                log.info("Auto open-question cleanup removed %s question(s)", meta.get("removed_total"))
             if (cleanup_requested or brief_turn.cleanup_mode) and base_panel:
                 effective_problem_brief = sync_problem_brief_from_panel(
                     effective_problem_brief, base_panel, test_problem_id=test_problem_id

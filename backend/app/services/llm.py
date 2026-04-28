@@ -423,6 +423,10 @@ def _build_brief_update_system_instruction(
             "Preserve existing open questions unless you intentionally emit a full replacement under "
             "problem_brief_patch.open_questions with replace_open_questions=true (omit open_questions from the patch to leave them unchanged)."
         )
+        parts.append(
+            "If the user specifically asks to clean up open questions only, prioritize updating "
+            "problem_brief_patch.open_questions with replace_open_questions=true and avoid replacing items."
+        )
     if recent_runs_summary:
         parts.append("Recent run results (for hidden brief-update context):")
         parts.append(json.dumps(recent_runs_summary, indent=2, ensure_ascii=False))

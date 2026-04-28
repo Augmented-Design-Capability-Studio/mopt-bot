@@ -21,11 +21,13 @@ from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySessi
 from app.optimization_gate import can_run_optimization
 from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
 from app.schemas import (
+    CleanupOpenQuestionsBody,
     MessageCreate,
     MessageOut,
     ModelSettingsBody,
     ParticipantPanelUpdate,
     ParticipantProblemBriefUpdate,
+    ParticipantTutorialUpdate,
     PostMessagesResponse,
     ResearcherSimulateParticipantUploadBody,
     RunOut,
@@ -298,6 +300,9 @@ def patch_session(
         row.optimization_runs_blocked_by_researcher = body.optimization_runs_blocked_by_researcher
     if body.participant_tutorial_enabled is not None:
         row.participant_tutorial_enabled = body.participant_tutorial_enabled
+    if "tutorial_step_override" in body.model_fields_set:
+        row.tutorial_step_override = body.tutorial_step_override
+        helpers.rewind_tutorial_tracking_from_step(row, row.tutorial_step_override)
     if body.gemini_model is not None:
         row.gemini_model = body.gemini_model
     if body.gemini_api_key is not None:
@@ -346,6 +351,15 @@ def reset_session(
     row.optimization_allowed = False
     row.optimization_runs_blocked_by_researcher = False
     row.optimization_gate_engaged = False
+    row.tutorial_step_override = None
+    row.tutorial_chat_started = False
+    row.tutorial_uploaded_files = False
+    row.tutorial_definition_tab_visited = False
+    row.tutorial_definition_saved = False
+    row.tutorial_config_tab_visited = False
+    row.tutorial_config_saved = False
+    row.tutorial_first_run_done = False
+    row.tutorial_second_run_done = False
     helpers.settle_processing_state(row, cancel_revision=True)
     row.config_status = "idle"
     row.updated_at = datetime.now(timezone.utc)
@@ -511,7 +525,25 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             patch_payload["replace_open_questions"] = True
                         elif turn.replace_open_questions:
                             patch_payload["replace_open_questions"] = True
-                        merged_brief = merge_problem_brief_patch(current_problem_brief, patch_payload)
+                        merged_brief, cleanup_meta = derivation.apply_brief_patch_with_cleanup(
+                            base_problem_brief=current_problem_brief,
+                            patch_payload=patch_payload,
+                            history_lines=hist,
+                            api_key=key,
+                            model_name=model,
+                            workflow_mode=row.workflow_mode,
+                            current_panel=current,
+                            recent_runs_summary=recent_runs_summary,
+                            researcher_steers=researcher_steers,
+                            test_problem_id=row.test_problem_id,
+                            enable_auto_open_question_cleanup=True,
+                        )
+                        if int(cleanup_meta.get("removed_total", 0)) > 0:
+                            log.info(
+                                "Auto open-question cleanup removed %s question(s) for session %s",
+                                cleanup_meta.get("removed_total"),
+                                session_id,
+                            )
                         if merged_brief != current_problem_brief:
                             row = db.get(StudySession, session_id) or row
                             row.problem_brief_json = json.dumps(merged_brief)
@@ -1011,6 +1043,106 @@ def patch_participant_problem_brief(
     return helpers.session_to_out(row)
 
 
+@router.post("/{session_id}/cleanup-open-questions", response_model=SessionOut)
+def cleanup_participant_open_questions(
+    session_id: str,
+    body: CleanupOpenQuestionsBody,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+
+    current_problem_brief = helpers.problem_brief_dict(row)
+    current_panel = helpers.panel_dict(row)
+    history = [
+        (str(m.role or "user"), str(m.content or ""))
+        for m in db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id, ChatMessage.visible_to_participant.is_(True))
+        .order_by(ChatMessage.id.asc())
+        .all()
+    ]
+    researcher_steers = [
+        str(m.content or "")
+        for m in db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "researcher",
+            ChatMessage.visible_to_participant.is_(False),
+            ChatMessage.kind == "steer",
+        )
+        .order_by(ChatMessage.id.asc())
+        .all()
+        if str(m.content or "").strip()
+    ]
+    recent_runs_summary: list[dict[str, Any]] = []
+    from app.crypto_util import decrypt_secret
+
+    api_key = decrypt_secret(row.gemini_key_encrypted)
+    model = row.gemini_model or get_settings().default_gemini_model
+    cleaned_brief, meta = derivation.apply_open_question_cleanup_pass(
+        problem_brief=current_problem_brief,
+        history_lines=history,
+        user_text=derivation.OPEN_QUESTION_CLEANUP_MESSAGE,
+        api_key=api_key,
+        model_name=model,
+        workflow_mode=row.workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        test_problem_id=row.test_problem_id,
+        infer_resolved=bool(body.infer_resolved),
+    )
+    if cleaned_brief != current_problem_brief:
+        row.problem_brief_json = json.dumps(cleaned_brief)
+        helpers.touch_session(row)
+        db.commit()
+        db.refresh(row)
+    log.info("Manual open-question cleanup metadata for session %s: %s", session_id, meta)
+    return helpers.session_to_out(row)
+
+
+@router.patch("/{session_id}/participant-tutorial", response_model=SessionOut)
+def patch_participant_tutorial(
+    session_id: str,
+    body: ParticipantTutorialUpdate,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+    if "participant_tutorial_enabled" in body.model_fields_set:
+        row.participant_tutorial_enabled = bool(body.participant_tutorial_enabled)
+    if "tutorial_step_override" in body.model_fields_set:
+        row.tutorial_step_override = body.tutorial_step_override
+    if "tutorial_chat_started" in body.model_fields_set and body.tutorial_chat_started is not None:
+        row.tutorial_chat_started = bool(body.tutorial_chat_started)
+    if "tutorial_uploaded_files" in body.model_fields_set and body.tutorial_uploaded_files is not None:
+        row.tutorial_uploaded_files = bool(body.tutorial_uploaded_files)
+    if "tutorial_definition_tab_visited" in body.model_fields_set and body.tutorial_definition_tab_visited is not None:
+        row.tutorial_definition_tab_visited = bool(body.tutorial_definition_tab_visited)
+    if "tutorial_definition_saved" in body.model_fields_set and body.tutorial_definition_saved is not None:
+        row.tutorial_definition_saved = bool(body.tutorial_definition_saved)
+    if "tutorial_config_tab_visited" in body.model_fields_set and body.tutorial_config_tab_visited is not None:
+        row.tutorial_config_tab_visited = bool(body.tutorial_config_tab_visited)
+    if "tutorial_config_saved" in body.model_fields_set and body.tutorial_config_saved is not None:
+        row.tutorial_config_saved = bool(body.tutorial_config_saved)
+    if "tutorial_first_run_done" in body.model_fields_set and body.tutorial_first_run_done is not None:
+        row.tutorial_first_run_done = bool(body.tutorial_first_run_done)
+    if "tutorial_second_run_done" in body.model_fields_set and body.tutorial_second_run_done is not None:
+        row.tutorial_second_run_done = bool(body.tutorial_second_run_done)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return helpers.session_to_out(row)
+
+
 @router.post("/{session_id}/sync-panel", response_model=SessionOut)
 def sync_panel_from_problem_brief_route(
     session_id: str,
@@ -1121,6 +1253,15 @@ def export_session(
             "optimization_allowed": row.optimization_allowed,
             "optimization_runs_blocked_by_researcher": row.optimization_runs_blocked_by_researcher,
             "participant_tutorial_enabled": bool(getattr(row, "participant_tutorial_enabled", False)),
+            "tutorial_step_override": getattr(row, "tutorial_step_override", None),
+            "tutorial_chat_started": bool(getattr(row, "tutorial_chat_started", False)),
+            "tutorial_uploaded_files": bool(getattr(row, "tutorial_uploaded_files", False)),
+            "tutorial_definition_tab_visited": bool(getattr(row, "tutorial_definition_tab_visited", False)),
+            "tutorial_definition_saved": bool(getattr(row, "tutorial_definition_saved", False)),
+            "tutorial_config_tab_visited": bool(getattr(row, "tutorial_config_tab_visited", False)),
+            "tutorial_config_saved": bool(getattr(row, "tutorial_config_saved", False)),
+            "tutorial_first_run_done": bool(getattr(row, "tutorial_first_run_done", False)),
+            "tutorial_second_run_done": bool(getattr(row, "tutorial_second_run_done", False)),
             "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
             "gemini_key_configured": bool(row.gemini_key_encrypted),

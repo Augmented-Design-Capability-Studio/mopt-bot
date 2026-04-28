@@ -11,6 +11,7 @@ export type DefinitionPanelProps = {
   /** True while global definition edit mode is active */
   editable: boolean;
   sessionTerminated: boolean;
+  openQuestionsBusy?: boolean;
   /** When `waterfall`, the Assumptions section is hidden (runs are gated on open questions). */
   workflowMode?: string | null;
   onChange: (value: ProblemBrief) => void;
@@ -228,6 +229,7 @@ export function DefinitionPanel({
   problemBrief,
   editable,
   sessionTerminated,
+  openQuestionsBusy = false,
   workflowMode,
   onChange,
   onEnsureDefinitionEditing,
@@ -259,7 +261,7 @@ export function DefinitionPanel({
   const gatheredItems = problemBrief.items.filter((item) => item.kind === "gathered");
   const assumptionItems = problemBrief.items.filter((item) => item.kind === "assumption");
   const openQuestions = problemBrief.open_questions;
-  const openLocked = sessionTerminated || !editable;
+  const openLocked = sessionTerminated || !editable || openQuestionsBusy;
   const showAssumptions = (workflowMode ?? "").toLowerCase() !== "waterfall";
 
   const showDeletedMarker = useCallback((section: "gathered" | "assumption" | "open", index: number) => {
@@ -520,7 +522,10 @@ export function DefinitionPanel({
       <section className="definition-section" id="definition-open-questions">
         <div className="definition-section-header">
           <div>
-            <div className="definition-section-title">Open Questions</div>
+            <div className="definition-section-title" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+              <span>Open Questions</span>
+              {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
+            </div>
             <div className="muted">Outstanding clarifications that would improve the configuration.</div>
           </div>
           <div className="definition-header-actions">
@@ -530,6 +535,7 @@ export function DefinitionPanel({
                 className="definition-icon-btn definition-add-btn"
                 aria-label="Add open question"
                 onClick={addOpenQuestion}
+                disabled={openQuestionsBusy}
               >
                 +
               </button>
@@ -564,6 +570,7 @@ export function DefinitionPanel({
                           type="button"
                           className="definition-icon-btn definition-remove-btn"
                           aria-label="Remove open question"
+                          disabled={openQuestionsBusy}
                           onClick={() => removeOpenQuestion(question.id)}
                         >
                           X

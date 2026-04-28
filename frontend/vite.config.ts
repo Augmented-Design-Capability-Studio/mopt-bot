@@ -30,6 +30,16 @@ export default defineConfig({
         researcher: path.resolve(__dirname, "researcher.html"),
         analyzer: path.resolve(__dirname, "analyzer.html"),
       },
+      output: {
+        manualChunks(id) {
+          if (id.includes("/vrptw_problem/frontend/")) return "problem-vrptw";
+          if (id.includes("/knapsack_problem/frontend/")) return "problem-knapsack";
+          if (id.includes("/node_modules/recharts/") || id.includes("/node_modules/d3-")) {
+            return "chart-vendor";
+          }
+          return undefined;
+        },
+      },
     },
   },
 });

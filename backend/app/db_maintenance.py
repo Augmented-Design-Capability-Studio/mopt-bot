@@ -21,6 +21,8 @@ def ensure_database_shape() -> None:
     _ensure_sessions_processing_columns()
     _ensure_sessions_optimization_runs_blocked_column()
     _ensure_sessions_participant_tutorial_enabled_column()
+    _ensure_sessions_tutorial_step_override_column()
+    _ensure_sessions_tutorial_tracking_columns()
     _ensure_sessions_optimization_gate_engaged_column()
     _ensure_sessions_content_reset_revision_column()
     _backfill_optimization_gate_engaged()
@@ -123,6 +125,54 @@ def _ensure_sessions_participant_tutorial_enabled_column() -> None:
             )
         )
     log.info("Added sessions.participant_tutorial_enabled column")
+
+
+def _ensure_sessions_tutorial_step_override_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "tutorial_step_override" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN tutorial_step_override VARCHAR(64)"))
+    log.info("Added sessions.tutorial_step_override column")
+
+
+def _ensure_sessions_tutorial_tracking_columns() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    statements: list[tuple[str, str]] = []
+    if "tutorial_chat_started" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_chat_started BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_chat_started"))
+    if "tutorial_uploaded_files" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_uploaded_files BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_uploaded_files"))
+    if "tutorial_definition_tab_visited" not in columns:
+        statements.append(
+            (
+                "ALTER TABLE sessions ADD COLUMN tutorial_definition_tab_visited BOOLEAN NOT NULL DEFAULT 0",
+                "sessions.tutorial_definition_tab_visited",
+            )
+        )
+    if "tutorial_definition_saved" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_definition_saved BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_definition_saved"))
+    if "tutorial_config_tab_visited" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_config_tab_visited BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_config_tab_visited"))
+    if "tutorial_config_saved" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_config_saved BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_config_saved"))
+    if "tutorial_first_run_done" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_first_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_first_run_done"))
+    if "tutorial_second_run_done" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_second_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_second_run_done"))
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for sql, _ in statements:
+            conn.execute(text(sql))
+    for _, column_name in statements:
+        log.info("Added %s column", column_name)
 
 
 def _ensure_sessions_content_reset_revision_column() -> None:

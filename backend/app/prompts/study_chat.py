@@ -364,6 +364,9 @@ Rules:
   deduplicate, reorganize, or clear definition content. For **open questions**, either omit
   them (unchanged) or set `replace_open_questions=true` with the **full** list you want
   (including **removing** stale or moot questions by omitting their ids from that list).
+- If the request is specifically to **clean up open questions only**, focus on
+  `problem_brief_patch.open_questions` and avoid replacing `items` unless needed for one
+  resolved Q&A carry-over.
 - On cleanup turns, you may rephrase **a single** gathered row (e.g. from answered open
   questions, id prefix `gathered-oq-`, or `Question — Answer` text) into clearer declarative wording.
   Do **not** merge **multiple goal terms** into one row while doing so.

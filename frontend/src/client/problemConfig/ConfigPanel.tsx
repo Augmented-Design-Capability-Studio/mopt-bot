@@ -33,6 +33,7 @@ type ConfigPanelProps = {
   onEnsureDefinitionEditing: () => void;
   isDefinitionDirty: boolean;
   onRequestDefinitionCleanup: () => void | Promise<void>;
+  onRequestOpenQuestionCleanup: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
@@ -46,6 +47,7 @@ type ConfigPanelProps = {
   canLoadFromSnapshot?: boolean;
   isConfigDirty?: boolean;
   onActiveTabChange?: (tab: PanelTab) => void;
+  onUserTabClick?: (tab: PanelTab) => void;
 };
 
 type PanelTab = "definition" | "config" | "raw";
@@ -95,6 +97,7 @@ export function ConfigPanel({
   onEnsureDefinitionEditing,
   isDefinitionDirty,
   onRequestDefinitionCleanup,
+  onRequestOpenQuestionCleanup,
   onSyncProblemConfig,
   onEnterConfigEdit,
   onCancelConfigEdit,
@@ -108,6 +111,7 @@ export function ConfigPanel({
   canLoadFromSnapshot = false,
   isConfigDirty = false,
   onActiveTabChange,
+  onUserTabClick,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
   const [pendingDefinitionOpenQuestionsScroll, setPendingDefinitionOpenQuestionsScroll] = useState(false);
@@ -340,6 +344,7 @@ export function ConfigPanel({
                 setActiveTab(tabId);
                 if (tabId === "definition") setDefinitionUnread(false);
                 if (tabId === "config") setConfigUnread(false);
+                onUserTabClick?.(tabId);
               }}
               data-tutorial-anchor={tabId === "definition" ? "definition-tab" : tabId === "config" ? "config-tab" : undefined}
               disabled={tabLocked && activeTab !== tabId}
@@ -383,6 +388,7 @@ export function ConfigPanel({
                   editable={editableDefinition}
                   sessionTerminated={sessionTerminated}
                   workflowMode={session?.workflow_mode ?? null}
+                  openQuestionsBusy={participantOps.cleaningOpenQuestions}
                   suppressTransientMarkers={definitionSaveShieldActive || configOrRawBlockingUi}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}
@@ -527,6 +533,23 @@ export function ConfigPanel({
                         style={menuItemStyle}
                       >
                         Clean up definition
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!definitionCleanupEnabled || participantOps.cleaningOpenQuestions}
+                        title={
+                          definitionCleanupEnabled
+                            ? "Clean only the open-questions list by removing resolved or duplicate questions."
+                            : definitionCleanupDisabledTitle
+                        }
+                        onClick={() => {
+                          setDefMoreMenuOpen(false);
+                          void onRequestOpenQuestionCleanup();
+                        }}
+                        style={menuItemStyle}
+                      >
+                        {participantOps.cleaningOpenQuestions ? "Cleaning open questions..." : "Clean up open questions"}
                       </button>
                     </div>
                   ) : null}

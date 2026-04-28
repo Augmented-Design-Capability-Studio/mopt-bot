@@ -180,12 +180,16 @@ export function useResearcherController() {
           body: JSON.stringify(patch),
         });
         setDetail(session);
-        if ("participant_tutorial_enabled" in patch) {
+        if ("participant_tutorial_enabled" in patch || "tutorial_step_override" in patch) {
           try {
-            const enabled = Boolean(patch.participant_tutorial_enabled);
             localStorage.setItem(
               TUTORIAL_REFRESH_SIGNAL_KEY,
-              JSON.stringify({ session_id: selected, enabled, ts: Date.now() }),
+              JSON.stringify({
+                session_id: selected,
+                enabled: Boolean(session.participant_tutorial_enabled),
+                tutorial_step_override: patch.tutorial_step_override ?? null,
+                ts: Date.now(),
+              }),
             );
           } catch {
             // ignore storage errors

@@ -15,6 +15,47 @@ from app.schemas import RunOut, SessionOut, SessionProcessingState
 from app.config import get_settings
 
 
+TUTORIAL_STEP_ORDER: tuple[str, ...] = (
+    "chat-info",
+    "upload-files",
+    "inspect-definition",
+    "update-definition",
+    "inspect-config",
+    "first-run",
+    "update-config",
+    "second-run",
+)
+
+
+def _tutorial_step_index(step: str | None) -> int:
+    if not step:
+        return 0
+    try:
+        return TUTORIAL_STEP_ORDER.index(step)
+    except ValueError:
+        return 0
+
+
+def rewind_tutorial_tracking_from_step(row: StudySession, step: str | None) -> None:
+    idx = _tutorial_step_index(step)
+    if idx <= 0:
+        row.tutorial_chat_started = False
+    if idx <= 1:
+        row.tutorial_uploaded_files = False
+    if idx <= 2:
+        row.tutorial_definition_tab_visited = False
+    if idx <= 3:
+        row.tutorial_definition_saved = False
+    if idx <= 4:
+        row.tutorial_config_tab_visited = False
+    if idx <= 5:
+        row.tutorial_first_run_done = False
+    if idx <= 6:
+        row.tutorial_config_saved = False
+    if idx <= 7:
+        row.tutorial_second_run_done = False
+
+
 def clean_participant_number(value: str | None) -> str | None:
     if value is None:
         return None
@@ -141,6 +182,15 @@ def session_to_out(row: StudySession) -> SessionOut:
         optimization_allowed=row.optimization_allowed,
         optimization_runs_blocked_by_researcher=row.optimization_runs_blocked_by_researcher,
         participant_tutorial_enabled=bool(getattr(row, "participant_tutorial_enabled", False)),
+        tutorial_step_override=getattr(row, "tutorial_step_override", None),
+        tutorial_chat_started=bool(getattr(row, "tutorial_chat_started", False)),
+        tutorial_uploaded_files=bool(getattr(row, "tutorial_uploaded_files", False)),
+        tutorial_definition_tab_visited=bool(getattr(row, "tutorial_definition_tab_visited", False)),
+        tutorial_definition_saved=bool(getattr(row, "tutorial_definition_saved", False)),
+        tutorial_config_tab_visited=bool(getattr(row, "tutorial_config_tab_visited", False)),
+        tutorial_config_saved=bool(getattr(row, "tutorial_config_saved", False)),
+        tutorial_first_run_done=bool(getattr(row, "tutorial_first_run_done", False)),
+        tutorial_second_run_done=bool(getattr(row, "tutorial_second_run_done", False)),
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
         gemini_model=row.gemini_model or get_settings().default_gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),

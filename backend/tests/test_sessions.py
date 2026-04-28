@@ -3,7 +3,7 @@ import importlib
 
 from app.config import get_settings
 from app.main import create_app
-from app.schemas import ChatModelTurn, RunTriggerIntentTurn
+from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn, RunTriggerIntentTurn
 
 
 def test_create_session_returns_null_panel_config(monkeypatch):
@@ -2280,3 +2280,293 @@ def test_researcher_can_toggle_participant_tutorial_flag(monkeypatch):
         )
         assert fetched.status_code == 200
         assert fetched.json()["participant_tutorial_enabled"] is True
+
+
+def test_researcher_can_set_and_clear_tutorial_step_override(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-tutorial-step-override")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-tutorial-step-override")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-tutorial-step-override"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+        assert create.json()["tutorial_step_override"] is None
+
+        patch_step = client.patch(
+            f"/sessions/{sid}",
+            json={"participant_tutorial_enabled": True, "tutorial_step_override": "inspect-config"},
+            headers={"Authorization": "Bearer test-researcher-tutorial-step-override"},
+        )
+        assert patch_step.status_code == 200
+        assert patch_step.json()["participant_tutorial_enabled"] is True
+        assert patch_step.json()["tutorial_step_override"] == "inspect-config"
+
+        fetched = client.get(
+            f"/sessions/{sid}",
+            headers={"Authorization": "Bearer test-client-tutorial-step-override"},
+        )
+        assert fetched.status_code == 200
+        assert fetched.json()["tutorial_step_override"] == "inspect-config"
+
+        clear_step = client.patch(
+            f"/sessions/{sid}",
+            json={"tutorial_step_override": None},
+            headers={"Authorization": "Bearer test-researcher-tutorial-step-override"},
+        )
+        assert clear_step.status_code == 200
+        assert clear_step.json()["tutorial_step_override"] is None
+
+        bad_step = client.patch(
+            f"/sessions/{sid}",
+            json={"tutorial_step_override": "not-a-step"},
+            headers={"Authorization": "Bearer test-researcher-tutorial-step-override"},
+        )
+        assert bad_step.status_code == 422
+
+
+def test_participant_dismiss_can_disable_tutorial_for_session(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-disable-tutorial")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-disable-tutorial")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-disable-tutorial"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        enable = client.patch(
+            f"/sessions/{sid}",
+            json={"participant_tutorial_enabled": True, "tutorial_step_override": "chat-info"},
+            headers={"Authorization": "Bearer test-researcher-disable-tutorial"},
+        )
+        assert enable.status_code == 200
+        assert enable.json()["participant_tutorial_enabled"] is True
+
+        dismiss = client.patch(
+            f"/sessions/{sid}/participant-tutorial",
+            json={"participant_tutorial_enabled": False},
+            headers={"Authorization": "Bearer test-client-disable-tutorial"},
+        )
+        assert dismiss.status_code == 200
+        assert dismiss.json()["participant_tutorial_enabled"] is False
+
+        researcher_view = client.get(
+            f"/sessions/{sid}/researcher",
+            headers={"Authorization": "Bearer test-researcher-disable-tutorial"},
+        )
+        assert researcher_view.status_code == 200
+        assert researcher_view.json()["participant_tutorial_enabled"] is False
+
+
+def test_participant_can_update_tutorial_step_state(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-tutorial-step-state")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-tutorial-step-state")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-tutorial-step-state"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        enable = client.patch(
+            f"/sessions/{sid}",
+            json={"participant_tutorial_enabled": True, "tutorial_step_override": "chat-info"},
+            headers={"Authorization": "Bearer test-researcher-tutorial-step-state"},
+        )
+        assert enable.status_code == 200
+
+        advance = client.patch(
+            f"/sessions/{sid}/participant-tutorial",
+            json={"tutorial_step_override": "upload-files"},
+            headers={"Authorization": "Bearer test-client-tutorial-step-state"},
+        )
+        assert advance.status_code == 200
+        assert advance.json()["tutorial_step_override"] == "upload-files"
+
+        researcher_view = client.get(
+            f"/sessions/{sid}/researcher",
+            headers={"Authorization": "Bearer test-researcher-tutorial-step-state"},
+        )
+        assert researcher_view.status_code == 200
+        assert researcher_view.json()["tutorial_step_override"] == "upload-files"
+
+
+def test_researcher_rewind_resets_tutorial_tracking_only(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-tutorial-rewind")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-tutorial-rewind")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-tutorial-rewind"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        enable = client.patch(
+            f"/sessions/{sid}",
+            json={"participant_tutorial_enabled": True, "tutorial_step_override": "chat-info"},
+            headers={"Authorization": "Bearer test-researcher-tutorial-rewind"},
+        )
+        assert enable.status_code == 200
+
+        progress = client.patch(
+            f"/sessions/{sid}/participant-tutorial",
+            json={
+                "tutorial_chat_started": True,
+                "tutorial_uploaded_files": True,
+                "tutorial_definition_tab_visited": True,
+                "tutorial_definition_saved": True,
+                "tutorial_config_tab_visited": True,
+                "tutorial_config_saved": True,
+                "tutorial_first_run_done": True,
+                "tutorial_second_run_done": True,
+            },
+            headers={"Authorization": "Bearer test-client-tutorial-rewind"},
+        )
+        assert progress.status_code == 200
+        assert progress.json()["tutorial_second_run_done"] is True
+
+        rewind = client.patch(
+            f"/sessions/{sid}",
+            json={"tutorial_step_override": "inspect-definition"},
+            headers={"Authorization": "Bearer test-researcher-tutorial-rewind"},
+        )
+        assert rewind.status_code == 200
+        body = rewind.json()
+        # Prior steps are preserved.
+        assert body["tutorial_chat_started"] is True
+        assert body["tutorial_uploaded_files"] is True
+        # Rewound step and onward are reset.
+        assert body["tutorial_definition_tab_visited"] is False
+        assert body["tutorial_definition_saved"] is False
+        assert body["tutorial_config_tab_visited"] is False
+        assert body["tutorial_config_saved"] is False
+        assert body["tutorial_first_run_done"] is False
+        assert body["tutorial_second_run_done"] is False
+
+
+def test_manual_cleanup_open_questions_endpoint_prunes_with_llm_patch(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-oq-manual-cleanup")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_problem_brief_update",
+        lambda *args, **kwargs: ProblemBriefUpdateTurn(
+            problem_brief_patch={
+                "open_questions": [
+                    {"id": "q-keep", "text": "What is the service-time target per stop?"},
+                ]
+            },
+            replace_open_questions=True,
+            cleanup_mode=True,
+        ),
+    )
+    with TestClient(create_app()) as client:
+        created = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-oq-manual-cleanup"},
+        )
+        assert created.status_code == 200
+        sid = created.json()["id"]
+        patched = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Need route policy details.",
+                    "items": [],
+                    "open_questions": [
+                        {"id": "q-drop", "text": "Do we allow overtime per driver?"},
+                        {"id": "q-keep", "text": "What is the service-time target per stop?"},
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-oq-manual-cleanup"},
+        )
+        assert patched.status_code == 200
+        cleanup = client.post(
+            f"/sessions/{sid}/cleanup-open-questions",
+            json={"infer_resolved": True},
+            headers={"Authorization": "Bearer test-client-oq-manual-cleanup"},
+        )
+        assert cleanup.status_code == 200
+        questions = cleanup.json()["problem_brief"]["open_questions"]
+        assert [q["id"] for q in questions] == ["q-keep"]
+
+
+def test_auto_cleanup_open_questions_after_brief_patch_all_modes(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-oq-auto-cleanup")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.classify_run_trigger_intent",
+        lambda *args, **kwargs: RunTriggerIntentTurn(
+            should_trigger_run=False,
+            intent_type="none",
+            confidence=0.0,
+            rationale="",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Updated definition context.",
+            problem_brief_patch={
+                "items": [
+                    {
+                        "id": "g1",
+                        "text": "Overtime policy allows up to 2 extra hours per worker.",
+                        "kind": "gathered",
+                        "source": "user",
+                        "status": "confirmed",
+                        "editable": True,
+                    }
+                ],
+                "open_questions": [
+                    {"id": "oq-1", "text": "Do we allow overtime per worker?"},
+                    {"id": "oq-2", "text": "Any preferred depot assignment?"},
+                ],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.generate_problem_brief_update",
+        lambda *args, **kwargs: ProblemBriefUpdateTurn(
+            problem_brief_patch={"open_questions": [{"id": "oq-2", "text": "Any preferred depot assignment?"}]},
+            replace_open_questions=True,
+            cleanup_mode=True,
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        for workflow_mode in ("agile", "waterfall", "demo"):
+            created = client.post(
+                "/sessions",
+                json={"workflow_mode": workflow_mode},
+                headers={"Authorization": "Bearer test-client-oq-auto-cleanup"},
+            )
+            assert created.status_code == 200
+            sid = created.json()["id"]
+            sent = client.post(
+                f"/sessions/{sid}/messages",
+                json={"content": "We allow up to 2 overtime hours per worker.", "invoke_model": True},
+                headers={"Authorization": "Bearer test-client-oq-auto-cleanup"},
+            )
+            assert sent.status_code == 200
+            brief = sent.json()["problem_brief"]
+            assert brief is not None
+            assert [q["id"] for q in brief["open_questions"]] == ["oq-2"]

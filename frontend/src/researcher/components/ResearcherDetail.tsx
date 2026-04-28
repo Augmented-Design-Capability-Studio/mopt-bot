@@ -6,6 +6,8 @@ import {
   type RunResult,
   type Session,
   type TestProblemMeta,
+  TUTORIAL_STEP_IDS,
+  type TutorialStepId,
 } from "@shared/api";
 import { ChatPanel } from "@shared/chat/ChatPanel";
 import { parseServerDate } from "@shared/dateTime";
@@ -76,6 +78,16 @@ export function ResearcherDetail({
   onRemoveRun,
   testProblemsMeta,
 }: ResearcherDetailProps) {
+  const tutorialStepLabels: Record<TutorialStepId, string> = {
+    "chat-info": "Step 1 - Start in chat",
+    "upload-files": "Step 2 - Upload files",
+    "inspect-definition": "Step 3 - Inspect Definition",
+    "update-definition": "Step 4 - Update definition",
+    "inspect-config": "Step 5 - Inspect Problem Config",
+    "first-run": "Step 6 - Trigger first run",
+    "update-config": "Step 7 - Edit problem config",
+    "second-run": "Step 8 - Run again",
+  };
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [participantNumberDraft, setParticipantNumberDraft] = useState("");
 
@@ -253,14 +265,41 @@ export function ResearcherDetail({
                     />{" "}
                     Only score explicitly listed objectives
                   </label>
-                  <label title="When enabled, the participant can see and replay the step-by-step tutorial bubbles for this session.">
+                  <label title="When enabled, the participant can see and replay tutorial bubbles for this session. If the participant dismisses, tutorial is turned off for this session. Progression is event-driven from participant actions.">
                     <input
                       type="checkbox"
                       checked={detail.participant_tutorial_enabled}
                       disabled={busy}
-                      onChange={(e) => void onPatchSession({ participant_tutorial_enabled: e.target.checked })}
+                      onChange={(e) =>
+                        void onPatchSession(
+                          e.target.checked
+                            ? {
+                                participant_tutorial_enabled: true,
+                                tutorial_step_override: detail.tutorial_step_override ?? "chat-info",
+                              }
+                            : { participant_tutorial_enabled: false },
+                        )
+                      }
                     />{" "}
                     Show participant tutorial
+                    <select
+                      value={detail.tutorial_step_override ?? "chat-info"}
+                      disabled={busy || !detail.participant_tutorial_enabled}
+                      onChange={(e) =>
+                        void onPatchSession({
+                          tutorial_step_override: e.target.value,
+                        })
+                      }
+                      className="researcher-workflow-select"
+                      style={{ width: "8.5rem", minWidth: "8.5rem", marginLeft: "0.45rem" }}
+                      title="Set current tutorial step. Selecting an earlier step rewinds tutorial tracking state only (chat/runs/config data are unchanged). Step 3 advances only after the participant explicitly clicks the Definition tab."
+                    >
+                      {TUTORIAL_STEP_IDS.map((stepId) => (
+                        <option key={stepId} value={stepId}>
+                          {tutorialStepLabels[stepId]}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
               </div>

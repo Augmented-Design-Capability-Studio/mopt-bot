@@ -13,6 +13,7 @@ import {
   type TestProblemMeta,
 } from "@shared/api";
 import { parseServerDate } from "@shared/dateTime";
+import { patchForTutorialEvent, type ParticipantTutorialPatch } from "../../tutorial/events";
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { computeCanRunOptimization } from "../lib/optimizationGate";
@@ -220,6 +221,43 @@ export function useParticipantSessionActions({
     await postContextMessage(DEFINITION_CLEANUP_CHAT_MESSAGE, invokeModel);
   }, [invokeModel, postContextMessage]);
 
+  const runOpenQuestionCleanupRequest = useCallback(async () => {
+    return apiFetch<Session>(`/sessions/${sessionId}/cleanup-open-questions`, token, {
+      method: "POST",
+      body: JSON.stringify({ infer_resolved: true }),
+    });
+  }, [sessionId, token]);
+
+  const requestOpenQuestionCleanup = useCallback(async () => {
+    if (!token || !sessionId || session?.status === "terminated") return;
+    setParticipantOps((prev) => ({ ...prev, cleaningOpenQuestions: true }));
+    try {
+      const nextSession = await runOpenQuestionCleanupRequest();
+      setSession(nextSession);
+      setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Open-question cleanup failed");
+    } finally {
+      setParticipantOps((prev) => ({ ...prev, cleaningOpenQuestions: false }));
+    }
+  }, [runOpenQuestionCleanupRequest, session?.status, sessionId, setError, setParticipantOps, setProblemBrief, setSession, token]);
+
+  const setParticipantTutorialState = useCallback(
+    async (patch: ParticipantTutorialPatch): Promise<void> => {
+      if (!token || !sessionId) return;
+      try {
+        const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/participant-tutorial`, token, {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        });
+        setSession(nextSession);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Could not update tutorial setting");
+      }
+    },
+    [sessionId, setError, setSession, token],
+  );
+
   const sendChat = useCallback(async () => {
     const text = (chatInputRef.current ?? "").trim();
     if (!text || !token || !sessionId || session?.status === "terminated") return;
@@ -254,6 +292,8 @@ export function useParticipantSessionActions({
       applyPanelConfigFromResponse(response.panel_config);
       applyProblemBriefFromResponse(response.problem_brief);
       applyProcessingFromResponse(response.processing);
+      const tutorialPatch = patchForTutorialEvent("chat-started", session);
+      if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) startEagerMessagePoll();
     } catch (error) {
       setMessages((current) => current.filter((message) => message.id !== tempUserId));
@@ -270,6 +310,8 @@ export function useParticipantSessionActions({
     applyProblemBriefFromResponse,
     chatInputRef,
     invokeModel,
+    session?.participant_tutorial_enabled,
+    session?.tutorial_chat_started,
     session?.status,
     sessionId,
     setAiPending,
@@ -279,6 +321,7 @@ export function useParticipantSessionActions({
     setLastMsgId,
     setMessages,
     setParticipantOps,
+    setParticipantTutorialState,
     startEagerMessagePoll,
     token,
   ]);
@@ -287,6 +330,8 @@ export function useParticipantSessionActions({
     async (fileNames: string[]) => {
       if (!token || !sessionId) return;
       await postContextMessage(buildSimulatedUploadMessage(fileNames), invokeModel);
+      const tutorialPatch = patchForTutorialEvent("files-uploaded", session);
+      if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       try {
         await apiFetch(`/sessions/${sessionId}/simulate-upload`, token, { method: "POST" });
         setError(null);
@@ -294,7 +339,7 @@ export function useParticipantSessionActions({
         setError(error instanceof Error ? error.message : "Upload failed");
       }
     },
-    [invokeModel, postContextMessage, sessionId, setError, token],
+    [invokeModel, postContextMessage, session?.participant_tutorial_enabled, sessionId, setError, setParticipantTutorialState, token],
   );
 
   const saveConfig = useCallback(async (overrideConfig?: string) => {
@@ -326,6 +371,8 @@ export function useParticipantSessionActions({
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+      const tutorialPatch = patchForTutorialEvent("config-saved", nextSession);
+      if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) {
         void postContextMessage(
           `I just manually updated the problem configuration. Changed fields: ${changedKeys}. Please acknowledge the change and briefly explain the expected impact on the solver.`,
@@ -355,6 +402,7 @@ export function useParticipantSessionActions({
     setParticipantOps,
     setProblemBrief,
     setSession,
+    setParticipantTutorialState,
     token,
   ]);
 
@@ -383,6 +431,8 @@ export function useParticipantSessionActions({
       problemPanelHydrationRef.current = "follow";
       setConfigText(sessionPanelToConfigText(nextSession.panel_config));
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+      const tutorialPatch = patchForTutorialEvent("definition-saved", nextSession);
+      if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) {
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()
@@ -417,6 +467,7 @@ export function useParticipantSessionActions({
     setParticipantOps,
     setProblemBrief,
     setSession,
+    setParticipantTutorialState,
     syncSession,
     token,
   ]);
@@ -623,6 +674,10 @@ export function useParticipantSessionActions({
           true,
         );
       }
+      if (run.ok) {
+        const tutorialPatch = patchForTutorialEvent("run-completed", session);
+        if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
+      }
     } catch (error) {
       setRuns((current) => {
         const filtered = current.filter((r) => !r.clientPending);
@@ -651,6 +706,7 @@ export function useParticipantSessionActions({
     setError,
     setOptimizing,
     setRuns,
+    setParticipantTutorialState,
     syncMessages,
     token,
     ],
@@ -746,6 +802,7 @@ export function useParticipantSessionActions({
   return {
     sendChat,
     requestDefinitionCleanup,
+    requestOpenQuestionCleanup,
     simulateUpload,
     saveConfig,
     saveProblemBrief,
@@ -756,5 +813,6 @@ export function useParticipantSessionActions({
     cancelOptimize,
     saveModelSettings,
     closeModelDialog,
+    setParticipantTutorialState,
   };
 }

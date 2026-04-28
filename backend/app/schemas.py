@@ -28,6 +28,16 @@ class SessionPatch(BaseModel):
     optimization_allowed: bool | None = None
     optimization_runs_blocked_by_researcher: bool | None = None
     participant_tutorial_enabled: bool | None = None
+    tutorial_step_override: Literal[
+        "chat-info",
+        "upload-files",
+        "inspect-definition",
+        "update-definition",
+        "inspect-config",
+        "first-run",
+        "update-config",
+        "second-run",
+    ] | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
 
@@ -83,6 +93,24 @@ class SessionOut(BaseModel):
     optimization_allowed: bool
     optimization_runs_blocked_by_researcher: bool
     participant_tutorial_enabled: bool = False
+    tutorial_step_override: Literal[
+        "chat-info",
+        "upload-files",
+        "inspect-definition",
+        "update-definition",
+        "inspect-config",
+        "first-run",
+        "update-config",
+        "second-run",
+    ] | None = None
+    tutorial_chat_started: bool = False
+    tutorial_uploaded_files: bool = False
+    tutorial_definition_tab_visited: bool = False
+    tutorial_definition_saved: bool = False
+    tutorial_config_tab_visited: bool = False
+    tutorial_config_saved: bool = False
+    tutorial_first_run_done: bool = False
+    tutorial_second_run_done: bool = False
     optimization_gate_engaged: bool = False
     gemini_model: str | None
     gemini_key_configured: bool = False
@@ -202,6 +230,32 @@ class ParticipantPanelUpdate(BaseModel):
 class ParticipantProblemBriefUpdate(BaseModel):
     problem_brief: ProblemBrief
     acknowledgement: str | None = Field(default=None, max_length=2000)
+
+
+class CleanupOpenQuestionsBody(BaseModel):
+    infer_resolved: bool = True
+
+
+class ParticipantTutorialUpdate(BaseModel):
+    participant_tutorial_enabled: bool | None = None
+    tutorial_step_override: Literal[
+        "chat-info",
+        "upload-files",
+        "inspect-definition",
+        "update-definition",
+        "inspect-config",
+        "first-run",
+        "update-config",
+        "second-run",
+    ] | None = None
+    tutorial_chat_started: bool | None = None
+    tutorial_uploaded_files: bool | None = None
+    tutorial_definition_tab_visited: bool | None = None
+    tutorial_definition_saved: bool | None = None
+    tutorial_config_tab_visited: bool | None = None
+    tutorial_config_saved: bool | None = None
+    tutorial_first_run_done: bool | None = None
+    tutorial_second_run_done: bool | None = None
 
 
 class SnapshotOut(BaseModel):

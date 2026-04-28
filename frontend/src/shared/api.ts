@@ -129,6 +129,19 @@ export type TestProblemMeta = {
   worker_preference_key: string | null;
 };
 
+export const TUTORIAL_STEP_IDS = [
+  "chat-info",
+  "upload-files",
+  "inspect-definition",
+  "update-definition",
+  "inspect-config",
+  "first-run",
+  "update-config",
+  "second-run",
+] as const;
+
+export type TutorialStepId = (typeof TUTORIAL_STEP_IDS)[number];
+
 export type Session = {
   id: string;
   created_at: string;
@@ -146,6 +159,16 @@ export type Session = {
   optimization_runs_blocked_by_researcher: boolean;
   /** Researcher-controlled tutorial visibility toggle for participant UI. */
   participant_tutorial_enabled: boolean;
+  /** Researcher-selected tutorial step for soft jump; null means natural progression. */
+  tutorial_step_override?: TutorialStepId | null;
+  tutorial_chat_started?: boolean;
+  tutorial_uploaded_files?: boolean;
+  tutorial_definition_tab_visited?: boolean;
+  tutorial_definition_saved?: boolean;
+  tutorial_config_tab_visited?: boolean;
+  tutorial_config_saved?: boolean;
+  tutorial_first_run_done?: boolean;
+  tutorial_second_run_done?: boolean;
   /** Waterfall: true after first participant chat or once the brief lists open questions (cold start gate). */
   optimization_gate_engaged?: boolean;
   gemini_model: string | null;

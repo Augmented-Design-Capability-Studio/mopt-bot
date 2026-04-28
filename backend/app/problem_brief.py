@@ -13,6 +13,48 @@ SYSTEM_ITEM_IDS = {
 }
 
 CONFIG_ITEM_PREFIX = "config-"
+_OPEN_QUESTION_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_OPEN_QUESTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "can",
+    "could",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "may",
+    "of",
+    "on",
+    "or",
+    "our",
+    "should",
+    "the",
+    "to",
+    "we",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "will",
+    "with",
+    "you",
+    "your",
+}
 
 def _all_weight_slot_markers() -> dict[str, tuple[str, ...]]:
     from app.problems.registry import register_study_ports
@@ -471,6 +513,101 @@ def _merge_gathered_deduped(items: list[dict[str, Any]], additions: list[dict[st
         if key not in seen:
             seen.add(key)
             items.append(g)
+
+
+def _question_text_key(text: Any) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def _question_tokens(text: Any) -> set[str]:
+    tokens = {
+        t
+        for t in _OPEN_QUESTION_TOKEN_RE.findall(str(text or "").strip().lower())
+        if t and t not in _OPEN_QUESTION_STOPWORDS and not t.isdigit()
+    }
+    return tokens
+
+
+def _question_fact_corpus(brief: dict[str, Any]) -> list[set[str]]:
+    rows: list[str] = []
+    goal_summary = str(brief.get("goal_summary") or "").strip()
+    if goal_summary:
+        rows.append(goal_summary)
+    for item in brief.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        rows.append(text)
+    corpus: list[set[str]] = []
+    for row in rows:
+        tokens = _question_tokens(row)
+        if tokens:
+            corpus.append(tokens)
+    return corpus
+
+
+def _question_is_resolved_by_corpus(question: dict[str, Any], corpus: list[set[str]]) -> bool:
+    q_tokens = _question_tokens(question.get("text"))
+    if not q_tokens or not corpus:
+        return False
+    required_overlap = max(2, min(3, len(q_tokens)))
+    for fact_tokens in corpus:
+        shared = q_tokens & fact_tokens
+        if len(shared) < required_overlap:
+            continue
+        coverage = len(shared) / max(1, len(q_tokens))
+        # Conservative threshold to avoid deleting genuinely open questions.
+        if coverage >= 0.66 and any(len(tok) >= 4 for tok in shared):
+            return True
+    return False
+
+
+def cleanup_open_questions(
+    brief: Any, *, infer_resolved: bool = True
+) -> tuple[dict[str, Any], dict[str, int | bool]]:
+    """
+    Normalize and prune open questions with deterministic rules.
+
+    Returns (cleaned_brief, metadata) where metadata tracks removals by reason.
+    """
+    normalized = normalize_problem_brief(brief)
+    original_count = len(normalized.get("open_questions") or [])
+    deduped_questions: list[dict[str, Any]] = []
+    seen_question_texts: set[str] = set()
+    duplicate_removed = 0
+    for question in normalized.get("open_questions") or []:
+        key = _question_text_key(question.get("text"))
+        if not key:
+            continue
+        if key in seen_question_texts:
+            duplicate_removed += 1
+            continue
+        seen_question_texts.add(key)
+        deduped_questions.append(question)
+
+    inferred_removed = 0
+    if infer_resolved and deduped_questions:
+        corpus = _question_fact_corpus(normalized)
+        kept: list[dict[str, Any]] = []
+        for question in deduped_questions:
+            if _question_is_resolved_by_corpus(question, corpus):
+                inferred_removed += 1
+                continue
+            kept.append(question)
+        deduped_questions = kept
+
+    cleaned = {**normalized, "open_questions": deduped_questions}
+    metadata: dict[str, int | bool] = {
+        "infer_resolved": infer_resolved,
+        "original_count": original_count,
+        "removed_duplicates": duplicate_removed,
+        "removed_inferred": inferred_removed,
+        "final_count": len(deduped_questions),
+        "removed_total": original_count - len(deduped_questions),
+    }
+    return cleaned, metadata
 
 
 def _normalize_item(raw: Any) -> dict[str, Any] | None:
