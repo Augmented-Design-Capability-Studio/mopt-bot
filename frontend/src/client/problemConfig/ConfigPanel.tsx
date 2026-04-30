@@ -7,6 +7,7 @@ import type { ParticipantOpsState } from "../lib/participantOps";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 import { SnapshotDialog } from "./SnapshotDialog";
+import { RawJsonDialog } from "../components/RawJsonDialog";
 
 type ConfigPanelProps = {
   configText: string;
@@ -50,7 +51,7 @@ type ConfigPanelProps = {
   onUserTabClick?: (tab: PanelTab) => void;
 };
 
-type PanelTab = "definition" | "config" | "raw";
+type PanelTab = "definition" | "config";
 
 const PROCESSING_UI_UNLOCK_MS = 90_000;
 
@@ -119,6 +120,7 @@ export function ConfigPanel({
   const [defMoreMenuOpen, setDefMoreMenuOpen] = useState(false);
   const [configSnapshotMenuOpen, setConfigSnapshotMenuOpen] = useState(false);
   const [snapshotDialogSource, setSnapshotDialogSource] = useState<"definition" | "config" | null>(null);
+  const [showRawJsonDialog, setShowRawJsonDialog] = useState(false);
   const [forceUnlockProcessingUi, setForceUnlockProcessingUi] = useState(false);
   const [processingStallWarn, setProcessingStallWarn] = useState(false);
   const [definitionUnread, setDefinitionUnread] = useState(false);
@@ -220,14 +222,10 @@ export function ConfigPanel({
     return () => window.clearTimeout(timer);
   }, [backgroundProcessingPending, configEditing, definitionEditing]);
 
-  const configOrRawBlockingUi =
-    (activeTab === "config" || activeTab === "raw") &&
-    !configEditing &&
-    backgroundProcessingPending &&
-    !forceUnlockProcessingUi;
+  const configBlockingUi = activeTab === "config" && !configEditing && backgroundProcessingPending && !forceUnlockProcessingUi;
 
   const configSurfaceLocked =
-    (activeTab === "config" || activeTab === "raw") &&
+    activeTab === "config" &&
     backgroundProcessingPending &&
     !forceUnlockProcessingUi &&
     !configEditing;
@@ -285,16 +283,26 @@ export function ConfigPanel({
 
   return (
     <section className={className}>
-      <div className="panel-header">
-        Problem setup
-        {(configEditing || definitionEditing) && (
-          <span className="panel-editing-indicator"> - Editing...</span>
-        )}
-        {!definitionEditing && !configEditing && processingSpinnerActive && (
-          <span className="muted" style={{ display: "inline-flex", alignItems: "center", marginLeft: "0.5rem" }}>
-            <span className="inline-spinner" aria-hidden="true" />
-          </span>
-        )}
+      <div className="panel-header panel-header-with-action">
+        <div>
+          Problem setup
+          {(configEditing || definitionEditing) && (
+            <span className="panel-editing-indicator"> - Editing...</span>
+          )}
+          {!definitionEditing && !configEditing && processingSpinnerActive && (
+            <span className="muted" style={{ display: "inline-flex", alignItems: "center", marginLeft: "0.5rem" }}>
+              <span className="inline-spinner" aria-hidden="true" />
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          className="panel-header-raw-json-btn"
+          onClick={() => setShowRawJsonDialog(true)}
+          aria-label="Show raw problem setup JSON"
+        >
+          raw json
+        </button>
       </div>
       <div className="panel-body">
         {waterfallOpenQuestionsAlert ? (
@@ -322,7 +330,6 @@ export function ConfigPanel({
           {([
             ["definition", "Definition"],
             ["config", "Problem Config"],
-            ["raw", "Raw JSON"],
           ] as Array<[PanelTab, string]>).map(([tabId, label]) => (
             <button
               key={tabId}
@@ -389,7 +396,7 @@ export function ConfigPanel({
                   sessionTerminated={sessionTerminated}
                   workflowMode={session?.workflow_mode ?? null}
                   openQuestionsBusy={participantOps.cleaningOpenQuestions}
-                  suppressTransientMarkers={definitionSaveShieldActive || configOrRawBlockingUi}
+                  suppressTransientMarkers={definitionSaveShieldActive || configBlockingUi}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}
                 />
@@ -406,18 +413,9 @@ export function ConfigPanel({
                 onInteractionStart={onEnterConfigEdit}
                 problemMeta={testProblemMeta}
               />
-            ) : (
-              <textarea
-                className="mono config-raw-textarea"
-                value={rawJsonText}
-                readOnly
-                disabled={false}
-                spellCheck={false}
-                placeholder='{"problem_definition": null, "problem_config": null}'
-              />
-            )}
+            ) : null}
           </div>
-          {definitionSaveShieldActive || configOrRawBlockingUi ? (
+          {definitionSaveShieldActive || configBlockingUi ? (
             <div className="config-panel-processing-shield" aria-live="polite">
               <span className="inline-spinner" aria-hidden="true" />
               <span className="muted">
@@ -630,13 +628,17 @@ export function ConfigPanel({
                 )}
               </div>
             )
-          ) : (
-            <p className="muted" style={{ margin: 0 }}>
-              Raw JSON is read-only. Edit the Definition or Problem Config tab to make changes.
-            </p>
-          )}
+          ) : null}
         </div>
       </div>
+
+      <RawJsonDialog
+        open={showRawJsonDialog}
+        title="Raw problem setup JSON"
+        helperText="Raw JSON is read-only. Edit Definition or Problem Config to make changes."
+        jsonText={rawJsonText}
+        onClose={() => setShowRawJsonDialog(false)}
+      />
 
       {snapshotDialogSource && onRestoreFromSnapshot && (
         <SnapshotDialog

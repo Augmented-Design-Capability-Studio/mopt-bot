@@ -395,6 +395,8 @@ export type RunPayload = {
   convergence: number[];
   weight_warnings?: string[];
   visualization?: RunVisualization | null;
+  edited_evaluation?: Record<string, unknown>;
+  original_snapshot?: Record<string, unknown>;
 };
 
 export type RunResult = {
@@ -410,6 +412,8 @@ export type RunResult = {
     type?: string;
     problem?: Record<string, unknown>;
     routes?: number[][];
+    candidate_seed_run_ids?: number[];
+    candidate_seeds?: Array<{ source_run_id: number; routes: number[][] }>;
   } | null;
   result: RunPayload | null;
   /** Client-only: placeholder row while POST /runs (optimize) is in flight */

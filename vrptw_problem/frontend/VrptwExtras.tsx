@@ -23,6 +23,7 @@ import {
   PREFERENCE_CONDITIONS,
   WORKER_NAMES,
 } from "./metadata";
+import { DELIVERY_ZONES, zoneLabelFromId } from "./zoneCanonical";
 import type { DriverPref, ProblemBlock } from "./types";
 import { parseProblemConfig } from "./serialization";
 
@@ -44,8 +45,8 @@ function driverPreferencePeekLine(pref: DriverPref): string {
   const worker = `${pref.vehicle_idx}: ${name ?? "?"}`;
   const cond = preferenceConditionLabel(pref.condition);
   const bits: string[] = [worker, cond];
-  if (pref.condition === "avoid_zone" || pref.condition === "zone_d") bits.push(`zone ${pref.zone ?? "?"}`);
-  if (pref.condition === "order_priority" || pref.condition === "express_order") {
+  if (pref.condition === "avoid_zone") bits.push(`zone ${zoneLabelFromId(pref.zone)}`);
+  if (pref.condition === "order_priority") {
     bits.push(String(pref.order_priority ?? "express"));
   }
   bits.push(`penalty ${pref.penalty}`);
@@ -224,13 +225,13 @@ function WorkerPreferenceExtras({
                 style={{ width: "4rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
               />
             </label>
-            {(pref.condition === "avoid_zone" || pref.condition === "zone_d") && (
+            {pref.condition === "avoid_zone" && (
               <label className="muted" style={{ fontSize: "0.75rem" }}>
                 zone
                 <ConfigSelect
                   editable={preferencesEditable}
                   value={pref.zone ?? 4}
-                  displayLabel={String.fromCharCode(64 + (pref.zone ?? 4))}
+                  displayLabel={zoneLabelFromId(pref.zone ?? 4)}
                   onChange={(e) =>
                     runEditingAction(() => updatePreferenceAt(index, { ...pref, zone: parseInt(e.target.value, 10) }))
                   }
@@ -238,15 +239,15 @@ function WorkerPreferenceExtras({
                   focusKey={`pref-${index}-zone`}
                   style={{ width: "4rem", marginLeft: "0.25rem", fontFamily: "monospace" }}
                 >
-                  <option value={1}>A</option>
-                  <option value={2}>B</option>
-                  <option value={3}>C</option>
-                  <option value={4}>D</option>
-                  <option value={5}>E</option>
+                  {DELIVERY_ZONES.map((zone) => (
+                    <option key={zone.id} value={zone.id}>
+                      {zone.label}
+                    </option>
+                  ))}
                 </ConfigSelect>
               </label>
             )}
-            {(pref.condition === "order_priority" || pref.condition === "express_order") && (
+            {pref.condition === "order_priority" && (
               <ConfigSelect
                 editable={preferencesEditable}
                 value={pref.order_priority ?? "express"}
@@ -262,7 +263,7 @@ function WorkerPreferenceExtras({
                 <option value="standard">standard</option>
               </ConfigSelect>
             )}
-            {(pref.condition === "shift_over_limit" || pref.condition === "shift_over_hours") && (
+            {pref.condition === "shift_over_limit" && (
               <label className="muted" style={{ fontSize: "0.75rem" }}>
                 limit (min)
                 <ConfigNumberInput

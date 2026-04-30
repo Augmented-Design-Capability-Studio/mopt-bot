@@ -175,3 +175,44 @@ def test_sync_preserves_driver_preferences_when_worker_preference_locked(monkeyp
     assert panel is not None
     assert panel["problem"]["weights"]["worker_preference"] == 5.0
     assert panel["problem"]["driver_preferences"] == current_prefs
+
+
+def test_sync_replaces_driver_preferences_when_not_derived(monkeypatch):
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {"travel_time": 1.0, "worker_preference": 5.0},
+                    "driver_preferences": [
+                        {
+                            "vehicle_idx": 0,
+                            "condition": "avoid_zone",
+                            "penalty": 3.0,
+                            "zone": 3,
+                            "aggregation": "per_stop",
+                        }
+                    ],
+                    "algorithm": "GA",
+                }
+            }
+        ),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+
+    def _fake_derive(self, _brief):
+        return {"problem": {"weights": {"travel_time": 2.0}, "algorithm": "PSO"}}
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief={"items": []},
+        api_key=None,
+        model_name=None,
+    )
+
+    assert panel is not None
+    assert panel["problem"].get("driver_preferences", []) == []

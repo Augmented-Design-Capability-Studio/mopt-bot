@@ -92,6 +92,11 @@ export function ClientApp() {
       onRunOptimize={controller.runOptimize}
       onCancelOptimize={controller.cancelOptimize}
       onRunEvaluateEdited={controller.runEvaluateEdited}
+      onRevertEditedRun={controller.revertEditedRun}
+      onExplainRun={controller.explainRun}
+      onLoadConfigFromRun={controller.loadConfigFromRun}
+      candidateRunIds={controller.candidateRunIds}
+      onToggleCandidateRun={controller.toggleCandidateRun}
       onCloseModelDialog={controller.closeModelDialog}
       onSaveModelSettings={controller.saveModelSettings}
       onSetParticipantTutorialState={controller.setParticipantTutorialState}

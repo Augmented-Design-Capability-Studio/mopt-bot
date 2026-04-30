@@ -102,6 +102,11 @@ type ParticipantShellProps = {
   onRunOptimize: () => void | Promise<void>;
   onCancelOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
+  onRevertEditedRun: (run: RunResult) => void | Promise<void>;
+  onExplainRun: (run: RunResult) => void | Promise<void>;
+  onLoadConfigFromRun: (run: RunResult) => void | Promise<void>;
+  candidateRunIds: number[];
+  onToggleCandidateRun: (runId: number, checked: boolean) => void;
   onCloseModelDialog: () => void;
   onSaveModelSettings: () => void | Promise<void>;
   onSetParticipantTutorialState?: (patch: ParticipantTutorialPatch) => void | Promise<void>;
@@ -172,6 +177,11 @@ export function ParticipantShell({
   onRunOptimize,
   onCancelOptimize,
   onRunEvaluateEdited,
+  onRevertEditedRun,
+  onExplainRun,
+  onLoadConfigFromRun,
+  candidateRunIds,
+  onToggleCandidateRun,
   onCloseModelDialog,
   onSaveModelSettings,
   onSetParticipantTutorialState,
@@ -560,6 +570,11 @@ export function ParticipantShell({
             onRunOptimize={onRunOptimize}
             onCancelOptimize={onCancelOptimize}
             onRunEvaluateEdited={onRunEvaluateEdited}
+            onRevertEditedRun={onRevertEditedRun}
+            onExplainRun={onExplainRun}
+            onLoadConfigFromRun={onLoadConfigFromRun}
+            candidateRunIds={candidateRunIds}
+            onToggleCandidateRun={onToggleCandidateRun}
           />
         )}
       </div>

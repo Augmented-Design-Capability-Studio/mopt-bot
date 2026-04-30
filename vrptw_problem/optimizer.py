@@ -178,6 +178,7 @@ class QuickBiteOptimizer:
         mode: str = "single",
         n_workers: Optional[int] = None,
         use_greedy_init: bool = True,
+        initial_solutions: Optional[list[np.ndarray]] = None,
     ) -> SolveResult:
         """
         Run the optimization.
@@ -286,20 +287,27 @@ class QuickBiteOptimizer:
             solve_kw["termination"] = effective_termination
         if n_workers is not None:
             solve_kw["n_workers"] = n_workers
-        if use_greedy_init:
-            n_greedy = min(max(1, pop_size // 5), pop_size)
-            starting_solutions = []
+        if use_greedy_init or initial_solutions:
+            starting_solutions: list[np.ndarray] = []
+            if initial_solutions:
+                for vec in initial_solutions:
+                    arr = np.asarray(vec, dtype=float)
+                    if arr.shape[0] == VECTOR_LEN:
+                        starting_solutions.append(arr)
+            slots_left = max(pop_size - len(starting_solutions), 0)
+            n_greedy = min(max(1, pop_size // 5), slots_left) if use_greedy_init and slots_left > 0 else 0
             for i in range(n_greedy):
                 greedy_rng = np.random.RandomState(self.seed + 1000 + i)
                 gv = encode_greedy_solution(self.orders, self.locked, greedy_rng)
                 starting_solutions.append(gv)
             random_rng = np.random.RandomState(self.seed + 2000)
-            random_count = pop_size - n_greedy
+            random_count = max(pop_size - len(starting_solutions), 0)
             if random_count > 0:
                 starting_solutions.extend(
                     [random_rng.uniform(0.0, 34.0, size=VECTOR_LEN) for _ in range(random_count)]
                 )
-            solve_kw["starting_solutions"] = starting_solutions
+            if starting_solutions:
+                solve_kw["starting_solutions"] = starting_solutions
         best = model.solve(problem, **solve_kw)
         runtime = time.perf_counter() - t0
 

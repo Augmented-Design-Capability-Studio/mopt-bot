@@ -40,7 +40,7 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
         "condition": {
             "type": "string",
             "description": (
-                "avoid_zone, order_priority, shift_over_limit; legacy: zone_d, express_order, shift_over_hours"
+                "avoid_zone, order_priority, shift_over_limit"
             ),
         },
         "penalty": {"type": "number"},

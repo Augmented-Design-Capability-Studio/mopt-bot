@@ -120,58 +120,59 @@ function DefinitionSection({
               id={`definition-item-${item.id}`}
               className={`definition-item kind-${item.kind} ${isPlaceholderItem(item) ? "definition-item-placeholder-glow" : ""} ${rowExtraClassName?.(item) ?? ""}`.trim()}
             >
-                <div className="definition-item-meta">
-                  <span className="definition-source mono">{item.source}</span>
-                  {rowMarkerKind?.(item) ? (
-                    <span
-                      className={`entry-diff-marker ${rowMarkerKind(item) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-                      title={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
-                      aria-label={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
-                    >
-                      {rowMarkerKind(item) === "new" ? "+" : "Δ"}
-                    </span>
-                  ) : null}
-                  {!sessionTerminated ? (
+                <div className="definition-item-content">
+                  <div className="definition-item-overlay-controls">
+                    {!sessionTerminated ? (
+                      <button
+                        type="button"
+                        className="definition-icon-btn definition-remove-btn"
+                        aria-label="Remove row"
+                        onClick={() => {
+                          onEnsureDefinitionEditing();
+                          onRemoveItem(item.id, index);
+                        }}
+                      >
+                        X
+                      </button>
+                    ) : null}
+                    {rowMarkerKind?.(item) ? (
+                      <span
+                        className={`entry-diff-marker ${rowMarkerKind(item) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
+                        title={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
+                        aria-label={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
+                      >
+                        {rowMarkerKind(item) === "new" ? "+" : "Δ"}
+                      </span>
+                    ) : null}
+                  </div>
+                  {editable ? (
+                    <textarea
+                      id={`definition-inline-text-${item.id}`}
+                      className="definition-inline-textarea"
+                      value={item.text}
+                      disabled={locked}
+                      rows={1}
+                      onFocus={() => onEnsureDefinitionEditing()}
+                      onChange={(e) => onUpdateItemText(item.id, e.target.value)}
+                      onInput={onTextareaInput}
+                    />
+                  ) : (
                     <button
                       type="button"
-                      className="definition-icon-btn definition-remove-btn"
-                      aria-label="Remove row"
-                      onClick={() => {
-                        onEnsureDefinitionEditing();
-                        onRemoveItem(item.id, index);
+                      className="definition-inline-display"
+                      title="Edit..."
+                      disabled={sessionTerminated}
+                      onClick={(e) => {
+                        onEnsureDefinitionEditing(
+                          `#definition-inline-text-${item.id}`,
+                          estimatedCaretIndexFromClick(item.text || "", e),
+                        );
                       }}
                     >
-                      X
+                      {item.text || "Click to add details..."}
                     </button>
-                  ) : null}
+                  )}
                 </div>
-                {editable ? (
-                  <textarea
-                    id={`definition-inline-text-${item.id}`}
-                    className="definition-inline-textarea"
-                    value={item.text}
-                    disabled={locked}
-                  rows={1}
-                    onFocus={() => onEnsureDefinitionEditing()}
-                    onChange={(e) => onUpdateItemText(item.id, e.target.value)}
-                    onInput={onTextareaInput}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="definition-inline-display"
-                    title="Edit..."
-                    disabled={sessionTerminated}
-                    onClick={(e) => {
-                      onEnsureDefinitionEditing(
-                        `#definition-inline-text-${item.id}`,
-                        estimatedCaretIndexFromClick(item.text || "", e),
-                      );
-                    }}
-                  >
-                    {item.text || "Click to add details..."}
-                  </button>
-                )}
               </div>
             </Fragment>
           ))}
@@ -471,6 +472,105 @@ export function DefinitionPanel({
         )}
       </section>
 
+      <section className="definition-section" id="definition-open-questions">
+        <div className="definition-section-header">
+          <div>
+            <div className="definition-section-title" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+              <span>Open Questions</span>
+              {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
+            </div>
+            <div className="muted">Outstanding clarifications that would improve the configuration.</div>
+          </div>
+          <div className="definition-header-actions">
+            {!sessionTerminated ? (
+              <button
+                type="button"
+                className="definition-icon-btn definition-add-btn"
+                aria-label="Add open question"
+                onClick={addOpenQuestion}
+                disabled={openQuestionsBusy}
+              >
+                +
+              </button>
+            ) : null}
+            <span className="definition-count">{openQuestions.length}</span>
+          </div>
+        </div>
+        <div className="definition-list">
+          {openQuestions.map((question, index) => {
+            return (
+              <Fragment key={question.id}>
+                {deletedMarker?.section === "open" && deletedMarker.index === index ? (
+                  <div className="definition-delete-marker" aria-hidden="true" />
+                ) : null}
+                <div className={`definition-item definition-item-open ${flashClassForQuestion(question.id)}`.trim()}>
+                    <div className="definition-item-content definition-item-content-open">
+                      <div className="definition-item-overlay-controls">
+                        {!sessionTerminated ? (
+                          <button
+                            type="button"
+                            className="definition-icon-btn definition-remove-btn"
+                            aria-label="Remove open question"
+                            disabled={openQuestionsBusy}
+                            onClick={() => removeOpenQuestion(question.id)}
+                          >
+                            X
+                          </button>
+                        ) : null}
+                        {markerKindForQuestion(question.id) ? (
+                          <span
+                            className={`entry-diff-marker ${markerKindForQuestion(question.id) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
+                            title={markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"}
+                            aria-label={
+                              markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"
+                            }
+                          >
+                            {markerKindForQuestion(question.id) === "new" ? "+" : "Δ"}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="definition-question-text">{question.text}</div>
+                      {editable ? (
+                        <textarea
+                          id={`definition-open-question-answer-${question.id}`}
+                          className="definition-inline-textarea definition-answer-textarea"
+                          value={question.answer_text ?? ""}
+                          placeholder="Type answer..."
+                          disabled={openLocked}
+                          rows={1}
+                          onFocus={() => onEnsureDefinitionEditing()}
+                          onChange={(e) => updateOpenQuestionAnswer(question.id, e.target.value)}
+                          onInput={autoGrowTextarea}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="definition-inline-display"
+                          style={{ textAlign: "left" }}
+                          title="Edit..."
+                          disabled={sessionTerminated}
+                          onClick={(e) =>
+                            ensureDefinitionEditingFromLocked(
+                              `#definition-open-question-answer-${question.id}`,
+                              estimatedCaretIndexFromClick(question.answer_text ?? "", e),
+                            )
+                          }
+                        >
+                          {(question.answer_text ?? "").length > 0 ? question.answer_text : "Type answer…"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
+          {deletedMarker?.section === "open" && deletedMarker.index === openQuestions.length ? (
+            <div className="definition-delete-marker" aria-hidden="true" />
+          ) : null}
+          {openQuestions.length === 0 ? <div className="muted definition-empty">Nothing here yet.</div> : null}
+        </div>
+      </section>
+
       <DefinitionSection
         title="Gathered Info"
         description="Facts grounded in user messages or simulated uploads."
@@ -519,104 +619,6 @@ export function DefinitionPanel({
         />
       ) : null}
 
-      <section className="definition-section" id="definition-open-questions">
-        <div className="definition-section-header">
-          <div>
-            <div className="definition-section-title" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-              <span>Open Questions</span>
-              {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
-            </div>
-            <div className="muted">Outstanding clarifications that would improve the configuration.</div>
-          </div>
-          <div className="definition-header-actions">
-            {!sessionTerminated ? (
-              <button
-                type="button"
-                className="definition-icon-btn definition-add-btn"
-                aria-label="Add open question"
-                onClick={addOpenQuestion}
-                disabled={openQuestionsBusy}
-              >
-                +
-              </button>
-            ) : null}
-            <span className="definition-count">{openQuestions.length}</span>
-          </div>
-        </div>
-        <div className="definition-list">
-          {openQuestions.map((question, index) => {
-            const questionStatus = question.status === "answered" ? "answered" : "open";
-            return (
-              <Fragment key={question.id}>
-                {deletedMarker?.section === "open" && deletedMarker.index === index ? (
-                  <div className="definition-delete-marker" aria-hidden="true" />
-                ) : null}
-                <div className={`definition-item ${flashClassForQuestion(question.id)}`.trim()}>
-                    <div className="definition-item-meta">
-                      <span className={`definition-chip status-${questionStatus}`}>{questionStatus}</span>
-                      {markerKindForQuestion(question.id) ? (
-                        <span
-                          className={`entry-diff-marker ${markerKindForQuestion(question.id) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-                          title={markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"}
-                          aria-label={
-                            markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"
-                          }
-                        >
-                          {markerKindForQuestion(question.id) === "new" ? "+" : "Δ"}
-                        </span>
-                      ) : null}
-                      {!sessionTerminated ? (
-                        <button
-                          type="button"
-                          className="definition-icon-btn definition-remove-btn"
-                          aria-label="Remove open question"
-                          disabled={openQuestionsBusy}
-                          onClick={() => removeOpenQuestion(question.id)}
-                        >
-                          X
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="definition-question-text">{question.text}</div>
-                    {editable ? (
-                      <textarea
-                        id={`definition-open-question-answer-${question.id}`}
-                        className="definition-inline-textarea definition-answer-textarea"
-                        value={question.answer_text ?? ""}
-                        placeholder="Type answer..."
-                        disabled={openLocked}
-                        rows={1}
-                        onFocus={() => onEnsureDefinitionEditing()}
-                        onChange={(e) => updateOpenQuestionAnswer(question.id, e.target.value)}
-                        onInput={autoGrowTextarea}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className="definition-inline-display"
-                        style={{ textAlign: "left" }}
-                        title="Edit..."
-                        disabled={sessionTerminated}
-                        onClick={(e) =>
-                          ensureDefinitionEditingFromLocked(
-                            `#definition-open-question-answer-${question.id}`,
-                            estimatedCaretIndexFromClick(question.answer_text ?? "", e),
-                          )
-                        }
-                      >
-                        {(question.answer_text ?? "").length > 0 ? question.answer_text : "Type answer…"}
-                      </button>
-                    )}
-                  </div>
-                </Fragment>
-              );
-            })}
-          {deletedMarker?.section === "open" && deletedMarker.index === openQuestions.length ? (
-            <div className="definition-delete-marker" aria-hidden="true" />
-          ) : null}
-          {openQuestions.length === 0 ? <div className="muted definition-empty">Nothing here yet.</div> : null}
-        </div>
-      </section>
     </div>
   );
 }

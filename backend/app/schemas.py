@@ -196,6 +196,13 @@ class SolveRunCreate(BaseModel):
     type: Literal["optimize", "evaluate"] = "optimize"
     problem: dict[str, Any]
     routes: list[list[int]] | None = None
+    candidate_seed_run_ids: list[int] | None = None
+    candidate_seeds: list[dict[str, Any]] | None = None
+
+
+class RunEvaluateEditBody(BaseModel):
+    problem: dict[str, Any]
+    routes: list[list[int]]
 
 
 class RunOut(BaseModel):

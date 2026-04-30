@@ -6,6 +6,34 @@ import type { EditMode } from "../lib/participantTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { ConvergencePlot } from "./ConvergencePlot";
 import { getProblemModule } from "../problemRegistry";
+import { RawJsonDialog } from "../components/RawJsonDialog";
+
+function normalizeRoutesForCompare(raw: unknown): number[][] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: number[][] = [];
+  for (const row of raw) {
+    if (!Array.isArray(row)) return null;
+    const parsedRow: number[] = [];
+    for (const v of row) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      parsedRow.push(n);
+    }
+    out.push(parsedRow);
+  }
+  return out;
+}
+
+function routesTextEqual(aText: string, bText: string): boolean {
+  try {
+    const a = normalizeRoutesForCompare(JSON.parse(aText));
+    const b = normalizeRoutesForCompare(JSON.parse(bText));
+    if (!a || !b) return false;
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
 
 type ResultsPanelProps = {
   runs: RunResult[];
@@ -28,6 +56,11 @@ type ResultsPanelProps = {
   onRunOptimize: () => void | Promise<void>;
   onCancelOptimize: () => void | Promise<void>;
   onRunEvaluateEdited: () => void | Promise<void>;
+  onRevertEditedRun: (run: RunResult) => void | Promise<void>;
+  onExplainRun: (run: RunResult) => void | Promise<void>;
+  onLoadConfigFromRun: (run: RunResult) => void | Promise<void>;
+  candidateRunIds: number[];
+  onToggleCandidateRun: (runId: number, checked: boolean) => void;
 };
 
 export function ResultsPanel({
@@ -51,26 +84,21 @@ export function ResultsPanel({
   onRunOptimize,
   onCancelOptimize,
   onRunEvaluateEdited,
+  onRevertEditedRun,
+  onExplainRun,
+  onLoadConfigFromRun,
+  candidateRunIds,
+  onToggleCandidateRun,
 }: ResultsPanelProps) {
   const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, problemMeta);
   const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, hasUploadedData, problemMeta);
-  const [showRaw, setShowRaw] = useState(false);
+  const [showRawJsonDialog, setShowRawJsonDialog] = useState(false);
   const [vizTabId, setVizTabId] = useState<string>("__convergence__");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
   const prevRunsLenRef = useRef<number | null>(null);
 
   const currentResult = currentRun?.result ?? null;
   const runProblem = (currentRun?.request?.problem ?? {}) as Record<string, unknown>;
-  const runWeights =
-    runProblem.weights && typeof runProblem.weights === "object" && !Array.isArray(runProblem.weights)
-      ? (runProblem.weights as Record<string, unknown>)
-      : {};
-  const runSoftConstraints = Array.isArray(runProblem.soft_constraints)
-    ? runProblem.soft_constraints.map((entry) => String(entry))
-    : [];
-  const runHardConstraints = Array.isArray(runProblem.hard_constraints)
-    ? runProblem.hard_constraints.map((entry) => String(entry))
-    : [];
   const runAlgorithm =
     typeof runProblem.algorithm === "string"
       ? runProblem.algorithm
@@ -80,7 +108,10 @@ export function ResultsPanel({
   const hasResult = currentResult !== null;
   const showOptimizeProgress = optimizing || Boolean(currentRun?.clientPending);
   const convergence = currentResult?.convergence ?? [];
-  const runActiveWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
+  const runtimeSeconds =
+    typeof currentResult?.runtime_seconds === "number" && Number.isFinite(currentResult.runtime_seconds)
+      ? currentResult.runtime_seconds
+      : null;
 
   const problemId = (session?.test_problem_id ?? "").trim().toLowerCase();
   const mod = getProblemModule(problemId);
@@ -117,17 +148,46 @@ export function ResultsPanel({
     ...mod.vizTabs,
     ...(convergence.length > 0 ? [{ id: "__convergence__", label: "Convergence" }] : []),
   ];
+  const originalSnapshot = (currentResult as Record<string, unknown> | null)?.original_snapshot as
+    | Record<string, unknown>
+    | undefined;
+  const originalSnapshotResult =
+    originalSnapshot && typeof originalSnapshot.result === "object" && originalSnapshot.result !== null
+      ? (originalSnapshot.result as Record<string, unknown>)
+      : null;
+  const originalSchedule =
+    originalSnapshotResult && typeof originalSnapshotResult.schedule === "object" && originalSnapshotResult.schedule !== null
+      ? (originalSnapshotResult.schedule as Record<string, unknown>)
+      : null;
+  const originalBaseRoutes = normalizeRoutesForCompare(originalSchedule?.routes ?? null);
+  const currentRoutes = normalizeRoutesForCompare((currentResult?.schedule as { routes?: unknown } | undefined)?.routes ?? null);
+  const editorBaseRoutes = originalBaseRoutes ?? currentRoutes;
+  const editorBaseText = editorBaseRoutes ? JSON.stringify(editorBaseRoutes, null, 2) : "";
+  const isScheduleDirty = editMode === "results" && editorBaseText !== "" && !routesTextEqual(scheduleText, editorBaseText);
+  const canSaveSchedule = Boolean(!sessionTerminated && scheduleText.trim().length > 0);
 
   return (
     <section className={className}>
-      <div className="panel-header">
-        Results &amp; visualization
-        {editMode === "results" && <span className="muted"> - editing</span>}
+      <div className="panel-header panel-header-with-action">
+        <div>
+          Results &amp; visualization
+          {editMode === "results" && <span className="muted"> - editing</span>}
+        </div>
+        <button
+          type="button"
+          className="panel-header-raw-json-btn"
+          onClick={() => setShowRawJsonDialog(true)}
+          aria-label="Show raw results JSON"
+        >
+          raw json
+        </button>
       </div>
       <div className="panel-body">
         <div className="tabs">
           {runs.map((run, index) => {
             const unreadHere = unreadRunIndex === index && index !== activeRun;
+            const selectedAsCandidate = candidateRunIds.includes(run.id);
+            const isEditedRun = Boolean(run.result && typeof run.result === "object" && "edited_evaluation" in run.result);
             return (
               <button
                 key={run.clientPending ? `pending-${run.id}` : run.id}
@@ -139,6 +199,8 @@ export function ResultsPanel({
                   <span className="chat-spinner" style={{ width: "0.7rem", height: "0.7rem", borderWidth: "2px" }} />
                 ) : null}
                 Run #{displayRunNumber(run, index)} {run.ok ? "" : "✗"}
+                {isEditedRun ? <span className="tab-candidate-badge" title="Edited schedule result">Edited</span> : null}
+                {selectedAsCandidate ? <span className="tab-candidate-badge" title="Included as candidate for next optimization">Candidate</span> : null}
                 {unreadHere ? <span title="New results" aria-hidden="true" className="tab-update-dot" /> : null}
               </button>
             );
@@ -148,20 +210,45 @@ export function ResultsPanel({
         {showOptimizeProgress ? <div className="opt-progress-bar" /> : null}
 
         {currentRun && !showOptimizeProgress && (
-          <div
-            className="mono muted"
-            style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}
-          >
+          <div className="muted" style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}>
             <span>
               cost: {currentRun.cost ?? "-"} · {currentRun.ok ? "ok" : currentRun.error_message}
             </span>
             <button
               type="button"
-              disabled={busy || sessionTerminated || !scheduleText.trim()}
-              onClick={() => void onRunEvaluateEdited()}
+              className="result-top-action-btn"
+              disabled={busy || sessionTerminated}
+              title="Explain more about this result"
+              onClick={() => void onExplainRun(currentRun)}
             >
-              Recalculate cost
+              Explain
             </button>
+            <button
+              type="button"
+              className="result-top-action-btn"
+              disabled={busy || sessionTerminated}
+              title="Revert to this config"
+              onClick={() => void onLoadConfigFromRun(currentRun)}
+            >
+              Use This Config
+            </button>
+            <label
+              className={`result-top-action-btn result-top-action-checkbox ${candidateRunIds.includes(currentRun.id) ? "checked" : ""}`}
+            >
+              <input
+                type="checkbox"
+                checked={candidateRunIds.includes(currentRun.id)}
+                onChange={(e) => onToggleCandidateRun(currentRun.id, e.target.checked)}
+                disabled={busy || sessionTerminated || !currentRun.ok}
+              />
+              Include as candidate
+            </label>
+          </div>
+        )}
+        {currentRun && !showOptimizeProgress && (
+          <div className="muted" style={{ marginTop: "0.2rem" }}>
+            algorithm: {runAlgorithm ?? "not captured in this run snapshot"} · runtime:{" "}
+            {runtimeSeconds !== null ? `${runtimeSeconds.toFixed(1)}s` : "not captured in this run snapshot"}
           </div>
         )}
 
@@ -181,30 +268,6 @@ export function ResultsPanel({
           </div>
         ) : hasResult ? (
           <div className="results-visualization-scroll">
-            <div className="run-summary-grid">
-              <div className="run-summary-card">
-                <div className="muted">Algorithm</div>
-                <div className="mono">{runAlgorithm ?? "not captured in this run snapshot"}</div>
-              </div>
-              <div className="run-summary-card">
-                <div className="muted">Objective Weights</div>
-                <div className="mono">
-                  {runActiveWeightKeys.length > 0
-                    ? runActiveWeightKeys.map((key) => `${key}: ${runWeights[key]}`).join(" · ")
-                    : "not captured in this run snapshot"}
-                </div>
-              </div>
-              <div className="run-summary-card">
-                <div className="muted">Constraints</div>
-                <div className="mono">
-                  {[
-                    runHardConstraints.length ? `hard: ${runHardConstraints.join(", ")}` : "",
-                    runSoftConstraints.length ? `soft: ${runSoftConstraints.join(", ")}` : "",
-                  ].filter(Boolean).join(" · ") || "not captured in this run snapshot"}
-                </div>
-              </div>
-            </div>
-
             {mod.ViolationSummary && currentRun ? (
               <mod.ViolationSummary currentRun={currentRun} />
             ) : null}
@@ -239,52 +302,32 @@ export function ResultsPanel({
           <div className="muted">Run optimization to populate a timeline view and schedule details.</div>
         )}
 
-        {hasResult && editMode !== "results" && (
-          <details
-            open={showRaw}
-            onToggle={(e) => setShowRaw((e.currentTarget as HTMLDetailsElement).open)}
-            style={{ marginTop: "0.6rem" }}
-            className="muted"
-          >
-            <summary
-              style={{
-                cursor: "pointer",
-                fontSize: "0.78rem",
-                userSelect: "none",
-              }}
+        <div
+          className="results-panel-actions"
+          style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "flex-end" }}
+        >
+          <div className="run-optimize-stack">
+            <span className="muted" title="Number of prior runs included as candidates for the next optimization">
+              Candidates: {candidateRunIds.length}
+            </span>
+            <button
+              type="button"
+              className="btn-primary results-main-action-btn"
+              data-tutorial-anchor="run-optimize"
+              disabled={busy || !canRunOptimization || editMode !== "none" || sessionTerminated}
+              title={
+                !canRunOptimization && !sessionTerminated && editMode === "none"
+                  ? runDisabledHint || "Cannot run optimization yet."
+                  : undefined
+              }
+              onClick={() => void onRunOptimize()}
             >
-              {showRaw ? "Hide" : "Show"} raw schedule / violations JSON
-            </summary>
-            <pre className="mono run-json-preview" style={{ marginTop: "0.35rem" }}>
-              {JSON.stringify(
-                {
-                  schedule: currentResult?.schedule,
-                  violations: currentResult?.violations,
-                },
-                null,
-                2,
-              )}
-            </pre>
-          </details>
-        )}
-
-        <div className="results-panel-actions" style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+              Run optimization
+            </button>
+          </div>
           <button
             type="button"
-            className="btn-primary"
-            data-tutorial-anchor="run-optimize"
-            disabled={busy || !canRunOptimization || editMode !== "none" || sessionTerminated}
-            title={
-              !canRunOptimization && !sessionTerminated && editMode === "none"
-                ? runDisabledHint || "Cannot run optimization yet."
-                : undefined
-            }
-            onClick={() => void onRunOptimize()}
-          >
-            Run optimization
-          </button>
-          <button
-            type="button"
+            className="results-main-action-btn"
             disabled={!showOptimizeProgress || sessionTerminated}
             onClick={() => void onCancelOptimize()}
             title="Ask the server to stop the current optimization early"
@@ -294,6 +337,7 @@ export function ResultsPanel({
           {editMode !== "results" ? (
             <button
               type="button"
+              className="results-main-action-btn"
               onClick={() => onSetEditMode("results")}
               disabled={!hasResult || editMode !== "none" || sessionTerminated}
             >
@@ -301,16 +345,49 @@ export function ResultsPanel({
             </button>
           ) : (
             <>
-              <button type="button" disabled={busy || sessionTerminated} onClick={() => void onRunEvaluateEdited()}>
-                Recalculate cost
+              <button
+                type="button"
+                className={isScheduleDirty ? "btn-save-attention" : undefined}
+                disabled={!canSaveSchedule}
+                onClick={() => void onRunEvaluateEdited()}
+              >
+                Save
               </button>
-              <button type="button" onClick={() => onSetEditMode("none")}>
-                Done editing
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentRun) void onRevertEditedRun(currentRun);
+                }}
+              >
+                Revert
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (editorBaseRoutes) onScheduleTextChange(JSON.stringify(editorBaseRoutes, null, 2));
+                  onSetEditMode("none");
+                }}
+              >
+                Cancel
               </button>
             </>
           )}
         </div>
       </div>
+      <RawJsonDialog
+        open={showRawJsonDialog}
+        title="Raw result JSON"
+        helperText="Raw result fields are read-only."
+        jsonText={JSON.stringify(
+          {
+            schedule: currentResult?.schedule ?? null,
+            violations: currentResult?.violations ?? null,
+          },
+          null,
+          2,
+        )}
+        onClose={() => setShowRawJsonDialog(false)}
+      />
     </section>
   );
 }

@@ -5,6 +5,13 @@
 
 import { parseAlgorithmParamsFromInner, serializeAlgorithmParams } from "@problemConfig/algorithmCatalog";
 import type { DriverPref, ProblemBlock } from "./types";
+import { parseZoneValue } from "./zoneCanonical";
+
+const LEGACY_CONDITION_MAP: Record<string, string> = {
+  zone_d: "avoid_zone",
+  express_order: "order_priority",
+  shift_over_hours: "shift_over_limit",
+};
 
 function normalizeOrderPriority(raw: unknown): "express" | "standard" {
   const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
@@ -21,14 +28,25 @@ function parseDriverPreferences(raw: unknown): DriverPref[] {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const o = entry as Record<string, unknown>;
     if (typeof o.vehicle_idx !== "number") continue;
-    const condition = typeof o.condition === "string" ? o.condition : "";
+    const rawCondition = typeof o.condition === "string" ? o.condition.trim().toLowerCase() : "";
+    const condition = LEGACY_CONDITION_MAP[rawCondition] ?? rawCondition;
     const penalty = typeof o.penalty === "number" ? o.penalty : 0;
     const pref: DriverPref = { vehicle_idx: o.vehicle_idx, condition, penalty };
-    if (typeof o.zone === "number") pref.zone = o.zone;
+    if (condition === "avoid_zone") {
+      if (rawCondition === "zone_d") {
+        pref.zone = 4;
+      } else {
+        const parsedZone =
+          parseZoneValue(o.zone) ?? parseZoneValue(o.zone_letter) ?? parseZoneValue(o.zone_name);
+        if (parsedZone != null) pref.zone = parsedZone;
+      }
+    }
     if (typeof o.limit_minutes === "number") pref.limit_minutes = o.limit_minutes;
-    if (typeof o.hours === "number") pref.hours = o.hours;
+    if (condition === "shift_over_limit" && typeof o.hours === "number" && pref.limit_minutes == null) {
+      pref.limit_minutes = o.hours * 60;
+    }
     if (typeof o.aggregation === "string") pref.aggregation = o.aggregation;
-    if (condition === "order_priority" || condition === "express_order") {
+    if (condition === "order_priority") {
       pref.order_priority = normalizeOrderPriority(o.order_priority);
     }
     out.push(pref);

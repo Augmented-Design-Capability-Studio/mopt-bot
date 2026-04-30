@@ -100,6 +100,25 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
     return merged
 
 
+def _managed_problem_fields() -> tuple[str, ...]:
+    """Managed keys are re-derived from brief each turn unless preserve mode is requested."""
+    return (
+        "weights",
+        "only_active_terms",
+        "algorithm",
+        "algorithm_params",
+        "epochs",
+        "pop_size",
+        "max_shift_hours",
+        "driver_preferences",
+        "locked_assignments",
+        "early_stop",
+        "early_stop_patience",
+        "early_stop_epsilon",
+        "use_greedy_init",
+    )
+
+
 def sync_panel_from_problem_brief(
     row: StudySession,
     db: Session,
@@ -156,7 +175,7 @@ def sync_panel_from_problem_brief(
     next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
     current_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
     next_problem = deepcopy(current_problem)
-    for key in ("weights", "only_active_terms", "algorithm", "algorithm_params", "epochs", "pop_size"):
+    for key in _managed_problem_fields():
         next_problem.pop(key, None)
     derived_problem = deepcopy(derived_panel["problem"])
     companion_fields = get_study_port(test_problem_id).locked_companion_fields()

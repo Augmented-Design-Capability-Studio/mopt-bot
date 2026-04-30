@@ -52,6 +52,35 @@ function makeOptimisticOptimizeRun(problem: Record<string, unknown>, existing: R
   };
 }
 
+function extractRoutesFromRun(run: RunResult): number[][] | null {
+  const rows = run.result?.schedule?.routes;
+  if (!Array.isArray(rows)) return null;
+  const out: number[][] = [];
+  for (const row of rows) {
+    if (!row || !Array.isArray(row.task_indices)) return null;
+    out.push(row.task_indices.map((v) => Number(v)).filter((v) => Number.isFinite(v)));
+  }
+  return out.length > 0 ? out : null;
+}
+
+function coerceRoutesPayload(raw: unknown): number[][] | null {
+  if (!Array.isArray(raw)) return null;
+  if (raw.every((row) => Array.isArray(row))) {
+    const out = (raw as unknown[][]).map((row) =>
+      row.map((v) => Number(v)).filter((v) => Number.isFinite(v)),
+    );
+    return out.length > 0 ? out : null;
+  }
+  const out: number[][] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") return null;
+    const taskIndices = (row as { task_indices?: unknown }).task_indices;
+    if (!Array.isArray(taskIndices)) return null;
+    out.push(taskIndices.map((v) => Number(v)).filter((v) => Number.isFinite(v)));
+  }
+  return out.length > 0 ? out : null;
+}
+
 type UseParticipantSessionActionsArgs = {
   token: string;
   hasUploadedData: boolean;
@@ -85,6 +114,9 @@ type UseParticipantSessionActionsArgs = {
   setModelKey: (value: string) => void;
   setAiPending: (value: boolean) => void;
   setParticipantOps: (value: ParticipantOpsState | ((prev: ParticipantOpsState) => ParticipantOpsState)) => void;
+  runs: RunResult[];
+  activeRun: number;
+  candidateRunIds: number[];
   syncMessages: () => Promise<void>;
   syncSession: () => Promise<void>;
   startEagerMessagePoll: () => void;
@@ -132,6 +164,9 @@ export function useParticipantSessionActions({
   setModelKey,
   setAiPending,
   setParticipantOps,
+  runs,
+  activeRun,
+  candidateRunIds,
   syncMessages,
   syncSession,
   startEagerMessagePoll,
@@ -637,6 +672,14 @@ export function useParticipantSessionActions({
       }
     }
     const problem = (panel.problem ?? panel) as Record<string, unknown>;
+    const candidateSeeds = runs
+      .filter((run) => candidateRunIds.includes(run.id))
+      .map((run) => {
+        const routes = extractRoutesFromRun(run);
+        if (!routes) return null;
+        return { source_run_id: run.id, routes };
+      })
+      .filter((v): v is { source_run_id: number; routes: number[][] } => v !== null);
     optimizingRef.current = true;
     setBusy(true);
     setOptimizing(true);
@@ -651,7 +694,12 @@ export function useParticipantSessionActions({
     try {
       const run = await apiFetch<RunResult>(`/sessions/${sessionId}/runs`, token, {
         method: "POST",
-        body: JSON.stringify({ type: "optimize", problem }),
+        body: JSON.stringify({
+          type: "optimize",
+          problem,
+          candidate_seed_run_ids: candidateSeeds.map((seed) => seed.source_run_id),
+          candidate_seeds: candidateSeeds,
+        }),
       });
       setRuns((current) => {
         const idx = current.findIndex((r) => r.clientPending);
@@ -692,12 +740,14 @@ export function useParticipantSessionActions({
     }
     },
     [
+    candidateRunIds,
     configText,
     invokeModel,
     optimizingRef,
     postContextMessage,
     refetchSnapshots,
     problemBrief,
+    runs,
     session,
     sessionId,
     hasUploadedData,
@@ -735,17 +785,22 @@ export function useParticipantSessionActions({
       return;
     }
     const problem = (panel.problem ?? panel) as Record<string, unknown>;
+    const targetRun = runs[activeRun];
+    if (!targetRun) {
+      setError("No active run selected.");
+      return;
+    }
     setBusy(true);
     try {
-      const run = await apiFetch<RunResult>(`/sessions/${sessionId}/runs`, token, {
+      const run = await apiFetch<RunResult>(`/sessions/${sessionId}/runs/${targetRun.id}/evaluate-edit`, token, {
         method: "POST",
-        body: JSON.stringify({ type: "evaluate", problem, routes }),
+        body: JSON.stringify({ problem, routes }),
       });
       setRuns((current) => {
-        const next = [...current, run];
-        setActiveRun(next.length - 1);
+        const next = current.map((r) => (r.id === run.id ? run : r));
         return next;
       });
+      setEditMode("none");
       void syncMessages();
       void refetchSnapshots?.();
     } catch (error) {
@@ -753,7 +808,57 @@ export function useParticipantSessionActions({
     } finally {
       setBusy(false);
     }
-  }, [configText, refetchSnapshots, scheduleText, session, sessionId, setActiveRun, setBusy, setError, setRuns, syncMessages, token]);
+  }, [activeRun, configText, refetchSnapshots, runs, scheduleText, session, sessionId, setBusy, setEditMode, setError, setRuns, syncMessages, token]);
+
+  const revertEditedRun = useCallback(async (run: RunResult) => {
+    if (!token || !sessionId) return;
+    const result = run.result as Record<string, unknown> | null;
+    const original = (result?.original_snapshot as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined;
+    const originalSchedule = original?.schedule as { routes?: unknown } | undefined;
+    const routes = coerceRoutesPayload(originalSchedule?.routes);
+    if (!routes) {
+      setError("No original snapshot available to revert.");
+      return;
+    }
+    const runProblem = run.request?.problem;
+    const problem =
+      runProblem && typeof runProblem === "object"
+        ? (runProblem as Record<string, unknown>)
+        : (() => {
+            try {
+              const panel = JSON.parse(configText) as Record<string, unknown>;
+              return (panel.problem ?? panel) as Record<string, unknown>;
+            } catch {
+              return {};
+            }
+          })();
+    setBusy(true);
+    try {
+      const updated = await apiFetch<RunResult>(`/sessions/${sessionId}/runs/${run.id}/evaluate-edit`, token, {
+        method: "POST",
+        body: JSON.stringify({ problem, routes }),
+      });
+      setRuns((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+      setEditMode("none");
+      void syncMessages();
+      void refetchSnapshots?.();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Revert failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [configText, refetchSnapshots, sessionId, setBusy, setEditMode, setError, setRuns, syncMessages, token]);
+
+  const explainRun = useCallback(async (run: RunResult) => {
+    if (!token || !sessionId || session?.status === "terminated") return;
+    const runNo = displayRunNumber(run);
+    const runCost = run.cost == null ? "?" : run.cost.toFixed(2);
+    const violationSummary = getProblemModule(session?.test_problem_id ?? "").formatRunViolationSummary?.(run.result) ?? "—";
+    await postContextMessage(
+      `Please explain Run #${runNo} in plain language for the participant. Include: (1) strengths, (2) likely local-improvement opportunities they may notice, (3) why a metaheuristic can still return this solution under current trade-offs, and (4) one or two concrete next-run adjustments. Context: cost=${runCost}, violations=${violationSummary}.`,
+      true,
+    );
+  }, [postContextMessage, session?.status, session?.test_problem_id, sessionId, token]);
 
   const saveModelSettings = useCallback(async () => {
     if (!token || !sessionId) return;
@@ -810,6 +915,8 @@ export function useParticipantSessionActions({
     restoreFromSnapshot,
     runOptimize,
     runEvaluateEdited,
+    revertEditedRun,
+    explainRun,
     cancelOptimize,
     saveModelSettings,
     closeModelDialog,

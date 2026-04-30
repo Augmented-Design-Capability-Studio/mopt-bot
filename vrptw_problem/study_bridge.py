@@ -414,22 +414,23 @@ def routes_to_neutral(routes: list[list[int]]) -> list[dict[str, Any]]:
 
 _CONDITIONS = frozenset(
     {
-        "zone_d",
-        "express_order",
-        "shift_over_hours",
         "avoid_zone",
         "order_priority",
         "shift_over_limit",
     }
 )
 
+_LEGACY_CONDITION_MAP = {
+    "zone_d": "avoid_zone",
+    "express_order": "order_priority",
+    "shift_over_hours": "shift_over_limit",
+}
+
 
 def _normalize_zone_value(raw_zone: Any) -> int:
-    if isinstance(raw_zone, str):
-        cleaned = raw_zone.strip().upper()
-        if cleaned in {"A", "B", "C", "D", "E"}:
-            return ord(cleaned) - ord("A") + 1
-    return int(raw_zone)
+    from vrptw_problem.zone_canonical import normalize_delivery_zone
+
+    return normalize_delivery_zone(raw_zone)
 
 
 def _validate_locked_assignments(raw: Any) -> dict[int, int]:
@@ -463,6 +464,29 @@ def _normalize_order_priority_value(raw: object) -> str:
     return "standard"
 
 
+def _canonicalize_driver_preference_rule(rule: dict[str, Any]) -> dict[str, Any]:
+    """Normalize legacy driver-preference aliases into current canonical fields."""
+    out = dict(rule)
+    raw_cond = str(out.get("condition", "")).strip().lower()
+    cond = _LEGACY_CONDITION_MAP.get(raw_cond, raw_cond)
+    out["condition"] = cond
+
+    if raw_cond == "zone_d":
+        out["zone"] = 4
+    elif cond == "avoid_zone" and out.get("zone_letter") is not None and out.get("zone") is None:
+        out["zone"] = out.get("zone_letter")
+    elif cond == "avoid_zone" and out.get("zone_name") is not None and out.get("zone") is None:
+        out["zone"] = out.get("zone_name")
+
+    if raw_cond == "express_order" and out.get("order_priority") is None:
+        out["order_priority"] = "express"
+
+    if raw_cond == "shift_over_hours" and out.get("limit_minutes") is None and out.get("hours") is not None:
+        out["limit_minutes"] = float(out["hours"]) * 60.0
+
+    return out
+
+
 def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
     """Normalize and validate driver preference rules for the VRPTW evaluator."""
     out: list[dict[str, Any]] = []
@@ -472,16 +496,17 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
         vid = rule.get("vehicle_idx")
         if vid is None or not (0 <= int(vid) <= 4):
             raise ValueError(f"driver_preferences[{i}]: vehicle_idx must be an integer 0–4")
-        cond = str(rule.get("condition", "")).strip().lower()
+        canon_rule = _canonicalize_driver_preference_rule(rule)
+        cond = str(canon_rule.get("condition", "")).strip().lower()
         if cond not in _CONDITIONS:
             raise ValueError(
                 f"driver_preferences[{i}]: unknown condition {cond!r}; "
                 f"expected one of: {', '.join(sorted(_CONDITIONS))}"
             )
-        penalty = float(rule.get("penalty", 0))
+        penalty = float(canon_rule.get("penalty", 0))
         if penalty < 0:
             raise ValueError(f"driver_preferences[{i}]: penalty must be >= 0")
-        agg = str(rule.get("aggregation", "per_stop"))
+        agg = str(canon_rule.get("aggregation", "per_stop"))
         if agg not in ("per_stop", "once_per_route"):
             raise ValueError(
                 f"driver_preferences[{i}]: aggregation must be 'per_stop' or 'once_per_route'"
@@ -494,8 +519,8 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
             "aggregation": agg,
         }
 
-        if cond in ("avoid_zone", "zone_d"):
-            z = rule.get("zone", 4 if cond == "zone_d" else None)
+        if cond == "avoid_zone":
+            z = canon_rule.get("zone")
             if z is None:
                 raise ValueError(f"driver_preferences[{i}]: avoid_zone requires 'zone' (1–5)")
             try:
@@ -506,14 +531,14 @@ def _validate_driver_preferences(raw: list[Any]) -> list[dict[str, Any]]:
                 raise ValueError(f"driver_preferences[{i}]: zone must be 1–5 (delivery zones A–E)")
             nr["zone"] = zi
 
-        if cond in ("order_priority", "express_order"):
-            nr["order_priority"] = _normalize_order_priority_value(rule.get("order_priority", "express"))
+        if cond == "order_priority":
+            nr["order_priority"] = _normalize_order_priority_value(canon_rule.get("order_priority", "express"))
 
-        if cond in ("shift_over_hours", "shift_over_limit"):
-            if rule.get("limit_minutes") is not None:
-                nr["limit_minutes"] = float(rule["limit_minutes"])
-            elif rule.get("hours") is not None:
-                nr["limit_minutes"] = float(rule["hours"]) * 60.0
+        if cond == "shift_over_limit":
+            if canon_rule.get("limit_minutes") is not None:
+                nr["limit_minutes"] = float(canon_rule["limit_minutes"])
+            elif canon_rule.get("hours") is not None:
+                nr["limit_minutes"] = float(canon_rule["hours"]) * 60.0
             else:
                 nr["limit_minutes"] = 6.5 * 60.0
             if nr["limit_minutes"] <= 0:
@@ -621,18 +646,54 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         "early_stop_epsilon": early_stop_epsilon,
         "use_greedy_init": use_greedy_init,
         "reference_weights": ref_weights,
+        "candidate_seed_vectors": [],
         # Callers must pop this before passing cfg to the solver.
         "weight_warnings": weight_warnings,
     }
 
 
+def _normalize_candidate_seed_routes(candidate_seeds_raw: Any) -> tuple[list[list[list[int]]], list[str]]:
+    candidate_routes_list: list[list[list[int]]] = []
+    warnings: list[str] = []
+    if candidate_seeds_raw is None:
+        return candidate_routes_list, warnings
+    if not isinstance(candidate_seeds_raw, list):
+        return candidate_routes_list, ["Ignored candidate seeds: expected a list."]
+
+    expected = set(range(30))
+    for idx, raw_seed in enumerate(candidate_seeds_raw):
+        if not isinstance(raw_seed, dict):
+            warnings.append(f"Ignored candidate seed #{idx + 1}: expected an object.")
+            continue
+        routes_raw = raw_seed.get("routes")
+        if not isinstance(routes_raw, list) or len(routes_raw) != 5:
+            warnings.append(f"Ignored candidate seed #{idx + 1}: expected exactly 5 routes.")
+            continue
+        try:
+            routes = [[int(x) for x in route] for route in routes_raw]
+        except (TypeError, ValueError):
+            warnings.append(f"Ignored candidate seed #{idx + 1}: routes must contain integer task indices.")
+            continue
+        flat: list[int] = [task for route in routes for task in route]
+        if len(flat) != 30 or set(flat) != expected:
+            warnings.append(f"Ignored candidate seed #{idx + 1}: routes must cover task indices 0..29 exactly once.")
+            continue
+        candidate_routes_list.append(routes)
+    return candidate_routes_list, warnings
+
+
 def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | None = None) -> dict[str, Any]:
     ensure_vrptw_on_path()
+    from vrptw_problem.encoder import encode_routes_as_vector
     from vrptw_problem.evaluator import simulate_routes
     from vrptw_problem.orders import get_orders
     from vrptw_problem.optimizer import OptimizationCancelled, QuickBiteOptimizer
 
     def _work():
+        candidate_seed_vectors = [
+            encode_routes_as_vector(routes)
+            for routes in cfg.get("candidate_seed_routes", [])
+        ]
         opt = QuickBiteOptimizer(
             weights=cfg["weights"],
             locked=cfg["locked_assignments"],
@@ -650,6 +711,7 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             early_stop_epsilon=cfg["early_stop_epsilon"],
             cancel_event=cancel_event,
             use_greedy_init=cfg.get("use_greedy_init", True),
+            initial_solutions=candidate_seed_vectors,
         )
 
     with ThreadPoolExecutor(max_workers=1) as ex:
@@ -798,9 +860,12 @@ def attach_fleet_gantt_visualization(result: dict[str, Any]) -> dict[str, Any]:
 
 def solve_request_to_result(body: dict[str, Any], timeout_sec: float, cancel_event: Any | None = None) -> dict[str, Any]:
     cfg = parse_problem_config(body.get("problem") or body)
+    candidate_routes, candidate_warnings = _normalize_candidate_seed_routes(body.get("candidate_seeds"))
+    cfg["candidate_seed_routes"] = candidate_routes
     # Pop warnings before passing cfg to the solver (solver ignores unknown keys anyway,
     # but this keeps cfg clean and makes warning propagation explicit).
     weight_warnings: list[str] = cfg.pop("weight_warnings", [])
+    weight_warnings.extend(candidate_warnings)
     run_type = (body.get("type") or "optimize").lower()
     if run_type == "evaluate":
         routes = body.get("routes")

@@ -142,8 +142,12 @@ function FleetScheduleVizInner({
     <div className="run-timeline-wrap">
       <div className="run-timeline-legend muted">
         <span className="timeline-legend-item">
+          <span className="timeline-legend-swatch drive" />
+          Drive
+        </span>
+        <span className="timeline-legend-item">
           <span className="timeline-legend-swatch service" />
-          Drive &amp; service (blue) · Gaps = driver free time (departs later)
+          Service
         </span>
         <span className="timeline-legend-item">
           <span className="timeline-legend-swatch tw-miss" />
@@ -160,12 +164,7 @@ function FleetScheduleVizInner({
         {schedulePreferencesActive ? (
           <span className="timeline-legend-item">
             <span className="timeline-legend-swatch preference" />
-            Preference penalty (stop)
-          </span>
-        ) : null}
-        {scheduleEarlyArrivalActive ? (
-          <span className="timeline-legend-item">
-            Total idle wait penalized (w8)
+            Preference
           </span>
         ) : null}
       </div>
@@ -199,11 +198,18 @@ function FleetScheduleVizInner({
                   const ctxKey = `${stop.vehicle_index}:${stop.task_index ?? stop.task_id}`;
                   const driveMinutes = stopContext.get(ctxKey)?.driveMinutes ?? 0;
                   const waitMinutes = stop.wait_minutes ?? 0;
+                  const serviceMinutes = Math.max(
+                    0,
+                    stop.departure_minutes - stop.arrival_minutes - waitMinutes,
+                  );
                   // Shift block start forward by wait time: driver departs later, arrives at window open
                   const barStartMinutes = stop.arrival_minutes - driveMinutes + waitMinutes;
-                  const adjustedBlockMin = driveMinutes + (stop.departure_minutes - stop.arrival_minutes) - waitMinutes;
+                  const adjustedBlockMin = driveMinutes + serviceMinutes;
                   const leftPct = ((barStartMinutes - start) / duration) * 100;
                   const widthPct = Math.max((adjustedBlockMin / duration) * 100, 2);
+                  const safeDenominator = Math.max(adjustedBlockMin, 1);
+                  const drivePct = Math.min(100, Math.max(0, (driveMinutes / safeDenominator) * 100));
+                  const servicePct = Math.max(0, 100 - drivePct);
                   const selected =
                     selectedStop != null &&
                     selectedStop.vehicle_index === stop.vehicle_index &&
@@ -231,7 +237,17 @@ function FleetScheduleVizInner({
                       }
                       title={`${stop.task_id} · ${formatClock(stop.arrival_minutes + waitMinutes)}-${formatClock(stop.departure_minutes)}`}
                     >
-                      <span style={{ position: "relative", zIndex: 1 }}>{stopLabel(stop)}</span>
+                      <span
+                        className="run-stop-bar-segment drive"
+                        style={{ width: `${drivePct}%` }}
+                        aria-hidden
+                      />
+                      <span
+                        className="run-stop-bar-segment service"
+                        style={{ width: `${servicePct}%` }}
+                        aria-hidden
+                      />
+                      <span className="run-stop-bar-label">{stopLabel(stop)}</span>
                     </button>
                   );
                 })}
@@ -263,7 +279,7 @@ function FleetScheduleVizInner({
                 {formatClock(selectedStop.departure_minutes)}
               </div>
               <div>arrival (adjusted)</div>
-              <div>{formatClock(selectedStop.window_open_minutes)}</div>
+              <div>{formatClock(selectedStop.arrival_minutes + (selectedStop.wait_minutes ?? 0))}</div>
               <div>window</div>
               <div>
                 {formatClock(selectedStop.window_open_minutes)} - {formatClock(selectedStop.window_close_minutes)}

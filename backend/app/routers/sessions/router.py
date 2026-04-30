@@ -30,6 +30,7 @@ from app.schemas import (
     ParticipantTutorialUpdate,
     PostMessagesResponse,
     ResearcherSimulateParticipantUploadBody,
+    RunEvaluateEditBody,
     RunOut,
     SessionCreate,
     SessionProcessingState,
@@ -799,25 +800,29 @@ def post_run(
     except json.JSONDecodeError:
         brief_obj = default_problem_brief()
 
-    if not can_run_optimization(
-        row.workflow_mode,
-        row.optimization_allowed,
-        row.optimization_runs_blocked_by_researcher,
-        panel_obj,
-        brief_obj,
-        has_uploaded_data=_session_has_uploaded_data(db, session_id),
-        optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
-        problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Optimization is not allowed (researcher block, or intrinsic readiness not met and no permit)",
-        )
+    run_type = str(body.type).lower()
+    if run_type == "optimize":
+        if not can_run_optimization(
+            row.workflow_mode,
+            row.optimization_allowed,
+            row.optimization_runs_blocked_by_researcher,
+            panel_obj,
+            brief_obj,
+            has_uploaded_data=_session_has_uploaded_data(db, session_id),
+            optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+            problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Optimization is not allowed (researcher block, or intrinsic readiness not met and no permit)",
+            )
 
     payload = {
         "type": body.type,
         "problem": body.problem,
         "routes": body.routes,
+        "candidate_seed_run_ids": body.candidate_seed_run_ids,
+        "candidate_seeds": body.candidate_seeds,
     }
     session_run_number = helpers.next_session_run_number(db, session_id)
     run_row = OptimizationRun(
@@ -833,7 +838,7 @@ def post_run(
 
     create_snapshot(db, session_id, EVENT_BEFORE_RUN)
 
-    cancel_ev = register_cancel_event(session_id) if str(body.type).lower() == "optimize" else None
+    cancel_ev = register_cancel_event(session_id) if run_type == "optimize" else None
     try:
         timeout = get_settings().solve_timeout_sec
         port = get_study_port(row.test_problem_id)
@@ -881,6 +886,155 @@ def post_run(
         error_message=run_row.error_message,
     )
     derivation.append_message(db, session_id, "assistant", summary, True, kind="run")
+    return helpers.run_to_out(run_row)
+
+
+def _normalize_routes_for_compare(raw: Any) -> list[list[int]] | None:
+    if not isinstance(raw, list):
+        return None
+    if all(isinstance(row, dict) and isinstance(row.get("task_indices"), list) for row in raw):
+        out_obj: list[list[int]] = []
+        for row in raw:
+            task_indices = row.get("task_indices")
+            if not isinstance(task_indices, list):
+                return None
+            vals_obj: list[int] = []
+            for value in task_indices:
+                try:
+                    vals_obj.append(int(value))
+                except (TypeError, ValueError):
+                    return None
+            out_obj.append(vals_obj)
+        return out_obj
+    out: list[list[int]] = []
+    for row in raw:
+        if not isinstance(row, list):
+            return None
+        vals: list[int] = []
+        for value in row:
+            try:
+                vals.append(int(value))
+            except (TypeError, ValueError):
+                return None
+        out.append(vals)
+    return out
+
+
+def _routes_equal(a: Any, b: Any) -> bool:
+    na = _normalize_routes_for_compare(a)
+    nb = _normalize_routes_for_compare(b)
+    return na is not None and nb is not None and na == nb
+
+
+@router.post("/{session_id}/runs/{run_id}/evaluate-edit", response_model=RunOut)
+def post_evaluate_edit_run(
+    session_id: str,
+    run_id: int,
+    body: RunEvaluateEditBody,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    from app.problems.registry import get_study_port
+
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+
+    run_row = (
+        db.query(OptimizationRun)
+        .filter(OptimizationRun.session_id == session_id, OptimizationRun.id == run_id)
+        .first()
+    )
+    if run_row is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    payload = {"type": "evaluate", "problem": body.problem, "routes": body.routes}
+    timeout = get_settings().solve_timeout_sec
+    port = get_study_port(row.test_problem_id)
+
+    try:
+        result = port.solve_request_to_result(payload, timeout, cancel_event=None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception:
+        log.exception("Run edit-evaluate failed for session %s run %s", session_id, run_id)
+        raise HTTPException(status_code=500, detail="Evaluate failed") from None
+
+    req_old: dict[str, Any] | None = None
+    if run_row.request_json:
+        try:
+            parsed = json.loads(run_row.request_json)
+            req_old = parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            req_old = None
+    res_old: dict[str, Any] | None = None
+    if run_row.result_json:
+        try:
+            parsed = json.loads(run_row.result_json)
+            res_old = parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            res_old = None
+
+    original_snapshot = (
+        res_old.get("original_snapshot")
+        if isinstance(res_old, dict) and isinstance(res_old.get("original_snapshot"), dict)
+        else {
+            "request": req_old,
+            "result": res_old,
+            "cost": run_row.cost,
+            "reference_cost": run_row.reference_cost,
+            "ok": bool(run_row.ok),
+            "error_message": run_row.error_message,
+        }
+    )
+
+    original_result = original_snapshot.get("result") if isinstance(original_snapshot, dict) else None
+    original_schedule = original_result.get("schedule") if isinstance(original_result, dict) else None
+    original_routes = original_schedule.get("routes") if isinstance(original_schedule, dict) else None
+
+    if _routes_equal(body.routes, original_routes):
+        if not isinstance(original_result, dict):
+            raise HTTPException(status_code=500, detail="Original run snapshot missing; cannot restore")
+        restored_result = dict(original_result)
+        restored_result.pop("edited_evaluation", None)
+        restored_result.pop("original_snapshot", None)
+        run_row.ok = bool(original_snapshot.get("ok", True))
+        run_row.cost = (
+            float(original_snapshot["cost"])
+            if original_snapshot.get("cost") is not None
+            else None
+        )
+        run_row.reference_cost = (
+            float(original_snapshot["reference_cost"])
+            if original_snapshot.get("reference_cost") is not None
+            else None
+        )
+        run_row.result_json = json.dumps(restored_result)
+        run_row.error_message = (
+            str(original_snapshot.get("error_message"))
+            if original_snapshot.get("error_message") is not None
+            else None
+        )
+    else:
+        result_out: dict[str, Any] = dict(result)
+        result_out["original_snapshot"] = original_snapshot
+        result_out["edited_evaluation"] = {
+            "edited_at": serialize_utc_datetime(datetime.now(timezone.utc)),
+            "request": payload,
+            "cost": float(result["cost"]),
+            "reference_cost": float(result["reference_cost"]) if result.get("reference_cost") is not None else None,
+        }
+
+        run_row.ok = True
+        run_row.cost = float(result["cost"])
+        run_row.reference_cost = float(result["reference_cost"]) if result.get("reference_cost") is not None else None
+        run_row.result_json = json.dumps(result_out)
+        run_row.error_message = None
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(run_row)
     return helpers.run_to_out(run_row)
 
 

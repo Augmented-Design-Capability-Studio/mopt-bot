@@ -53,11 +53,8 @@ const MAX_SHIFT_HOURS_INFO = {
 } as const;
 
 const CONDITION_LABEL: Record<string, string> = {
-  zone_d: "avoid zone D (Westgate) stops",
   avoid_zone: "avoid a delivery zone (set zone A–E)",
-  express_order: "avoid express / priority orders",
   order_priority: "avoid a priority class (express or standard)",
-  shift_over_hours: "soft limit on shift length",
   shift_over_limit: "soft limit on shift length (use limit_minutes or hours)",
 };
 
@@ -65,11 +62,8 @@ const CONDITION_LABEL: Record<string, string> = {
 const WORKER_NAMES = ["Alice", "Bob", "Carol", "Dave", "Eve"] as const;
 
 const PREFERENCE_CONDITIONS = [
-  { value: "zone_d", label: "Avoid zone D (legacy)" },
   { value: "avoid_zone", label: "Avoid zone (specify A–E)" },
-  { value: "express_order", label: "Avoid express orders (legacy)" },
   { value: "order_priority", label: "Avoid order priority class" },
-  { value: "shift_over_hours", label: "Soft shift length (legacy hours)" },
   { value: "shift_over_limit", label: "Soft shift length (limit_minutes)" },
 ] as const;
 

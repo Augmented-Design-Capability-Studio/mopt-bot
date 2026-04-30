@@ -138,8 +138,7 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
       : {};
   const activeWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
 
-  const { violations, metrics, runtime_seconds: runtimeSeconds } = currentResult;
-  const referenceCost = currentRun.reference_cost ?? null;
+  const { violations, metrics } = currentResult;
 
   const active = new Set(activeWeightKeys);
   const visibleCards = TRACKABLE.filter((t) => active.has(t.key));
@@ -150,10 +149,13 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
         {visibleCards.map(({ key, label, card }) => {
           const { value, warn } = card(violations, metrics);
           const contrib = weightedContributionLine(key, runWeights, metrics, violations);
+          const weight = Number(runWeights[key]);
+          const weightLine = Number.isFinite(weight) ? `weight: ${weight}` : null;
           return (
             <div key={key} className={`run-summary-card${warn ? " warn" : ""}`}>
               <div className="muted">{label}</div>
               <div className="mono">{value}</div>
+              {weightLine ? <div className="mono muted"> {weightLine}</div> : null}
               {contrib ? (
                 <div className="mono muted" style={{ fontSize: "0.72rem", marginTop: "0.15rem" }}>
                   {contrib}
@@ -172,13 +174,6 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
             </div>
           </div>
         ) : null}
-
-        <div className="run-summary-card">
-          <div className="muted">Cost · runtime</div>
-          <div className="mono">
-            {referenceCost != null ? referenceCost.toFixed(2) : "—"} · {runtimeSeconds.toFixed(1)}s
-          </div>
-        </div>
       </div>
     </div>
   );

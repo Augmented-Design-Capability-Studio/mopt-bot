@@ -63,9 +63,9 @@ All available fields under `"problem"`:
   so only the user's stated priorities count. Use when the user says "only care about X".
 - `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
   - **Worker names → index** (when the scenario names workers): Alice → 0, Bob → 1, Carol → 2, Dave → 3, Eve → 4.
-  - **`avoid_zone`** (or legacy **`zone_d`**): soft dislike of delivery stops in a zone; set `"zone": 1–5` matching order zones (1=A … 4=D Westgate … 5=E Northgate). Depot/matrix index 0 is not an order zone.
-  - **`order_priority`** (or legacy **`express_order`**): `"order_priority"` must be exactly **`express`** or **`standard`** (never synonyms like `"low"` / `"high"` / `"priority"`).
-  - **`shift_over_limit`** (or legacy **`shift_over_hours`**): soft dislike of long shifts; set `"limit_minutes"` (e.g. 390 for 6.5h) or legacy `"hours": 6.5` (adapter converts to minutes).
+  - **`avoid_zone`**: soft dislike of delivery stops in a zone; set `"zone": 1–5` matching order zones (1=A … 4=D Westgate … 5=E Northgate). Depot/matrix index 0 is not an order zone.
+  - **`order_priority`**: `"order_priority"` must be exactly **`express`** or **`standard`** (never synonyms like `"low"` / `"high"` / `"priority"`).
+  - **`shift_over_limit`**: soft dislike of long shifts; set `"limit_minutes"` (e.g. 390 for 6.5h).
   - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
   - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
 - `"max_shift_hours"`: numeric threshold (e.g. 8.0) beyond which `shift_limit` penalty applies.
@@ -143,8 +143,7 @@ Rules:
   Emit whenever the user discusses early arrival, excessive waiting, or a "cannot arrive too early" constraint.
 - When the brief names worker-specific soft preferences, emit "driver_preferences" with
   vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
-  shift_over_limit (or legacy zone_d, express_order, shift_over_hours); include "limit_minutes" or
-  "hours" for long-shift discomfort when stated (e.g. 6.5h → "limit_minutes": 390).
+  shift_over_limit; include "limit_minutes" for long-shift discomfort when stated (e.g. 6.5h → 390).
   Include "worker_preference" in weights when driver_preferences is nonempty.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - Keep output compact and valid JSON.

@@ -1,4 +1,5 @@
 import type { ProblemModule } from "@problemConfig/problemModule";
+import "./styles.css";
 import { buildVrptwGoalTermsExtension } from "./VrptwExtras";
 import { FleetScheduleViz } from "./FleetScheduleViz";
 import { ViolationSummary } from "./ViolationSummary";

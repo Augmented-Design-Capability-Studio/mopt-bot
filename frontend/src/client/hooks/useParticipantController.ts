@@ -69,6 +69,7 @@ export function useParticipantController() {
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [runs, setRuns] = useState<RunResult[]>([]);
+  const [candidateRunIds, setCandidateRunIds] = useState<number[]>([]);
   const [lastMsgId, setLastMsgId] = useState(0);
   const [chatInput, setChatInput] = useState("");
   const [invokeModel, setInvokeModel] = useState(true);
@@ -240,6 +241,7 @@ export function useParticipantController() {
     setDefinitionEditBaseline(null);
     setParticipantOps(DEFAULT_PARTICIPANT_OPS_STATE);
     setSimulatedUploadChips([]);
+    setCandidateRunIds([]);
     processedUploadMessageIdsRef.current = new Set();
     if (sessionId) _clearRemovedChips(sessionId);
   }, [sessionId]);
@@ -261,6 +263,11 @@ export function useParticipantController() {
       });
     }
   }, [messages, sessionId]);
+
+  useEffect(() => {
+    const validIds = new Set(runs.map((run) => run.id));
+    setCandidateRunIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [runs]);
 
   const removeSimulatedUploadChip = useCallback((fileName: string) => {
     if (sessionId) _saveRemovedChip(sessionId, fileName);
@@ -337,6 +344,9 @@ export function useParticipantController() {
     setModelKey,
     setAiPending,
     setParticipantOps,
+    runs,
+    activeRun,
+    candidateRunIds,
     syncMessages: sync.syncMessages,
     syncSession: sync.syncSession,
     startEagerMessagePoll: sync.startEagerMessagePoll,
@@ -439,6 +449,25 @@ export function useParticipantController() {
     void actions.saveConfig(newConfig);
   }, [runs, setConfigText, actions.saveConfig]);
 
+  const loadConfigFromRun = useCallback((run: RunResult) => {
+    const problem = run?.request?.problem;
+    if (problem == null || typeof problem !== "object") return;
+    const panel = { problem };
+    const newConfig = JSON.stringify(panel, null, 2);
+    setConfigText(newConfig);
+    void actions.saveConfig(newConfig);
+  }, [actions.saveConfig, setConfigText]);
+
+  const toggleCandidateRun = useCallback((runId: number, checked: boolean) => {
+    setCandidateRunIds((prev) => {
+      if (checked) {
+        if (prev.includes(runId)) return prev;
+        return [...prev, runId];
+      }
+      return prev.filter((id) => id !== runId);
+    });
+  }, []);
+
   const restoreFromSnapshot = useCallback(
     (snap: SnapshotSummary, source: "definition" | "config") => {
       setDefinitionEditBaseline(null);
@@ -515,6 +544,8 @@ export function useParticipantController() {
     runOptimize: actions.runOptimize,
     cancelOptimize: actions.cancelOptimize,
     runEvaluateEdited: actions.runEvaluateEdited,
+    revertEditedRun: actions.revertEditedRun,
+    explainRun: actions.explainRun,
     saveModelSettings: actions.saveModelSettings,
     leaveSession: lifecycle.leaveSession,
     forgetRecentSession: lifecycle.forgetRecentSession,
@@ -529,6 +560,9 @@ export function useParticipantController() {
     isConfigDirty,
     bookmarkSnapshot,
     loadConfigFromLastRun,
+    loadConfigFromRun,
+    candidateRunIds,
+    toggleCandidateRun,
     restoreFromSnapshot,
     loadSnapshots,
     snapshots,
