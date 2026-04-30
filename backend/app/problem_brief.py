@@ -147,6 +147,7 @@ def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
     tmpl = port.problem_brief_template_fields()
     return {
         "goal_summary": "",
+        "run_summary": "",
         "items": [
             _system_item(str(it["id"]), str(it["text"]))
             for it in system_items
@@ -347,6 +348,14 @@ def _sanitize_goal_summary(text: Any) -> str:
     if not clean_clauses:
         return ""
     return _ensure_terminator(" ".join(clean_clauses))
+
+
+def _sanitize_run_summary(text: Any) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    one_line = " ".join(raw.split())
+    return _ensure_terminator(one_line)
 
 
 def _split_into_goal_term_clauses(text: str) -> list[str]:
@@ -642,6 +651,7 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
         return base
 
     goal_summary = _sanitize_goal_summary(raw.get("goal_summary", ""))
+    run_summary = _sanitize_run_summary(raw.get("run_summary", ""))
     solver_scope = str(raw.get("solver_scope") or base["solver_scope"]).strip() or base["solver_scope"]
     backend_template = (
         str(raw.get("backend_template") or base["backend_template"]).strip() or base["backend_template"]
@@ -670,6 +680,7 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     promoted_items = _reconcile_problem_brief_items(promoted_items)
     return {
         "goal_summary": goal_summary,
+        "run_summary": run_summary,
         "items": promoted_items,
         "open_questions": questions,
         "solver_scope": solver_scope,
@@ -689,6 +700,8 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
 
     if "goal_summary" in patch:
         merged["goal_summary"] = _sanitize_goal_summary(patch.get("goal_summary") or "")
+    if "run_summary" in patch:
+        merged["run_summary"] = _sanitize_run_summary(patch.get("run_summary") or "")
     # If the model sets replace_open_questions but omits open_questions (common on cleanup
     # turns that only replace items), keep the existing list — do not wipe it.
     if "open_questions" in patch:
@@ -836,6 +849,11 @@ def _problem_brief_item_slot(item: dict[str, Any]) -> str | None:
     if not text:
         return None
     return _slot_from_text(text)
+
+
+def problem_brief_item_slot(item: dict[str, Any]) -> str | None:
+    """Public wrapper for slot detection used by session-merge guards."""
+    return _problem_brief_item_slot(item)
 
 
 def _slot_from_item_id(item_id: str) -> str | None:

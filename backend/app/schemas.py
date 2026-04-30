@@ -60,6 +60,7 @@ class ProblemBriefQuestion(BaseModel):
 
 class ProblemBrief(BaseModel):
     goal_summary: str = ""
+    run_summary: str = ""
     items: list[ProblemBriefItem] = Field(default_factory=list)
     # Accept legacy string questions; normalize_problem_brief coerces to {id, text}.
     open_questions: list[ProblemBriefQuestion | str] = Field(default_factory=list)

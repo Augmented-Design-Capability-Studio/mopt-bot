@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import type { ProblemBrief, Session, SnapshotSummary, TestProblemMeta } from "@shared/api";
+import type { Message, ProblemBrief, RunResult, Session, SnapshotSummary, TestProblemMeta } from "@shared/api";
 
 import type { EditMode } from "../lib/participantTypes";
 import type { ParticipantOpsState } from "../lib/participantOps";
@@ -24,6 +24,8 @@ type ConfigPanelProps = {
   /** Used for workflow-specific definition UI and waterfall run reminders. */
   session: Session | null;
   testProblemMeta: TestProblemMeta | null;
+  runs?: RunResult[];
+  messages?: Message[];
   className: string;
   onConfigTextChange: (value: string) => void;
   onProblemBriefChange: (value: ProblemBrief | null) => void;
@@ -88,6 +90,8 @@ export function ConfigPanel({
   sessionTerminated,
   session,
   testProblemMeta,
+  runs = [],
+  messages = [],
   className,
   onConfigTextChange,
   onProblemBriefChange,
@@ -412,6 +416,8 @@ export function ConfigPanel({
                 editable={editableConfig}
                 onInteractionStart={onEnterConfigEdit}
                 problemMeta={testProblemMeta}
+                runs={runs}
+                messages={messages}
               />
             ) : null}
           </div>

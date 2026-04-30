@@ -14,6 +14,7 @@ import { Fragment } from "react";
 
 import type { GoalTermsExtension, RemovedGoalTermEntry } from "@problemConfig/GoalTermsSection";
 import { toggleLockedGoalTerm, removeLockedGoalTerm, WeightRow } from "@problemConfig/GoalTermsSection";
+import type { ConstraintType } from "@problemConfig/types";
 import type { MarkerKind } from "@problemConfig/useProblemConfigDiffMarkers";
 import { ConfigNumberInput, ConfigSelect, type ActivateHint } from "@problemConfig/controls";
 import { FieldRow } from "@problemConfig/layout";
@@ -74,6 +75,8 @@ export type VrptwGoalTermsExtensionProps = {
   rememberRemovedGoalTerm: (entry: RemovedGoalTermEntry) => void;
   /** Provided by ProblemConfigBlocks; handles "weight" and fieldName-based restoration. */
   restoreRemovedGoalTerm: (key: string) => void;
+  constraintTypes: Record<string, ConstraintType>;
+  onConstraintTypeChange: (key: string, type: ConstraintType) => void;
 };
 
 // ------------------------------------------------------------------
@@ -166,11 +169,12 @@ function WorkerPreferenceExtras({
           <div
             key={index}
             style={{
+              position: "relative",
               display: "flex",
               flexWrap: "wrap",
               gap: "0.35rem",
               alignItems: "center",
-              padding: "0.35rem 0",
+              padding: "0.35rem 1.9rem 0.35rem 0",
               borderBottom: "1px solid var(--border)",
             }}
           >
@@ -287,23 +291,21 @@ function WorkerPreferenceExtras({
                 />
               </label>
             )}
-            {preferencesEditable && (
-              <button
-                type="button"
-                className="muted"
-                style={{ fontSize: "0.75rem" }}
-                onClick={() => removePreference(index)}
-              >
-                Remove
-              </button>
-            )}
+            <button
+              type="button"
+              className="definition-icon-btn definition-remove-btn"
+              title="Remove preference rule"
+              aria-label="Remove preference rule"
+              style={{ position: "absolute", top: "0.35rem", right: 0 }}
+              onClick={() => runEditingAction(() => removePreference(index))}
+            >
+              X
+            </button>
           </div>
         ))}
-        {preferencesEditable && (
-          <button type="button" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }} onClick={() => runEditingAction(addPreference)}>
-            + Add preference rule
-          </button>
-        )}
+        <button type="button" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }} onClick={() => runEditingAction(addPreference)}>
+          + Add preference rule
+        </button>
       </div>
     </details>
   );
@@ -366,7 +368,7 @@ function MaxShiftHoursDetails({
             <div className="definition-inline-actions" style={{ marginBottom: "0.2rem" }}>
               <button
                 type="button"
-                className="definition-icon-btn"
+                className={`definition-icon-btn${problem.locked_goal_terms.includes("max_shift_hours") ? " definition-icon-btn--locked" : " definition-icon-btn--unlocked"}`}
                 title={problem.locked_goal_terms.includes("max_shift_hours") ? "Unlock this goal term" : "Lock this goal term"}
                 aria-label={problem.locked_goal_terms.includes("max_shift_hours") ? "Unlock goal term" : "Lock goal term"}
                 onClick={() =>
@@ -596,6 +598,13 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
               weightCatalog={p.weightCatalog}
               updateProblem={(patch) => p.runEditingAction(() => p.updateProblem(patch))}
               onActivate={(event) => p.ensureEditing(event)}
+              markerKind={p.markerKindFor("weight:worker_preference")}
+              onRememberRemoved={p.rememberRemovedGoalTerm}
+              constraintType={
+                p.constraintTypes.worker_preference ??
+                (problem.locked_goal_terms.includes("worker_preference") ? "custom" : "objective")
+              }
+              onConstraintTypeChange={(type) => p.onConstraintTypeChange("worker_preference", type)}
             />
             {showWorkerBlock && (
               <WorkerPreferenceExtras

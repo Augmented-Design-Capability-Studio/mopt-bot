@@ -73,6 +73,7 @@ _PROBLEM_BRIEF_PATCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "goal_summary": {"type": "string"},
+        "run_summary": {"type": "string"},
         "items": {"type": "array", "items": _PROBLEM_BRIEF_ITEM_SCHEMA},
         "open_questions": {
             "type": "array",

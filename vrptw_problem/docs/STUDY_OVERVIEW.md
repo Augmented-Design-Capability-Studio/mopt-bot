@@ -1,83 +1,43 @@
-# AI-Assisted Metaheuristic Optimization Study
+# AI-Assisted Metaheuristic Optimization — Study Overview
 
-## Overview
-This study investigates how users interact with an AI-assisted interface for solving optimization problems using metaheuristic approaches. The system enables participants to define problems, specify assumptions, and iteratively generate and evaluate solutions with the assistance of an AI agent.
+## Purpose
 
-## Objectives
-- Examine how different interface designs and workflows affect optimization outcomes and user experience.
-- Understand how users formulate optimization problems during human-AI interaction.
-- Analyze the relationship between user expertise and problem structuring strategies.
+This study evaluates an AI-assisted optimization interface as a **design artifact**. Participants role-play as a domain expert — someone with working knowledge of optimization trade-offs who would otherwise hire a programmer to configure and run a solver — and use the interface to engage with an optimization problem from that standpoint. The core question they are implicitly answering is: *"Does this interface let me, as a domain expert, do work I would otherwise have to hand off to a programmer?"*
 
-## System Description
-The interface consists of three primary components:
-1. **Chat Interface** – Users communicate with an AI agent to describe the problem, refine assumptions, and request solutions.
-2. **Problem Definition Panel** – Displays structured representations of objectives, constraints, and assumptions.
-3. **Optimization & Visualization Panel** – Shows generated solutions, performance metrics, and visualizations.
+The study is a 2×2 between-subjects design: **optimization expertise** (novice vs expert) × **workflow mode** (Agile vs Waterfall).
 
-The AI agent assists by:
-- Interpreting user intent
-- Proposing assumptions
-- Generating solver code or configurations
-- Running optimization procedures
-- Presenting results for iteration
+## Participant Role
 
-## Task Description
-Participants are given a computational optimization problem (e.g., a vehicle routing problem with constraints). They are asked to:
-- Understand the problem
-- Define relevant objectives and constraints
-- Interact with the AI to generate solutions
-- Iterate until they reach a satisfactory outcome or the session ends
+Participants adopt the perspective of a domain expert who understands the problem space (scheduling, routing, trade-offs) but does not write code. Both novice and expert groups take this role; the distinction is the depth of optimization knowledge they bring to it. After the session, participants are interviewed about their experience and their critique of the interface.
 
-## Experimental Factors
-The study may vary:
-- **Workflow style** (fast vs. structured problem formulation): **Agile** (iterative, early runs), **Waterfall** (specification-first, run gated on resolved questions), or **Demo** (blended — generates both assumptions and open questions, agile-style run gate, no open-questions banner; for live demonstrations)
-- **User agency** (manual vs. automated execution)
-- **Visualization type** (static vs. interactive)
-- **User expertise level** (novice to expert)
+## System
+
+Three panels:
+
+1. **Chat** — Describe the problem, state priorities, request solutions.
+2. **Problem Definition Panel** — Structured view of objectives, constraints, and assumptions.
+3. **Optimization & Visualization Panel** — Solutions, cost breakdowns, and route visualizations.
+
+The underlying task is a fixed logistics scenario (fleet scheduling with time windows), presented as a general optimization assistant. Participants configure weights, constraints, algorithm choice, and driver preferences; they do not modify the underlying problem instance.
+
+## Experimental Conditions
+
+| Factor | Levels |
+|--------|--------|
+| Expertise | Novice / Expert |
+| Workflow | Agile (iterative; runs enabled early) / Waterfall (specification-first; runs gated on resolved questions) |
 
 ## Data Collected
-- Interaction logs (chat history, actions taken)
+
+- Full interaction logs (chat, panel edits, solver runs, timestamps)
 - Problem formulations (objectives, constraints, assumptions)
-- Optimization performance metrics (e.g., cost, solution quality)
-- Completion time and iteration patterns
-- System usage data (e.g., number of AI calls/tokens)
-- Subjective responses (e.g., trust, confidence, usability)
-- Optional audio/video recordings of sessions
-
-## Pre-Interaction Screening
-Participants complete a brief questionnaire to assess:
-- Familiarity with optimization and programming
-- Basic understanding of the task
-
-This ensures participants have sufficient background to engage with the system.
-
-## Study Procedure
-1. Task briefing and instructions
-2. Pre-interaction questionnaire or interview
-3. Interaction with the AI-assisted system
-4. Iterative problem solving and solution refinement
-5. Post-task questionnaire and optional discussion
-6. Debriefing
+- Optimization metrics (cost, violations, convergence)
+- Post-session interview and questionnaire (interface critique)
 
 ## Deception and Debriefing
-The system may appear to support general optimization tasks but is configured for specific problem instances. This limitation is not disclosed prior to the task to preserve natural interaction.
 
-At the end of the session, participants are debriefed on:
-- The system’s actual capabilities
-- The purpose of the study design
-- Any limitations of the AI system
+The system is presented as a general-purpose optimization assistant; it is configured around a single fixed problem instance. This is disclosed at debriefing, when participants also learn the broader research questions and how their data will be used.
 
-## Risks and Mitigation
-- Minimal risk study
-- Possible mild confusion regarding system capabilities
-- Mitigated through supervision and post-task debriefing
+## Ethics
 
-## Use Cases
-This document can be used as:
-- Context for AI systems assisting with study analysis
-- Reference for collaborators and researchers
-- Basis for generating study materials or extensions
-
-## Notes
-- The system is a research prototype and not a fully general-purpose optimization tool.
-- The focus is on user interaction and problem formulation rather than solver performance alone.
+Minimal risk study, currently under IRB review. Chat logs are the primary data artifact. No API keys or personal identifiers are stored in logs.

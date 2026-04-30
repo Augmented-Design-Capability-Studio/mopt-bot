@@ -385,6 +385,52 @@ def test_skip_hidden_brief_update_skips_background_and_settles_processing(monkey
         assert session.json()["processing"]["brief_status"] == "ready"
 
 
+def test_interpret_only_context_message_skips_background_derivation(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-interpret-only-secret")
+    get_settings.cache_clear()
+
+    launched: dict[str, object] = {}
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Acknowledged. Keep stop early off for this run.",
+            panel_patch=None,
+            problem_brief_patch=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.sessions.derivation.launch_background_derivation",
+        lambda **kwargs: launched.update(kwargs),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-interpret-only-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={
+                "content": "Run #12 just completed - cost 100. Please interpret these results briefly.",
+                "invoke_model": True,
+                "skip_hidden_brief_update": False,
+            },
+            headers={"Authorization": "Bearer test-client-interpret-only-secret"},
+        )
+        assert send.status_code == 200
+        body = send.json()
+        assert body["messages"][-1]["content"].startswith("Acknowledged.")
+        assert body["processing"]["brief_status"] == "ready"
+        assert body["processing"]["config_status"] == "idle"
+        assert launched == {}
+
+
 def test_post_message_without_model_returns_current_processing_state(monkeypatch):
     """invoke_model false must still return processing so the client can clear stale pending UI."""
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-no-model-proc-secret")
@@ -560,6 +606,7 @@ def test_participant_can_patch_problem_brief(monkeypatch):
         assert patch.status_code == 200
         data = patch.json()
         assert data["problem_brief"]["goal_summary"] == "Minimize lateness while keeping workload balanced."
+        assert data["problem_brief"]["run_summary"] == ""
         assert any(item["kind"] == "gathered" for item in data["problem_brief"]["items"])
         assert any(item["kind"] == "system" for item in data["problem_brief"]["items"])
 
@@ -1565,6 +1612,102 @@ def test_non_cleanup_request_keeps_additive_merge_behavior(monkeypatch):
         assert "fact-new" in non_system_ids
 
 
+def test_cleanup_moves_run_related_rows_into_run_summary(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-cleanup-run-summary-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="I consolidated run notes into one summary.",
+            problem_brief_patch={
+                "goal_summary": "Keep improving delivery quality.",
+                "items": [
+                    {
+                        "id": "fact-run-note",
+                        "text": "Run #3 just completed with lower cost than previous run.",
+                        "kind": "gathered",
+                        "source": "agent",
+                        "status": "confirmed",
+                        "editable": True,
+                    },
+                    {
+                        "id": "fact-stable",
+                        "text": "Deadline compliance remains a top priority.",
+                        "kind": "gathered",
+                        "source": "user",
+                        "status": "confirmed",
+                        "editable": True,
+                    },
+                ],
+                "open_questions": [
+                    {"id": "oq-run-note", "text": "After this run, should we keep the same algorithm?"}
+                ],
+            },
+            cleanup_mode=True,
+            replace_open_questions=True,
+        ),
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-cleanup-run-summary-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Evaluate improvements across runs.",
+                    "items": [
+                        {
+                            "id": "fact-run-note",
+                            "text": "Run #3 just completed with lower cost than previous run.",
+                            "kind": "gathered",
+                            "source": "agent",
+                            "status": "confirmed",
+                            "editable": True,
+                        },
+                        {
+                            "id": "fact-stable",
+                            "text": "Deadline compliance remains a top priority.",
+                            "kind": "gathered",
+                            "source": "user",
+                            "status": "confirmed",
+                            "editable": True,
+                        },
+                    ],
+                    "open_questions": [
+                        {"id": "oq-run-note", "text": "After this run, should we keep the same algorithm?"}
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-cleanup-run-summary-secret"},
+        )
+        assert patch.status_code == 200
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "Please clean up the definition.", "invoke_model": True},
+            headers={"Authorization": "Bearer test-client-cleanup-run-summary-secret"},
+        )
+        assert send.status_code == 200
+        brief = send.json()["problem_brief"]
+        assert brief is not None
+        texts = [item["text"] for item in brief["items"] if item["kind"] != "system"]
+        assert "Deadline compliance remains a top priority." in texts
+        assert all("Run #3 just completed" not in text for text in texts)
+        assert all("After this run" not in q["text"] for q in brief["open_questions"])
+        assert "Run #3 just completed" in brief["run_summary"]
+
+
 def test_clear_definition_request_clears_editable_items_when_model_omits_patch(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-clear-definition-fallback-secret")
     get_settings.cache_clear()
@@ -2506,6 +2649,60 @@ def test_manual_cleanup_open_questions_endpoint_prunes_with_llm_patch(monkeypatc
         assert cleanup.status_code == 200
         questions = cleanup.json()["problem_brief"]["open_questions"]
         assert [q["id"] for q in questions] == ["q-keep"]
+
+
+def test_manual_open_question_cleanup_consolidates_run_questions_into_run_summary(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-oq-run-summary")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_problem_brief_update",
+        lambda *args, **kwargs: ProblemBriefUpdateTurn(
+            problem_brief_patch={
+                "open_questions": [
+                    {"id": "q-run", "text": "After this run should we try a bigger population?"},
+                    {"id": "q-keep", "text": "What is the target service-time at each stop?"},
+                ]
+            },
+            replace_open_questions=True,
+            cleanup_mode=True,
+        ),
+    )
+    with TestClient(create_app()) as client:
+        created = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-oq-run-summary"},
+        )
+        assert created.status_code == 200
+        sid = created.json()["id"]
+        patched = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Tune for reliable schedules.",
+                    "items": [],
+                    "open_questions": [
+                        {"id": "q-run", "text": "After this run should we try a bigger population?"},
+                        {"id": "q-keep", "text": "What is the target service-time at each stop?"},
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-oq-run-summary"},
+        )
+        assert patched.status_code == 200
+        cleanup = client.post(
+            f"/sessions/{sid}/cleanup-open-questions",
+            json={"infer_resolved": True},
+            headers={"Authorization": "Bearer test-client-oq-run-summary"},
+        )
+        assert cleanup.status_code == 200
+        brief = cleanup.json()["problem_brief"]
+        questions = brief["open_questions"]
+        assert [q["id"] for q in questions] == ["q-keep"]
+        assert "After this run should we try a bigger population?" in brief["run_summary"]
 
 
 def test_auto_cleanup_open_questions_after_brief_patch_all_modes(monkeypatch):

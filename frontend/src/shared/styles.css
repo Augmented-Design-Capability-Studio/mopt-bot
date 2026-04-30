@@ -1060,6 +1060,198 @@ select:focus-visible {
   background: rgba(33, 150, 243, 0.1);
 }
 
+/* ---- Goal term drag-and-drop ---- */
+
+.goal-term-row-wrapper {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.goal-term-row-wrapper--dragging {
+  opacity: 0.35;
+}
+
+.goal-term-row-wrapper--drag-over-top::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--link, #1a5a96);
+  border-radius: 1px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.goal-term-row-wrapper--drag-over-bottom::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--link, #1a5a96);
+  border-radius: 1px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Left column: rank badge + drag handle */
+.goal-term-row-left-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.12rem;
+  padding-top: 0.42rem;
+  flex-shrink: 0;
+}
+
+/* Content column (WeightRow or replaceRow) */
+.goal-term-row-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.goal-terms-helper-text {
+  margin: 0 0 0.35rem 0;
+  font-size: 0.78rem;
+}
+
+/* ---- Rank badge ---- */
+
+.goal-term-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  background: var(--bg, #fff);
+  border: 1.5px solid rgba(0, 0, 0, 0.28);
+  color: var(--fg, #222);
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* ---- Drag handle ---- */
+
+.goal-term-drag-handle {
+  color: rgba(0, 0, 0, 0.3);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.goal-term-drag-handle:hover {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.goal-term-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* ---- Constraint type toggle (edit mode) ---- */
+
+.constraint-type-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.constraint-type-toggle__btn {
+  padding: 0.1rem 0.42rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: none;
+  border-right: 1px solid var(--border, #ddd);
+  background: transparent;
+  color: var(--fg-muted, #777);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.1s, color 0.1s;
+}
+
+.constraint-type-toggle__btn:last-child {
+  border-right: none;
+}
+
+.constraint-type-toggle__btn:hover:not([class*="--active"]) {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.constraint-type-toggle__btn--active-objective {
+  background: #455a64;
+  color: #fff;
+}
+
+.constraint-type-toggle__btn--active-soft {
+  background: #1565c0;
+  color: #fff;
+}
+
+.constraint-type-toggle__btn--active-hard {
+  background: #c62828;
+  color: #fff;
+}
+
+.constraint-type-toggle__btn--active-custom {
+  background: #2e7d32;
+  color: #fff;
+}
+
+/* Subtle color coding for type select (including locked mimic button). */
+.problem-config-blocks .constraint-type-select {
+  font-weight: 600;
+}
+
+.problem-config-blocks .constraint-type-select--objective {
+  background-color: #eef1f4;
+  border-color: #a8b3bf;
+  color: #3e4a56;
+}
+
+.problem-config-blocks .constraint-type-select--soft {
+  background-color: #edf2f7;
+  border-color: #9fb1c3;
+  color: #2f4f6f;
+}
+
+.problem-config-blocks .constraint-type-select--hard {
+  background-color: #f5eceb;
+  border-color: #c3a7a2;
+  color: #7c4b45;
+}
+
+.problem-config-blocks .constraint-type-select--custom {
+  background-color: #edf3ed;
+  border-color: #a6b8a8;
+  color: #3d5a45;
+}
+
+/* ---- Lock button color differentiation ---- */
+
+.definition-icon-btn--locked {
+  color: #1b5e20;
+  background: rgba(76, 175, 80, 0.18);
+  border-color: rgba(27, 94, 32, 0.5) !important;
+}
+
+.definition-icon-btn--unlocked {
+  color: var(--fg-muted, #999);
+  background: transparent;
+  border-color: var(--border, #ddd) !important;
+}
+
 .definition-item-removed {
   border-color: rgba(176, 0, 32, 0.4);
   background: rgba(176, 0, 32, 0.06);

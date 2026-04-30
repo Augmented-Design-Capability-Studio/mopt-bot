@@ -390,16 +390,13 @@ export function useParticipantSessionActions({
     }
     const previousPanel = session?.panel_config ?? null;
     const changedKeys = configChangeSummary(previousPanel, parsed);
-    const acknowledgement = `Problem configuration saved (changed: ${changedKeys}).`;
+    const acknowledgement = "";
     setBusy(true);
     setParticipantOps((prev) => ({ ...prev, savingConfig: true }));
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/panel`, token, {
         method: "PATCH",
-        body: JSON.stringify({
-          panel_config: parsed,
-          acknowledgement,
-        }),
+        body: JSON.stringify({ panel_config: parsed, acknowledgement }),
       });
       setSession(nextSession);
       setEditMode("none");
@@ -410,7 +407,7 @@ export function useParticipantSessionActions({
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) {
         void postContextMessage(
-          `I just manually updated the problem configuration. Changed fields: ${changedKeys}. Please acknowledge the change and briefly explain the expected impact on the solver.`,
+          `I manually updated the problem configuration. Changed settings: ${changedKeys}. Please acknowledge in 1-2 short sentences, use participant-friendly names, and keep the impact explanation concise.`,
           true,
           { skipHiddenBriefUpdate: true },
         );
@@ -718,8 +715,9 @@ export function useParticipantSessionActions({
         const module = getProblemModule(session?.test_problem_id ?? "");
         const violationSummary = module.formatRunViolationSummary?.(run.result) ?? "—";
         void postContextMessage(
-          `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). Please interpret these results, compare to any previous runs, and suggest what to adjust next.`,
+          `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). Give a very brief interpretation in 1-2 short sentences using plain language and suggest at most one next adjustment.`,
           true,
+          { skipHiddenBriefUpdate: true },
         );
       }
       if (run.ok) {

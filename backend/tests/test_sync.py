@@ -216,3 +216,53 @@ def test_sync_replaces_driver_preferences_when_not_derived(monkeypatch):
 
     assert panel is not None
     assert panel["problem"].get("driver_preferences", []) == []
+
+
+def test_sync_preserves_manual_termination_and_init_controls(monkeypatch):
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {"travel_time": 1.0},
+                    "algorithm": "GA",
+                    "early_stop": False,
+                    "early_stop_patience": 77,
+                    "early_stop_epsilon": 0.005,
+                    "use_greedy_init": True,
+                }
+            }
+        ),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+
+    def _fake_derive(self, _brief):
+        return {
+            "problem": {
+                "weights": {"travel_time": 2.0},
+                "algorithm": "PSO",
+                "early_stop": True,
+                "early_stop_patience": 3,
+                "early_stop_epsilon": 1e-6,
+                "use_greedy_init": False,
+            }
+        }
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief={"items": []},
+        api_key=None,
+        model_name=None,
+        preserve_missing_managed_fields=True,
+    )
+
+    assert panel is not None
+    assert panel["problem"]["algorithm"] == "PSO"
+    assert panel["problem"]["early_stop"] is False
+    assert panel["problem"]["early_stop_patience"] == 77
+    assert abs(float(panel["problem"]["early_stop_epsilon"]) - 0.005) < 1e-12
+    assert panel["problem"]["use_greedy_init"] is True

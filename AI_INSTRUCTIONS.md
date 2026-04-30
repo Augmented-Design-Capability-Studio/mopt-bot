@@ -1,230 +1,123 @@
-# AI build instructions
+# AI Build Instructions — MOPT Study Platform
 
-Use this document as the source of truth for implementers and for pasting into Cursor. Do not commit real secrets, API keys, or participant identifiers.
-
----
-
-## 1. Non-negotiables
-
-- **`*_problem/`** directories (currently `vrptw_problem/`, `knapsack_problem/`) are **domain packages**; study integration goes through **`backend/app/problems/`** (`StudyPort` + registry). Per-session **`test_problem_id`** (default set by **`DEFAULT_PROBLEM_ID`** in `registry.py`, currently `"vrptw"`) chooses the active port. Modularity changes within a `*_problem/` package — frontend integration, prompt text, weight definitions, panel schema, study port wiring — are expected and encouraged. Changes to **core solver logic** (optimizer, evaluator, cost functions, instance data, constraint definitions) require **maintainer approval**.
-- The backend and frontend are **problem-agnostic**. The single named registration point for frontends is **`frontend/src/client/problemRegistry.ts`**; all generic code calls `getProblemModule(id)`. Do **not** import problem folders directly in generic code. To add a new problem, copy **`template_problem/`** and follow the instructions in **`template_problem/TEMPLATE_INSTRUCTIONS.md`**.
-- **`backend/app/adapter.py`** remains a **compatibility re-export** for VRPTW study bridge helpers (from **`vrptw_study_bridge`**); new code should use **`get_study_port(...)`** from the registry.
-- **Documentation:** Changes to **workflow**, **architecture**, or **repo layout** should include concise updates to **this file** and **`README.md`** (see Cursor rule `docs-sync`).
+Source of truth for implementers. Do not commit secrets or participant identifiers.
 
 ---
 
-## 2. Goal
+## 1. What This System Is
 
-Build **two browser frontends** (participant **client** and **researcher**) and **one backend** suitable for a low-cost host (e.g. Raspberry Pi) to run a **user experience study**. The study examines how **workflow** affects optimization outcomes and experience: a **2×2** design (**Novice vs Expert** participants) × (**Agile vs Waterfall** interaction with the AI). In **Agile**, the user need not fully specify the problem up front; the agent may assume missing details, propose configuration or code-like artifacts, and run optimization frequently. In **Waterfall**, intrinsic run readiness requires **`optimization_gate_engaged`** (first participant user chat or brief with open questions) and **no** `open_questions` with `status: “open”`; there is no separate “milestone or panel” fallback. In **Agile**, intrinsic readiness requires at least one goal-term weight and a non-empty **`algorithm`** on the saved `problem` JSON. A third **Demo** mode also exists: it generates both assumptions and open questions freely (like a blend of agile and waterfall), uses the same intrinsic readiness check as agile (≥1 goal weight + algorithm), and never shows the open-questions warning banner — intended for live demonstrations rather than study sessions. The researcher permit and sync behavior match **`README.md`**. The underlying task is the VRPTW scenario in `vrptw_problem/`, but the product should **present** as a general metaheuristic-style assistant where required (see §7.3).
+MOPT is a research platform for evaluating an AI-assisted optimization interface as a **design artifact**. Participants role-play as a domain expert — someone with working knowledge of optimization trade-offs who would otherwise hire a programmer to configure and run a solver — and interact with the system from that standpoint. Researchers observe behavioral patterns and conduct post-session interviews about the interface.
 
----
+The study is a **2×2 between-subjects design**: expertise (novice vs expert) × workflow mode (Agile vs Waterfall).
 
-## 3. Tech stack
+- **Agile**: AI makes assumptions, proposes configurations, and runs optimization early and frequently.
+- **Waterfall**: Optimization is gated until all open questions are resolved; full specification expected upfront.
+- **Demo**: Blended mode for live demonstrations (not a study condition).
 
-| Layer       | Choice                         | Notes |
-|-------------|--------------------------------|--------|
-| Frontend    | React + Vite                   | React entry apps: **`client`**, **`researcher`**, optional **`analyzer`** (local upload of exported session archives), plus a static **homepage** (`index.html`) for choosing which app to open; shared components as needed. |
-| Backend     | FastAPI                        | Exposed via HTTPS; Cloudflare (or similar) in front when using a public domain. Participant chat uses Google **`google-genai`** (not the deprecated `google-generativeai` package). |
-| Python      | Repo **`venv/`** at project root | Use `venv` for all Python tooling (`pip`, `pytest`, server run). |
-| DB / cache  | SQLite                         | One database file per deployment is sufficient for sessions, chats, runs. |
-| Deploy      | Frontend Vercel; backend own domain | Configure public API base URL and CORS for the Vercel origin; Raspberry Pi or other small host for API. |
+The underlying task is a fixed VRPTW scenario (`vrptw_problem/`), presented to participants as a general metaheuristic optimization assistant. The domain identity is not disclosed until debriefing.
+
+Study materials are in `vrptw_problem/docs/`. IRB review in progress; minimal risk.
 
 ---
 
-## 4. Repository layout (target)
+## 2. Tech Stack
 
-- **`frontend/`** — Participant **`client/`** UI and **`researcher/`** UI (separate areas or builds); optional root **`index.html`** homepage linking to both for local dev and static hosting; shared UI and API client code colocated as appropriate.
-- **`backend/`** — FastAPI app, SQLite access, session and logging logic, **`run_server.py`** (Uvicorn entry with optional `--host` / `--port` / `--reload`; defaults from `.env`), editable **LLM system prompts** under **`backend/app/prompts/`** (e.g. participant chat persona), and a **thin adapter** that imports from **`vrptw_problem`** (no copies of that tree inside `backend/` unless explicitly approved). Sessions API lives in **`backend/app/routers/sessions/`** as a package: `router.py` (routes), `helpers.py`, `intent.py`, `context.py`, `sync.py`, `derivation.py`.
-- **`vrptw_problem/`**, **`knapsack_problem/`** — domain packages; see `mopt_manifest.toml` in each for registry wiring. **`template_problem/`** is a copy-and-fill template for adding new problems; see `template_problem/TEMPLATE_INSTRUCTIONS.md`.
-- **`docs/`** (outside `vrptw_problem/`) — e.g. **`RASPBERRY_PI_SETUP.txt`** for clone → venv → install → run on a Pi. Other study or deploy notes may live in repo root or `docs/` as needed.
-
----
-
-## 5. Reference material (read-only)
-
-- **Domain and solver behavior:** `vrptw_problem/` — e.g. `DESCRIPTION.md`, `optimizer.py`, `evaluator.py`, `user_input.py`, `orders.py`, `vehicles.py`, `traffic_api.py`.
-- **Study framing (optional):** `vrptw_problem/docs/` (e.g. proposed study materials).
-
-Do **not** add application routes, study-only hacks, or deployment config **inside** `vrptw_problem/`.
+| Layer | Choice | Notes |
+|-------|--------|-------|
+| Frontend | React 18 + Vite + TypeScript | Three SPAs: `client` (participant), `researcher`, `analyzer` |
+| Backend | FastAPI + Uvicorn | Python; target host is Raspberry Pi or equivalent |
+| Database | SQLite via SQLAlchemy 2.0 | One file per deployment |
+| LLM | Google Gemini via `google-genai` SDK | Not the deprecated `google-generativeai` package |
+| Solver | MEALpy 3.0+ | GA, PSO, SA, SwarmSA, ACOR |
+| Charting | Recharts 3.8 | |
+| Python env | Repo `venv/` at project root | Use for all Python tooling |
+| Deploy | Frontend: Vercel; Backend: own domain | Cloudflare tunnel in front of backend |
 
 ---
 
-## 6. Backend specifications
+## 3. Repository Layout
 
-### 6.1 Responsibilities
+```
+frontend/           # Participant (client/), researcher, analyzer SPAs; shared components
+backend/            # FastAPI app; prompts in app/prompts/; sessions API in app/routers/sessions/
+vrptw_problem/      # Primary VRPTW domain package
+knapsack_problem/   # Toy benchmark domain package
+template_problem/   # Copy-and-fill template for adding new domains
+docs/               # Deployment guides (Raspberry Pi, Windows PC setup)
+```
 
-- Accept a **gathered or assumed problem configuration** (neutral DTOs / JSON on the wire) and return a **solution** suitable for the UI: schedule (or equivalent), **cost** under the user- and agent-defined objective, and **constraint violation** summaries where applicable. For analysis, support scoring with a **reference** cost model when specified by the researcher.
-- Preserve the **illusion** of a **general metaheuristic** assistant in external API names, payloads exposed to the client, and default error copy — without lying in ways that break consent; internal implementation may call VRPTW-specific code.
-- **Persist** interactions the researcher needs: chat transcripts, panel state / edits, the editable **problem brief** middle layer (gathered info, assumptions, open questions, system facts), run requests and results, workflow mode, and timestamps. **Session snapshots** (`SessionSnapshot` model) store brief+panel state before runs and on manual saves; kept per session (last 10) for continuity. **`GET /sessions/:id/snapshots`** returns snapshot summaries for the Load-from-snapshot UI; restore posts to PATCH panel or PATCH problem-brief with chat acknowledgement.
+Domain packages expose a `StudyProblemPort` via `mopt_manifest.toml`. The backend registry (`backend/app/problems/registry.py`) discovers and loads them dynamically. `DEFAULT_PROBLEM_ID` is `"vrptw"`.
 
-### 6.2 Public API (shape)
-
-- Implement **REST** with **FastAPI**. Support **local dev** and **production** behind Cloudflare (or similar) on a custom domain; document base URL and CORS for the Vercel frontend.
-- **Authentication:** simple **shared-secret or password** per deployment, supplied via `.env` (separate values for **client** vs **researcher** if needed). All mutating and session-sensitive routes require auth.
-- Prefer **stable, domain-neutral** resource names (examples: sessions, messages, runs, exports — e.g. `/session`, `/chat`, `/solve` or RESTful `/sessions/{id}/...`). Initial version does **not** require WebSockets; polling or short requests are fine.
-- **SQLite** as system of record for sessions, chats, configurations, and run history. Provide **GET** (or equivalent) export endpoints for **JSON** logs and run configs for offline analysis.
-- **Solve** endpoint: accept a **problem configuration** JSON (neutral schema on the wire), return **solution**, **cost**, and **violations** in a stable shape. Validate input; on failure return **clear, safe** errors (no raw stack traces to clients by default).
-- **Responses and logs** shown to participants must not **name** VRPTW, QuickBite, or internal zone identifiers unless the **user** introduced those terms in chat.
-
-### 6.3 Study ports and domain packages (`vrptw_problem`, `knapsack_problem`)
-
-- **`GET /meta/test-problems`** returns registered problem metadata (id, label, `weight_definitions`, `extension_ui`, visualization presets, `weight_display_keys`, `worker_preference_key`) for participant/researcher UIs. **`MOPT_PROBLEM_PATHS`** (optional, comma-separated, trusted hosts only) can register extra ports: directories with **`mopt_manifest.toml`** load like built-ins; otherwise legacy **`register_ports.py`** — see `backend/.env.example`.
-- Built-in domains **`knapsack_problem/`** and **`vrptw_problem/`** each ship **`mopt_manifest.toml`** pointing at **`*_study_port.py`** (`STUDY_PORT`). **`backend/app/problems/registry.py`** inserts the domain root on `sys.path` only while importing that module; `DEFAULT_PROBLEM_ID` is exported from that module for use everywhere a fallback is needed. The **VRPTW** neutral JSON bridge lives in **`vrptw_problem/study_bridge.py`** (re-exported from **`backend/app/adapter.py`**). Enforce **validation** in each port before calling domain code.
-- **Per-domain files:** each problem package owns its weight definitions (`study_meta.py`), Gemini panel schema (`panel_schema.py`), chat prompt appendix (`study_prompts.py`), brief seeding (`brief_seed.py`), and neutral JSON bridge (`study_bridge.py`). See `vrptw_problem/` for the full VRPTW example. The shared `algorithm_params` schema fragment lives in **`backend/app/problems/schema_shared.py`**.
-- **Problem-agnostic gate and config panel:** `StudyProblemPort` exposes `weight_display_keys() → list[str]` (ordered weight keys for the agile gate — at least one must be set to unblock runs) and `worker_preference_key() → str | None` (conditional UI block key; `None` for problems without this concept). Both surface in `TestProblemMeta` via the API and are consumed by `backend/app/optimization_gate.intrinsic_optimization_ready_agile` and the frontend `intrinsicOptimizationReadyAgile`. The config panel (`ProblemConfigBlocks`) is fully problem-agnostic — it uses `TestProblemMeta.weight_definitions` for display order and labels.
-- **Session export:** `GET /sessions/{id}/export` returns `export_schema_version: 2`, full session payload, `messages`, `runs`, `snapshots`, and a server-built **`timeline`** (sorted `message` / `snapshot` / `run` rows with `payload_summary`). `session_snapshots.KEEP_SNAPSHOTS_PER_SESSION` is **2000** (FIFO prune beyond that).
-- **Driver preference semantics:** participant-facing solve/evaluate flows treat `driver_preferences` as explicit-only input. If omitted, default to an empty list (no implicit driver-trait penalties). Brief→panel sync treats `driver_preferences` as a managed field, so stale values do not persist across derivations except when preserved through an explicit lock companion rule. `parse_problem_config` validates canonical conditions (`avoid_zone`, `order_priority`, `shift_over_limit`) with nonnegative `penalty`, `vehicle_idx` 0–4, and optional `zone` / `order_priority` / `limit_minutes` / `aggregation`; canonical zones accept `1`–`5`, `A`–`E`, or canonical zone names. Legacy condition aliases remain read-compatible only in the normalization adapter and are rewritten to canonical forms immediately. **`locked_assignments`** must map task indices **0–29** to vehicles **0–4** with no duplicate tasks. Run metrics expose **`driver_preference_units`** (alias `driver_preference_penalty`) as raw preference cost units before w6 — not minutes of travel time.
-- **Reproducibility:** document and fix **RNG seeds** (and any time-dependent behavior) so the same configuration yields the same result when that is a study requirement.
-- **Violation consistency:** the adapter uses the optimizer's `visits` from its final `evaluate_solution` (not a re-simulation) so the violation block and timeline per-stop data share the same underlying evaluation. Cost and violations reflect the user's configured objectives. Visit payloads may include **`preference_penalty_units`** / **`preference_conflict`** for per-stop driver-preference cost (per-visit rules only).
-- **Timeouts and cancellation:** long runs use a server timeout (`solve_timeout_sec`). **Cooperative cancel:** while `POST /sessions/{id}/runs` (optimize) is executing, `POST /sessions/{id}/runs/cancel` or **`POST /sessions/{id}/optimization/cancel`** (same behavior) sets a per-session flag; the MEALpy objective checks it and stops early (`OptimizationCancelled` → stored run with “Optimization cancelled”). The participant **Cancel run** button calls **`/optimization/cancel`** so strict proxies are less likely to mishandle `/runs/cancel`.
-- **Failed runs / solver imports:** `ImportError` during solve is stored on the run as **`Solver import error: …`** (e.g. missing **`mealpy`** if the API’s Python environment is wrong). Server logs record **`Optimization import error`** or **`Optimization run failed`** with a traceback; operators should run Uvicorn from the repo **`venv`** with **`backend/requirements.txt`** installed.
-
-### 6.4 Environment & config
-
-- Use a **`.env`** (or equivalent) for backend: listen host/port (`MOPT_HOST`, `MOPT_PORT`), **database path**, **public URL** (`MOPT_PUBLIC_URL`) for redirects or links behind Cloudflare etc., **CORS** allowed origins, **client/researcher** auth secrets, and any **Gemini** or other provider keys if proxied server-side. **`MOPT_DEFAULT_GEMINI_MODEL`** defaults to **`gemini-3-flash-preview`** when a session has no stored model id (see `backend/app/config.py` and `backend/.env.example`). Model ids vary by API version and key; participant/researcher UIs suggest presets and allow typing any id.
-- Prefer **`backend/run_server.py`** to start Uvicorn so host/port match `.env` without repeating flags; optional CLI overrides for ad-hoc runs.
-- **Never** commit real `.env` values. Document variable **names** and example **placeholders** only in the repo.
-
-### 6.5 Agent / LLM prompts
-
-- Use the **`google-genai`** Python SDK for Gemini (`genai.Client`, **`chats.create` + `send_message`** with history and config), not deprecated `google-generativeai` or ad-hoc one-shot `generate_content` for conversational turns unless there is a clear non-chat reason.
-- Store **system prompts** and reusable instruction blocks in **`backend/app/prompts/`** (e.g. `study_chat.py`); import them from services—do not embed long prompt strings in route handlers.
-- **Prompt architecture** (`backend/app/prompts/study_chat.py`):
-  - `STUDY_CHAT_SYSTEM_PROMPT` — base persona, **study sandbox** (configuration-only; no custom source or repo edits; pivot “change the code” to supported knobs), **cold start vs warm** (until `goal_summary`, open questions, or non-system brief items exist, `llm._system_prompt_openers` **omits** the per-benchmark `study_prompt_appendix()`; `surface_problem_brief_for_chat_prompt` may mask template fields in the injected JSON), then progressive disclosure, locked terms, and brevity.
-  - `STUDY_CHAT_WORKFLOW_WATERFALL` / `STUDY_CHAT_WORKFLOW_AGILE` / `STUDY_CHAT_WORKFLOW_DEMO` — **mode deltas only** (elicitation depth, when to run, algorithm defaults). `llm.py` appends the chosen one after the base. Agile references weight keys **only when** the benchmark appendix is present in the instruction bundle.
-  - Task-specific prompt fragments now separate **visible chat reply**, **hidden brief update**, **workflow guidance**, and **phase guidance** (`discovery`, `structuring`, `configuration`). Keep `agile`, `waterfall`, and `demo` as first-class inputs across those layers.
-  - `STUDY_CHAT_STRUCTURED_JSON_RULES` and the hidden brief-update task rules cover structured brief updates plus cleanup controls. Normal turns stay additive; cleanup/reorganize turns use explicit replacement flags (`replace_editable_items`, `replace_open_questions`) so omitted rows are truly removed.
-  - The chat system instruction injects the current **problem brief** (compact authoritative memory for the turn), compact summaries of the last 4 optimization runs, and hidden researcher steering notes (if any). Steering stays invisible to participants, is treated as highest-priority guidance for the next participant-visible reply or hidden brief update, and should be blended in naturally with the prior conversational thread.
-- **Fast-path chat pipeline:** participant chat first produces the visible reply (`generate_chat_turn` / `generate_visible_chat_reply`) and returns it to the client, then backend continues hidden brief/config derivation in a background thread. The hidden pass (`generate_problem_brief_update`) uses **`STUDY_CHAT_BRIEF_UPDATE_TASK` plus `STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES`** (same items discipline as structured JSON, including one row per goal term) so cleanup/consolidate turns are not weaker than visible structured rules. **`POST /sessions/:id/messages` always returns the current `processing` snapshot** (including when `invoke_model` is `false`) so the client can reconcile panel spinners after user-only messages. Session responses expose `processing` state (`processing_revision`, `brief_status`, `config_status`, `processing_error`) so the frontend can show pending state without blocking chat. When the hidden brief-update pass yields **no normalized change** to the brief, the background thread skips `generate_config_from_brief` and uses heuristic `derive_problem_panel_from_brief` only (same behavior for `agile` and `waterfall`). If config derivation fails, backend falls back to deterministic regex parsing (`derive_problem_panel_from_brief`). Chat cleanup intents (e.g., consolidate/remove/reorganize definition) still trigger a backend cleanup mode so the model emits a full editable-definition replacement instead of additive append behavior.
-- **Chat-triggered run intent (backend):** `POST /sessions/:id/messages` also performs an LLM structured intent classification (`RunTriggerIntentTurn`) for run start requests: `intent_type` in `{none, affirm_invite, direct_request}` with `should_trigger_run`. Backend triggers optimize only when intent is positive and `can_run_optimization(...)` passes, preserving Agile/Waterfall gate semantics. For direct run requests while blocked/closed, append a concise assistant guidance message that explains missing prerequisites.
-- **`MessageCreate.skip_hidden_brief_update`:** when `true` with `invoke_model`, the server returns the visible assistant reply but **does not** run `launch_background_derivation` (no hidden brief merge / panel resync from that message). Processing is settled to `ready` so the client does not stay `pending`. The participant client sets this for acknowledgement messages after **manual definition saves** (default: no chat note), **manual config saves**, and **snapshot restores**, so the model cannot overwrite authoritative participant edits. Normal chat and run-interpretation messages omit the flag (default `false`).
-- **Visible vs hidden payload discipline:** participant-visible assistant text must stay plain language (no JSON payloads). Structured keys such as `problem_brief_patch`, `replace_editable_items`, and `replace_open_questions` belong only to hidden brief-update flow; backend should sanitize visible replies if such keys leak into chat text.
-- **Framing (participant-visible illusion):** The assistant behaves as a **general metaheuristic optimization** colleague. The **backend** evaluates a **single hard-coded benchmark instance**; the model must **not** name **routing / fleet / scheduling / vehicles / deliveries** domains unless the **user** did so first. **Greetings** and small talk must stay **domain-neutral**. The chat model's actionable output is the **problem brief patch**; solver config JSON is derived in the follow-up config-derivation call. Weight keys in stored config and in the participant panel use **human-readable alias names** (`travel_time`, `deadline_penalty`, `workload_balance`, etc.); the adapter translates these to internal keys before calling the solver.
-- **Frontend auto-context injection:** after a successful optimization run (with **Ask model** on), the frontend automatically posts a context message so the model can interpret and compare results (full hidden derivation). Manual definition/config saves post a change summary with **`skip_hidden_brief_update`** so only the visible reply runs.
-- **Run-acknowledgement rules** (`STUDY_CHAT_RUN_ACK_BASE`, `STUDY_CHAT_RUN_ACK_AGILE`, `STUDY_CHAT_RUN_ACK_WATERFALL`, `STUDY_CHAT_RUN_ACK_DEMO`): when the user message is the auto-posted run-complete context (detected via `intent.is_run_acknowledgement_message`), the agent must **not** add run-result narrative (costs, violation counts, run summaries) to the problem brief — that would contaminate the definition and destabilize config derivation. The agent may suggest at most one or two targeted **config-linked** refinements (e.g. a weight or population-size change). `replace_editable_items` is forced to `False` for run-ack turns; merge-appended **assumption** rows (agile/demo) or **open_questions** (waterfall) are encouraged per the workflow addendum — **waterfall** prompts prioritize **one or two** new or refined `open_questions` after a run when clarification remains (not necessarily every run); **demo** keeps open questions alive alongside assumptions to show the full discovery experience. Agile vs Waterfall vs Demo differ in post-run emphasis and how config tweaks are framed.
-- **Chat-triggered runs + locks:** `POST /sessions/:id/messages` **skips** `classify_run_trigger_intent` when `is_run_acknowledgement_message` is true, so the auto-posted run-complete user line cannot spuriously start optimization in the same request; `classify_run_trigger_intent` also treats run-ack-shaped text as no-trigger. **`locked_goal_terms`** from the saved `panel_config` are injected into visible and hidden chat system instructions via `problem_brief.locked_goal_terms_prompt_section` so the model avoids proposing changes to locked weights and can tell the user which terms are locked. While **`worker_preference`** is locked, brief-derived panel sync preserves the saved **`driver_preferences`** list (does not overwrite it from derived config).
-- **Answered open questions → gathered:** On `PATCH /sessions/:id/problem-brief` and in the participant client's `cleanProblemBriefForCompare`, any open question with `status: answered` and non-empty `answer_text` is **promoted** to a **Gathered Info** row (`kind: gathered`, `source: user`, id `gathered-oq-{questionId}`) as **literal** `Question — Answer` text (`problem_brief._format_answered_open_question_gathered`, mirrored in `summary.ts`), then removed from `open_questions`. Later chat cleanup turns may rephrase those lines into declarative facts. Chat prompts forbid encoding resolved answers as fake open questions (e.g. `(Answered: …)` in question text); `merge_problem_brief_patch` also folds matching patch rows into gathered. Optional intent `is_answered_open_question_message` still nudges the hidden brief-update task when that exact phrase is posted. `merge_problem_brief_patch` preserves `status` and `answer_text` from the base when the agent's patch includes a question by id but omits those fields (before normalize promotes answered rows).
-- **Open-question cleanup (manual + auto):** Keep a dedicated participant action (`ConfigPanel` drop-up) for **Clean up open questions**, placed directly under **Clean up definition**. It should target only `open_questions` via a dedicated backend endpoint. After chat turns that mutate the brief, backend should also run an automatic open-question cleanup pass in all modes (`agile`, `waterfall`, `demo`) using LLM-first pruning plus conservative deterministic fallback. Open-question cleanup must show loading only inside the Open Questions section so gathered/assumption editing remains available.
-- **Brief item atomization:** `normalize_problem_brief` splits compound gathered/assumption lines that enumerate several objective terms (when known weight-slot phrases appear) and lines beginning with **`Constraint handling:`** into **one row per term** (the first row keeps the `Constraint handling:` prefix; following rows are standalone clauses), matching how compound objective lists are split so constraint penalties align with individual goal terms for deterministic parsing. Rows promoted from answered open questions (`gathered-oq-*` ids, or text containing the literal `Question — Answer` em dash) are **excluded** from that splitting.
-- **Cleanup + panel:** On definition **clean up** (`cleanup_mode` / `replace_editable_items`), after the hidden LLM merge, background derivation calls **`sync_problem_brief_from_panel`** so gathered rows for config slots (weights, search strategy, shift penalty, etc.) are **reconciled to the saved `panel_config`** and numeric values are not dropped. The hidden brief-update prompt also includes the current panel JSON when cleanup is active so the model can align wording.
-- Structured replies use **`STUDY_CHAT_STRUCTURED_JSON_RULES`**; keep rules aligned with §7.3.
-- Restart the API (or use `--reload` in dev) after editing prompt files.
----
-
-## 7. Frontend specifications
-
-### 7.1 Client / participant flows
-
-The participant **does not** choose Agile vs Waterfall at session start; that mode is assigned by the **researcher** (see §7.2). **`POST /sessions`** creates sessions with **`optimization_allowed: false`**, **`optimization_runs_blocked_by_researcher: false`**, and **`optimization_gate_engaged: false`**. **`GET /sessions/:id`** exposes **`optimization_gate_engaged`** for the participant cold-start banner. **`can_run_optimization`** gates runs: **`optimization_runs_blocked_by_researcher`** false, then permit **or** intrinsic readiness (agile: weights + algorithm; waterfall: engaged and no open questions). After participant brief/panel updates, **`POST /sessions/:id/messages`**, synchronous brief merges, and background derivation, **`helpers.sync_optimization_allowed_after_participant_mutation`** aligns **`optimization_allowed`** with intrinsic readiness and may set **`optimization_gate_engaged`** when the brief lists open questions. A researcher **`PATCH`** may temporarily set **`optimization_allowed: true`** until the next participant update. **`ConfigPanel`** (waterfall): cold-start banner until engaged; open-questions banner while any question is open. Researcher checkbox: **`!optimization_runs_blocked_by_researcher && optimization_allowed`**. **Agile** may autorun the first optimization client-side once intrinsic readiness is met. Chat-triggered run requests are backend-evaluated from conversation context (invite-affirmation or direct request) and still require `can_run_optimization(...)`; blocked requests produce an assistant guidance message instead of starting a run. While signed in, the participant top bar shows **Participant #…** when a number exists, preferring **`session.participant_number`** from the server (sign-in field, create-session body, researcher edits, or resume) over browser-only state so refresh and **Start session** without **Save token** still display it; plus a short session id prefix. The bar does **not** show workflow mode by name (to reduce demand characteristics); a very thin cool vs warm **top accent** on the header gives a discreet cue for observers who know to look. The client offers **Start session** plus **Past sessions on this browser** (collapsible on the login gate): start includes an optional **participant number** field. **localStorage** keeps a bounded list of session ids the user has started or left on this device; **Refresh list** + **Resume** use the saved **access token** and `GET /sessions/:id` (and messages/runs) to reopen. Resume entries should display participant number and session start time (server snapshot preferred; local snapshot fallback). **Terminated** sessions resume in the existing read-only mode. **Forget** drops an id from local storage only. Do **not** implement “past sessions by IP” on the server for the shared participant token — that would expose other participants’ sessions.
-
-The **client** UI has at least **three panels:** (1) **Chat and upload**, (2) **Information and assumption / controls**, (3) **Visualization and results**.
-
-- The user states the problem in chat and should be steered to the chat-footer control **`Upload file(s)...`** (exact label, including ellipsis). **Upload is simulated** for the study: the backend is fixed to the canonical scenario; the agent should **acknowledge** uploads and answer **as if** data were supplied. The participant UI shows **chips** beside that button (scrollable row; **×** removes a chip from the local list only). **Participant-facing guidance** must not mention researcher-only testing shortcuts; for developers, the same upload line can be injected via **`POST /sessions/{id}/researcher/simulate-participant-upload`**. In logistics context, the agent should ask for both **order data** and **driver info/preferences**, and may naturally mention city-traffic API assumptions (time-of-day effects, disruptions) to explain routing logic. Canonical inputs include the **travel time matrix** and **30 orders** (see `vrptw_problem` data and docs).
-- **New sessions** ship with **no** problem JSON on panels 2–3: the **Start session** action must clear the configuration textarea immediately and keep it **empty** until the **researcher** uses **Push starter problem config** (a deliberately mediocre, sparse starter on the server) or the participant/agent updates the panel. The participant must not see leftover JSON from a prior session when beginning a new one, and there should be **no separate automatic fallback/test config** beyond that explicit researcher push. Panel 2 now has a middle layer: an editable **problem brief / definition** tab (gathered info, assumptions, open questions), a structured **Problem Config** tab, and a **Raw JSON** tab. Problem Config goal-term rows include lock/remove controls; locked goal terms must survive chat/definition-derived config sync unchanged until unlocked. Entering config edit mode should come only from deliberate controls (buttons, lock/remove, and read-only field mimics), not arbitrary panel background clicks. Open questions should use stable objects (`id`, `text`, `status`, `answer_text`) and the participant UI should prioritize answering/toggling question status instead of freeform rewriting existing question text. Definition content edits should be inline (per-element Save/Cancel) without requiring a global **Edit definition** gate, while the tab-level Definition actions persist the overall brief and optionally sync to config. Keep this answer-state behavior explicit with respect to `workflow_mode`; current behavior is intentionally aligned across `agile` and `waterfall` unless a change explicitly introduces divergence. Hidden system context may still exist in the stored brief for prompting, but should not be shown to participants. In **Waterfall**, an empty Problem Config tab is expected early on; the agent should keep the conversation focused on clarifying the definition until a real solver config is actually created, but the backend should deterministically derive and sync the `problem` block from the saved definition whenever that definition contains enough configuration signal, even if some open questions remain. Partial chat `problem_brief_patch.items` payloads should be merged additively so a turn that only changes the algorithm does not drop earlier confirmed constraints before config derivation runs. Numeric targets stated in the definition should carry through into the derived config where possible. Config saves should also push stable config-derived facts back into the saved definition so the flow stays bidirectional: `chat -> definition -> config`, and config edits feed back into the definition before later syncs. Config-linked facts in the saved definition should reconcile by semantic slot, so newer values for the same setting (algorithm, population size, epochs, weights, algorithm params, and similar config facts) replace older conflicting entries instead of accumulating duplicates. The **Raw JSON** tab should present a read-only combined snapshot of both the problem definition JSON and the current problem config JSON, and when no config has been saved yet it should show an empty object rather than `null`. Depending on **Agile vs Waterfall**, the agent surfaces **constraints and objectives** on panel 2 once that exists; the user may edit values or options. Panel 2 state must stay in sync with the **JSON configuration** sent to the solver; when the user changes the brief or config, the **chat** should acknowledge the update. When chat updates `problem.weights` or `problem.algorithm_params`, treat those nested objects as replacements rather than additive deep merges so stale starter values do not survive after the user changes priorities or algorithms. Keep a participant-visible debug action under the Definition tab that rebuilds the saved config from the saved definition.
-- When an **optimization run** completes, show results in panel 3 (**tabs** if multiple runs). Run labels shown to users must be **session-local** (`Run #1`, `Run #2`, … within that session) rather than raw database ids. While a solve is in flight, use **one** tab for that run (`Run #N` plus a spinner); do not add a separate “Running…” tab or poll the run list in a way that duplicates the in-flight run in the UI. For this problem, include an **editable schedule** (edit mode) and **cost** for that run per the configured objective. **Manipulated** schedules should be reflected in chat. **Constraint violations** should update panel 2 when run results exist. Algorithm, objective weights, and constraints shown in results are derived strictly from the run snapshot (`run.request.problem` / run result); when the snapshot lacks keys, show "not captured in this run snapshot" rather than falling back to current panel config.
-- **Results visualization:** outside **results edit mode**, panel 3 should prefer a visual timeline over raw JSON. The backend run payload includes **`schedule.stops`** (arrival/departure/window/load/capacity/priority/violation fields), **`schedule.vehicle_summaries`**, and **`schedule.time_bounds`** so the frontend can render an interactive per-vehicle Gantt/timeline with inline time-window and capacity markers plus a compact violation summary. Keep the visualization area vertically scrollable for taller schedules, keep raw JSON as a secondary details/debug view, keep the bottom action row anchored even when no run exists yet, use a compact **Edit** action for schedule editing only after a run result exists, expose **Run optimization** as the clearer primary action, and use short helper actions (**Explain**, **Revert** with tooltips). Participants may mark one or more prior runs as **Include as candidate** seeds for the next optimize run; this metadata should remain optional and problem ports may consume or ignore it safely.
-- Each **RUN** produces a **chat** bubble (acknowledgment); the **result summary** may follow as the next bubble.
-- **Saving** edits on panels 2 and 3 posts a **chat acknowledgment**. While a panel is in **edit mode**, it is visually highlighted and the user **cannot** use other panels until **save** or **exit edit** (per your UX rules).
-- **Chat responsiveness:** Outgoing messages render **immediately** (optimistic). If **Ask model** is on, the backend should return the participant-visible assistant reply on the fast path, then continue definition/config derivation asynchronously. The assistant area still shows pending feedback while the reply is in flight, and panel 2 should show definition/config spinners from session `processing` state while background derivation is still running. On **Problem Config** and **Raw JSON** tabs, a **grey overlay** stays fixed over the scroll area while `brief_status` or `config_status` is pending (or a client sync is in flight); it is visual-only (`pointer-events: none`) so the user can still scroll the config underneath. While either status is **pending**, the participant client should **`GET /sessions/:id` on a short interval** (about **2.5s**, visibility-gated) so processing state and `panel_config` refresh promptly after the background thread commits. Spinner/shield labels must be operation-scoped (definition-save vs config-sync) rather than a single global busy bit. After **90s** a client watchdog clears the overlay and shows a stall hint so the user is not stuck. Entering **definition** or **config** edit mode (by interacting with fields, **+**/**X**, or the config surface) respects the same lock until **Save** or **Cancel**.
-- **Definition UX (participant):** new gathered/assumption rows use a placeholder string (`DEFINITION_NEW_ROW_PLACEHOLDER` in `client/problemDefinition/constants.ts`) until the user replaces it; placeholder rows are **omitted** from PATCH payloads and do not count as unsaved changes until edited. Global **Save** / **Cancel** for the definition tab (not per-row saves). In the definition tab action row (next to **Sync to config**, same drop-up pattern as **Snapshot**), **⋯** opens a menu whose item **Clean up definition** posts a cleanup intent message (requires **Ask model**). Gathered and assumption rows are editable regardless of stored `item.editable`; per-row Type/Status dropdowns are removed (subsection implies kind). While a participant session has no loaded chat messages yet (new session or still loading history), auto-focus the chat composer, apply a visible-but-brief highlight pulse, and keep a chat-first layout (hide panels 2–3) while preserving chat at its normal 3/10 width. The **Model / API key** control should be a compact **chip** that reflects whether a key is configured (refresh session when opening the dialog; after save, update status from the server response). A matching **Backend** chip should expose the active backend URL plus connection status.
-- **Session sync races:** In-flight `GET` session / messages / runs must **not** apply after the user **Leave**s or **Start session** (another id). Use a **session id ref** (or equivalent) so stale HTTP responses cannot repopulate state from a **previous** session. **Problem panel hydration:** use an explicit mode — after **POST /sessions**, stay in **empty-until-server-panel** until `panel_config` is non-empty on the server (researcher push, etc.) or the client applies JSON from **save** / **chat** `panel_config`; then **follow** the server on each poll. While the server panel is still empty, **do not** push `""` into the textarea on every poll (that would erase in-progress edits). While the participant is in **problem configuration edit mode**, **do not** overwrite the textarea from `GET` session (polling would undo clearing the JSON); after **Save** or **Cancel**, resume mirroring from the server. The **mount** `syncSession` effect should pass **AbortSignal** + **abort on cleanup** so **React Strict Mode** does not double-fetch the same session snapshot.
-
-### 7.2 Researcher flows
-
-The **researcher** UI has a **left panel** for session list and management. Selecting a session shows **chat**, **runs**, and **edits**. Session rows should display participant number and session start time, and the session detail controls should allow editing/saving participant number after start.
-
-- **Delete session:** the participant client must detect removal (404 / gone responses on sync) and return to the **same gate as initial login** (token still in browser storage) with copy explaining the session was deleted; **Start session** creates a new UUID.
-- The researcher session list should support selecting multiple visible sessions and deleting them in one confirmed batch operation for fast test-session cleanup.
-- **Terminate session:** the participant **keeps read access** to GET session, messages, and runs so they can review history; **writes** (chat, uploads, panel saves, runs, model key save) are rejected by the API. The client **greys out** chat and actions and shows an **info banner** with **Start new session** while leaving panels readable.
-- **Researcher messages** in chat are **invisible** to the participant; only the researcher sees their own steering messages.
-- The researcher sets **Agile vs Waterfall** mode for the agent driving that session and may **push** the canonical mediocre sparse starter problem JSON to the participant session when the study design calls for it. In researcher session detail, the selected session panel should show a clear workflow accent (cool for agile, warm for waterfall) that updates immediately on mode changes. In **waterfall**, turning on **“'Run' button available.”** while the brief still has **open** questions must prompt for **`window.confirm`** (same pattern as delete) before applying the PATCH.
-- The researcher also controls session-level participant tutorial visibility via **Show participant tutorial** (`participant_tutorial_enabled`, default `false`). When enabled, participant UI shows a replayable step-by-step bubble tutorial (chat, upload, definition/config review, definition save, run, config save, run again) with workflow-specific copy: agile emphasizes assumptions and iteration; waterfall emphasizes open questions and gating.
-- Researcher detail also exposes a persisted **Tutorial step override** (`tutorial_step_override`) used as the session-level current tutorial step pointer. Participant-side action events update tutorial tracking flags and may advance this pointer; selecting a step in researcher UI rewinds tutorial tracking from that step onward (tutorial-state only) while preserving chat/runs/config artifacts. Keep the compact step dropdown adjacent to **Show participant tutorial**.
-- Participant tutorial dismiss persists as session-level tutorial disable via participant-auth PATCH (`/sessions/{id}/participant-tutorial`), so researcher controls stay in sync with participant hide actions.
-- Step 3 (`inspect-definition`) must complete only from an explicit participant Definition-tab click event; initial mount emissions and programmatic tab switches must not mark it visited.
-- The researcher session detail should keep the **participant model/API key chip** and the **backend chip** in the controls area immediately above chat, not in the top header.
-- The researcher Runs view should list each run as a collapsed entry by default, with actions to inspect details and delete individual runs without removing the entire session. Run deletion should require an explicit confirmation and remain deleted after refresh or reselection.
-
-### 7.3 UX constraints
-
-- Do **not** surface **VRPTW**, **QuickBite**, or **internal zone names** in UI copy or API-visible labels unless the **participant** used those terms first.
-- **Chat UI** (participant and researcher steering): shared **`frontend/src/shared/chat/ChatPanel.tsx`** (`ChatPanel` + `ChatComposer` + optional **`ChatAiPendingBubble`**). Enter sends, Shift+Enter newline — implemented **inside** that module (not a separate keyboard file). Shared message-bubble rendering should stay under **`frontend/src/shared/chat/`** so both apps keep the same optimistic-message behavior. Chat typing performance is optimized by using a `scrollTriggerKey` for scroll-to-end (message-based only), memoizing `MessageBubbleList`, and stabilizing the send callback via a ref for chat input to avoid keystroke-triggered re-renders.
-- **Participant frontend structure:** keep **`frontend/src/client/ClientApp.tsx`** thin. Session orchestration belongs in **`frontend/src/client/hooks/useParticipantController.ts`**; unauthenticated UI in **`frontend/src/client/components/LoginGate.tsx`**; authenticated layout in **`frontend/src/client/components/ParticipantShell.tsx`**; the model dialog in **`frontend/src/client/components/ModelSettingsDialog.tsx`**. Group participant-only code by feature: chat UI/helpers under **`frontend/src/client/chat/`**, the editable middle layer under **`frontend/src/client/problemDefinition/`**, problem-config UI and JSON helpers under **`frontend/src/client/problemConfig/`**, and visualization/schedule tooling under **`frontend/src/client/results/`**. Shared non-React client helpers and types belong under **`frontend/src/client/lib/`**. **Problem module registration:** the single named point is **`frontend/src/client/problemRegistry.ts`** — all generic code calls `getProblemModule(id)` and never imports problem folders directly. Each problem's `frontend/index.ts` exports a `MODULE: ProblemModule` with optional `buildGoalTermsExtension`, `vizTabs`, `ViolationSummary`, `parseEvalRoutes`, and `formatRunViolationSummary`.
-- **Tutorial frontend structure:** shared tutorial state/event/transition/anchor logic belongs in **`frontend/src/tutorial/`** (`state.ts`, `events.ts`, `transitions.ts`, `anchors.ts`) and should be reused by participant and researcher flows instead of duplicating step logic in page components.
-- **Researcher frontend structure:** keep **`frontend/src/researcher/ResearcherApp.tsx`** as a composition root only. Polling/stateful logic should live under **`frontend/src/researcher/hooks/useResearcherController.ts`**, display sections under **`frontend/src/researcher/components/`**, and shared non-React helpers under **`frontend/src/researcher/lib/`** so the top-level shape mirrors the participant app for readability.
-- **Problem configuration panel (`client/problemConfig/ConfigPanel.tsx`):** renders `ProblemConfigBlocks.tsx` — a structured form with **Goal terms** (weight rows from `TestProblemMeta.weight_definitions`), optional problem-specific extras (injected via `ProblemModule.buildGoalTermsExtension` — e.g. VRPTW adds driver preferences and structural fields), and **Search strategy** (algorithm, `algorithm_params`, max epochs, pop size, seed — see `backend/app/algorithm_catalog.py`). The participant enters edit mode by interacting with fields; the bottom row shows **Save** / **Cancel** (Save disabled until material changes). When not editing, **Snapshot** drop-ups offer save / load, and the definition tab keeps **Sync to config**. Participant form omits `only_active_terms`; researcher controls include that toggle.
-- **Optimistic chat:** After send, the user’s message should **appear immediately** in the log (do not block on persistence or model latency). When the participant enables **Ask model** and a reply is pending, show a **spinner** (“Thinking…”) in the assistant area until the server returns. Researcher steering messages should also appear immediately (optimistic row, then replace with the server `MessageOut`).
-- **Password** protection for both apps; secrets from `.env` (see §6.4).
-- The agent should **not** dump large explanations into panel 2 **without** prior chat context — especially under **Waterfall**.
-- Chat responses should stay **concise** by default.
-
-### 7.4 State & data
-
-- **Authoritative** session history (chat, runs, configs) lives on the **server** (SQLite). The **browser** may cache a **local copy** for resilience (e.g. offline draft or re-open) and for **participant review** of their own past sessions; define **merge rules** on reconnect (server wins for conflicts unless you specify otherwise).
-- The **researcher** sees **all** server-stored sessions. If a session is **deleted** or **terminated** while the client is open, the next sync should surface the UX in §7.2.
-
-### 7.5 Shared components between researcher and client
-
-- **Model / API key setup:** a shared **chip** opens a dialog to paste an **API key** and select **model** (start with **Google Gemini** “Flash” tier or current equivalent). **Keys** are stored **server-side** (encrypted at rest if feasible) so sessions can resume; the researcher may **push** a key to the participant flow; participants may also supply their own.
-- **Backend connection setup:** a shared **Backend** chip opens a dialog showing the active backend URL and connectivity. URL resolution priority is **browser user override → `VITE_API_BASE` → `http://127.0.0.1:8000`**. Both participant and researcher can inspect or change the browser-local override from that dialog.
-- Structure the codebase so **other providers** can be added without rewriting the whole chat layer.
-- **Chat + model calls** originate from the **participant client**; the researcher **interferes** (steering messages) through the researcher UI without exposing those lines to the participant.
-
-### 7.6 Look and feel
-
-- The interface design should **avoid high-saturation colors**. Use **moderate or muted palettes** to minimize eye fatigue during long study sessions.
-- It is acceptable—and even preferable for this phase—to keep the **visual design “retro”** or reminiscent of classical **engineering/scientific software** (think understated, functional interfaces: clear panels, plain backgrounds, minimal visual distractions).
-- Avoid glossy, hyper-modern, or overly animated elements. Favor classic typographic hierarchy, static icons, and clear, separated regions.
-- When in doubt, prefer **simplicity and readability** over flash or trendiness. The visual hierarchy should reinforce workflows rather than obscure them.
-- Maintain **strong accessibility** in color choices—ensure sufficient contrast for those with color vision differences, but stay within the muted/retro theme.
-- The overall aesthetic should evoke reliability and clarity; playful or “modern consumer app” motifs are discouraged for now.
-
+Architecture or layout changes should be reflected in both this file and `README.md`.
 
 ---
 
-## 8. Logging, study, and ethics
+## 4. Backend Architecture
 
-- **Chat logs** are the primary artifact; additional events (timestamps, run IDs, mode changes, exports) may be added later.
-- **Do not** persist **API keys** or passwords in application logs; redact or hash identifiers if logs are shared.
-- The study materials are under IRB review. Overall, this study presents minimal risk. 
+### Core data flow
 
----
+1. Participant sends a chat message → LLM generates a visible reply (fast path, returned immediately).
+2. Background thread: LLM updates a hidden `ProblemBrief` (gathered info, assumptions, open questions) as a compact rolling definition, then derives a structured `problem` config JSON.
+3. Participant saves the definition → backend syncs brief ↔ panel config bidirectionally.
+4. Optimization gate check → `POST /sessions/{id}/runs` → MEALpy solver → result stored.
+5. Next chat turn acknowledges the run result (interpretation-only context messages do not trigger hidden brief/config derivation).
+6. Researcher steering notes are injected into the system prompt (invisible to participant, highest priority).
 
-## 9. Quality bar
+### Problem brief as middle layer
 
-- **Tests:** core adapter and API handlers should have **unit tests** where practical; at least a **manual smoke checklist** for client, researcher, and solve path before demos.
-- **Accessibility:** keyboard access to the three client panels and dialogs; visible focus; reasonable contrast (target **WCAG-oriented** behavior without blocking on a full audit unless required).
-- **Browsers:** latest **Chrome** and **Edge** for the study; note if Safari/Firefox are best-effort.
-- The backend should support **one** active study session with **1–3** concurrent users without noticeable UI lag.
-- **Cold start** under **30 seconds** on the target Pi-class host.
-- Typical **chat** and **solve** requests: visible chat should usually return on the first model call, even if definition/config derivation continues in the background. Aim for **1–5 s** for the visible reply when warm; allow panel derivation or heavy runs to continue with explicit loading feedback up to **~30 s** when necessary.
-- **Storage** writes should be **durable** and **bounded**; recover cleanly from abrupt shutdown where SQLite allows.
-- **Memory** steady-state **under ~1 GB** on the server; avoid leaks across long sessions.
-- **CPU-heavy** work: **timeouts**, **cancellation**, and user-visible **timeout** messages.
-- **Disk:** avoid chatty logging on **SD cards**; rotate or buffer logs if needed.
-- **No** long-lived WebSockets required initially; **HTTP polling** or short requests are acceptable on low bandwidth.
-- On overload, **fail gracefully** (clear errors, retry guidance) rather than wedging the process.
+The brief is the single source of truth between chat and panel config. Config is always *derived from* the brief, never written directly. Brief structure includes `goal_summary`, a single rolling `run_summary`, `gathered_info`, `assumptions`, and `open_questions` (with `status`/`answer_text`). Cleanup should consolidate run/session bookkeeping noise into `run_summary` instead of leaving per-run rows in gathered/assumptions/questions.
 
----
+### Workflow gating
 
-## 10. Out of scope (explicit)
+- **Agile**: saved `problem` has ≥1 goal-term weight and a non-empty algorithm.
+- **Waterfall**: `optimization_gate_engaged` flag set (first participant chat or saved open question) and no open questions with `status: "open"`.
+- **Researcher override**: `optimization_allowed` flag on the session.
 
-- **No** production multi-tenant billing, full OAuth identity platform, or mobile native apps unless later specified.
-- **No** requirement for real file ingestion that changes the canonical problem data **without** maintainer approval (simulated upload only for v1).
+### LLM prompts
 
----
+All prompts live in `backend/app/prompts/` (primarily `study_chat.py`). The system instruction injects the current brief, last 4 run summaries, and researcher steering notes. Workflow-specific addenda (`STUDY_CHAT_WORKFLOW_WATERFALL` / `STUDY_CHAT_WORKFLOW_AGILE`) are appended based on `session.workflow_mode`. Domain-specific appendices come from each problem package (`*_study_prompts.py`), merged in `backend/app/services/llm.py`. Run-ack turns are constrained to avoid run-by-run memory growth: brief updates should stay condensed, avoid upload/run bookkeeping rows, and favor durable config-slot updates over new assumptions. Participant-facing replies should stay very short by default and use natural-language setting names over raw config keys.
 
-## 11. Definition of done
+### Domain packages
 
-- [ ] `vrptw_problem/` **unchanged** (`git status` clean under that path).
-- [ ] **Backend** starts locally with documented **`.env.example`** (no secrets in repo); **`backend/run_server.py`** (or equivalent) documented for host/port.
-- [ ] **Client** and **researcher** frontends **build** and run locally against the API.
-- [ ] **Auth** enforced on API; CORS correct for Vercel + local dev.
-- [ ] At least one **end-to-end path**: session → chat → panel edits → solve → result + cost + violations.
-- [ ] **Export** of session JSON available for the researcher.
+Each domain owns: weight definitions (`study_meta.py`), Gemini panel schema (`panel_schema.py`), chat prompt appendix (`study_prompts.py`), brief seeding (`brief_seed.py`), and neutral JSON bridge (`study_bridge.py`). Generic backend code accesses all domain behavior through `get_study_port()` from the registry.
+
+### API shape
+
+REST with FastAPI. Separate bearer token secrets for participant and researcher (from `.env`).
+
+- Sessions, messages, runs, snapshots at `/sessions/{id}/...`
+- `GET /meta/test-problems` — registered problem metadata for frontends
+- `POST /sessions/{id}/runs` — solve; returns solution, cost, violations
+- `GET /sessions/{id}/export` — versioned archive (`export_schema_version: 2`) with full timeline
 
 ---
 
-## 12. Open questions
+## 5. Frontend Architecture
 
-- *(Add bullets here as decisions land — e.g. exact neutral JSON schema, debrief wording, encryption for stored keys.)*
+Three SPAs share common components from `frontend/src/shared/`:
+
+- **`client.html`** (participant) — Three panels: (1) Chat + upload, (2) Problem definition/config, (3) Results/visualization. Session orchestration in `useParticipantController.ts`.
+- **`researcher.html`** — Session list + detail (chat, runs, mode controls, tutorial controls). Orchestration in `useResearcherController.ts`.
+- **`analyzer.html`** — Local session archive viewer (upload exported JSON; timeline + raw JSON).
+
+Problem modules register in `frontend/src/client/problemRegistry.ts` — the single named point for domain-specific frontend code. All generic frontend code calls `getProblemModule(id)`.
+
+### Participant UI
+
+The participant UI presents as a domain-neutral metaheuristic assistant. The workflow mode is not labeled in the participant header; a thin color accent provides a discreet observer cue.
+
+Panel 2 has three tabs: **Definition** (gathered info, assumptions, open questions), **Problem Config** (structured goal-term weights, algorithm, params), and **Raw JSON** (read-only combined view). Config edits feed back into the brief; both directions of the chat → brief → config pipeline are kept in sync.
+
+Panel 3 defaults to an interactive Gantt-style vehicle timeline built from run payload data. Run tabs use session-local labels (`Run #1`, `Run #2`, …).
+
+Chat messages render optimistically. The visible reply returns on the fast path; panel spinners from `session.processing` state reflect background brief/config derivation.
+
+### Researcher UI
+
+The researcher sets workflow mode (agile/waterfall), the run-button availability, and the participant tutorial visibility. Steering messages are injected into the participant's session and remain invisible to them. The researcher can push a sparse starter problem config and batch-delete sessions.
+
+---
+
+## 6. Ethics and Logging
+
+Chat logs are the primary data artifact. API keys and participant identifiers must not appear in application logs. Real `.env` values must not be committed — document variable names and placeholders only.

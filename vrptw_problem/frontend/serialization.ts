@@ -111,6 +111,15 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
           : {},
       driver_preferences: parseDriverPreferences(inner.driver_preferences),
       use_greedy_init: typeof inner.use_greedy_init === "boolean" ? inner.use_greedy_init : true,
+      goal_term_order: Array.isArray(inner.goal_term_order)
+        ? (inner.goal_term_order as string[]).filter((e): e is string => typeof e === "string")
+        : null,
+      constraint_types:
+        inner.constraint_types !== null &&
+        typeof inner.constraint_types === "object" &&
+        !Array.isArray(inner.constraint_types)
+          ? (inner.constraint_types as Record<string, import("@problemConfig/types").ConstraintType>)
+          : {},
     },
   };
 }

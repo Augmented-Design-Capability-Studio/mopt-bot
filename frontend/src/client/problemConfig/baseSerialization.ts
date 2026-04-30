@@ -6,7 +6,7 @@
  */
 
 import { parseAlgorithmParamsFromInner, serializeAlgorithmParams } from "./algorithmCatalog";
-import type { BaseProblemBlock } from "./types";
+import type { BaseProblemBlock, ConstraintType } from "./types";
 
 export type ParsedBaseProblemConfig = {
   outerRaw: Record<string, unknown>;
@@ -33,6 +33,17 @@ export function parseBaseProblemConfig(json: string): ParsedBaseProblemConfig {
   const earlyStop = typeof inner.early_stop === "boolean" ? inner.early_stop : true;
   const algorithmStr = typeof inner.algorithm === "string" ? inner.algorithm : "";
 
+  const goalTermOrder = Array.isArray(inner.goal_term_order)
+    ? inner.goal_term_order.filter((e): e is string => typeof e === "string")
+    : null;
+
+  const constraintTypes: Record<string, ConstraintType> = {};
+  if (inner.constraint_types !== null && typeof inner.constraint_types === "object" && !Array.isArray(inner.constraint_types)) {
+    for (const [k, v] of Object.entries(inner.constraint_types as Record<string, unknown>)) {
+      if (v === "hard" || v === "soft" || v === "custom") constraintTypes[k] = v;
+    }
+  }
+
   return {
     outerRaw,
     hasProblemKey,
@@ -51,6 +62,8 @@ export function parseBaseProblemConfig(json: string): ParsedBaseProblemConfig {
       pop_size: typeof inner.pop_size === "number" ? inner.pop_size : null,
       random_seed: typeof inner.random_seed === "number" ? inner.random_seed : null,
       use_greedy_init: typeof inner.use_greedy_init === "boolean" ? inner.use_greedy_init : true,
+      goal_term_order: goalTermOrder && goalTermOrder.length > 0 ? goalTermOrder : null,
+      constraint_types: constraintTypes,
     },
   };
 }
@@ -90,6 +103,17 @@ export function serializeBaseProblemConfig(
   const serializedAp = serializeAlgorithmParams(problem.algorithm, problem.algorithm_params);
   if (serializedAp) problemObject.algorithm_params = serializedAp;
   else delete problemObject.algorithm_params;
+
+  if (problem.goal_term_order && problem.goal_term_order.length > 0) {
+    problemObject.goal_term_order = problem.goal_term_order;
+  } else {
+    delete problemObject.goal_term_order;
+  }
+  if (problem.constraint_types && Object.keys(problem.constraint_types).length > 0) {
+    problemObject.constraint_types = problem.constraint_types;
+  } else {
+    delete problemObject.constraint_types;
+  }
 
   const result = hasProblemKey ? { ...outerRaw, problem: problemObject } : problemObject;
   return JSON.stringify(result, null, 2);

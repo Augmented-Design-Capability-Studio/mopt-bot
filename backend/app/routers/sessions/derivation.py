@@ -18,6 +18,7 @@ from app.problem_brief import (
     cleanup_open_questions,
     merge_problem_brief_patch,
     normalize_problem_brief,
+    problem_brief_item_slot,
     sync_problem_brief_from_panel,
 )
 
@@ -27,6 +28,161 @@ log = logging.getLogger(__name__)
 OPEN_QUESTION_CLEANUP_MESSAGE = (
     "Clean up open questions only: remove resolved or duplicate questions, keep still-ambiguous ones open."
 )
+_RUN_BOOKKEEPING_TEXT_SNIPPETS: tuple[str, ...] = (
+    "run #",
+    "just completed",
+    "finished run",
+    "previous run",
+    "latest run",
+    "this run",
+    "after this run",
+    "upload file",
+    "uploaded file",
+)
+
+
+def _is_run_related_text(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    if any(snippet in lowered for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS):
+        return True
+    return False
+
+
+def _format_run_context_line(run: dict[str, Any]) -> str:
+    run_number = run.get("run_number")
+    algorithm = str(run.get("algorithm") or "").strip()
+    cost = run.get("cost")
+    ok = bool(run.get("ok"))
+    status = "succeeded" if ok else "failed"
+    details: list[str] = [f"Run #{run_number}" if run_number else "Latest run", status]
+    if isinstance(cost, (int, float)):
+        details.append(f"cost {cost:.2f}")
+    if algorithm:
+        details.append(f"algorithm {algorithm}")
+    violations = run.get("violations")
+    if isinstance(violations, dict):
+        tw = violations.get("time_window_stop_count")
+        cap = violations.get("capacity_units_over")
+        if isinstance(tw, (int, float)):
+            details.append(f"time-window stops over {int(tw)}")
+        if isinstance(cap, (int, float)):
+            details.append(f"capacity units over {int(cap)}")
+    return ", ".join(details) + "."
+
+
+def consolidate_run_summary(
+    brief: dict[str, Any],
+    *,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """
+    Maintain a single rolling run summary. On cleanup, migrate run-related noisy rows/questions
+    into this summary and remove them from their sections.
+    """
+    normalized = normalize_problem_brief(brief)
+    existing = str(normalized.get("run_summary") or "").strip()
+    moved_items = 0
+    moved_questions = 0
+    notes: list[str] = []
+    items = list(normalized.get("items") or [])
+    questions = list(normalized.get("open_questions") or [])
+
+    if cleanup_mode:
+        kept_items: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or "").strip().lower()
+            text = str(item.get("text") or "").strip()
+            if kind in {"gathered", "assumption"} and _is_run_related_text(text):
+                moved_items += 1
+                if text:
+                    notes.append(text)
+                continue
+            kept_items.append(item)
+        items = kept_items
+
+        kept_questions: list[dict[str, Any]] = []
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            text = str(question.get("text") or "").strip()
+            if _is_run_related_text(text):
+                moved_questions += 1
+                if text:
+                    notes.append(text)
+                continue
+            kept_questions.append(question)
+        questions = kept_questions
+
+    recent_line = ""
+    if recent_runs_summary:
+        latest = recent_runs_summary[-1]
+        if isinstance(latest, dict):
+            recent_line = _format_run_context_line(latest).strip()
+    parts: list[str] = []
+    if existing:
+        parts.append(existing)
+    if recent_line and (is_run_acknowledgement or cleanup_mode):
+        parts.append(recent_line)
+    if notes and cleanup_mode:
+        unique = list(dict.fromkeys(n for n in notes if n.strip()))
+        if unique:
+            parts.append(f"Cleanup consolidated run notes: {'; '.join(unique[:2])}.")
+
+    next_summary = " ".join(parts).strip()
+    if next_summary:
+        next_summary = next_summary[-420:]
+        if next_summary[0].islower():
+            next_summary = next_summary[0].upper() + next_summary[1:]
+        if next_summary[-1] not in ".!?":
+            next_summary += "."
+
+    updated = {
+        **normalized,
+        "items": items,
+        "open_questions": questions,
+        "run_summary": next_summary,
+    }
+    return normalize_problem_brief(updated), {"moved_items": moved_items, "moved_questions": moved_questions}
+
+
+def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Keep run-ack brief edits compact: allow open-question curation plus durable config-slot rows.
+    Drop per-run/session bookkeeping rows to prevent Definition growth across runs.
+    """
+    sanitized = dict(patch_payload)
+    raw_items = sanitized.get("items")
+    if not isinstance(raw_items, list):
+        sanitized["replace_editable_items"] = False
+        return sanitized
+
+    kept_items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("kind") or "").strip().lower()
+        if kind == "system":
+            kept_items.append(raw)
+            continue
+        slot = problem_brief_item_slot(raw)
+        text = str(raw.get("text") or "").strip().lower()
+        if slot and not any(snippet in text for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS):
+            kept_items.append(raw)
+
+    sanitized["items"] = kept_items
+    sanitized["replace_editable_items"] = False
+    return sanitized
+
+
+def sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, Any]:
+    """Public wrapper for run-ack patch sanitization."""
+    return _sanitize_run_ack_patch_payload(patch_payload)
 
 
 def apply_open_question_cleanup_pass(
@@ -101,13 +257,21 @@ def apply_brief_patch_with_cleanup(
     researcher_steers: list[str],
     test_problem_id: str | None,
     enable_auto_open_question_cleanup: bool = True,
+    is_run_acknowledgement: bool = False,
+    cleanup_mode: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
     """
     merged = merge_problem_brief_patch(base_problem_brief, patch_payload)
     if not enable_auto_open_question_cleanup or merged == base_problem_brief:
-        return merged, {"removed_total": 0}
+        consolidated, run_meta = consolidate_run_summary(
+            merged,
+            recent_runs_summary=recent_runs_summary,
+            cleanup_mode=cleanup_mode,
+            is_run_acknowledgement=is_run_acknowledgement,
+        )
+        return consolidated, {"removed_total": 0, **run_meta}
     cleaned, meta = apply_open_question_cleanup_pass(
         problem_brief=merged,
         history_lines=history_lines,
@@ -121,7 +285,13 @@ def apply_brief_patch_with_cleanup(
         test_problem_id=test_problem_id,
         infer_resolved=True,
     )
-    return cleaned, meta
+    consolidated, run_meta = consolidate_run_summary(
+        cleaned,
+        recent_runs_summary=recent_runs_summary,
+        cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
+    )
+    return consolidated, {**meta, **run_meta}
 
 
 def _run_with_timeout(callable_obj, timeout_sec: float):
@@ -219,7 +389,7 @@ def _run_background_derivation(
         effective_problem_brief = base_problem_brief
         if patch_payload is not None:
             if is_run_acknowledgement:
-                patch_payload["replace_editable_items"] = False
+                patch_payload = _sanitize_run_ack_patch_payload(patch_payload)
             elif cleanup_requested or brief_turn.cleanup_mode or brief_turn.replace_editable_items:
                 patch_payload["replace_editable_items"] = True
             if clear_requested:
@@ -238,6 +408,8 @@ def _run_background_derivation(
                 researcher_steers=researcher_steers,
                 test_problem_id=test_problem_id,
                 enable_auto_open_question_cleanup=True,
+                is_run_acknowledgement=is_run_acknowledgement,
+                cleanup_mode=cleanup_requested or bool(brief_turn.cleanup_mode),
             )
             if int(meta.get("removed_total", 0)) > 0:
                 log.info("Auto open-question cleanup removed %s question(s)", meta.get("removed_total"))

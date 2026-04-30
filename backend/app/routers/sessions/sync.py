@@ -81,6 +81,13 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
         "algorithm_params",
         "epochs",
         "pop_size",
+        "early_stop",
+        "early_stop_patience",
+        "early_stop_epsilon",
+        "use_greedy_init",
+    )
+    always_preserve_current_if_present = frozenset(
+        {"early_stop", "early_stop_patience", "early_stop_epsilon", "use_greedy_init"}
     )
     merged = deepcopy(derived_problem)
     current_weights = current_problem.get("weights")
@@ -94,6 +101,9 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
             merged["weights"] = deepcopy(current_weights)
     for key in managed_keys:
         if key == "weights":
+            continue
+        if key in always_preserve_current_if_present and key in current_problem:
+            merged[key] = deepcopy(current_problem[key])
             continue
         if key not in merged and key in current_problem:
             merged[key] = deepcopy(current_problem[key])

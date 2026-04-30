@@ -1,3 +1,34 @@
+.run-summary-accordion-summary {
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  user-select: none;
+  display: list-item;
+  list-style: disclosure-closed inside;
+  padding: 0.5rem 0.75rem;
+  background: #dce6f0;
+  color: var(--text);
+  border: 1px solid #a8bdd0;
+  border-radius: 2px;
+}
+
+.run-summary-accordion-summary:hover {
+  background: #cddaea;
+}
+
+.run-summary-accordion[open] > .run-summary-accordion-summary {
+  list-style-type: disclosure-open;
+  border-radius: 2px 2px 0 0;
+}
+
+.run-summary-label-open { display: none; }
+.run-summary-accordion[open] .run-summary-label-closed { display: none; }
+.run-summary-accordion[open] .run-summary-label-open { display: inline; }
+
+.run-summary-accordion > .run-summary-grid {
+  margin-top: 0.4rem;
+}
+
 .run-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));

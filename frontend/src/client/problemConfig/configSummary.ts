@@ -21,7 +21,7 @@ export function configChangeSummary(
     if (previous !== next) changed.push(key);
   }
 
-  return changed.length === 0 ? "no keys changed" : changed.join(", ");
+  return changed.length === 0 ? "no settings changed" : changed.map(toParticipantLabel).join(", ");
 }
 
 function normalizeProblemFieldForSummary(key: string, value: unknown): unknown {
@@ -47,4 +47,24 @@ function isEmptyRecord(value: unknown): boolean {
     !Array.isArray(value) &&
     Object.keys(value as Record<string, unknown>).length === 0
   );
+}
+
+function toParticipantLabel(key: string): string {
+  const labels: Record<string, string> = {
+    early_stop: "Stop early on plateau",
+    early_stop_patience: "Plateau patience",
+    early_stop_epsilon: "Minimum score improvement",
+    use_greedy_init: "Greedy initialization",
+    driver_preferences: "Driver preferences",
+    locked_assignments: "Locked assignments",
+    only_active_terms: "Only active objectives",
+    algorithm: "Algorithm",
+    algorithm_params: "Algorithm settings",
+    epochs: "Max iterations",
+    pop_size: "Population size",
+    random_seed: "Random seed",
+    max_shift_hours: "Shift limit (hours)",
+    weights: "Goal weights",
+  };
+  return labels[key] ?? key.replaceAll("_", " ");
 }

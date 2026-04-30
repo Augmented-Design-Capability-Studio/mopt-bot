@@ -20,6 +20,10 @@ _RUN_ACK_PATTERNS: tuple[re.Pattern[str], ...] = (
 _ANSWERED_OPEN_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bI answered an open question\b", re.IGNORECASE),
 )
+_INTERPRET_ONLY_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bI manually updated the problem configuration\b", re.IGNORECASE),
+    re.compile(r"\bRun\s*#\d+.*just completed\b", re.IGNORECASE),
+)
 _CLEAR_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bclear\b.{0,40}\b(definition|brief|gathered|assumption|open question|everything|all)\b", re.IGNORECASE),
     re.compile(r"\breset\b.{0,40}\b(definition|brief|everything|all)\b", re.IGNORECASE),
@@ -56,6 +60,14 @@ def is_definition_clear_request(content: str) -> bool:
     if not text:
         return False
     return any(pattern.search(text) for pattern in _CLEAR_INTENT_PATTERNS)
+
+
+def is_interpret_only_context_message(content: str) -> bool:
+    """True for synthetic context notes that should not trigger hidden brief/config derivation."""
+    text = content.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _INTERPRET_ONLY_CONTEXT_PATTERNS)
 
 
 _ASSISTANT_RUN_INVITATION_PATTERNS: tuple[re.Pattern[str], ...] = (

@@ -520,6 +520,8 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                         log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
 
                     if patch_payload is not None:
+                        if is_run_ack:
+                            patch_payload = derivation.sanitize_run_ack_patch_payload(patch_payload)
                         if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
                             patch_payload["replace_editable_items"] = True
                         if clear_requested:
@@ -538,6 +540,8 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             researcher_steers=researcher_steers,
                             test_problem_id=row.test_problem_id,
                             enable_auto_open_question_cleanup=True,
+                            is_run_acknowledgement=is_run_ack,
+                            cleanup_mode=cleanup_requested or bool(turn.cleanup_mode),
                         )
                         if int(cleanup_meta.get("removed_total", 0)) > 0:
                             log.info(
@@ -577,7 +581,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     db.commit()
                     db.refresh(row)
                     proc_state = helpers.processing_state(row)
-            elif body.skip_hidden_brief_update:
+            elif body.skip_hidden_brief_update or intent.is_interpret_only_context_message(body.content):
                 row = db.get(StudySession, session_id) or row
                 helpers.settle_processing_state(row, cancel_revision=True)
                 helpers.touch_session(row)
@@ -1250,12 +1254,18 @@ def cleanup_participant_open_questions(
         test_problem_id=row.test_problem_id,
         infer_resolved=bool(body.infer_resolved),
     )
+    cleaned_brief, run_meta = derivation.consolidate_run_summary(
+        cleaned_brief,
+        recent_runs_summary=recent_runs_summary,
+        cleanup_mode=True,
+        is_run_acknowledgement=False,
+    )
     if cleaned_brief != current_problem_brief:
         row.problem_brief_json = json.dumps(cleaned_brief)
         helpers.touch_session(row)
         db.commit()
         db.refresh(row)
-    log.info("Manual open-question cleanup metadata for session %s: %s", session_id, meta)
+    log.info("Manual open-question cleanup metadata for session %s: %s", session_id, {**meta, **run_meta})
     return helpers.session_to_out(row)
 
 

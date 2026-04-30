@@ -75,6 +75,7 @@ export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
   const trimmed: ProblemBrief = {
     ...brief,
     goal_summary: brief.goal_summary.trim(),
+    run_summary: brief.run_summary.trim(),
     items: brief.items
       .map((item) => ({ ...item, text: item.text.trim() }))
       .filter((item) => {
@@ -133,7 +134,8 @@ export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemB
     );
   }).length;
   const goalChanged = previous.goal_summary.trim() !== next.goal_summary.trim() ? 1 : 0;
-  const total = addedOrRemovedItemCount + changedRows + questionDelta + changedQuestions + goalChanged;
+  const runSummaryChanged = previous.run_summary.trim() !== next.run_summary.trim() ? 1 : 0;
+  const total = addedOrRemovedItemCount + changedRows + questionDelta + changedQuestions + goalChanged + runSummaryChanged;
   if (total <= 0) return "no material changes";
   if (total === 1) return "1 brief update";
   return `${total} brief updates`;

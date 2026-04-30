@@ -514,6 +514,8 @@ export function ParticipantShell({
             sessionTerminated={sessionTerminated}
             session={session}
             testProblemMeta={testProblemMeta}
+            runs={runs}
+            messages={messages}
             onConfigTextChange={onConfigTextChange}
             onProblemBriefChange={onProblemBriefChange}
             onSetEditMode={onSetEditMode}

@@ -144,7 +144,11 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
   const visibleCards = TRACKABLE.filter((t) => active.has(t.key));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+    <details className="run-summary-accordion">
+      <summary className="run-summary-accordion-summary">
+        <span className="run-summary-label-closed">See how each goal term contributed to the total cost</span>
+        <span className="run-summary-label-open">Hide cost breakdown</span>
+      </summary>
       <div className="run-summary-grid">
         {visibleCards.map(({ key, label, card }) => {
           const { value, warn } = card(violations, metrics);
@@ -175,6 +179,6 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
           </div>
         ) : null}
       </div>
-    </div>
+    </details>
   );
 }

@@ -3,6 +3,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 export type ActivateHint = {
   caretIndex?: number;
   focusSelector?: string;
+  openSelectOnEdit?: boolean;
 };
 
 /** Locked: button mimic (same as Definition read-only). Edit: real number input. */
@@ -111,6 +112,7 @@ export function ConfigSelect({
         onClick={() =>
           onActivate?.({
             focusSelector: focusKey ? `[data-focus-key="${focusKey}"]` : undefined,
+            openSelectOnEdit: true,
           })
         }
         data-focus-key={focusKey}

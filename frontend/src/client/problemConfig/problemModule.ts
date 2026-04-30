@@ -3,6 +3,7 @@ import type { GoalTermsExtension } from "./GoalTermsSection";
 import type { MarkerKind } from "./useProblemConfigDiffMarkers";
 import type { ActivateHint } from "./controls";
 import type { RemovedGoalTermEntry } from "./GoalTermsSection";
+import type { ConstraintType } from "./types";
 
 export type { RunResult };
 
@@ -36,6 +37,8 @@ export type GoalTermsExtensionBuilderProps = {
   ensureEditing: (event?: ActivateHint) => void;
   rememberRemovedGoalTerm: (entry: RemovedGoalTermEntry) => void;
   restoreRemovedGoalTerm: (key: string) => void;
+  constraintTypes: Record<string, ConstraintType>;
+  onConstraintTypeChange: (key: string, type: ConstraintType) => void;
 };
 
 /**
@@ -44,6 +47,11 @@ export type GoalTermsExtensionBuilderProps = {
  * and uses only the fields defined here — no problem-specific imports in generic code.
  */
 export type ProblemModule = {
+  /**
+   * Optional: provide additional goal-term keys that should be visible/rankable
+   * even when absent from problem.weights (for structural controls tied to a term).
+   */
+  getAdditionalGoalTermKeys?: (configJson: string) => string[];
   /** Optional: builds a GoalTermsExtension for the config panel. */
   buildGoalTermsExtension?: (props: GoalTermsExtensionBuilderProps) => GoalTermsExtension;
   /** Visualization tabs to offer in the results panel (in order). */

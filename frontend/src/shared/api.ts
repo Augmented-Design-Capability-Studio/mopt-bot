@@ -204,6 +204,7 @@ export type ProblemBriefQuestion = {
 
 export type ProblemBrief = {
   goal_summary: string;
+  run_summary: string;
   items: ProblemBriefItem[];
   open_questions: ProblemBriefQuestion[];
   solver_scope: string;

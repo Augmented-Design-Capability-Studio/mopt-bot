@@ -85,10 +85,14 @@ not change them in chat or in brief patches; explain lock/unlock in UI if asked.
   reply** only; do not stuff run metrics into the problem definition as if they were
   user goals.
 - If two runs differ, relate changes to the configuration when helpful.
+- In participant-facing chat, prefer natural-language setting names (e.g., "Stop early on
+  plateau", "Driver preferences", "Greedy initialization") instead of raw config keys.
+  Use a raw key in parentheses only when disambiguation is necessary.
 
 ## Style and brevity
 
-- **Short replies** (2–3 sentences) unless the user wants detail. One main idea per turn.
+- **Very short replies** by default (1–2 short sentences) unless the user asks for detail.
+- For save/run interpretation prompts, keep to one concise takeaway plus at most one next step.
 - Never name internal study labels, codenames, or raw benchmark id strings in chat.
 - Avoid long option dumps; prefer one clarifying question or one confirmation.
 """.strip()
@@ -159,10 +163,9 @@ STUDY_CHAT_WORKFLOW_DEMO = """
 """.strip()
 
 STUDY_CHAT_RUN_ACK_DEMO = """
-- **Demo (post-run focus):** After a run, lean on **`kind: "assumption"`** rows (merge-append)
-  to capture modeling choices or working hypotheses, and keep open questions alive to show
-  the discovery experience. You may proactively apply one small config tweak and frame it
-  as a suggested next step.
+- **Demo (post-run focus):** Keep Definition memory compact like agile: no per-run
+  `gathered`/`assumption` append behavior. Prefer concise interpretation in visible chat,
+  optionally one small config tweak, and selective open-question curation.
 """.strip()
 
 
@@ -186,6 +189,11 @@ This turn was triggered by an optimization run completion. Follow these rules:
 - **Do NOT use replace_editable_items** for this turn. Preserve existing rows, but you
   **may merge-append** new brief rows (see workflow addendum) using `problem_brief_patch`
   without replacing the full list.
+- Across all workflow modes, treat post-run Definition memory as an **ever-updating concise
+  specification**, not a run log. Do not add timeline/bookkeeping rows like upload notes,
+  "run #N happened", or one-run observations as new `gathered`/`assumption` entries.
+- If post-run memory needs an update, prefer updating an existing durable config/definition
+  row rather than appending a new one.
 - You **may** suggest at most one or two targeted **config-linked** refinements when
   appropriate (e.g. a single weight, population size, or algorithm param change).
   Use `problem_brief_patch` with only config-slot items such as:
@@ -196,13 +204,20 @@ This turn was triggered by an optimization run completion. Follow these rules:
 - Discuss results, costs, and violations freely in your **visible reply** only.
   Compare runs and suggest next steps in chat — that context stays in the
   conversation, not in the problem brief.
+- Keep the visible run interpretation concise: 1–2 short sentences, and suggest
+  at most one adjustment unless the user asks for more.
 """.strip()
 
 STUDY_CHAT_RUN_ACK_AGILE = """
-- **Agile (post-run focus):** After a run, lean on **`kind: "assumption"`** rows (merge-append)
-  to capture modeling choices or working hypotheses suggested by the dialogue — not raw
-  run metrics. You may keep or lightly extend **open questions**; they do not all need to
-  resolve immediately.
+- **Agile (post-run focus):** Keep the Definition memory **compact**. Do **not** append
+  new `gathered`/`assumption` rows just because another run happened.
+- Treat post-run memory as a **rolling concise definition**: only update an existing row
+  when the participant's intent truly changed, or add a row when a genuinely new durable
+  requirement appears. Avoid per-run chronology.
+- Never add `gathered`/`assumption` rows that are only run/session bookkeeping
+  (for example upload confirmations, "Run #N happened", or one-off run impressions).
+- You may keep or lightly extend **open questions**; they do not all need to resolve
+  immediately.
 - You may proactively apply one small config tweak based on run feedback.
   Frame it as "I've adjusted X based on what we saw — run again when ready."
 """.strip()
@@ -233,12 +248,14 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   domain. For greetings, stay brief and domain-neutral.
 - `"problem_brief_patch"`: object or null. Use this when you want to update the editable
   middle layer (goal summary, gathered facts, assumptions, system facts, open questions).
+  Use `run_summary` for one concise rolling run-context entry.
   If `replace_editable_items` is true, emit a coherent full replacement `items` array for all
   editable rows (while preserving system rows).
 - If you claim that you removed or corrected conflicting definition facts, emit a non-null
   `problem_brief_patch` that includes the corrected fact for that setting.
 - Keep `goal_summary` qualitative only: no explicit numeric weights, penalties, algorithm params,
   or run-budget numbers. Put those details in `items` (`gathered`/`assumption`) instead.
+- Keep `run_summary` concise and singular (one rolling entry). Do not create per-run lists.
 - `"replace_editable_items"`: boolean. Set true only when performing holistic cleanup or
   reorganization of gathered/assumption rows.
 - `"replace_open_questions"`: boolean. Set **true** when `problem_brief_patch.open_questions`
@@ -348,11 +365,14 @@ Rules:
 - Keep `goal_summary` qualitative and short. Never encode explicit weights, penalties,
   algorithm parameters, or run-budget numbers in `goal_summary`; store those details in
   `items` (`gathered` or `assumption`) only.
+- Keep `run_summary` as one concise rolling entry for run context; avoid per-run chronology rows.
 - Prefer **one gathered row per objective or constraint-handling term** (each weight or
   penalty line), aligned with how goal terms are configured. **Never** pack several terms into
   one comma-separated `Constraint handling:` or objective list line when separate rows would work.
 - Keep search-strategy notes concise: consolidate algorithm + tuning details into one brief
   entry when possible, and avoid listing default-only parameter values unless explicitly discussed.
+- Keep memory density high: prefer updating/rephrasing existing rows over appending near-duplicate
+  rows. Do not create run-by-run or session-by-session timeline rows in `items`.
 - **Formulation discipline (incremental chat turns only):** Add at most one **new** objective or
   constraint per turn when you are **not** doing a full replacement. Follow workflow style:
   waterfall — only add after explicit user confirmation; agile — can add from a clear hint when

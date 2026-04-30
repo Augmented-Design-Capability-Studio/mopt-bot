@@ -386,6 +386,10 @@ export function DefinitionPanel({
     persist({ ...problemBrief, goal_summary: value });
   }
 
+  function updateRunSummary(value: string) {
+    persist({ ...problemBrief, run_summary: value });
+  }
+
   function updateOpenQuestionAnswer(questionId: string, answer: string) {
     const nextQuestions = openQuestions.map((row) =>
       row.id !== questionId
@@ -416,7 +420,7 @@ export function DefinitionPanel({
       textarea.style.height = "auto";
       textarea.style.height = `${textarea.scrollHeight}px`;
     }
-  }, [editable, problemBrief.goal_summary, problemBrief.items, problemBrief.open_questions]);
+  }, [editable, problemBrief.goal_summary, problemBrief.run_summary, problemBrief.items, problemBrief.open_questions]);
 
   return (
     <div className="definition-panel" ref={rootRef}>
@@ -455,6 +459,42 @@ export function DefinitionPanel({
                 }
               >
                 {problemBrief.goal_summary || "Summarize what the solver should optimize for."}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="definition-section">
+        <div className="definition-section-heading">Run Summary</div>
+        <div className="definition-item">
+          <div className="definition-item-content definition-item-content-goal">
+            {editable ? (
+              <textarea
+                id="definition-run-summary"
+                className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
+                value={problemBrief.run_summary}
+                disabled={sessionTerminated}
+                rows={1}
+                onFocus={() => onEnsureDefinitionEditing()}
+                onChange={(e) => updateRunSummary(e.target.value)}
+                onInput={autoGrowTextarea}
+                placeholder="Keep one concise rolling summary of recent run outcomes."
+              />
+            ) : (
+              <button
+                type="button"
+                className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
+                title="Edit..."
+                disabled={sessionTerminated}
+                onClick={(e) =>
+                  ensureDefinitionEditingFromLocked(
+                    "#definition-run-summary",
+                    estimatedCaretIndexFromClick(problemBrief.run_summary || "", e),
+                  )
+                }
+              >
+                {problemBrief.run_summary || "Keep one concise rolling summary of recent run outcomes."}
               </button>
             )}
           </div>

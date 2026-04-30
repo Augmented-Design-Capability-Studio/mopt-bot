@@ -288,18 +288,29 @@ class QuickBiteOptimizer:
         if n_workers is not None:
             solve_kw["n_workers"] = n_workers
         if use_greedy_init or initial_solutions:
-            starting_solutions: list[np.ndarray] = []
+            raw_candidates: list[np.ndarray] = []
             if initial_solutions:
                 for vec in initial_solutions:
                     arr = np.asarray(vec, dtype=float)
                     if arr.shape[0] == VECTOR_LEN:
-                        starting_solutions.append(arr)
+                        raw_candidates.append(arr)
+
+            # Keep some exploration capacity (greedy/random) even when many
+            # prior-run candidates are selected; otherwise the initial
+            # population can become too closed and convergence may flatten.
+            reserve_non_candidate = 1 if pop_size >= 2 else 0
+            if use_greedy_init and pop_size >= 3:
+                reserve_non_candidate = 2
+            candidate_limit = max(pop_size - reserve_non_candidate, 0)
+            starting_solutions: list[np.ndarray] = raw_candidates[:candidate_limit]
+
             slots_left = max(pop_size - len(starting_solutions), 0)
             n_greedy = min(max(1, pop_size // 5), slots_left) if use_greedy_init and slots_left > 0 else 0
             for i in range(n_greedy):
                 greedy_rng = np.random.RandomState(self.seed + 1000 + i)
                 gv = encode_greedy_solution(self.orders, self.locked, greedy_rng)
                 starting_solutions.append(gv)
+
             random_rng = np.random.RandomState(self.seed + 2000)
             random_count = max(pop_size - len(starting_solutions), 0)
             if random_count > 0:

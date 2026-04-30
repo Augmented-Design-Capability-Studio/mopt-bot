@@ -4,6 +4,7 @@ import { buildVrptwGoalTermsExtension } from "./VrptwExtras";
 import { FleetScheduleViz } from "./FleetScheduleViz";
 import { ViolationSummary } from "./ViolationSummary";
 import { parseRoutesForSolver } from "./schedule";
+import { parseProblemConfig } from "./serialization";
 
 function formatRunViolationSummary(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
@@ -18,6 +19,10 @@ function formatRunViolationSummary(result: unknown): string | null {
 }
 
 export const MODULE: ProblemModule = {
+  getAdditionalGoalTermKeys: (configJson: string) => {
+    const { problem } = parseProblemConfig(configJson);
+    return problem.max_shift_hours !== null ? ["shift_limit"] : [];
+  },
   buildGoalTermsExtension: buildVrptwGoalTermsExtension,
   vizTabs: [{ id: "fleet_gantt", label: "Schedule", component: FleetScheduleViz }],
   ViolationSummary,
