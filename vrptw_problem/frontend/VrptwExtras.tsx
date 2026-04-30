@@ -19,11 +19,12 @@ import { ConfigNumberInput, ConfigSelect, type ActivateHint } from "@problemConf
 import { FieldRow } from "@problemConfig/layout";
 
 import {
+  DELIVERY_ZONES,
   MAX_SHIFT_HOURS_INFO,
   PREFERENCE_CONDITIONS,
   WORKER_NAMES,
+  zoneLabelFromId,
 } from "./metadata";
-import { DELIVERY_ZONES, zoneLabelFromId } from "./zoneCanonical";
 import type { DriverPref, ProblemBlock } from "./types";
 import { parseProblemConfig } from "./serialization";
 

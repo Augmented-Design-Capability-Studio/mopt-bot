@@ -5,7 +5,7 @@
 
 import { parseAlgorithmParamsFromInner, serializeAlgorithmParams } from "@problemConfig/algorithmCatalog";
 import type { DriverPref, ProblemBlock } from "./types";
-import { parseZoneValue } from "./zoneCanonical";
+import { parseZoneValue } from "./metadata";
 
 const LEGACY_CONDITION_MAP: Record<string, string> = {
   zone_d: "avoid_zone",

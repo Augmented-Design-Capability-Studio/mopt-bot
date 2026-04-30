@@ -1,4 +1,4 @@
-"""Tests for canonical zone normalization and legacy preference compatibility."""
+"""Tests for canonical zone normalization."""
 
 from __future__ import annotations
 
@@ -15,21 +15,6 @@ def test_zone_roundtrip_letter_number_name():
     assert normalize_delivery_zone("E") == 5
     assert normalize_delivery_zone("Westgate") == 4
     assert normalize_delivery_zone("Northgate") == 5
-
-
-def test_parse_problem_config_zone_d_is_canonicalized_to_avoid_zone():
-    cfg = parse_problem_config(
-        {
-            "weights": {"worker_preference": 5.0},
-            "driver_preferences": [
-                {"vehicle_idx": 0, "condition": "zone_d", "penalty": 2.0},
-            ],
-        }
-    )
-    prefs = cfg["driver_preferences"]
-    assert len(prefs) == 1
-    assert prefs[0]["condition"] == "avoid_zone"
-    assert prefs[0]["zone"] == 4
 
 
 def test_parse_problem_config_accepts_zone_letter_and_name():

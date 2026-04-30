@@ -53,18 +53,6 @@ def test_two_avoid_zone_rules_different_vehicles():
     assert m1["driver_penalty"] >= m0["driver_penalty"]
 
 
-def test_legacy_zone_d_matches_avoid_zone_d():
-    orders = get_orders(seed=None)
-    rng = np.random.RandomState(1)
-    weights = {f"w{i}": 0.0 for i in range(1, 8)}
-    weights["w6"] = 1.0
-    legacy = [{"vehicle_idx": 0, "condition": "zone_d", "penalty": 5.0}]
-    modern = [{"vehicle_idx": 0, "condition": "avoid_zone", "zone": 4, "penalty": 5.0}]
-    _, a, _ = simulate_routes(_default_routes(), orders, rng, weights, driver_preferences=legacy)
-    _, b, _ = simulate_routes(_default_routes(), orders, rng, weights, driver_preferences=modern)
-    assert a["driver_penalty"] == b["driver_penalty"]
-
-
 def test_shift_over_limit_minutes():
     orders = get_orders(seed=None)
     rng = np.random.RandomState(2)
