@@ -114,24 +114,26 @@ export function GoalTermRow({
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: "0.85rem" }} className="goal-term-row-label">
-          <span>{label}</span>
-          {direction === "maximize" ? (
-            <span
-              className="direction-badge direction-badge--maximize"
-              title="This term is maximized — higher weight favors more of this objective"
-              aria-label="Maximize objective"
-            >
-              ↑ max
-            </span>
-          ) : (
-            <span
-              className="direction-badge"
-              title="This term is minimized — higher weight penalizes this objective more strongly"
-              aria-label="Minimize objective"
-            >
-              ↓ min
-            </span>
-          )}
+          <span className="goal-term-row-label-text">
+            {label}
+            {direction === "maximize" ? (
+              <span
+                className="direction-badge direction-badge--maximize"
+                title="This term is maximized — higher weight favors more of this objective"
+                aria-label="Maximize objective"
+              >
+                ↑ max
+              </span>
+            ) : (
+              <span
+                className="direction-badge direction-badge--minimize"
+                title="This term is minimized — higher weight penalizes this objective more strongly"
+                aria-label="Minimize objective"
+              >
+                ↓ min
+              </span>
+            )}
+          </span>
         </div>
         {description ? (
           <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>

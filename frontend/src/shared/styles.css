@@ -748,6 +748,10 @@ select:focus-visible {
   padding-top: 0.32rem;
 }
 
+.definition-item-content-goal {
+  padding-right: 0;
+}
+
 .definition-item-overlay-controls {
   position: absolute;
   top: 0.16rem;
@@ -886,6 +890,14 @@ select:focus-visible {
   padding: 0.12rem 1.75rem 0.12rem 0.1rem;
 }
 
+.definition-inline-textarea-goal {
+  padding-right: 0.45rem;
+}
+
+.definition-inline-display-goal {
+  padding-right: 0.45rem;
+}
+
 .definition-answer-textarea {
   min-height: 1.65rem;
   margin-top: 0.18rem;
@@ -1010,21 +1022,36 @@ select:focus-visible {
 }
 
 .goal-term-row-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
+  display: block;
+}
+
+.goal-term-row-label-text {
+  white-space: normal;
 }
 
 .direction-badge {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   border-radius: 999px;
   border: 1px solid currentColor;
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1;
   padding: 0.05rem 0.28rem;
+  white-space: nowrap;
+  vertical-align: middle;
   cursor: default;
+}
+
+.goal-term-row-label-text .direction-badge {
+  margin-left: 0.28rem;
+}
+
+.direction-badge--minimize {
+  color: #7a3e00;
+  border-color: rgba(122, 62, 0, 0.45);
+  background: rgba(245, 124, 0, 0.12);
 }
 
 .direction-badge--maximize {

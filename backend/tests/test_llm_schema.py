@@ -45,6 +45,9 @@ def test_config_schema_requires_known_driver_preference_fields():
 
     assert driver_pref["required"] == ["vehicle_idx", "condition", "penalty"]
     assert driver_pref["properties"]["condition"]["type"] == "string"
+    assert "Alice=0" in driver_pref["properties"]["vehicle_idx"]["description"]
+    assert "A=1" in driver_pref["properties"]["zone"]["description"]
+    assert "D=4" in driver_pref["properties"]["zone"]["description"]
 
 
 def test_knapsack_config_schema_weights():

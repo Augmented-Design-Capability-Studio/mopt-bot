@@ -36,7 +36,10 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
 _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "vehicle_idx": {"type": "integer"},
+        "vehicle_idx": {
+            "type": "integer",
+            "description": "Worker index mapping: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4.",
+        },
         "condition": {
             "type": "string",
             "description": (
@@ -44,7 +47,10 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
             ),
         },
         "penalty": {"type": "number"},
-        "zone": {"type": "integer"},
+        "zone": {
+            "type": "integer",
+            "description": "Delivery zone id for avoid_zone only: A=1, B=2, C=3, D=4, E=5. Depot=0 is invalid for avoid_zone.",
+        },
         "order_priority": {
             "type": "string",
             "enum": ["express", "standard"],

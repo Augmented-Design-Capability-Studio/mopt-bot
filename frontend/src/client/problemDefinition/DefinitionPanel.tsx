@@ -427,34 +427,38 @@ export function DefinitionPanel({
       </p> */}
       <section className="definition-section">
         <div className="definition-section-heading">Goal Summary</div>
-        {editable ? (
-          <textarea
-            id="definition-goal-summary"
-            className="definition-inline-textarea"
-            value={problemBrief.goal_summary}
-            disabled={sessionTerminated}
-            rows={1}
-            onFocus={() => onEnsureDefinitionEditing()}
-            onChange={(e) => updateGoalSummary(e.target.value)}
-            onInput={autoGrowTextarea}
-            placeholder="Summarize what the solver should optimize for."
-          />
-        ) : (
-          <button
-            type="button"
-            className="definition-inline-display"
-            title="Edit..."
-            disabled={sessionTerminated}
-            onClick={(e) =>
-              ensureDefinitionEditingFromLocked(
-                "#definition-goal-summary",
-                estimatedCaretIndexFromClick(problemBrief.goal_summary || "", e),
-              )
-            }
-          >
-            {problemBrief.goal_summary || "Summarize what the solver should optimize for."}
-          </button>
-        )}
+        <div className="definition-item">
+          <div className="definition-item-content definition-item-content-goal">
+            {editable ? (
+              <textarea
+                id="definition-goal-summary"
+                className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
+                value={problemBrief.goal_summary}
+                disabled={sessionTerminated}
+                rows={1}
+                onFocus={() => onEnsureDefinitionEditing()}
+                onChange={(e) => updateGoalSummary(e.target.value)}
+                onInput={autoGrowTextarea}
+                placeholder="Summarize what the solver should optimize for."
+              />
+            ) : (
+              <button
+                type="button"
+                className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
+                title="Edit..."
+                disabled={sessionTerminated}
+                onClick={(e) =>
+                  ensureDefinitionEditingFromLocked(
+                    "#definition-goal-summary",
+                    estimatedCaretIndexFromClick(problemBrief.goal_summary || "", e),
+                  )
+                }
+              >
+                {problemBrief.goal_summary || "Summarize what the solver should optimize for."}
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="definition-section" id="definition-open-questions">

@@ -144,6 +144,7 @@ Rules:
 - When the brief names worker-specific soft preferences, emit "driver_preferences" with
   vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
   shift_over_limit; include "limit_minutes" for long-shift discomfort when stated (e.g. 6.5h → 390).
+  For avoid_zone, use delivery-zone ids only: A=1, B=2, C=3, D=4, E=5. Never use zero-based zone indexing.
   Include "worker_preference" in weights when driver_preferences is nonempty.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - Keep output compact and valid JSON.
