@@ -22,6 +22,35 @@ function formatSnapshotLabel(snap: SnapshotSummary): string {
   return parts.join(" · ");
 }
 
+function formatSnapshotOrigin(eventType: string): string {
+  switch (eventType) {
+    case "before_run":
+      return "Run snapshot";
+    case "manual_save":
+      return "Autosave";
+    case "bookmark":
+      return "Manual snapshot";
+    default:
+      return "Snapshot";
+  }
+}
+
+function buildRunSnapshotNumberById(snapshots: SnapshotSummary[]): Map<number, number> {
+  const runSnapshotNumberById = new Map<number, number>();
+  let runNumber = 0;
+  const chronological = [...snapshots].sort((a, b) => {
+    const byTime = Date.parse(a.created_at) - Date.parse(b.created_at);
+    if (Number.isFinite(byTime) && byTime !== 0) return byTime;
+    return a.id - b.id;
+  });
+  for (const snap of chronological) {
+    if (snap.event_type !== "before_run") continue;
+    runNumber += 1;
+    runSnapshotNumberById.set(snap.id, runNumber);
+  }
+  return runSnapshotNumberById;
+}
+
 type SnapshotDialogProps = {
   open: boolean;
   onClose: () => void;
@@ -43,6 +72,8 @@ export function SnapshotDialog({
   busy,
   onRestore,
 }: SnapshotDialogProps) {
+  const runSnapshotNumberById = buildRunSnapshotNumberById(snapshots);
+
   const handleSelect = (snap: SnapshotSummary) => {
     if (busy || sessionTerminated) return;
     onRestore(snap, sourceTab);
@@ -79,13 +110,18 @@ export function SnapshotDialog({
             overflowY: "auto",
           }}
         >
-          {snapshots.map((snap) => (
+          {snapshots.map((snap) => {
+            const runNumber = runSnapshotNumberById.get(snap.id);
+            const origin = snap.event_type === "before_run" && runNumber
+              ? `Run snapshot #${runNumber}`
+              : formatSnapshotOrigin(snap.event_type);
+            return (
             <li key={snap.id}>
               <button
                 type="button"
                 disabled={busy || sessionTerminated}
                 onClick={() => handleSelect(snap)}
-                title={`Restore from ${formatSnapshotTime(snap.created_at)}`}
+                title={`Restore ${origin} from ${formatSnapshotTime(snap.created_at)}`}
                 style={{
                   display: "block",
                   width: "100%",
@@ -99,13 +135,16 @@ export function SnapshotDialog({
                   cursor: busy || sessionTerminated ? "default" : "pointer",
                 }}
               >
-                <span style={{ fontWeight: 500 }}>{formatSnapshotTime(snap.created_at)}</span>
+                <span style={{ fontWeight: 500 }}>
+                  {origin} · {formatSnapshotTime(snap.created_at)}
+                </span>
                 <span className="muted" style={{ display: "block", fontSize: "0.8rem", marginTop: "0.15rem" }}>
                   {formatSnapshotLabel(snap)}
                 </span>
               </button>
             </li>
-          ))}
+          );
+          })}
         </ul>
       )}
     </DialogShell>
