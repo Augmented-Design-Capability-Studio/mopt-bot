@@ -155,13 +155,5 @@ export function useDefinitionExternalFlash(
     return "";
   }
 
-  function markerKindForItem(id: string): "new" | "upd" | null {
-    return itemFlash[id] ?? null;
-  }
-
-  function markerKindForQuestion(id: string): "new" | "upd" | null {
-    return questionFlash[id] ?? null;
-  }
-
-  return { flashClassForItem, flashClassForQuestion, markerKindForItem, markerKindForQuestion };
+  return { flashClassForItem, flashClassForQuestion };
 }

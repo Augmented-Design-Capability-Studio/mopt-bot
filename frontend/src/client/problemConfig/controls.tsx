@@ -13,6 +13,7 @@ export function ConfigNumberInput({
   onActivate,
   focusKey,
   style,
+  className,
   min,
   max,
   step,
@@ -23,6 +24,7 @@ export function ConfigNumberInput({
   onActivate?: (event?: ActivateHint) => void;
   focusKey?: string;
   style?: CSSProperties;
+  className?: string;
   min?: number;
   max?: number;
   step?: number;
@@ -37,7 +39,7 @@ export function ConfigNumberInput({
     return (
       <button
         type="button"
-        className="problem-config-field-mimic"
+        className={`problem-config-field-mimic${className ? ` ${className}` : ""}`}
         title="Edit..."
         style={style}
         onClick={(e) => {
@@ -56,7 +58,7 @@ export function ConfigNumberInput({
   return (
     <input
       type="number"
-      className="problem-config-input"
+      className={`problem-config-input${className ? ` ${className}` : ""}`}
       min={min}
       max={max}
       step={step}
@@ -86,6 +88,7 @@ export function ConfigSelect({
   onActivate,
   focusKey,
   style,
+  className,
   children,
 }: {
   editable: boolean;
@@ -95,13 +98,14 @@ export function ConfigSelect({
   onActivate?: (event?: ActivateHint) => void;
   focusKey?: string;
   style?: CSSProperties;
+  className?: string;
   children: ReactNode;
 }) {
   if (!editable) {
     return (
       <button
         type="button"
-        className="problem-config-field-mimic problem-config-field-mimic--select"
+        className={`problem-config-field-mimic problem-config-field-mimic--select${className ? ` ${className}` : ""}`}
         title="Edit..."
         style={style}
         onClick={() =>
@@ -116,7 +120,13 @@ export function ConfigSelect({
     );
   }
   return (
-    <select className="problem-config-select" value={value} onChange={onChange} style={style} data-focus-key={focusKey}>
+    <select
+      className={`problem-config-select${className ? ` ${className}` : ""}`}
+      value={value}
+      onChange={onChange}
+      style={style}
+      data-focus-key={focusKey}
+    >
       {children}
     </select>
   );

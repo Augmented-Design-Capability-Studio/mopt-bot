@@ -96,6 +96,12 @@ export function GoalTermRow({
   showRemove?: boolean;
   inputStyle?: CSSProperties;
 }) {
+  const markerClass =
+    markerKind === "new"
+      ? "problem-config-control-external-mark--new"
+      : markerKind === "upd"
+        ? "problem-config-control-external-mark--upd"
+        : "";
   return (
     <div
       style={{
@@ -117,16 +123,15 @@ export function GoalTermRow({
             >
               ↑ max
             </span>
-          ) : null}
-          {markerKind ? (
+          ) : (
             <span
-              className={`entry-diff-marker ${markerKind === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-              title={markerKind === "new" ? "New agent update" : "Updated by agent"}
-              aria-label={markerKind === "new" ? "New agent update" : "Updated by agent"}
+              className="direction-badge"
+              title="This term is minimized — higher weight penalizes this objective more strongly"
+              aria-label="Minimize objective"
             >
-              {markerKind === "new" ? "+" : "Δ"}
+              ↓ min
             </span>
-          ) : null}
+          )}
         </div>
         {description ? (
           <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.1rem" }}>
@@ -164,6 +169,7 @@ export function GoalTermRow({
         <ConfigNumberInput
           editable={editable}
           value={value}
+          className={markerClass}
           min={min}
           max={max}
           step={step}

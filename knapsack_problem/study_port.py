@@ -27,8 +27,8 @@ class KnapsackStudyPort:
             label=self.label,
             weight_definitions=[
                 WeightDefinition("value_emphasis", "Total value", "Higher weight favors more packed value", direction="maximize"),
-                WeightDefinition("capacity_overflow", "Capacity overflow", "Penalty when selection exceeds knapsack capacity"),
-                WeightDefinition("selection_sparsity", "Selection size", "Penalty for number of items picked"),
+                WeightDefinition("capacity_overflow", "Capacity overflow", "Penalty when selection exceeds knapsack capacity", direction="minimize"),
+                WeightDefinition("selection_sparsity", "Selection size", "Penalty for number of items picked", direction="minimize"),
             ],
             extension_ui="none",
             visualization_presets=["knapsack_selection"],

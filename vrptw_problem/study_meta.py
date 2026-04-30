@@ -6,33 +6,36 @@ Participant-visible aliases map to internal ``w1``–``w7`` via
 
 from __future__ import annotations
 
-# (alias_key, label, description) — one row per w1–w7 alias shown in the panel.
-VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
-    ("travel_time", "Travel time", "Total route duration and driving minutes."),
+# (alias_key, label, description, direction) — one row per w1–w7 alias shown in the panel.
+VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str, str]] = [
+    ("travel_time", "Travel time", "Total route duration and driving minutes.", "minimize"),
     (
         "shift_limit",
         "Shift limit",
         "Per minute past max_shift_hours (summed over vehicles); use a large weight for a near-hard cap.",
+        "minimize",
     ),
-    ("deadline_penalty", "On-time delivery", "Lateness vs customer time windows (per minute late)."),
-    ("capacity_penalty", "Load capacity", "Demand exceeding vehicle capacity (per overflow unit)."),
-    ("workload_balance", "Workload balance", "Fairness of drive+service time across drivers (variance; excludes idle pre-window wait)."),
-    ("worker_preference", "Worker preferences", "Soft assignment rules (zones, priorities, shift shape)."),
+    ("deadline_penalty", "On-time delivery", "Lateness vs customer time windows (per minute late).", "minimize"),
+    ("capacity_penalty", "Load capacity", "Demand exceeding vehicle capacity (per overflow unit).", "minimize"),
+    ("workload_balance", "Workload balance", "Fairness of drive+service time across drivers (variance; excludes idle pre-window wait).", "minimize"),
+    ("worker_preference", "Worker preferences", "Soft assignment rules (zones, priorities, shift shape).", "minimize"),
     (
         "priority_penalty",
         "Express & priority deadlines",
         "Per late express (or emphasized priority) order after its window close.",
+        "minimize",
     ),
     (
         "waiting_time",
         "Idle Wait Time",
         "Penalty per idle minute a driver waits before a time window opens.",
+        "minimize",
     ),
 ]
 
 
 def weight_item_labels() -> dict[str, str]:
-    return {key: label for key, label, _desc in VRPTW_WEIGHT_DEFINITIONS}
+    return {key: label for key, label, _desc, _direction in VRPTW_WEIGHT_DEFINITIONS}
 
 
 # Ordered weight keys that count toward the agile gate ("at least one goal term").

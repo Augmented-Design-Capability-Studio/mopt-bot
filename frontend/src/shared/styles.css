@@ -639,16 +639,16 @@ select:focus-visible {
 .definition-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.9rem;
 }
 
 .definition-section {
-  border: 1px solid var(--border);
-  background: #fff;
-  padding: 0.45rem 0.5rem;
+  border: none;
+  background: transparent;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.45rem;
 }
 
 .definition-section textarea,
@@ -667,9 +667,14 @@ select:focus-visible {
   gap: 0.5rem;
 }
 
-.definition-section-title {
-  font-size: 0.85rem;
-  font-weight: 600;
+.definition-section-heading {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--fg-muted, #666);
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid var(--border);
 }
 
 .definition-count {
@@ -696,9 +701,9 @@ select:focus-visible {
 }
 
 .definition-item {
-  border-top: none;
-  background: transparent;
-  padding: 0.28rem 0;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.35rem 0.45rem;
   display: flex;
   flex-direction: column;
   gap: 0.18rem;
@@ -732,19 +737,21 @@ select:focus-visible {
 
 .definition-item-content {
   position: relative;
-  padding-right: 0.05rem;
+  padding-right: 0.1rem;
 }
 
 .definition-item-content-open {
   display: flex;
   flex-direction: column;
   gap: 0.16rem;
+  /* Reserve vertical room for the absolute-positioned remove button. */
+  padding-top: 0.32rem;
 }
 
 .definition-item-overlay-controls {
   position: absolute;
-  top: 0.2rem;
-  right: 0.2rem;
+  top: 0.16rem;
+  right: 0.08rem;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -756,7 +763,7 @@ select:focus-visible {
   border: none;
   background: transparent;
   /* Align question text start with answer input/content text. */
-  padding: 0 0 0 0.35rem;
+  padding: 0 0 0 0.1rem;
   white-space: pre-wrap;
   line-height: 1.3;
   font-size: inherit;
@@ -778,6 +785,17 @@ select:focus-visible {
 .definition-inline-display:hover:not(:disabled) {
   background: #f7f7f4;
   border-color: #9a9a8e;
+}
+
+.definition-inline-display-bare {
+  border: none;
+  background: transparent;
+  padding: 0.12rem 1.75rem 0.12rem 0.1rem;
+}
+
+.definition-inline-display-bare:hover:not(:disabled) {
+  border: none;
+  background: #f7f7f4;
 }
 
 /*
@@ -862,8 +880,15 @@ select:focus-visible {
   word-wrap: break-word;
 }
 
+.definition-inline-textarea-bare {
+  border: none;
+  background: transparent;
+  padding: 0.12rem 1.75rem 0.12rem 0.1rem;
+}
+
 .definition-answer-textarea {
   min-height: 1.65rem;
+  margin-top: 0.18rem;
 }
 
 .definition-delete-marker {
@@ -888,13 +913,58 @@ select:focus-visible {
 }
 
 .definition-item-external-mark--new {
-  border-color: rgba(46, 125, 50, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(46, 125, 50, 0.22);
+  border-color: rgba(27, 94, 32, 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(46, 125, 50, 0.34),
+    0 0 0 2px rgba(67, 160, 71, 0.2);
+  animation: definition-update-glow-pulse 1.8s ease-in-out infinite;
 }
 
 .definition-item-external-mark--upd {
-  border-color: rgba(56, 142, 60, 0.5);
-  box-shadow: inset 0 0 0 1px rgba(56, 142, 60, 0.16);
+  border-color: rgba(46, 125, 50, 0.68);
+  box-shadow:
+    inset 0 0 0 1px rgba(56, 142, 60, 0.28),
+    0 0 0 2px rgba(102, 187, 106, 0.18);
+  animation: definition-update-glow-pulse 1.8s ease-in-out infinite;
+}
+
+.problem-config-control-external-mark--new {
+  border-color: rgba(27, 94, 32, 0.72) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(46, 125, 50, 0.34),
+    0 0 0 2px rgba(67, 160, 71, 0.2);
+  animation: definition-update-glow-pulse 1.8s ease-in-out infinite;
+}
+
+.problem-config-control-external-mark--upd {
+  border-color: rgba(46, 125, 50, 0.68) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(56, 142, 60, 0.28),
+    0 0 0 2px rgba(102, 187, 106, 0.18);
+  animation: definition-update-glow-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes definition-update-glow-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(56, 142, 60, 0.24),
+      0 0 0 2px rgba(102, 187, 106, 0.16);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px rgba(56, 142, 60, 0.38),
+      0 0 0 3px rgba(102, 187, 106, 0.28);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .definition-item-external-mark--new,
+  .definition-item-external-mark--upd,
+  .problem-config-control-external-mark--new,
+  .problem-config-control-external-mark--upd {
+    animation: none;
+  }
 }
 
 .entry-diff-marker {

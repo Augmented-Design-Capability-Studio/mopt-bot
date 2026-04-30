@@ -33,7 +33,6 @@ type DefinitionSectionProps = {
   deletedMarkerIndex: number | null;
   onTextareaInput: (e: FormEvent<HTMLTextAreaElement>) => void;
   rowExtraClassName?: (item: ProblemBriefItem) => string;
-  rowMarkerKind?: (item: ProblemBriefItem) => "new" | "upd" | null;
   removedItems?: Array<{ id: string; text: string; index: number }>;
   onRestoreItem?: (id: string) => void;
   suppressTransientMarkers?: boolean;
@@ -81,7 +80,6 @@ function DefinitionSection({
   deletedMarkerIndex,
   onTextareaInput,
   rowExtraClassName,
-  rowMarkerKind,
   removedItems = [],
   onRestoreItem,
   suppressTransientMarkers = false,
@@ -90,9 +88,9 @@ function DefinitionSection({
 
   return (
     <section className="definition-section">
+      <div className="definition-section-heading">{title}</div>
       <div className="definition-section-header">
         <div>
-          <div className="definition-section-title">{title}</div>
           <div className="muted">{description}</div>
         </div>
         <div className="definition-header-actions">
@@ -135,20 +133,11 @@ function DefinitionSection({
                         X
                       </button>
                     ) : null}
-                    {rowMarkerKind?.(item) ? (
-                      <span
-                        className={`entry-diff-marker ${rowMarkerKind(item) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-                        title={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
-                        aria-label={rowMarkerKind(item) === "new" ? "New agent update" : "Updated by agent"}
-                      >
-                        {rowMarkerKind(item) === "new" ? "+" : "Δ"}
-                      </span>
-                    ) : null}
                   </div>
                   {editable ? (
                     <textarea
                       id={`definition-inline-text-${item.id}`}
-                      className="definition-inline-textarea"
+                      className="definition-inline-textarea definition-inline-textarea-bare"
                       value={item.text}
                       disabled={locked}
                       rows={1}
@@ -159,7 +148,7 @@ function DefinitionSection({
                   ) : (
                     <button
                       type="button"
-                      className="definition-inline-display"
+                      className="definition-inline-display definition-inline-display-bare"
                       title="Edit..."
                       disabled={sessionTerminated}
                       onClick={(e) => {
@@ -276,11 +265,7 @@ export function DefinitionPanel({
     }, 1650);
   }, []);
 
-  const { flashClassForItem, flashClassForQuestion, markerKindForItem, markerKindForQuestion } = useDefinitionExternalFlash(
-    problemBrief,
-    editable,
-    showDeletedMarker,
-  );
+  const { flashClassForItem, flashClassForQuestion } = useDefinitionExternalFlash(problemBrief, editable, showDeletedMarker);
 
   useLayoutEffect(() => {
     const id = pendingScrollToItemIdRef.current;
@@ -435,13 +420,13 @@ export function DefinitionPanel({
 
   return (
     <div className="definition-panel" ref={rootRef}>
-      <p className="muted" style={{ fontSize: "0.82rem", marginBottom: "0.85rem", lineHeight: 1.45 }}>
+      {/* <p className="muted" style={{ fontSize: "0.82rem", marginBottom: "0.85rem", lineHeight: 1.45 }}>
         Clarify <strong>goals</strong> (what to improve), <strong>soft penalties</strong> (undesirable outcomes with a cost),
         and <strong>hard constraints</strong> (fixed assignments or non‑negotiable limits). Use the Problem Config tab to
         translate into solver weights.
-      </p>
+      </p> */}
       <section className="definition-section">
-        <div className="definition-section-title">Goal Summary</div>
+        <div className="definition-section-heading">Goal Summary</div>
         {editable ? (
           <textarea
             id="definition-goal-summary"
@@ -473,12 +458,15 @@ export function DefinitionPanel({
       </section>
 
       <section className="definition-section" id="definition-open-questions">
+        <div
+          className="definition-section-heading"
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+        >
+          <span>Open Questions</span>
+          {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
+        </div>
         <div className="definition-section-header">
           <div>
-            <div className="definition-section-title" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-              <span>Open Questions</span>
-              {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
-            </div>
             <div className="muted">Outstanding clarifications that would improve the configuration.</div>
           </div>
           <div className="definition-header-actions">
@@ -516,17 +504,6 @@ export function DefinitionPanel({
                           >
                             X
                           </button>
-                        ) : null}
-                        {markerKindForQuestion(question.id) ? (
-                          <span
-                            className={`entry-diff-marker ${markerKindForQuestion(question.id) === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-                            title={markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"}
-                            aria-label={
-                              markerKindForQuestion(question.id) === "new" ? "New agent update" : "Updated by agent"
-                            }
-                          >
-                            {markerKindForQuestion(question.id) === "new" ? "+" : "Δ"}
-                          </span>
                         ) : null}
                       </div>
                       <div className="definition-question-text">{question.text}</div>
@@ -584,7 +561,6 @@ export function DefinitionPanel({
         deletedMarkerIndex={deletedMarker?.section === "gathered" ? deletedMarker.index : null}
         onTextareaInput={autoGrowTextarea}
         rowExtraClassName={(item) => flashClassForItem(item.id)}
-        rowMarkerKind={(item) => markerKindForItem(item.id)}
         suppressTransientMarkers={suppressTransientMarkers}
         removedItems={removedItems.gathered.map((entry) => ({
           id: entry.id,
@@ -608,7 +584,6 @@ export function DefinitionPanel({
           deletedMarkerIndex={deletedMarker?.section === "assumption" ? deletedMarker.index : null}
           onTextareaInput={autoGrowTextarea}
           rowExtraClassName={(item) => flashClassForItem(item.id)}
-          rowMarkerKind={(item) => markerKindForItem(item.id)}
           suppressTransientMarkers={suppressTransientMarkers}
           removedItems={removedItems.assumption.map((entry) => ({
             id: entry.id,

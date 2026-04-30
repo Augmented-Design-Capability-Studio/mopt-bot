@@ -28,13 +28,21 @@ export function SearchStrategySection({
   runEditingAction,
   ensureEditing,
 }: SearchStrategySectionProps) {
+  function markerClassFor(key: string): string {
+    const marker = markerKindFor(key);
+    if (marker === "new") return "problem-config-control-external-mark--new";
+    if (marker === "upd") return "problem-config-control-external-mark--upd";
+    return "";
+  }
+
   return (
     <>
       {problem.algorithm && (
-        <FieldRow label="Algorithm" markerKind={markerKindFor("field:algorithm")}>
+        <FieldRow label="Algorithm">
           <ConfigSelect
             editable={editable}
             value={problem.algorithm}
+            className={markerClassFor("field:algorithm")}
             displayLabel={problem.algorithm}
             onChange={(e) => {
               const nextAlgo = e.target.value;
@@ -64,11 +72,12 @@ export function SearchStrategySection({
       )}
 
       {problem.algorithm && (
-        <FieldRow label="Greedy initialization" markerKind={markerKindFor("field:use_greedy_init")}>
+        <FieldRow label="Greedy initialization">
           <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
             <ConfigSelect
               editable={editable}
               value={problem.use_greedy_init ? "1" : "0"}
+              className={markerClassFor("field:use_greedy_init")}
               displayLabel={problem.use_greedy_init ? "On" : "Off"}
               onChange={(e) => runEditingAction(() => updateProblem({ use_greedy_init: e.target.value === "1" }))}
               onActivate={(hint) => ensureEditing(hint)}
@@ -91,11 +100,12 @@ export function SearchStrategySection({
           const value = problem.algorithm_params[paramKey];
           const safe = typeof value === "number" && Number.isFinite(value) ? value : (meta?.min ?? 0);
           return (
-            <FieldRow key={paramKey} label={meta?.label ?? paramKey} markerKind={markerKindFor(`algo:${paramKey}`)}>
+            <FieldRow key={paramKey} label={meta?.label ?? paramKey}>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                 <ConfigNumberInput
                   editable={editable}
                   value={safe}
+                  className={markerClassFor(`algo:${paramKey}`)}
                   min={meta?.min}
                   max={meta?.max}
                   step={meta?.step ?? 0.01}
@@ -125,12 +135,13 @@ export function SearchStrategySection({
         })}
 
       {(problem.algorithm !== "" || problem.epochs !== null) && (
-        <FieldRow label="Max iterations" markerKind={markerKindFor("field:epochs")}>
+        <FieldRow label="Max iterations">
           <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <ConfigNumberInput
                 editable={editable}
                 value={problem.epochs ?? DEFAULT_EPOCHS}
+                className={markerClassFor("field:epochs")}
                 min={1}
                 max={50000}
                 onValueChange={(value) => {
@@ -155,11 +166,12 @@ export function SearchStrategySection({
       )}
 
       {(problem.algorithm || problem.epochs !== null) && (
-        <FieldRow label="Stop early on plateau" markerKind={markerKindFor("field:early_stop")}>
+        <FieldRow label="Stop early on plateau">
           <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
             <ConfigSelect
               editable={editable}
               value={problem.early_stop ? "1" : "0"}
+              className={markerClassFor("field:early_stop")}
               displayLabel={problem.early_stop ? "Yes" : "No (run all iterations)"}
               onChange={(e) => runEditingAction(() => updateProblem({ early_stop: e.target.value === "1" }))}
               onActivate={(hint) => ensureEditing(hint)}
@@ -180,11 +192,12 @@ export function SearchStrategySection({
 
       {problem.early_stop && (problem.algorithm || problem.epochs !== null) && (
         <>
-          <FieldRow label="Plateau patience (epochs)" markerKind={markerKindFor("field:early_stop_patience")}>
+          <FieldRow label="Plateau patience (epochs)">
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <ConfigNumberInput
                 editable={editable}
                 value={problem.early_stop_patience ?? NaN}
+                className={markerClassFor("field:early_stop_patience")}
                 min={1}
                 max={5000}
                 onValueChange={(value) => {
@@ -204,11 +217,12 @@ export function SearchStrategySection({
               </span>
             </div>
           </FieldRow>
-          <FieldRow label="Min score improvement" markerKind={markerKindFor("field:early_stop_epsilon")}>
+          <FieldRow label="Min score improvement">
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <ConfigNumberInput
                 editable={editable}
                 value={problem.early_stop_epsilon ?? NaN}
+                className={markerClassFor("field:early_stop_epsilon")}
                 min={0}
                 step={0.0001}
                 onValueChange={(value) => {
@@ -232,10 +246,11 @@ export function SearchStrategySection({
       )}
 
       {(problem.algorithm !== "" || problem.pop_size !== null) && (
-        <FieldRow label="Population / swarm size" markerKind={markerKindFor("field:pop_size")}>
+        <FieldRow label="Population / swarm size">
           <ConfigNumberInput
             editable={editable}
             value={problem.pop_size ?? DEFAULT_POP_SIZE}
+            className={markerClassFor("field:pop_size")}
             min={2}
             max={500}
             onValueChange={(value) => {
@@ -250,11 +265,12 @@ export function SearchStrategySection({
       )}
 
       {problem.random_seed !== null && (
-        <FieldRow label="Random seed" markerKind={markerKindFor("field:random_seed")}>
+        <FieldRow label="Random seed">
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <ConfigNumberInput
               editable={editable}
               value={problem.random_seed}
+              className={markerClassFor("field:random_seed")}
               onValueChange={(value) => {
                 if (value == null) return;
                 runEditingAction(() => updateProblem({ random_seed: Math.trunc(value) }));

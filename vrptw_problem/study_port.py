@@ -31,8 +31,8 @@ class VrptwStudyPort:
             id=self.id,
             label=self.label,
             weight_definitions=[
-                WeightDefinition(key, label, desc)
-                for key, label, desc in VRPTW_WEIGHT_DEFINITIONS
+                WeightDefinition(key, label, desc, direction=direction)
+                for key, label, desc, direction in VRPTW_WEIGHT_DEFINITIONS
             ],
             extension_ui="vrptw_extras",
             visualization_presets=["fleet_gantt"],

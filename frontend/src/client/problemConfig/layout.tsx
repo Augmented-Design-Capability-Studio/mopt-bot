@@ -30,11 +30,9 @@ export function BlockSection({
 
 export function FieldRow({
   label,
-  markerKind,
   children,
 }: {
   label: string;
-  markerKind?: "new" | "upd" | null;
   children: ReactNode;
 }) {
   return (
@@ -55,18 +53,7 @@ export function FieldRow({
           letterSpacing: "0.05em",
         }}
       >
-        <span className="field-row-label">
-          {label}
-          {markerKind ? (
-            <span
-              className={`entry-diff-marker ${markerKind === "new" ? "entry-diff-marker--new" : "entry-diff-marker--upd"}`}
-              title={markerKind === "new" ? "New agent update" : "Updated by agent"}
-              aria-label={markerKind === "new" ? "New agent update" : "Updated by agent"}
-            >
-              {markerKind === "new" ? "+" : "Δ"}
-            </span>
-          ) : null}
-        </span>
+        <span className="field-row-label">{label}</span>
       </div>
       <div>{children}</div>
     </div>
