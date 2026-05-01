@@ -193,6 +193,69 @@ def test_run_ack_message_does_not_trigger_post_run_even_if_classifier_says_run(m
         assert called["post_run"] is False
 
 
+def test_run_ack_agile_allows_one_assumption_patch_item(monkeypatch):
+    """Agile run-ack patches may include one non-slot assumption row (bounded)."""
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-run-ack-assumption-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+
+    # Return a run-ack turn with a single assumption item (non-slot) plus no panel patch.
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message="Noted. I'll treat that as a provisional assumption for the next iteration.",
+            panel_patch=None,
+            problem_brief_patch={
+                "items": [
+                    {
+                        "id": "assumption-next-step",
+                        "text": "Assume minimizing time-window misses is now the top priority.",
+                        "kind": "assumption",
+                        "source": "agent",
+                        "status": "active",
+                        "editable": True,
+                    }
+                ]
+            },
+        ),
+    )
+    # Ensure classifier is not called for run-ack (but even if it were, should not matter here).
+    monkeypatch.setattr(
+        "app.routers.sessions.derivation.launch_background_derivation",
+        lambda **kwargs: None,
+    )
+
+    run_ack_text = (
+        "Run #1 just completed - cost 123.45 (5 time-window stops late). "
+        "Please interpret these results and suggest what to adjust next."
+    )
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "agile"},
+            headers={"Authorization": "Bearer test-run-ack-assumption-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        send = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": run_ack_text, "invoke_model": True},
+            headers={"Authorization": "Bearer test-run-ack-assumption-secret"},
+        )
+        assert send.status_code == 200
+
+        session = client.get(
+            f"/sessions/{sid}",
+            headers={"Authorization": "Bearer test-run-ack-assumption-secret"},
+        )
+        assert session.status_code == 200
+        items = (session.json().get("problem_brief") or {}).get("items") or []
+        assert any(str(i.get("id")) == "assumption-next-step" for i in items)
+
+
 def test_direct_run_request_triggers_autorun_when_gate_open(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-chat-autorun-open-secret")
     get_settings.cache_clear()

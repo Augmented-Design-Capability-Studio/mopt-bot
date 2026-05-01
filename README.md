@@ -1,6 +1,6 @@
 # MOPT study stack
 
-Participant and researcher web apps plus a FastAPI backend for the workflow study described in `AI_INSTRUCTIONS.md`. **Solver domains** ship as sibling **`*_problem/`** directories — currently **`vrptw_problem/`** (fleet routing) and **`knapsack_problem/`** (toy benchmark). Each exposes a **study port** via `mopt_manifest.toml`, loaded by **`backend/app/problems/registry.py`**. Per-session **`test_problem_id`** (default `vrptw`, set by `DEFAULT_PROBLEM_ID` in `registry.py`) selects the active port. **`GET /meta/test-problems`** lists ids, labels, weight definitions, and UI extension keys for clients. Pulling new code **adds SQLite columns idempotently** on API startup (`ensure_database_shape`).
+Participant and researcher web apps plus a FastAPI backend for the workflow study described in `docs/.implementation/AI_INSTRUCTIONS.md` (with the detailed plan in `docs/.study_plan/STUDY_DETAILED_PLAN.md`). **Solver domains** ship as sibling **`*_problem/`** directories — currently **`vrptw_problem/`** (fleet routing) and **`knapsack_problem/`** (toy benchmark). Each exposes a **study port** via `mopt_manifest.toml`, loaded by **`backend/app/problems/registry.py`**. Per-session **`test_problem_id`** (default `vrptw`, set by `DEFAULT_PROBLEM_ID` in `registry.py`) selects the active port. **`GET /meta/test-problems`** lists ids, labels, weight definitions, and UI extension keys for clients. Pulling new code **adds SQLite columns idempotently** on API startup (`ensure_database_shape`).
 
 ## Table of contents
 
@@ -39,8 +39,14 @@ cp backend/.env.example .env
 # Edit `.env` with real secrets (same variables as above).
 ```
 
-**Linux / Raspberry Pi** — see `docs/RASPBERRY_PI_SETUP.txt` for `apt`, `venv`, and `pip` commands.  
-**Windows PC** — see `docs/WINDOWS_PC_SETUP.txt` for PowerShell, `venv`, backend run, and Cloudflare Tunnel setup.
+**Linux / Raspberry Pi** — see `docs/.setup/RASPBERRY_PI_SETUP.txt` for `apt`, `venv`, and `pip` commands.  
+**Windows PC** — see `docs/.setup/WINDOWS_PC_SETUP.txt` for PowerShell, `venv`, backend run, and Cloudflare Tunnel setup.
+
+User-facing guidance for participants and operators lives in `docs/user/`:
+
+- `docs/user/INTERFACE_GUIDE.md`
+- `docs/user/PROBLEM_MODULES_GUIDE.md`
+- `docs/user/ASKING_THE_AGENT.md`
 
 ### Run the API
 

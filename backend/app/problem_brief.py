@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 from copy import deepcopy
 from typing import Any
@@ -56,6 +57,7 @@ _OPEN_QUESTION_STOPWORDS = {
     "your",
 }
 
+@functools.lru_cache(maxsize=None)
 def _all_weight_slot_markers() -> dict[str, tuple[str, ...]]:
     from app.problems.registry import register_study_ports
 
@@ -82,13 +84,13 @@ def locked_goal_terms_prompt_section(panel_config: Any, test_problem_id: str | N
     raw = problem.get("locked_goal_terms")
     if not isinstance(raw, list) or not raw:
         return None
+    from app.problems.registry import get_study_port
+
+    labels = get_study_port(test_problem_id).weight_item_labels()
     lines: list[str] = []
     for key in raw:
         if not isinstance(key, str) or not key.strip():
             continue
-        from app.problems.registry import get_study_port
-
-        labels = get_study_port(test_problem_id).weight_item_labels()
         label = labels.get(key, key.replace("_", " ").strip().title())
         lines.append(f"- `{key}` — {label}")
     if not lines:
@@ -122,8 +124,9 @@ _CONSTRAINT_HANDLING_PREFIX_RE = re.compile(
 )
 
 # Model sometimes emits fake "open questions" like "Cap shifts? (Answered: 8h)." — fold into gathered instead.
+# Pattern covers common model formatting variants: (Answered: X), [Answered: X], — Answer: X, - Answered: X.
 _ANSWERED_SUFFIX_IN_OPQ_RE = re.compile(
-    r"^(?P<q>.+?)\s*\(\s*answered\s*:\s*(?P<a>.+?)\)\s*\.?\s*\Z",
+    r"^(?P<q>.+?)\s*(?:\(\s*answered\s*:\s*|\[\s*answered\s*:\s*|[-–]\s*answer\s*:\s*|[-–]\s*answered\s*:\s*)(?P<a>.+?)[\])]?\s*\.?\s*\Z",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -791,6 +794,48 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     return normalize_problem_brief(merged)
 
 
+_WATERFALL_ASSUMPTION_QUESTION_PREFIX = "Confirm or correct: "
+
+
+def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> dict[str, Any]:
+    """
+    Enforce workflow-specific invariants at persistence boundaries.
+
+    Waterfall invariant: do not store editable `kind: "assumption"` rows. Convert them into
+    `open_questions` so uncertainty is explicitly tracked and gated.
+    """
+    normalized = normalize_problem_brief(brief)
+    mode = str(workflow_mode or "").strip().lower()
+    if mode != "waterfall":
+        return normalized
+
+    items = list(normalized.get("items") or [])
+    open_questions = list(normalized.get("open_questions") or [])
+
+    next_items: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind != "assumption":
+            next_items.append(item)
+            continue
+
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        open_questions.append(
+            {
+                "id": f"wf-assumption-{str(item.get('id') or '').strip() or 'unknown'}",
+                "text": f"{_WATERFALL_ASSUMPTION_QUESTION_PREFIX}{text}",
+                "status": "open",
+                "answer_text": None,
+            }
+        )
+
+    return {**normalized, "items": next_items, "open_questions": open_questions}
+
+
 def sync_problem_brief_from_panel(
     base_brief: Any, panel_config: Any, test_problem_id: str | None = None
 ) -> dict[str, Any]:
@@ -842,10 +887,8 @@ def _config_item(item_id: str, text: str) -> dict[str, Any]:
 
 def _weight_item_text(label: str, value: float, constraint_type: str | None) -> str:
     ctype = (constraint_type or "").strip().lower()
-    if ctype == "hard":
-        return f"{label} is a hard constraint term (weight {value})."
-    if ctype == "soft":
-        return f"{label} is a soft constraint term (weight {value})."
+    if ctype in ("hard", "soft"):
+        return f"{label} is a {ctype} constraint term (weight {value})."
     if ctype == "custom":
         return f"{label} uses a custom locked value (weight {value})."
     return f"{label} is a primary objective term (weight {value})."
@@ -936,6 +979,11 @@ def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str
     return reconciled
 
 
+def _numeric_field(d: dict[str, Any], key: str) -> int | float | None:
+    v = d.get(key)
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
 def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = None) -> list[dict[str, Any]]:
     from app.algorithm_catalog import (
         DEFAULT_ALGORITHM_PARAMS,
@@ -984,8 +1032,8 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
     )
     if isinstance(weights, dict):
         for key in sorted(weights):
-            value = weights.get(key)
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
+            value = _numeric_field(weights, key)
+            if value is None:
                 continue
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             ctype = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
@@ -1031,18 +1079,12 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
         strategy_details.append(
             "stop early on plateau on" if problem["early_stop"] else "stop early on plateau off"
         )
-    if "early_stop_patience" in problem:
-        esp = problem.get("early_stop_patience")
-        if isinstance(esp, (int, float)) and not isinstance(esp, bool):
-            strategy_details.append(f"plateau patience {int(esp)}")
-    if "early_stop_epsilon" in problem:
-        ese = problem.get("early_stop_epsilon")
-        if isinstance(ese, (int, float)) and not isinstance(ese, bool):
-            strategy_details.append(f"min improvement epsilon {float(ese):g}")
-    if "random_seed" in problem:
-        rs = problem.get("random_seed")
-        if isinstance(rs, (int, float)) and not isinstance(rs, bool):
-            strategy_details.append(f"random seed {int(rs)}")
+    if (esp := _numeric_field(problem, "early_stop_patience")) is not None:
+        strategy_details.append(f"plateau patience {int(esp)}")
+    if (ese := _numeric_field(problem, "early_stop_epsilon")) is not None:
+        strategy_details.append(f"min improvement epsilon {float(ese):g}")
+    if (rs := _numeric_field(problem, "random_seed")) is not None:
+        strategy_details.append(f"random seed {int(rs)}")
 
     if algorithm and strategy_details:
         items.append(

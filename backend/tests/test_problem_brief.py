@@ -9,6 +9,7 @@ from app.problem_brief import (
     is_chat_cold_start,
     locked_goal_terms_prompt_section,
     merge_problem_brief_patch,
+    coerce_problem_brief_for_workflow,
     normalize_problem_brief,
     surface_problem_brief_for_chat_prompt,
     sync_problem_brief_from_panel,
@@ -162,6 +163,30 @@ def test_cleanup_open_questions_infers_resolved_when_fact_overlap_is_high():
     cleaned, meta = cleanup_open_questions(brief, infer_resolved=True)
     assert [q["id"] for q in cleaned["open_questions"]] == ["q2"]
     assert meta["removed_inferred"] == 1
+
+
+def test_coerce_waterfall_converts_assumptions_into_open_questions():
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            items=[
+                {
+                    "id": "a1",
+                    "text": "Assume moderate workload balance unless stated otherwise.",
+                    "kind": "assumption",
+                    "source": "agent",
+                    "status": "active",
+                    "editable": True,
+                }
+            ],
+            open_questions=[],
+        )
+    )
+    coerced = coerce_problem_brief_for_workflow(brief, "waterfall")
+    assert not any(i.get("kind") == "assumption" for i in coerced["items"])
+    assert any(
+        q.get("status") == "open" and "confirm or correct" in str(q.get("text") or "").lower()
+        for q in coerced.get("open_questions") or []
+    )
 
 
 def test_brief_items_from_panel_always_shows_strategy_if_algorithm_present():

@@ -1,5 +1,10 @@
 import { useCallback, useRef, type MutableRefObject } from "react";
 
+const RUN_ACK_INSTRUCTION_WATERFALL =
+  "Give a very brief interpretation in 1-2 short sentences using plain language. Then add 1-2 targeted open questions to clarify what is still missing before the next run.";
+const RUN_ACK_INSTRUCTION_DEFAULT =
+  "Give a very brief interpretation in 1-2 short sentences using plain language and suggest at most one next adjustment.";
+
 import {
   apiFetch,
   displayRunNumber,
@@ -687,8 +692,7 @@ export function useParticipantSessionActions({
     setOptimizing(true);
     setError(null);
     const startedRunNumber = maxCommittedRunNumber(runs) + 1;
-    // Visible timeline marker only; no model response requested.
-    void postContextMessage(`I started Run #${startedRunNumber}.`, false);
+    void postContextMessage(`I started Run #${startedRunNumber}.`, false, { skipHiddenBriefUpdate: true, suppressOptimisticUserMessage: true });
     setRuns((current) => {
       const base = current.filter((r) => !r.clientPending);
       const pending = makeOptimisticOptimizeRun(problem, base);
@@ -722,8 +726,10 @@ export function useParticipantSessionActions({
       if (invokeModel && run.ok) {
         const module = getProblemModule(session?.test_problem_id ?? "");
         const violationSummary = module.formatRunViolationSummary?.(run.result) ?? "—";
+        const mode = (session?.workflow_mode ?? "").toLowerCase();
+        const instruction = mode === "waterfall" ? RUN_ACK_INSTRUCTION_WATERFALL : RUN_ACK_INSTRUCTION_DEFAULT;
         void postContextMessage(
-          `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). Give a very brief interpretation in 1-2 short sentences using plain language and suggest at most one next adjustment.`,
+          `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). ${instruction}`,
           true,
           {
             skipHiddenBriefUpdate: true,

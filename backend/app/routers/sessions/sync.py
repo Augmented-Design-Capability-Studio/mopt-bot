@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import StudySession
-from app.problem_brief import sync_problem_brief_from_panel as merge_brief_from_panel
+from app.problem_brief import coerce_problem_brief_for_workflow, sync_problem_brief_from_panel as merge_brief_from_panel
 from app.problems.registry import DEFAULT_PROBLEM_ID
 
 from . import helpers
@@ -130,50 +130,18 @@ def _managed_problem_fields() -> tuple[str, ...]:
     )
 
 
-def _deterministic_seed_panel(problem_brief: dict, test_problem_id: str | None) -> dict | None:
-    """
-    Panel from deterministic brief seeding only.
-
-    Import problem-package ``brief_seed`` directly so unit tests can monkeypatch
-    ``StudyPort.derive_problem_panel_from_brief`` with partial stubs without
-    losing search-strategy backfill (which needs the real seeding logic).
-    """
-    pid = test_problem_id or DEFAULT_PROBLEM_ID
-    try:
-        if pid == "vrptw":
-            from vrptw_problem.brief_seed import derive_problem_panel_from_brief as _seed
-
-            return _seed(problem_brief)
-        if pid == "knapsack":
-            from knapsack_problem.brief_seed import derive_problem_panel_from_brief as _seed
-
-            return _seed(problem_brief)
-        if pid == "template":
-            from template_problem.brief_seed import derive_problem_panel_from_brief as _seed
-
-            return _seed(problem_brief)
-    except Exception:
-        log.exception("Deterministic brief seed failed for problem_id=%s", pid)
-        return None
-    from app.problems.registry import get_study_port
-
-    return get_study_port(pid).derive_problem_panel_from_brief(problem_brief)
-
-
-def _backfill_solver_fields_from_deterministic_seed(
-    problem_brief: dict,
+def _backfill_solver_fields_from_seed(
+    seed_panel: dict | None,
     problem: dict[str, Any],
-    test_problem_id: str | None,
 ) -> dict[str, Any]:
     """Fill algorithm / budget / params omitted by a partial LLM panel patch."""
-    seed_panel = _deterministic_seed_panel(problem_brief, test_problem_id)
     if not isinstance(seed_panel, dict):
         return problem
     seed = seed_panel.get("problem")
     if not isinstance(seed, dict):
         return problem
 
-    out = dict(problem)
+    out = deepcopy(problem)
     seed_algo = str(seed.get("algorithm") or "").strip()
 
     if not str(out.get("algorithm") or "").strip() and seed_algo:
@@ -212,9 +180,11 @@ def sync_panel_from_problem_brief(
     from app.services.llm import generate_config_from_brief
 
     test_problem_id = getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
+    port = get_study_port(test_problem_id)
 
     current_panel = helpers.panel_dict(row)
     derived_panel = None
+    seed_panel: dict | None = None
     if api_key and model_name:
         timeout_sec = get_settings().derivation_timeout_sec
         try:
@@ -232,22 +202,9 @@ def sync_panel_from_problem_brief(
             )
         except FuturesTimeoutError:
             log.warning("Config derivation timed out for session %s; falling back to deterministic seed", row.id)
-        except TypeError:
-            try:
-                derived_panel = _run_with_timeout(
-                    lambda: generate_config_from_brief(
-                        brief=problem_brief,
-                        current_panel=None,
-                        api_key=api_key,
-                        model_name=model_name,
-                        test_problem_id=test_problem_id,
-                    ),
-                    timeout_sec,
-                )
-            except FuturesTimeoutError:
-                log.warning("Config derivation (retry) timed out for session %s; falling back to deterministic seed", row.id)
     if derived_panel is None:
-        derived_panel = get_study_port(test_problem_id).derive_problem_panel_from_brief(problem_brief)
+        seed_panel = port.derive_problem_panel_from_brief(problem_brief)
+        derived_panel = seed_panel
     if derived_panel is None:
         return None, []
 
@@ -257,16 +214,16 @@ def sync_panel_from_problem_brief(
     for key in _managed_problem_fields():
         next_problem.pop(key, None)
     derived_problem = deepcopy(derived_panel["problem"])
-    companion_fields = get_study_port(test_problem_id).locked_companion_fields()
+    companion_fields = port.locked_companion_fields()
     derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem, companion_fields)
     if preserve_missing_managed_fields:
         derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
     next_problem.update(derived_problem)
-    next_problem = _backfill_solver_fields_from_deterministic_seed(
-        problem_brief, next_problem, test_problem_id
-    )
+    if seed_panel is None:
+        seed_panel = port.derive_problem_panel_from_brief(problem_brief)
+    next_problem = _backfill_solver_fields_from_seed(seed_panel, next_problem)
     next_panel["problem"] = next_problem
-    merged, weight_warnings = get_study_port(test_problem_id).sanitize_panel_config(next_panel)
+    merged, weight_warnings = port.sanitize_panel_config(next_panel)
     if merged == current_panel:
         return merged, weight_warnings
 
@@ -288,6 +245,7 @@ def sync_problem_brief_from_panel(
     next_problem_brief = merge_brief_from_panel(
         current_problem_brief, panel_config, test_problem_id=tpid
     )
+    next_problem_brief = coerce_problem_brief_for_workflow(next_problem_brief, row.workflow_mode)
     if next_problem_brief == current_problem_brief:
         return current_problem_brief
     row.problem_brief_json = json.dumps(next_problem_brief)

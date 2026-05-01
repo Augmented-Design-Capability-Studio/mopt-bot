@@ -141,6 +141,17 @@ STUDY_CHAT_WORKFLOW_WATERFALL = """
 - After each run, relate results to **stated goals** before another run; prefer deliberate
   changes over thrashing.
 
+**Waterfall — no assumptions:** do **not** add `items` with `kind: "assumption"`. If something
+is unknown or needs confirmation, represent it as an `open_questions` entry (or ask in chat and
+only add to `gathered` after explicit confirmation).
+
+**Waterfall — open-question pacing:** keep the open-question list **small and stable**:
+- Keep at most **3** open questions at a time.
+- Add or refine **at most 1** new blocking question per turn.
+- Prefer **replacing** an older/moot question (use `replace_open_questions=true` with the full
+  intended list) over growing the list.
+- Ask questions in phases: scope/objectives → trade-offs/weights (one at a time) → search strategy.
+
 **Waterfall — formulation:** elicit and get **explicit confirmation** before adding
 objectives or constraints. Treat this like requirements review: probe for completeness
 without adding items until the user agrees. Propose numeric targets (importance levels /
@@ -161,6 +172,15 @@ STUDY_CHAT_WORKFLOW_AGILE = """
   Partial specs are OK.
 - Before inviting the first run, make sure upload has been requested or acknowledged in chat.
   If not, ask for upload first (using the exact UI label **Upload file(s)...**).
+
+**Agile — gathered vs assumption (definition discipline):**
+- Use `kind: "gathered"` only for facts the participant **stated or explicitly confirmed**.
+- Use `kind: "assumption"` for **agent-proposed provisional stand-ins** used to move forward.
+  Make them easy to revise later.
+- Keep assumptions bounded: add **at most 1** new assumption per turn, and keep only a **small**
+  active set (roughly **3–5**). Prefer updating an existing assumption over adding another.
+- Keep `open_questions` minimal: use them only for uploads or true must-choose forks where a
+  default would be misleading.
 
 **Agile — formulation:** when the user gives a **clear** priority, add **at most one** new
 objective/constraint per turn. **If** the **Active benchmark** appendix is in your
@@ -218,6 +238,9 @@ This turn was triggered by an optimization run completion. Follow these rules:
 - **Do NOT use replace_editable_items** for this turn. Preserve existing rows, but you
   **may merge-append** new brief rows (see workflow addendum) using `problem_brief_patch`
   without replacing the full list.
+- If you want the saved Definition to change on this run-complete turn (open-question curation,
+  a deliberate agile assumption update, or a config-slot tweak), you must include a **non-null**
+  `problem_brief_patch`. Otherwise the system may treat this message as interpretation-only.
 - Across all workflow modes, treat post-run Definition memory as an **ever-updating concise
   specification**, not a run log. Do not add timeline/bookkeeping rows like upload notes,
   "run #N happened", or one-run observations as new `gathered`/`assumption` entries.
@@ -247,18 +270,18 @@ STUDY_CHAT_RUN_ACK_AGILE = """
   requirement appears. Avoid per-run chronology.
 - Never add `gathered`/`assumption` rows that are only run/session bookkeeping
   (for example upload confirmations, "Run #N happened", or one-off run impressions).
-- You may keep or lightly extend **open questions**; they do not all need to resolve
-  immediately.
-- You may proactively apply one small config tweak based on run feedback.
-  Frame it as "I've adjusted X based on what we saw — run again when ready."
+- Keep `open_questions` minimal (uploads / true forks only); do not build a Waterfall-style
+  open-question backlog.
+- If you update the definition at all, prefer **one** small change: either update an existing
+  assumption, add one new assumption, or apply one config-slot tweak. Frame it as provisional.
 """.strip()
 
 STUDY_CHAT_RUN_ACK_WATERFALL = """
 - **Waterfall (post-run focus):** After a run, **prioritize `open_questions`**: add or refine
   **one or two** questions when anything material is still unclear (merge-append; avoid
   `replace_open_questions` unless you intentionally replace the whole list). You need not add
-  questions every single run if the specification is already well covered. Prefer
-  clarifications over new **assumption** rows unless the participant asked for an assumption.
+  questions every single run if the specification is already well covered. Do **not** add
+  assumption rows in waterfall.
 - If you suggest a config change, tie it explicitly to the stated objectives. "Given your
   priority for on-time delivery, we could try increasing the deadline penalty — I've
   updated that."

@@ -151,7 +151,12 @@ def consolidate_run_summary(
     return normalize_problem_brief(updated), {"moved_items": moved_items, "moved_questions": moved_questions}
 
 
-def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, Any]:
+def _is_bookkeeping(raw: dict[str, Any]) -> bool:
+    text = str(raw.get("text") or "").strip().lower()
+    return any(snippet in text for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS)
+
+
+def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_mode: str | None = None) -> dict[str, Any]:
     """
     Keep run-ack brief edits compact: allow open-question curation plus durable config-slot rows.
     Drop per-run/session bookkeeping rows to prevent Definition growth across runs.
@@ -162,7 +167,9 @@ def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, 
         sanitized["replace_editable_items"] = False
         return sanitized
 
+    mode = str(workflow_mode or "").strip().lower()
     kept_items: list[dict[str, Any]] = []
+    kept_agile_assumption_count = 0
     for raw in raw_items:
         if not isinstance(raw, dict):
             continue
@@ -170,9 +177,15 @@ def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, 
         if kind == "system":
             kept_items.append(raw)
             continue
+        # On run-ack turns we normally keep only durable config-slot rows. Agile is allowed
+        # a very small provisional assumption update to support iterative refinement.
+        if kind == "assumption" and mode == "agile":
+            if not _is_bookkeeping(raw) and kept_agile_assumption_count < 1:
+                kept_items.append(raw)
+                kept_agile_assumption_count += 1
+            continue
         slot = problem_brief_item_slot(raw)
-        text = str(raw.get("text") or "").strip().lower()
-        if slot and not any(snippet in text for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS):
+        if slot and not _is_bookkeeping(raw):
             kept_items.append(raw)
 
     sanitized["items"] = kept_items
@@ -180,9 +193,9 @@ def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, 
     return sanitized
 
 
-def sanitize_run_ack_patch_payload(patch_payload: dict[str, Any]) -> dict[str, Any]:
+def sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_mode: str | None = None) -> dict[str, Any]:
     """Public wrapper for run-ack patch sanitization."""
-    return _sanitize_run_ack_patch_payload(patch_payload)
+    return _sanitize_run_ack_patch_payload(patch_payload, workflow_mode=workflow_mode)
 
 
 def apply_open_question_cleanup_pass(
@@ -295,9 +308,14 @@ def apply_brief_patch_with_cleanup(
 
 
 def _run_with_timeout(callable_obj, timeout_sec: float):
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(callable_obj)
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(callable_obj)
+    try:
         return future.result(timeout=timeout_sec)
+    finally:
+        # Don't block on shutdown — if the LLM thread is still running after a
+        # timeout, wait=True would hold the request handler open indefinitely.
+        executor.shutdown(wait=False)
 
 
 def append_message(

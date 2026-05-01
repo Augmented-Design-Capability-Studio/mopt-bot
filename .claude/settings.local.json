@@ -30,7 +30,13 @@
       "Bash(git -C C:/Users/whyhowie/git-repo/mopt-bot diff HEAD -- backend/app/routers/meta.py)",
       "Bash(git -C C:/Users/whyhowie/git-repo/mopt-bot diff HEAD -- backend/app/routers/meta.py frontend/src/shared/api.ts frontend/src/client/hooks/useParticipantController.ts frontend/src/client/chat/ChatSection.tsx)",
       "Bash(git -C C:/Users/whyhowie/git-repo/mopt-bot status --short)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(.\\\\venv\\\\Scripts\\\\pytest.exe *)",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\pytest.exe backend/tests/test_sync.py -v 2>&1)",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\pytest.exe -v 2>&1)",
+      "Bash(python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)"
     ]
   }
 }

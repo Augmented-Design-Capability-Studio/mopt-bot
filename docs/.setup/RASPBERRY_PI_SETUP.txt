@@ -1,0 +1,213 @@
+# Raspberry Pi — full setup guide for mopt-bot
+#
+# Covers: cloning the repo, Python environment, backend config,
+#         running the API, Cloudflare Tunnel, and personal domain routing.
+#
+# Assumptions: Raspberry Pi OS Bookworm (Debian 12), SSH or local terminal.
+# All commands run as your normal user unless sudo is shown explicitly.
+
+# =============================================================================
+# 1. SYSTEM PACKAGES
+# =============================================================================
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-venv python3-pip git curl
+
+# Verify Python version (need 3.10+; Bookworm ships 3.11)
+python3 --version
+
+
+# =============================================================================
+# 2. CLONE THE REPOSITORY
+# =============================================================================
+
+# Option A — public / HTTPS (no SSH key needed, but prompts for password/token)
+git clone https://github.com/<your-org>/mopt-bot.git
+cd mopt-bot
+
+# Option B — SSH (requires an SSH key added to GitHub/GitLab)
+#   If you haven't set one up yet:
+#     ssh-keygen -t ed25519 -C "your@email.com"
+#     cat ~/.ssh/id_ed25519.pub    # paste this into GitHub → Settings → SSH keys
+git clone git@github.com:<your-org>/mopt-bot.git
+cd mopt-bot
+
+# Option C — private HTTPS with a Personal Access Token (PAT)
+#   Generate a PAT on GitHub: Settings → Developer settings → Personal access tokens
+#   Then embed it in the URL (never commit this):
+#     git clone https://<username>:<token>@github.com/<your-org>/mopt-bot.git
+#   Or store credentials via git credential helper so you only type it once:
+git config --global credential.helper store
+#   The first push/pull will prompt for username + PAT, then cache it.
+
+
+# =============================================================================
+# 3. PYTHON VIRTUAL ENVIRONMENT
+# =============================================================================
+
+# Create venv at repo root (matches the project convention used by run_server.py)
+python3 -m venv venv
+source venv/bin/activate
+
+# Upgrade pip first, then install solver + API dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Note: mealpy/numpy wheels may take several minutes to build on Pi.
+# If the install dies with an out-of-memory error, add swap:
+#   sudo fallocate -l 2G /swapfile
+#   sudo chmod 600 /swapfile
+#   sudo mkswap /swapfile
+#   sudo swapon /swapfile
+
+
+# =============================================================================
+# 4. BACKEND CONFIGURATION (.env)
+# =============================================================================
+
+# The app checks backend/.env first, then ../.env (repo root). Keeping it in
+# backend/ is the most direct — no ambiguity about which file is loaded.
+cp backend/.env.example backend/.env
+nano backend/.env
+
+# Key variables to set:
+#
+#   MOPT_HOST=127.0.0.1          # bind locally; Cloudflare Tunnel connects here
+#   MOPT_PORT=8000
+#   MOPT_PUBLIC_URL=https://mopt.your-domain.example   # public URL behind Cloudflare
+#   MOPT_CLIENT_SECRET=<strong-secret>
+#   MOPT_RESEARCHER_SECRET=<strong-secret>
+#   MOPT_DEFAULT_GEMINI_MODEL=gemini-3-flash-preview
+#
+#   MOPT_DATABASE_URL=sqlite:///./data/mopt_study.db   # default, fine to leave as-is
+#   MOPT_SOLVE_TIMEOUT_SEC=120                          # default, fine to leave as-is
+#
+# CORS — controls which frontend origins the backend accepts requests from.
+# If you have no frontend deployed yet, keep the defaults (localhost Vite):
+#   MOPT_CORS_ORIGINS=http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173
+# Once your frontend is deployed publicly, add its origin here:
+#   MOPT_CORS_ORIGINS=https://your-frontend-domain.com
+#
+# Optional Fernet key for encrypting stored Gemini API keys:
+#   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   Paste the output as MOPT_FERNET_KEY=...
+
+
+# =============================================================================
+# 5. RUN THE API
+# =============================================================================
+
+cd backend
+
+# Production (no auto-reload):
+../venv/bin/python run_server.py
+
+# Or from the repo root:
+# ./venv/bin/python backend/run_server.py
+
+# Development (auto-reload; more CPU):
+# ../venv/bin/python run_server.py --reload
+
+# Health check:
+curl http://127.0.0.1:8000/health
+
+
+# =============================================================================
+# 6. CLOUDFLARE TUNNEL — INSTALL cloudflared
+# =============================================================================
+
+# Download the correct binary for your Pi architecture.
+# Pi 4 / 5 (64-bit OS):
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb \
+  -o cloudflared.deb
+
+# Pi 3 or older / 32-bit OS:
+# curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm.deb \
+#   -o cloudflared.deb
+
+sudo dpkg -i cloudflared.deb
+cloudflared --version    # confirm it installed
+
+
+# =============================================================================
+# 7. CLOUDFLARE TUNNEL — CREATE VIA DASHBOARD (recommended)
+# =============================================================================
+
+# This is the easiest approach — no config files or credentials to manage.
+#
+# 1. Go to: Cloudflare dashboard → Zero Trust → Networks → Tunnels
+# 2. Click "Create a tunnel" → choose "Cloudflared" → give it a name (e.g. mopt-backend)
+# 3. Under "Install and run connector", copy the command shown. It looks like:
+#      sudo cloudflared service install eyJh...long-token...
+# 4. Run that command on the Pi — it installs and registers cloudflared as a
+#    systemd service in one step. No config.yml needed.
+#
+# 5. Back in the dashboard, add a Public Hostname:
+#      Subdomain: mopt
+#      Domain:    howiewang.me
+#      Service:   http://127.0.0.1:8000
+#    Save — Cloudflare creates the CNAME record automatically.
+
+# After the install command runs, enable and start the service:
+sudo systemctl enable cloudflared
+sudo systemctl start cloudflared
+sudo systemctl status cloudflared   # should show "active (running)"
+
+# Test that it's reachable from outside:
+curl https://mopt.howiewang.me/health
+
+
+# =============================================================================
+# 12. OPTIONAL: systemd SERVICE FOR THE BACKEND
+# =============================================================================
+
+# Create a unit file so the FastAPI server also starts on boot.
+sudo nano /etc/systemd/system/mopt-backend.service
+
+# Paste and edit (replace <youruser> and the repo path):
+# -------------------------------------------------------
+# [Unit]
+# Description=mopt-bot FastAPI backend
+# After=network.target
+#
+# [Service]
+# Type=simple
+# User=<youruser>
+# WorkingDirectory=/home/<youruser>/mopt-bot/backend
+# ExecStart=/home/<youruser>/mopt-bot/venv/bin/python run_server.py
+# Restart=on-failure
+# RestartSec=5
+#
+# [Install]
+# WantedBy=multi-user.target
+# -------------------------------------------------------
+
+sudo systemctl daemon-reload
+sudo systemctl enable mopt-backend
+sudo systemctl start mopt-backend
+sudo systemctl status mopt-backend
+
+
+# =============================================================================
+# 13. NOTES & TROUBLESHOOTING
+# =============================================================================
+
+# - CORS: MOPT_CORS_ORIGINS must list every origin your frontend is served from,
+#   comma-separated, with no trailing slashes.
+#   e.g.  MOPT_CORS_ORIGINS=https://your-frontend.com,https://www.your-frontend.com
+
+# - Cloudflare Tunnel encrypts traffic between the Pi and Cloudflare's edge.
+#   TLS termination happens at Cloudflare, so the local service can stay HTTP.
+
+# - If cloudflared loses connectivity it reconnects automatically.
+#   Check logs: sudo journalctl -u cloudflared -f
+
+# - SQLite database lives at the path set by MOPT_DATABASE_URL (default:
+#   backend/data/mopt_study.db relative to where you start the server).
+#   Back this file up before OS updates.
+
+# - To pull code updates on the Pi:
+#   cd ~/mopt-bot && git pull
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+#   sudo systemctl restart mopt-backend

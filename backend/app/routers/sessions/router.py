@@ -19,7 +19,7 @@ from app.database import get_db
 from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port, register_study_ports
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
-from app.problem_brief import default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
+from app.problem_brief import coerce_problem_brief_for_workflow, default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
 from app.schemas import (
     CleanupOpenQuestionsBody,
     MessageCreate,
@@ -294,7 +294,9 @@ def patch_session(
     if body.panel_config is not None:
         row.panel_config_json = json.dumps(body.panel_config)
     if body.problem_brief is not None:
-        row.problem_brief_json = json.dumps(normalize_problem_brief(body.problem_brief))
+        row.problem_brief_json = json.dumps(
+            coerce_problem_brief_for_workflow(body.problem_brief, row.workflow_mode)
+        )
     if body.optimization_allowed is not None:
         row.optimization_allowed = body.optimization_allowed
     if body.optimization_runs_blocked_by_researcher is not None:
@@ -523,7 +525,9 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
 
                     if patch_payload is not None:
                         if is_run_ack:
-                            patch_payload = derivation.sanitize_run_ack_patch_payload(patch_payload)
+                            patch_payload = derivation.sanitize_run_ack_patch_payload(
+                                patch_payload, workflow_mode=row.workflow_mode
+                            )
                         if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
                             patch_payload["replace_editable_items"] = True
                         if clear_requested:
@@ -545,6 +549,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             is_run_acknowledgement=is_run_ack,
                             cleanup_mode=cleanup_requested or bool(turn.cleanup_mode),
                         )
+                        merged_brief = coerce_problem_brief_for_workflow(merged_brief, row.workflow_mode)
                         if int(cleanup_meta.get("removed_total", 0)) > 0:
                             log.info(
                                 "Auto open-question cleanup removed %s question(s) for session %s",
@@ -1169,7 +1174,10 @@ def patch_participant_problem_brief(
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
 
-    next_problem_brief = normalize_problem_brief(body.problem_brief.model_dump())
+    next_problem_brief = coerce_problem_brief_for_workflow(
+        body.problem_brief.model_dump(),
+        row.workflow_mode,
+    )
     row.problem_brief_json = json.dumps(next_problem_brief)
     helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
@@ -1262,6 +1270,7 @@ def cleanup_participant_open_questions(
         cleanup_mode=True,
         is_run_acknowledgement=False,
     )
+    cleaned_brief = coerce_problem_brief_for_workflow(cleaned_brief, row.workflow_mode)
     if cleaned_brief != current_problem_brief:
         row.problem_brief_json = json.dumps(cleaned_brief)
         helpers.touch_session(row)
