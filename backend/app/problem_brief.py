@@ -840,6 +840,17 @@ def _config_item(item_id: str, text: str) -> dict[str, Any]:
     }
 
 
+def _weight_item_text(label: str, value: float, constraint_type: str | None) -> str:
+    ctype = (constraint_type or "").strip().lower()
+    if ctype == "hard":
+        return f"{label} is a hard constraint term (weight {value})."
+    if ctype == "soft":
+        return f"{label} is a soft constraint term (weight {value})."
+    if ctype == "custom":
+        return f"{label} uses a custom locked value (weight {value})."
+    return f"{label} is a primary objective term (weight {value})."
+
+
 def _problem_brief_item_slot(item: dict[str, Any]) -> str | None:
     item_id = str(item.get("id") or "")
     slot = _slot_from_item_id(item_id)
@@ -870,7 +881,12 @@ def _slot_from_item_id(item_id: str) -> str | None:
     if item_id == "config-shift-hard-penalty":
         return "weight:shift_limit"
     if item_id.startswith("config-weight-"):
-        return f"weight:{item_id.removeprefix('config-weight-')}"
+        weight_key = item_id.removeprefix("config-weight-")
+        if weight_key == "deadline_penalty":
+            weight_key = "lateness_penalty"
+        elif weight_key == "priority_penalty":
+            weight_key = "express_miss_penalty"
+        return f"weight:{weight_key}"
     if item_id.startswith("config-algorithm-param-"):
         return f"algorithm_param:{item_id.removeprefix('config-algorithm-param-')}"
     return None
@@ -961,13 +977,24 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
         )
 
     weights = problem.get("weights")
+    constraint_types = (
+        problem.get("constraint_types")
+        if isinstance(problem.get("constraint_types"), dict)
+        else {}
+    )
     if isinstance(weights, dict):
         for key in sorted(weights):
             value = weights.get(key)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 continue
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
-            items.append(_config_item(f"config-weight-{key}", f"{label} weight is set to {value}."))
+            ctype = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
+            items.append(
+                _config_item(
+                    f"config-weight-{key}",
+                    _weight_item_text(label, float(value), str(ctype) if isinstance(ctype, str) else None),
+                )
+            )
 
     algorithm_params = problem.get("algorithm_params")
     algo_key = canonical_algorithm_stored(algorithm) if algorithm else None
@@ -993,6 +1020,30 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
             else:
                 continue
             strategy_details.append(f"{key}={rendered}")
+
+    # Search-strategy extras (not algorithm_params): keep in the same gathered line so brief→panel
+    # seeding and chat context retain greedy init / early-stop / seed settings across sync.
+    if isinstance(problem.get("use_greedy_init"), bool):
+        strategy_details.append(
+            "greedy initialization on" if problem["use_greedy_init"] else "greedy initialization off"
+        )
+    if isinstance(problem.get("early_stop"), bool):
+        strategy_details.append(
+            "stop early on plateau on" if problem["early_stop"] else "stop early on plateau off"
+        )
+    if "early_stop_patience" in problem:
+        esp = problem.get("early_stop_patience")
+        if isinstance(esp, (int, float)) and not isinstance(esp, bool):
+            strategy_details.append(f"plateau patience {int(esp)}")
+    if "early_stop_epsilon" in problem:
+        ese = problem.get("early_stop_epsilon")
+        if isinstance(ese, (int, float)) and not isinstance(ese, bool):
+            strategy_details.append(f"min improvement epsilon {float(ese):g}")
+    if "random_seed" in problem:
+        rs = problem.get("random_seed")
+        if isinstance(rs, (int, float)) and not isinstance(rs, bool):
+            strategy_details.append(f"random seed {int(rs)}")
+
     if algorithm and strategy_details:
         items.append(
             _config_item(

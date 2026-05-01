@@ -6,7 +6,7 @@ structured output when deriving or patching a panel config.
 
 from __future__ import annotations
 
-from app.problems.schema_shared import ALGORITHM_PARAMS_SCHEMA
+from app.problems.schema_shared import ALGORITHM_PARAMS_SCHEMA, CONSTRAINT_TYPES_SCHEMA
 
 
 def panel_patch_response_json_schema() -> dict:
@@ -41,6 +41,7 @@ def panel_patch_response_json_schema() -> dict:
                     "pop_size": {"type": "integer", "description": "Population / swarm size."},
                     "random_seed": {"type": "integer", "description": "RNG seed for reproducibility."},
                     "algorithm_params": ALGORITHM_PARAMS_SCHEMA,
+                    "constraint_types": CONSTRAINT_TYPES_SCHEMA,
                 },
                 "additionalProperties": False,
             }

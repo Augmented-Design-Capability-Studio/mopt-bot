@@ -443,7 +443,7 @@ export function DefinitionPanel({
                 onFocus={() => onEnsureDefinitionEditing()}
                 onChange={(e) => updateGoalSummary(e.target.value)}
                 onInput={autoGrowTextarea}
-                placeholder="Summarize what the solver should optimize for."
+                placeholder="Summarize what a good plan should prioritize."
               />
             ) : (
               <button
@@ -458,7 +458,7 @@ export function DefinitionPanel({
                   )
                 }
               >
-                {problemBrief.goal_summary || "Summarize what the solver should optimize for."}
+                {problemBrief.goal_summary || "Summarize what a good plan should prioritize."}
               </button>
             )}
           </div>
@@ -479,7 +479,7 @@ export function DefinitionPanel({
                 onFocus={() => onEnsureDefinitionEditing()}
                 onChange={(e) => updateRunSummary(e.target.value)}
                 onInput={autoGrowTextarea}
-                placeholder="Keep one concise rolling summary of recent run outcomes."
+                placeholder="Rolling summary of recent run outcomes and implications."
               />
             ) : (
               <button
@@ -494,7 +494,7 @@ export function DefinitionPanel({
                   )
                 }
               >
-                {problemBrief.run_summary || "Keep one concise rolling summary of recent run outcomes."}
+                {problemBrief.run_summary || "Rolling summary of recent run outcomes and implications."}
               </button>
             )}
           </div>
@@ -511,7 +511,7 @@ export function DefinitionPanel({
         </div>
         <div className="definition-section-header">
           <div>
-            <div className="muted">Outstanding clarifications that would improve the configuration.</div>
+            <div className="muted">Questions we still need to answer to improve the plan.</div>
           </div>
           <div className="definition-header-actions">
             {!sessionTerminated ? (
@@ -594,7 +594,7 @@ export function DefinitionPanel({
 
       <DefinitionSection
         title="Gathered Info"
-        description="Facts grounded in user messages or simulated uploads."
+        description="Confirmed facts from chat messages or uploaded materials."
         items={gatheredItems}
         editable={editable}
         sessionTerminated={sessionTerminated}
@@ -617,7 +617,7 @@ export function DefinitionPanel({
       {showAssumptions ? (
         <DefinitionSection
           title="Assumptions"
-          description="Working assumptions that help the config move forward."
+          description="Temporary assumptions used until confirmed information is available."
           items={assumptionItems}
           editable={editable}
           sessionTerminated={sessionTerminated}

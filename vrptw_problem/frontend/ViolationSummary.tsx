@@ -1,6 +1,12 @@
 import type { RunMetrics, RunViolations } from "@shared/api";
 import type { ViolationSummaryProps } from "@problemConfig/problemModule";
 
+function canonicalWeightKey(key: string): string {
+  if (key === "deadline_penalty") return "lateness_penalty";
+  if (key === "priority_penalty") return "express_miss_penalty";
+  return key;
+}
+
 /** Weight aliases that map to a specific violation/metric card. */
 const TRACKABLE: {
   key: string;
@@ -27,8 +33,8 @@ const TRACKABLE: {
     },
   },
   {
-    key: "deadline_penalty",
-    label: "On-Time Delivery",
+    key: "lateness_penalty",
+    label: "Overall Punctuality",
     card: (v) => ({
       value: `${v.time_window_stop_count} late · ${v.time_window_minutes_over.toFixed(0)} min`,
       warn: v.time_window_stop_count > 0,
@@ -43,8 +49,8 @@ const TRACKABLE: {
     }),
   },
   {
-    key: "priority_penalty",
-    label: "Express & priority deadlines",
+    key: "express_miss_penalty",
+    label: "Express order misses",
     card: (v) => ({
       value: `${v.priority_deadline_misses} late`,
       warn: v.priority_deadline_misses > 0,
@@ -77,6 +83,7 @@ function weightedContributionLine(
   metrics: RunMetrics,
   violations: RunViolations,
 ): string | null {
+  const keyAlias = key === "lateness_penalty" ? "deadline_penalty" : key === "express_miss_penalty" ? "priority_penalty" : key;
   switch (key) {
     case "travel_time": {
       const w = Number(runWeights["travel_time"]);
@@ -85,39 +92,39 @@ function weightedContributionLine(
       return `+${c.toFixed(2)} to cost (${w}×${metrics.total_travel_minutes.toFixed(1)} route min)`;
     }
     case "shift_overtime": {
-      const w = Number(runWeights[key]);
+      const w = Number(runWeights[key] ?? runWeights[keyAlias]);
       if (!Number.isFinite(w)) return null;
       const ot = Number(metrics.shift_overtime_minutes ?? 0);
       const c = w * ot;
       return `+${c.toFixed(2)} to cost (${w}×${ot.toFixed(1)} overtime min)`;
     }
-    case "deadline_penalty": {
-      const w = Number(runWeights[key]);
+    case "lateness_penalty": {
+      const w = Number(runWeights[key] ?? runWeights[keyAlias]);
       if (!Number.isFinite(w)) return null;
       const c = w * violations.time_window_minutes_over;
       return `+${c.toFixed(2)} to cost (${w}×${violations.time_window_minutes_over.toFixed(1)} min late)`;
     }
     case "capacity_penalty": {
-      const w = Number(runWeights[key]);
+      const w = Number(runWeights[key] ?? runWeights[keyAlias]);
       if (!Number.isFinite(w)) return null;
       const c = w * violations.capacity_units_over;
       return `+${c.toFixed(2)} to cost (${w}×${violations.capacity_units_over} units)`;
     }
     case "workload_balance": {
-      const w = Number(runWeights[key]);
+      const w = Number(runWeights[key] ?? runWeights[keyAlias]);
       if (!Number.isFinite(w)) return null;
       const c = w * metrics.workload_variance;
       return `+${c.toFixed(2)} to cost (${w}×${metrics.workload_variance.toFixed(2)} variance)`;
     }
     case "worker_preference": {
-      const w = Number(runWeights[key]);
+      const w = Number(runWeights[key] ?? runWeights[keyAlias]);
       if (!Number.isFinite(w)) return null;
       const u = metrics.driver_preference_penalty ?? metrics.driver_preference_units ?? 0;
       const c = w * Number(u);
       return `+${c.toFixed(2)} to cost (${w}×${Number(u).toFixed(1)} pref units)`;
     }
-    case "priority_penalty": {
-      const w = Number(runWeights[key]);
+    case "express_miss_penalty": {
+      const w = Number(runWeights[key] ?? runWeights[keyAlias]);
       if (!Number.isFinite(w)) return null;
       const c = w * violations.priority_deadline_misses;
       return `+${c.toFixed(2)} to cost (${w}×${violations.priority_deadline_misses} late orders)`;
@@ -136,7 +143,9 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
     runProblem.weights && typeof runProblem.weights === "object" && !Array.isArray(runProblem.weights)
       ? (runProblem.weights as Record<string, unknown>)
       : {};
-  const activeWeightKeys = Object.keys(runWeights).filter((key) => Number.isFinite(Number(runWeights[key])));
+  const activeWeightKeys = Object.keys(runWeights)
+    .filter((key) => Number.isFinite(Number(runWeights[key])))
+    .map(canonicalWeightKey);
 
   const { violations, metrics } = currentResult;
 
@@ -153,7 +162,8 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
         {visibleCards.map(({ key, label, card }) => {
           const { value, warn } = card(violations, metrics);
           const contrib = weightedContributionLine(key, runWeights, metrics, violations);
-          const weight = Number(runWeights[key]);
+          const legacyKey = key === "lateness_penalty" ? "deadline_penalty" : key === "express_miss_penalty" ? "priority_penalty" : key;
+          const weight = Number(runWeights[key] ?? runWeights[legacyKey]);
           const weightLine = Number.isFinite(weight) ? `weight: ${weight}` : null;
           return (
             <div key={key} className={`run-summary-card${warn ? " warn" : ""}`}>

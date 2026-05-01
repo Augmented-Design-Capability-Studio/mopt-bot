@@ -14,10 +14,10 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
     description:
       "Penalizes total minutes routes run past the configurable shift cap (summed over drivers). Set a high value to enforce a strict limit.",
   },
-  deadline_penalty: {
-    label: "On-Time Delivery",
+  lateness_penalty: {
+    label: "Overall Punctuality",
     description:
-      "Penalizes arriving after a stop's allowed time window. Higher values enforce stricter punctuality.",
+      "Penalizes arriving after any stop's allowed time window. Higher values enforce stricter overall punctuality.",
   },
   capacity_penalty: {
     label: "Load Capacity Limits",
@@ -33,10 +33,10 @@ const WEIGHT_INFO: Record<string, { label: string; description: string }> = {
     label: "Driver Preferences",
     description: "Weight on preference-rule cost units (per rules below).",
   },
-  priority_penalty: {
-    label: "Express & priority deadlines",
+  express_miss_penalty: {
+    label: "Express order misses",
     description:
-      "Penalizes each express (or emphasized priority) order delivered after its deadline window. Higher values protect SLA-style orders.",
+      "Penalizes each express order delivered after its deadline window. Higher values protect express SLA orders.",
   },
   waiting_time: {
     label: "Idle Wait Time",

@@ -22,7 +22,7 @@ def test_seed_splits_sentences_and_ignores_negated_objectives():
     weights = panel["problem"]["weights"]
     assert "travel_time" not in weights
     assert weights["workload_balance"] == 12.0
-    assert weights["deadline_penalty"] == 120.0
+    assert weights["lateness_penalty"] == 120.0
 
 
 def test_seed_parses_search_strategy_line_from_panel_sync():
@@ -79,6 +79,46 @@ def test_seed_parses_search_strategy_line_from_panel_sync():
     assert problem["weights"]["shift_limit"] == 88.0
 
 
+def test_seed_round_trips_greedy_init_early_stop_and_seed_from_search_strategy_line():
+    """Panel→brief search-strategy phrasing for non-algorithm_params knobs must parse back."""
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "config-search-strategy",
+                    "text": (
+                        "Search strategy: GA (max iterations 100, population size 50, "
+                        "greedy initialization off, stop early on plateau on, plateau patience 12, "
+                        "min improvement epsilon 0.0002, random seed 99)."
+                    ),
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+                {
+                    "id": "config-weight-travel_time",
+                    "text": "Travel time weight is set to 1.0.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                },
+            ],
+        },
+        test_problem_id="vrptw",
+    )
+    assert panel is not None
+    problem = panel["problem"]
+    assert problem["algorithm"] == "GA"
+    assert problem["use_greedy_init"] is False
+    assert problem["early_stop"] is True
+    assert problem["early_stop_patience"] == 12
+    assert abs(problem["early_stop_epsilon"] - 0.0002) < 1e-9
+    assert problem["random_seed"] == 99
+
+
 def test_seed_accepts_broader_numeric_phrasings():
     panel = derive_problem_panel_from_brief(
         {
@@ -109,7 +149,7 @@ def test_seed_accepts_broader_numeric_phrasings():
     assert problem["algorithm"] == "PSO"
     assert problem["pop_size"] == 60
     assert problem["epochs"] == 45
-    assert problem["weights"]["deadline_penalty"] == 65.0
+    assert problem["weights"]["lateness_penalty"] == 65.0
 
 
 def test_seed_parses_snake_case_alias_terms():
@@ -133,7 +173,7 @@ def test_seed_parses_snake_case_alias_terms():
     assert weights["travel_time"] == 1.0
     assert weights["workload_balance"] == 5.0
     assert weights["capacity_penalty"] == 100.0
-    assert weights["priority_penalty"] == 50.0
+    assert weights["express_miss_penalty"] == 50.0
     assert panel["problem"]["weights"]["shift_limit"] == 1000.0
 
 
@@ -156,8 +196,8 @@ def test_seed_does_not_infer_waiting_time_from_on_time_and_priority_language():
 
     assert panel is not None
     weights = panel["problem"]["weights"]
-    assert weights["deadline_penalty"] == 75.0
-    assert weights["priority_penalty"] == 100.0
+    assert weights["lateness_penalty"] == 200.0
+    assert weights["express_miss_penalty"] == 100.0
     assert "waiting_time" not in weights
     assert "early_arrival_threshold_min" not in panel["problem"]
 

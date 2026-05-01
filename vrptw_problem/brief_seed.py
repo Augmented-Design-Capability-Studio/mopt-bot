@@ -62,7 +62,7 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bhours over limit\b", re.IGNORECASE),
         re.compile(r"\blong shift penalty\b", re.IGNORECASE),
     ),
-    "deadline_penalty": (
+    "lateness_penalty": (
         re.compile(r"\bdeadline(?:s)?\b", re.IGNORECASE),
         re.compile(r"\blate(?: arrival| arrivals|ness)?\b", re.IGNORECASE),
         re.compile(r"\btime window(?:s)?\b", re.IGNORECASE),
@@ -90,7 +90,7 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bzone avoidance\b", re.IGNORECASE),
         re.compile(r"\bprefer to avoid\b", re.IGNORECASE),
     ),
-    "priority_penalty": (
+    "express_miss_penalty": (
         re.compile(r"\bpriority order\b", re.IGNORECASE),
         re.compile(r"\bpriority orders\b", re.IGNORECASE),
         re.compile(r"\bexpress\b", re.IGNORECASE),
@@ -329,6 +329,102 @@ def _extract_only_active_terms(entries: list[str]) -> bool | None:
     return None
 
 
+def _extract_structured_slots(problem_brief: dict[str, Any]) -> tuple[dict[str, float], dict[str, Any]]:
+    """
+    Parse panel-synced config rows by stable ids/text prefixes first.
+    This is the primary, generalizable fallback path (less keyword guessing).
+    """
+    weights: dict[str, float] = {}
+    structured: dict[str, Any] = {
+        "algorithm": None,
+        "epochs": None,
+        "pop_size": None,
+        "max_shift_hours": None,
+        "only_active_terms": None,
+        "use_greedy_init": None,
+        "early_stop": None,
+        "early_stop_patience": None,
+        "early_stop_epsilon": None,
+        "random_seed": None,
+    }
+    for item in problem_brief.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().lower() == "rejected":
+            continue
+        item_id = str(item.get("id") or "").strip()
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        numeric_match = _EXPLICIT_VALUE_RE.search(text)
+        numeric_value = float(numeric_match.group(1)) if numeric_match else None
+
+        if item_id.startswith("config-weight-"):
+            key = item_id.removeprefix("config-weight-")
+            if numeric_value is not None:
+                weights[key] = numeric_value
+            continue
+        if item_id == "config-search-strategy":
+            structured["algorithm"] = _detect_algorithm([text])
+            compact_epochs = _ITERATIONS_COMPACT_RE.search(text) or _EPOCHS_COMPACT_RE.search(text)
+            if compact_epochs:
+                val = float(compact_epochs.group(1))
+                structured["epochs"] = int(val) if val.is_integer() else val
+            compact_pop = _POP_SWARM_SIZE_COMPACT_RE.search(text)
+            if compact_pop:
+                val = float(compact_pop.group(1))
+                structured["pop_size"] = int(val) if val.is_integer() else val
+            tl = lowered
+            if re.search(r"\bgreedy initialization on\b", tl):
+                structured["use_greedy_init"] = True
+            elif re.search(r"\bgreedy initialization off\b", tl):
+                structured["use_greedy_init"] = False
+            if re.search(r"\bstop early on plateau on\b", tl):
+                structured["early_stop"] = True
+            elif re.search(r"\bstop early on plateau off\b", tl):
+                structured["early_stop"] = False
+            mp = re.search(r"\bplateau patience\s+(\d+)\b", text, re.IGNORECASE)
+            if mp:
+                structured["early_stop_patience"] = int(mp.group(1))
+            me = re.search(r"\bmin improvement epsilon\s+([0-9.eE+-]+)\b", text, re.IGNORECASE)
+            if me:
+                structured["early_stop_epsilon"] = float(me.group(1))
+            mr = re.search(r"\brandom seed\s+(-?\d+)\b", text, re.IGNORECASE)
+            if mr:
+                structured["random_seed"] = int(mr.group(1))
+            continue
+        if item_id == "config-only-active-terms":
+            if "only active objective terms should be applied" in lowered:
+                structured["only_active_terms"] = True
+            elif "inactive objective terms may also remain available" in lowered:
+                structured["only_active_terms"] = False
+            continue
+        if item_id == "config-epochs" and numeric_value is not None:
+            structured["epochs"] = int(numeric_value) if numeric_value.is_integer() else numeric_value
+            continue
+        if item_id == "config-pop-size" and numeric_value is not None:
+            structured["pop_size"] = int(numeric_value) if numeric_value.is_integer() else numeric_value
+            continue
+        if "max shift hours" in lowered and numeric_value is not None:
+            structured["max_shift_hours"] = numeric_value
+
+    return weights, structured
+
+
+def _structured_search_overlay_present(structured: dict[str, Any]) -> bool:
+    return any(
+        structured.get(k) is not None
+        for k in (
+            "use_greedy_init",
+            "early_stop",
+            "early_stop_patience",
+            "early_stop_epsilon",
+            "random_seed",
+        )
+    )
+
+
 def derive_problem_panel_from_brief(
     problem_brief: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -341,58 +437,68 @@ def derive_problem_panel_from_brief(
     if not fragments:
         return None
 
-    weights: dict[str, float] = {}
-    explicit_algorithm = _detect_algorithm(fragments)
+    structured_weights, structured = _extract_structured_slots(problem_brief)
+    weights: dict[str, float] = dict(structured_weights)
+    explicit_algorithm = structured.get("algorithm") or _detect_algorithm(fragments)
 
     travel_entries = _mentions(fragments, "travel_time")
-    if travel_entries:
+    if travel_entries and "travel_time" not in weights:
         weights["travel_time"] = _extract_explicit_value_for_key(travel_entries, "travel_time") or 1.0
 
     shift_limit_entries = _mentions(fragments, "shift_limit")
-    shift_limit_explicit: float | None = None
-    if shift_limit_entries:
+    shift_limit_explicit: float | None = (
+        float(structured_weights["shift_limit"]) if "shift_limit" in structured_weights else None
+    )
+    if shift_limit_entries and "shift_limit" not in weights:
         shift_limit_explicit = _extract_explicit_value_for_key(shift_limit_entries, "shift_limit")
         weights["shift_limit"] = float(shift_limit_explicit) if shift_limit_explicit is not None else 500.0
 
     capacity_entries = _mentions(fragments, "capacity_penalty")
-    if capacity_entries:
+    if capacity_entries and "capacity_penalty" not in weights:
         weights["capacity_penalty"] = _extract_explicit_value_for_key(capacity_entries, "capacity_penalty") or (
             1000.0
             if any(any(term in text.lower() for term in _STRONG_TERMS) for text in capacity_entries)
             else 100.0
         )
 
-    deadline_entries = _mentions(fragments, "deadline_penalty")
-    if deadline_entries:
-        explicit_value = _extract_explicit_value_for_key(deadline_entries, "deadline_penalty")
+    deadline_entries = _mentions(fragments, "lateness_penalty")
+    if deadline_entries and "lateness_penalty" not in weights:
+        explicit_value = _extract_explicit_value_for_key(deadline_entries, "lateness_penalty")
         if explicit_value is not None:
-            weights["deadline_penalty"] = explicit_value
+            weights["lateness_penalty"] = explicit_value
         elif any(any(term in text.lower() for term in _PRIMARY_TERMS) for text in deadline_entries):
-            weights["deadline_penalty"] = 120.0
+            weights["lateness_penalty"] = 120.0
         elif any(any(term in text.lower() for term in _MODERATE_TERMS) for text in deadline_entries):
-            weights["deadline_penalty"] = 50.0
+            weights["lateness_penalty"] = 50.0
         else:
-            weights["deadline_penalty"] = 75.0
+            weights["lateness_penalty"] = 75.0
 
     workload_entries = _mentions(fragments, "workload_balance")
-    if workload_entries:
+    if workload_entries and "workload_balance" not in weights:
         weights["workload_balance"] = _extract_explicit_value_for_key(workload_entries, "workload_balance") or (
             5.0 if any(any(term in text.lower() for term in _SECONDARY_TERMS) for text in workload_entries) else 10.0
         )
     worker_pref_entries = _mentions(fragments, "worker_preference")
-    if worker_pref_entries:
+    if worker_pref_entries and "worker_preference" not in weights:
         weights["worker_preference"] = _extract_explicit_value_for_key(worker_pref_entries, "worker_preference") or 10.0
-    priority_entries = _mentions(fragments, "priority_penalty")
-    if priority_entries:
-        weights["priority_penalty"] = _extract_explicit_value_for_key(priority_entries, "priority_penalty") or 100.0
+    priority_entries = _mentions(fragments, "express_miss_penalty")
+    if priority_entries and "express_miss_penalty" not in weights:
+        weights["express_miss_penalty"] = _extract_explicit_value_for_key(priority_entries, "express_miss_penalty") or 100.0
+
+    # By default prioritize global punctuality over express misses unless user explicitly overrides.
+    if "lateness_penalty" in weights and "express_miss_penalty" in weights:
+        weights["lateness_penalty"] = max(
+            weights["lateness_penalty"],
+            round(weights["express_miss_penalty"] * 2.0, 4),
+        )
 
     early_arrival_entries = _mentions(fragments, "waiting_time")
-    if early_arrival_entries:
+    if early_arrival_entries and "waiting_time" not in weights:
         weights["waiting_time"] = _extract_explicit_value_for_key(early_arrival_entries, "waiting_time") or 100.0
 
     shift_threshold_entries = _mentions(fragments, "max_shift_hours")
-    max_shift_hours = None
-    if shift_threshold_entries:
+    max_shift_hours = structured.get("max_shift_hours")
+    if shift_threshold_entries and max_shift_hours is None:
         max_shift_hours = _extract_explicit_value_for_key(shift_threshold_entries, "max_shift_hours") or 8.0
         # If they mentioned shift limits, give w2 a boost
         weights["shift_limit"] = max(weights.get("shift_limit", 0), 500.0)
@@ -410,9 +516,15 @@ def derive_problem_panel_from_brief(
             max_shift_hours = 8.0
 
     algorithm_params = _extract_algorithm_params(fragments)
-    epochs = _extract_numeric_setting(fragments, ("epoch", "epochs", "iteration", "iterations"))
-    pop_size = _extract_numeric_setting(fragments, ("population size", "swarm size"))
-    only_active_terms = _extract_only_active_terms(fragments)
+    epochs = structured.get("epochs")
+    if epochs is None:
+        epochs = _extract_numeric_setting(fragments, ("epoch", "epochs", "iteration", "iterations"))
+    pop_size = structured.get("pop_size")
+    if pop_size is None:
+        pop_size = _extract_numeric_setting(fragments, ("population size", "swarm size"))
+    only_active_terms = structured.get("only_active_terms")
+    if only_active_terms is None:
+        only_active_terms = _extract_only_active_terms(fragments)
 
     if (
         not weights
@@ -422,6 +534,7 @@ def derive_problem_panel_from_brief(
         and epochs is None
         and pop_size is None
         and only_active_terms is None
+        and not _structured_search_overlay_present(structured)
     ):
         return None
 
@@ -441,4 +554,14 @@ def derive_problem_panel_from_brief(
     }
     if max_shift_hours is not None:
         problem["max_shift_hours"] = max_shift_hours
+    if structured.get("use_greedy_init") is not None:
+        problem["use_greedy_init"] = bool(structured["use_greedy_init"])
+    if structured.get("early_stop") is not None:
+        problem["early_stop"] = bool(structured["early_stop"])
+    if structured.get("early_stop_patience") is not None:
+        problem["early_stop_patience"] = int(structured["early_stop_patience"])
+    if structured.get("early_stop_epsilon") is not None:
+        problem["early_stop_epsilon"] = float(structured["early_stop_epsilon"])
+    if structured.get("random_seed") is not None:
+        problem["random_seed"] = int(structured["random_seed"])
     return {"problem": problem}

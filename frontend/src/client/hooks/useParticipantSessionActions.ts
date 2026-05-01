@@ -129,6 +129,7 @@ type SaveProblemBriefOptions = {
 
 type PostContextMessageOptions = {
   skipHiddenBriefUpdate?: boolean;
+  suppressOptimisticUserMessage?: boolean;
 };
 
 export function useParticipantSessionActions({
@@ -205,15 +206,17 @@ export function useParticipantSessionActions({
     async (content: string, withModel: boolean, messageOptions?: PostContextMessageOptions) => {
       if (!token || !sessionId || session?.status === "terminated") return;
       const tempId = -Date.now() - Math.random();
-      const optimistic: Message = {
-        id: tempId,
-        created_at: new Date().toISOString(),
-        role: "user",
-        content,
-        visible_to_participant: true,
-        kind: "chat",
-      };
-      setMessages((current) => [...current, optimistic]);
+      if (!messageOptions?.suppressOptimisticUserMessage) {
+        const optimistic: Message = {
+          id: tempId,
+          created_at: new Date().toISOString(),
+          role: "user",
+          content,
+          visible_to_participant: true,
+          kind: "chat",
+        };
+        setMessages((current) => [...current, optimistic]);
+      }
       setAiPending(withModel);
       try {
         const raw = await apiFetch<unknown>(`/sessions/${sessionId}/messages`, token, {
@@ -233,7 +236,9 @@ export function useParticipantSessionActions({
         applyProcessingFromResponse(response.processing);
         if (withModel) startEagerMessagePoll();
       } catch {
-        setMessages((current) => current.filter((message) => message.id !== tempId));
+        if (!messageOptions?.suppressOptimisticUserMessage) {
+          setMessages((current) => current.filter((message) => message.id !== tempId));
+        }
       } finally {
         setAiPending(false);
       }
@@ -681,6 +686,9 @@ export function useParticipantSessionActions({
     setBusy(true);
     setOptimizing(true);
     setError(null);
+    const startedRunNumber = maxCommittedRunNumber(runs) + 1;
+    // Visible timeline marker only; no model response requested.
+    void postContextMessage(`I started Run #${startedRunNumber}.`, false);
     setRuns((current) => {
       const base = current.filter((r) => !r.clientPending);
       const pending = makeOptimisticOptimizeRun(problem, base);
@@ -717,7 +725,10 @@ export function useParticipantSessionActions({
         void postContextMessage(
           `Run #${displayRunNumber(run)} just completed - cost ${run.cost?.toFixed(2) ?? "?"} (${violationSummary}). Give a very brief interpretation in 1-2 short sentences using plain language and suggest at most one next adjustment.`,
           true,
-          { skipHiddenBriefUpdate: true },
+          {
+            skipHiddenBriefUpdate: true,
+            suppressOptimisticUserMessage: true,
+          },
         );
       }
       if (run.ok) {

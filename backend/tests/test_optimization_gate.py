@@ -9,7 +9,7 @@ from app.routers.sessions import helpers as session_helpers
 # VRPTW weight keys and worker-preference key used in agile gate tests.
 _VRPTW_WDK = [
     "travel_time", "shift_limit", "workload_balance",
-    "deadline_penalty", "capacity_penalty", "priority_penalty", "worker_preference",
+    "lateness_penalty", "capacity_penalty", "express_miss_penalty", "worker_preference",
 ]
 _VRPTW_WPK = "worker_preference"
 

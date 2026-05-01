@@ -264,7 +264,7 @@ export function ResultsPanel({
           />
         ) : showOptimizeProgress ? (
           <div className="muted" style={{ fontSize: "0.85rem", paddingTop: "0.25rem" }}>
-            Optimization in progress - the solver is searching for a good solution...
+            Optimization in progress - searching for a better plan...
           </div>
         ) : hasResult ? (
           <div className="results-visualization-scroll">
@@ -299,7 +299,7 @@ export function ResultsPanel({
             ) : null}
           </div>
         ) : (
-          <div className="muted">Run optimization to populate a timeline view and schedule details.</div>
+          <div className="muted">Run optimization to generate a timeline view and plan details.</div>
         )}
 
         <div

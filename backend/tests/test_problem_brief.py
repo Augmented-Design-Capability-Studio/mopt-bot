@@ -199,6 +199,28 @@ def test_brief_items_from_panel_skip_keys_not_allowed_for_algorithm():
     assert "w=0.4" not in texts[0]
 
 
+def test_brief_items_from_panel_includes_greedy_init_early_stop_and_seed():
+    panel = {
+        "problem": {
+            "algorithm": "GA",
+            "algorithm_params": {"pc": 0.9, "pm": 0.05},
+            "use_greedy_init": False,
+            "early_stop": True,
+            "early_stop_patience": 12,
+            "early_stop_epsilon": 0.0002,
+            "random_seed": 99,
+        }
+    }
+    items = _brief_items_from_panel(panel)
+    texts = [i["text"] for i in items]
+    s = [t for t in texts if "search strategy:" in t.lower()][0]
+    assert "greedy initialization off" in s.lower()
+    assert "stop early on plateau on" in s.lower()
+    assert "plateau patience 12" in s.lower()
+    assert "min improvement epsilon" in s.lower()
+    assert "random seed 99" in s.lower()
+
+
 def test_normalize_goal_summary_strips_numeric_weight_details():
     raw = _minimal_brief_payload(
         goal_summary="Optimize travel time (weight 1) and keep deadline penalty 50 while using GA for 120 epochs."
@@ -227,10 +249,10 @@ def test_normalize_atomizes_compound_gathered_item():
 
 def test_locked_goal_terms_prompt_section_lists_keys():
     text = locked_goal_terms_prompt_section(
-        {"problem": {"locked_goal_terms": ["deadline_penalty", "shift_limit"]}}
+        {"problem": {"locked_goal_terms": ["lateness_penalty", "shift_limit"]}}
     )
     assert text is not None
-    assert "deadline_penalty" in text
+    assert "lateness_penalty" in text
     assert "shift_limit" in text
     assert "Locked goal terms" in text
 
@@ -258,7 +280,7 @@ def test_sync_problem_brief_from_panel_reinjects_weights_after_cleanup_style_mer
     )
     panel = {
         "problem": {
-            "weights": {"travel_time": 7.5, "deadline_penalty": 12.0},
+            "weights": {"travel_time": 7.5, "lateness_penalty": 12.0},
             "algorithm": "GA",
         }
     }
@@ -268,6 +290,31 @@ def test_sync_problem_brief_from_panel_reinjects_weights_after_cleanup_style_mer
     assert "7.5" in joined
     assert "12" in joined
     assert "Travel time" in joined or "travel" in joined.lower()
+
+
+def test_sync_problem_brief_from_panel_writes_goal_term_types_before_values():
+    merged = normalize_problem_brief(_minimal_brief_payload(items=[]))
+    panel = {
+        "problem": {
+            "weights": {
+                "travel_time": 2.0,
+                "capacity_penalty": 80.0,
+                "shift_limit": 500.0,
+                "workload_balance": 9.0,
+            },
+            "constraint_types": {
+                "capacity_penalty": "soft",
+                "shift_limit": "hard",
+                "workload_balance": "custom",
+            },
+        }
+    }
+    out = sync_problem_brief_from_panel(merged, panel)
+    texts = [i.get("text", "") for i in out["items"] if i.get("kind") == "gathered"]
+    assert "Travel time is a primary objective term (weight 2.0)." in texts
+    assert "Load capacity is a soft constraint term (weight 80.0)." in texts
+    assert "Shift limit is a hard constraint term (weight 500.0)." in texts
+    assert "Workload balance uses a custom locked value (weight 9.0)." in texts
 
 
 def test_normalize_atomizes_constraint_handling_gathered_item():

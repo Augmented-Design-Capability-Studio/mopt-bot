@@ -14,15 +14,15 @@ def test_deep_merge_parses_stringified_nested_json_objects():
     base = {"problem": {"epochs": 80}}
     patch = {
         "problem": {
-            "weights": '{"travel_time": 1.0, "deadline_penalty": 50.0}',
-            "soft_constraints": '["deadline_penalty", "capacity_penalty"]',
+            "weights": '{"travel_time": 1.0, "lateness_penalty": 50.0}',
+            "soft_constraints": '["lateness_penalty", "capacity_penalty"]',
         }
     }
     out = deep_merge(base, patch)
     assert out["problem"]["weights"]["travel_time"] == 1.0
-    assert out["problem"]["weights"]["deadline_penalty"] == 50.0
+    assert out["problem"]["weights"]["lateness_penalty"] == 50.0
     assert out["problem"]["soft_constraints"] == [
-        "deadline_penalty",
+        "lateness_penalty",
         "capacity_penalty",
     ]
 

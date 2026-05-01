@@ -5,6 +5,7 @@ from app.services.llm import (
     CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA,
     CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA,
     RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA,
+    _build_visible_chat_system_instruction,
     _build_brief_update_system_instruction,
     _build_structured_system_instruction,
 )
@@ -20,11 +21,11 @@ def test_config_schema_constrains_problem_weights_to_object():
     assert set(weights["properties"]) == {
         "travel_time",
         "shift_limit",
-        "deadline_penalty",
+        "lateness_penalty",
         "capacity_penalty",
         "workload_balance",
         "worker_preference",
-        "priority_penalty",
+        "express_miss_penalty",
         "waiting_time",
     }
     assert problem.get("additionalProperties") is False
@@ -33,10 +34,14 @@ def test_config_schema_constrains_problem_weights_to_object():
 
 def test_config_schema_algorithm_params_has_bounded_properties():
     panel_patch = CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA
-    ap = panel_patch["properties"]["problem"]["properties"]["algorithm_params"]
+    problem_props = panel_patch["properties"]["problem"]["properties"]
+    ap = problem_props["algorithm_params"]
     assert ap.get("additionalProperties") is False
     assert "pc" in ap["properties"]
     assert "mutation_step_size_damp" in ap["properties"]
+    constraint_types = problem_props["constraint_types"]
+    assert constraint_types["type"] == "object"
+    assert constraint_types["additionalProperties"]["enum"] == ["soft", "hard", "custom"]
 
 
 def test_config_schema_requires_known_driver_preference_fields():
@@ -52,10 +57,12 @@ def test_config_schema_requires_known_driver_preference_fields():
 
 def test_knapsack_config_schema_weights():
     schema = get_study_port("knapsack").panel_patch_response_json_schema()
-    weights = schema["properties"]["problem"]["properties"]["weights"]
+    problem_props = schema["properties"]["problem"]["properties"]
+    weights = problem_props["weights"]
     assert weights.get("additionalProperties") is False
     assert set(weights["properties"]) == {"value_emphasis", "capacity_overflow", "selection_sparsity"}
-    assert "driver_preferences" not in schema["properties"]["problem"]["properties"]
+    assert "driver_preferences" not in problem_props
+    assert problem_props["constraint_types"]["additionalProperties"]["enum"] == ["soft", "hard", "custom"]
 
 
 def test_chat_schema_focuses_on_assistant_and_problem_brief_patch():
@@ -95,6 +102,16 @@ def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_m
     )
     assert "Rule 5 — One goal term per row" in system
     assert "Mandatory:" in system and "Constraint handling" in system
+
+
+def test_visible_chat_instruction_enforces_plain_language_over_internal_keys():
+    system = _build_visible_chat_system_instruction(
+        current_problem_brief={"goal_summary": "Improve delivery consistency.", "items": [], "open_questions": []},
+        workflow_mode="agile",
+    )
+    assert "Participant-facing wording guardrails" in system
+    assert "**not** use raw key names" in system
+    assert "avoid \"activate/enable/turn on\" phrasing" in system
 
 
 def _warm_brief() -> dict:

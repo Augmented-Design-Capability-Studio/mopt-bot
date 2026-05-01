@@ -15,14 +15,14 @@ VRPTW_WEIGHT_DEFINITIONS: list[tuple[str, str, str, str]] = [
         "Per minute past max_shift_hours (summed over vehicles); use a large weight for a near-hard cap.",
         "minimize",
     ),
-    ("deadline_penalty", "On-time delivery", "Lateness vs customer time windows (per minute late).", "minimize"),
+    ("lateness_penalty", "Overall punctuality", "Lateness vs all customer time windows (per minute late).", "minimize"),
     ("capacity_penalty", "Load capacity", "Demand exceeding vehicle capacity (per overflow unit).", "minimize"),
     ("workload_balance", "Workload balance", "Fairness of drive+service time across drivers (variance; excludes idle pre-window wait).", "minimize"),
     ("worker_preference", "Worker preferences", "Soft assignment rules (zones, priorities, shift shape).", "minimize"),
     (
-        "priority_penalty",
-        "Express & priority deadlines",
-        "Per late express (or emphasized priority) order after its window close.",
+        "express_miss_penalty",
+        "Express order misses",
+        "Per late express order after its window close (express-only misses).",
         "minimize",
     ),
     (
@@ -45,9 +45,9 @@ VRPTW_WEIGHT_DISPLAY_KEYS: tuple[str, ...] = (
     "travel_time",
     "shift_limit",
     "workload_balance",
-    "deadline_penalty",
+    "lateness_penalty",
     "capacity_penalty",
-    "priority_penalty",
+    "express_miss_penalty",
     "worker_preference",
 )
 
@@ -91,9 +91,10 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "shift duration hard penalty",
             "shift hard penalty",
         ),
-        "deadline_penalty": (
+        "lateness_penalty": (
             "on-time delivery",
-            "deadline penalty",
+            "overall punctuality",
+            "lateness penalty",
             "lateness penalty",
             "time window",
             "punctual",
@@ -114,13 +115,14 @@ def weight_slot_markers() -> dict[str, tuple[str, ...]]:
             "driver preference",
             "driver preferences",
         ),
-        "priority_penalty": (
+        "express_miss_penalty": (
             "express",
             "express order",
             "express orders",
             "priority order",
             "priority orders",
-            "priority deadline",
+            "express miss",
+            "sla miss",
             "priority-order",
             "vip",
             "sla",

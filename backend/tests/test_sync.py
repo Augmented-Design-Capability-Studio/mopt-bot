@@ -266,3 +266,66 @@ def test_sync_preserves_manual_termination_and_init_controls(monkeypatch):
     assert panel["problem"]["early_stop_patience"] == 77
     assert abs(float(panel["problem"]["early_stop_epsilon"]) - 0.005) < 1e-12
     assert panel["problem"]["use_greedy_init"] is True
+
+
+def test_sync_backfills_search_strategy_when_llm_returns_weights_only(monkeypatch):
+    """LLM panel patches may omit algorithm/epochs; deterministic brief seed fills them."""
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {"travel_time": 1.0, "capacity_penalty": 1000.0},
+                    "constraint_types": {"capacity_penalty": "hard"},
+                    "hard_constraints": ["capacity_penalty"],
+                    "soft_constraints": ["travel_time"],
+                }
+            }
+        ),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+        id="test-session",
+    )
+    brief = {
+        "items": [
+            {
+                "kind": "gathered",
+                "text": "Confirmed Genetic Algorithm (GA) as the search strategy.",
+                "status": "active",
+                "source": "user",
+            },
+            {
+                "kind": "gathered",
+                "text": "Setting default search budget of 100 epochs with a population size of 50.",
+                "status": "active",
+                "source": "agent",
+            },
+        ]
+    }
+
+    def _fake_llm(**_kwargs):
+        return {
+            "problem": {
+                "weights": {"travel_time": 1.0, "capacity_penalty": 1000.0},
+                "constraint_types": {"capacity_penalty": "hard"},
+                "hard_constraints": ["capacity_penalty"],
+                "soft_constraints": ["travel_time"],
+            }
+        }
+
+    monkeypatch.setattr("app.services.llm.generate_config_from_brief", _fake_llm)
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief=brief,
+        api_key="fake-key",
+        model_name="fake-model",
+    )
+
+    assert panel is not None
+    prob = panel["problem"]
+    assert prob["algorithm"] == "GA"
+    assert prob["epochs"] == 100
+    assert prob["pop_size"] == 50
+    assert prob["algorithm_params"] == {"pc": 0.9, "pm": 0.05}

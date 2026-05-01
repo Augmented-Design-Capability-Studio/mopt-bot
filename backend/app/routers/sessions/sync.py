@@ -7,6 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from copy import deepcopy
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -129,6 +130,74 @@ def _managed_problem_fields() -> tuple[str, ...]:
     )
 
 
+def _deterministic_seed_panel(problem_brief: dict, test_problem_id: str | None) -> dict | None:
+    """
+    Panel from deterministic brief seeding only.
+
+    Import problem-package ``brief_seed`` directly so unit tests can monkeypatch
+    ``StudyPort.derive_problem_panel_from_brief`` with partial stubs without
+    losing search-strategy backfill (which needs the real seeding logic).
+    """
+    pid = test_problem_id or DEFAULT_PROBLEM_ID
+    try:
+        if pid == "vrptw":
+            from vrptw_problem.brief_seed import derive_problem_panel_from_brief as _seed
+
+            return _seed(problem_brief)
+        if pid == "knapsack":
+            from knapsack_problem.brief_seed import derive_problem_panel_from_brief as _seed
+
+            return _seed(problem_brief)
+        if pid == "template":
+            from template_problem.brief_seed import derive_problem_panel_from_brief as _seed
+
+            return _seed(problem_brief)
+    except Exception:
+        log.exception("Deterministic brief seed failed for problem_id=%s", pid)
+        return None
+    from app.problems.registry import get_study_port
+
+    return get_study_port(pid).derive_problem_panel_from_brief(problem_brief)
+
+
+def _backfill_solver_fields_from_deterministic_seed(
+    problem_brief: dict,
+    problem: dict[str, Any],
+    test_problem_id: str | None,
+) -> dict[str, Any]:
+    """Fill algorithm / budget / params omitted by a partial LLM panel patch."""
+    seed_panel = _deterministic_seed_panel(problem_brief, test_problem_id)
+    if not isinstance(seed_panel, dict):
+        return problem
+    seed = seed_panel.get("problem")
+    if not isinstance(seed, dict):
+        return problem
+
+    out = dict(problem)
+    seed_algo = str(seed.get("algorithm") or "").strip()
+
+    if not str(out.get("algorithm") or "").strip() and seed_algo:
+        out["algorithm"] = seed["algorithm"]
+
+    out_algo = str(out.get("algorithm") or "").strip()
+
+    if out.get("epochs") is None and seed.get("epochs") is not None:
+        out["epochs"] = seed["epochs"]
+    if out.get("pop_size") is None and seed.get("pop_size") is not None:
+        out["pop_size"] = seed["pop_size"]
+
+    ap = out.get("algorithm_params")
+    need_params = not isinstance(ap, dict) or len(ap) == 0
+    if need_params and isinstance(seed.get("algorithm_params"), dict) and out_algo and seed_algo:
+        if out_algo == seed_algo:
+            out["algorithm_params"] = deepcopy(seed["algorithm_params"])
+
+    if "use_greedy_init" not in out and isinstance(seed.get("use_greedy_init"), bool):
+        out["use_greedy_init"] = seed["use_greedy_init"]
+
+    return out
+
+
 def sync_panel_from_problem_brief(
     row: StudySession,
     db: Session,
@@ -193,6 +262,9 @@ def sync_panel_from_problem_brief(
     if preserve_missing_managed_fields:
         derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
     next_problem.update(derived_problem)
+    next_problem = _backfill_solver_fields_from_deterministic_seed(
+        problem_brief, next_problem, test_problem_id
+    )
     next_panel["problem"] = next_problem
     merged, weight_warnings = get_study_port(test_problem_id).sanitize_panel_config(next_panel)
     if merged == current_panel:

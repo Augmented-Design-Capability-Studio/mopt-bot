@@ -26,12 +26,18 @@ _VRPTW_ROOT = Path(__file__).resolve().parent
 WEIGHT_ALIASES: dict[str, str] = {
     "travel_time":       "w1",
     "shift_limit":       "w2",
-    "deadline_penalty":  "w3",
+    "lateness_penalty":  "w3",
     "capacity_penalty":  "w4",
     "workload_balance":  "w5",
     "worker_preference": "w6",
-    "priority_penalty":  "w7",
+    "express_miss_penalty": "w7",
     "waiting_time":      "w8",
+}
+
+# Legacy keys accepted for backward compatibility (input only).
+LEGACY_WEIGHT_ALIASES: dict[str, str] = {
+    "deadline_penalty": "lateness_penalty",
+    "priority_penalty": "express_miss_penalty",
 }
 
 # Reverse map for displaying wN keys as human-readable aliases.
@@ -57,16 +63,16 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "shift_overtime":  "shift_limit",
     "shift_over":      "shift_limit",
     "hours_over_8":    "shift_limit",
-    # deadline_penalty
-    "deadline":        "deadline_penalty",
-    "late":            "deadline_penalty",
-    "time_window":     "deadline_penalty",
-    "on_time":         "deadline_penalty",
-    "punctuality":     "deadline_penalty",
-    "lateness":        "deadline_penalty",
-    "tardiness":       "deadline_penalty",
-    "window":          "deadline_penalty",
-    "timeliness":      "deadline_penalty",
+    # lateness_penalty
+    "deadline":        "lateness_penalty",
+    "late":            "lateness_penalty",
+    "time_window":     "lateness_penalty",
+    "on_time":         "lateness_penalty",
+    "punctuality":     "lateness_penalty",
+    "lateness":        "lateness_penalty",
+    "tardiness":       "lateness_penalty",
+    "window":          "lateness_penalty",
+    "timeliness":      "lateness_penalty",
     # capacity_penalty
     "capacity":        "capacity_penalty",
     "load":            "capacity_penalty",
@@ -88,13 +94,13 @@ _WEIGHT_KEYWORD_MAP: dict[str, str] = {
     "comfort":         "worker_preference",
     "satisfaction":    "worker_preference",
     "welfare":         "worker_preference",
-    # priority_penalty (omit bare "priority" — matches unrelated keys)
-    "urgent":          "priority_penalty",
-    "express":         "priority_penalty",
-    "sla":             "priority_penalty",
-    "vip":             "priority_penalty",
-    "rush":            "priority_penalty",
-    "critical":        "priority_penalty",
+    # express_miss_penalty (omit bare "priority" — matches unrelated keys)
+    "urgent":          "express_miss_penalty",
+    "express":         "express_miss_penalty",
+    "sla":             "express_miss_penalty",
+    "vip":             "express_miss_penalty",
+    "rush":            "express_miss_penalty",
+    "critical":        "express_miss_penalty",
     # early arrival penalty (w8)
     "early_arrival":         "waiting_time",
     "early_arrival_penalty": "waiting_time",
@@ -137,7 +143,7 @@ def _fuzzy_match_weight_key(key: str) -> str | None:
 
 def translate_weights(raw: dict[str, Any]) -> dict[str, Any]:
     """
-    Translate human-readable alias keys (travel_time, deadline_penalty, …) to the
+    Translate human-readable alias keys (travel_time, lateness_penalty, …) to the
     internal w1–w7 keys expected by build_weights. Also tries fuzzy/keyword matching
     for close-but-not-exact keys. Unknown keys that cannot be matched are dropped.
     Configs already using w1–w7 keys pass through unchanged.
@@ -159,8 +165,13 @@ def translate_weights_strict(
     out: dict[str, Any] = {}
     warnings: list[str] = []
     for k, v in raw.items():
-        if k in WEIGHT_ALIASES:
-            out[WEIGHT_ALIASES[k]] = v
+        normalized_key = LEGACY_WEIGHT_ALIASES.get(k, k)
+        if normalized_key in WEIGHT_ALIASES:
+            out[WEIGHT_ALIASES[normalized_key]] = v
+            if normalized_key != k:
+                warnings.append(
+                    f"Weight key '{k}' is deprecated and was normalized to '{normalized_key}'."
+                )
         elif k in _WEIGHT_VALID_WN:
             out[k] = v
         else:
@@ -255,13 +266,14 @@ def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any]
                 continue
             raw_k = x.strip()
             nk = "shift_limit" if raw_k in ("fuel_cost", "shift_overtime") else raw_k
-            if raw_k in ("fuel_cost", "shift_overtime"):
+            nk = LEGACY_WEIGHT_ALIASES.get(nk, nk)
+            if raw_k in ("fuel_cost", "shift_overtime") or raw_k in LEGACY_WEIGHT_ALIASES:
                 migrated_lock = True
             if nk not in seen:
                 out.append(nk)
                 seen.add(nk)
         if migrated_lock:
-            warnings.append("Renamed locked goal term to `shift_limit`.")
+            warnings.append("Renamed deprecated locked goal term(s) to canonical names.")
         problem["locked_goal_terms"] = out
 
     warnings.extend(_sanitize_algorithm_params_on_problem(problem))

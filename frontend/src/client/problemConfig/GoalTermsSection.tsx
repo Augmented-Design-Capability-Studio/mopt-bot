@@ -317,7 +317,7 @@ export function WeightRow({
       focusKey={`weight-${wkey}`}
       markerKind={markerKind}
       locked={isLocked}
-      showLock={constraintType == null}
+      showLock
       showRemove={!!onRememberRemoved}
       onToggleLock={() => {
         updateProblem({ locked_goal_terms: toggleLockedGoalTerm(problem.locked_goal_terms, wkey) });

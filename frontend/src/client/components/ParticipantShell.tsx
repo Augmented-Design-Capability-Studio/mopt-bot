@@ -444,14 +444,14 @@ export function ParticipantShell({
             </button>
           ) : null}
           <StatusChip
-            label="Model / API key"
+            label="Assistant settings"
             status={modelKeyStatus}
             icon={modelKeyIcon}
             title={
               modelKeyStatus === "ok"
-                ? "API key is set for this session"
+                ? "Assistant key is set for this session"
                 : modelKeyStatus === "warn"
-                  ? "No API key on the session - add one or ask the researcher"
+                  ? "No assistant key on this session - add one or ask the researcher"
                   : "Session loading"
             }
             onClick={() => onSetShowModelDialog(true)}

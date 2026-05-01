@@ -282,7 +282,7 @@ When the user clicks "Run optimization" (once unlocked), show an interstitial th
 
 ### 19. Agile: Post-Run Suggestion Banner
 
-After each run completes, show a persistent UI banner in the results panel: *"Biggest issue: [X]. Suggested next step: [Y]. [Apply & Re-run]"*. The banner content can be derived from the violation summary (e.g., "12 time-window violations — try increasing deadline_penalty"). This nudges rapid iteration at the UI level, not just the prompt level. Waterfall doesn't get this banner.
+After each run completes, show a persistent UI banner in the results panel: *"Biggest issue: [X]. Suggested next step: [Y]. [Apply & Re-run]"*. The banner content can be derived from the violation summary (e.g., "12 time-window violations — try increasing lateness_penalty"). This nudges rapid iteration at the UI level, not just the prompt level. Waterfall doesn't get this banner.
 
 ---
 

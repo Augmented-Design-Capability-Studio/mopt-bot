@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.problems.schema_shared import ALGORITHM_PARAMS_SCHEMA, wrap_panel_patch_schema
+from app.problems.schema_shared import (
+    ALGORITHM_PARAMS_SCHEMA,
+    CONSTRAINT_TYPES_SCHEMA,
+    wrap_panel_patch_schema,
+)
 
 _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -17,11 +21,11 @@ _VRPTW_WEIGHTS_OBJECT_SCHEMA: dict[str, Any] = {
     "properties": {
         "travel_time": {"type": "number"},
         "shift_limit": {"type": "number"},
-        "deadline_penalty": {"type": "number"},
+        "lateness_penalty": {"type": "number"},
         "capacity_penalty": {"type": "number"},
         "workload_balance": {"type": "number"},
         "worker_preference": {"type": "number"},
-        "priority_penalty": {"type": "number"},
+        "express_miss_penalty": {"type": "number"},
         "waiting_time": {
             "type": "number",
             "description": (
@@ -84,6 +88,7 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
             "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR"],
         },
         "algorithm_params": ALGORITHM_PARAMS_SCHEMA,
+        "constraint_types": CONSTRAINT_TYPES_SCHEMA,
         "epochs": {"type": "integer"},
         "pop_size": {"type": "integer"},
         "random_seed": {"type": "integer"},

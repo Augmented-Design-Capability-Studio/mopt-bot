@@ -67,6 +67,10 @@ Architecture or layout changes should be reflected in both this file and `README
 
 The brief is the single source of truth between chat and panel config. Config is always *derived from* the brief, never written directly. Brief structure includes `goal_summary`, a single rolling `run_summary`, `gathered_info`, `assumptions`, and `open_questions` (with `status`/`answer_text`). Cleanup should consolidate run/session bookkeeping noise into `run_summary` instead of leaving per-run rows in gathered/assumptions/questions.
 
+After merging a Gemini `panel_patch`, `sync_panel_from_problem_brief` (`backend/app/routers/sessions/sync.py`) backfills any missing search-strategy keys (`algorithm`, `epochs`, `pop_size`, and `algorithm_params` when the resolved algorithm matches the seed) from deterministic `*_problem/brief_seed.py` logic. That prevents partial model output (weights-only patches) from stripping the Problem Config search strategy block or breaking agile intrinsic readiness.
+
+Panel→brief injection for the `config-search-strategy` gathered row (`_brief_items_from_panel`) also embeds **greedy init**, **early stopping** (+ patience/epsilon when present on `problem`), and **random seed** when present; VRPTW `brief_seed` parses those subphrases back out of the same line for deterministic round-trip.
+
 ### Workflow gating
 
 - **Agile**: saved `problem` has ≥1 goal-term weight and a non-empty algorithm.
@@ -75,11 +79,13 @@ The brief is the single source of truth between chat and panel config. Config is
 
 ### LLM prompts
 
-All prompts live in `backend/app/prompts/` (primarily `study_chat.py`). The system instruction injects the current brief, last 4 run summaries, and researcher steering notes. Workflow-specific addenda (`STUDY_CHAT_WORKFLOW_WATERFALL` / `STUDY_CHAT_WORKFLOW_AGILE`) are appended based on `session.workflow_mode`. Domain-specific appendices come from each problem package (`*_study_prompts.py`), merged in `backend/app/services/llm.py`. Run-ack turns are constrained to avoid run-by-run memory growth: brief updates should stay condensed, avoid upload/run bookkeeping rows, and favor durable config-slot updates over new assumptions. Participant-facing replies should stay very short by default and use natural-language setting names over raw config keys.
+All prompts live in `backend/app/prompts/` (primarily `study_chat.py`). The system instruction injects the current brief, last 4 run summaries, and researcher steering notes. Workflow-specific addenda (`STUDY_CHAT_WORKFLOW_WATERFALL` / `STUDY_CHAT_WORKFLOW_AGILE`) are appended based on `session.workflow_mode`. Domain-specific appendices come from each problem package (`*_study_prompts.py`), merged in `backend/app/services/llm.py`. Run-ack turns are constrained to avoid run-by-run memory growth: brief updates should stay condensed, avoid upload/run bookkeeping rows, and favor durable config-slot updates over new assumptions. Participant-facing replies should stay very short by default, use plain operational wording first (for example priorities and importance levels), and only introduce technical optimization terms when needed for precision. In visible chat across all modes, internal schema/config key names should stay hidden unless the participant explicitly asks for field-level names, and wording should avoid "activate/enable/turn on" framing in favor of neutral optimization phrasing ("increase emphasis", "prioritize more", "adjust toward").
+When new goal terms are introduced, config derivation should also assign term types in `problem.constraint_types` (`soft`, `hard`, `custom`; objective is implicit by omission): keep one main objective and classify most additional terms as soft/hard constraints, with `custom` reserved for explicit manual fixed-weight asks.
+Definition rows synced from panel config should describe goal-term type first (objective/soft/hard/custom-locked) before numeric value details. In participant Problem Config, goal-term lock controls should remain available; custom terms are treated as user-owned locked values unless manually unlocked.
 
 ### Domain packages
 
-Each domain owns: weight definitions (`study_meta.py`), Gemini panel schema (`panel_schema.py`), chat prompt appendix (`study_prompts.py`), brief seeding (`brief_seed.py`), and neutral JSON bridge (`study_bridge.py`). Generic backend code accesses all domain behavior through `get_study_port()` from the registry.
+Each domain owns: weight definitions (`study_meta.py`), Gemini panel schema (`panel_schema.py`), chat prompt appendix (`study_prompts.py`), brief seeding (`brief_seed.py`), and neutral JSON bridge (`study_bridge.py`). Generic backend code accesses all domain behavior through `get_study_port()` from the registry. For VRPTW, canonical punctuality keys are `lateness_penalty` (all-order lateness) and `express_miss_penalty` (express-only misses); legacy `deadline_penalty` / `priority_penalty` are compatibility aliases normalized at read boundaries only.
 
 ### API shape
 
@@ -111,6 +117,7 @@ Panel 2 has three tabs: **Definition** (gathered info, assumptions, open questio
 Panel 3 defaults to an interactive Gantt-style vehicle timeline built from run payload data. Run tabs use session-local labels (`Run #1`, `Run #2`, …).
 
 Chat messages render optimistically. The visible reply returns on the fast path; panel spinners from `session.processing` state reflect background brief/config derivation.
+Auto-posted run-complete interpretation context remains hidden from participant-visible chat (it is still passed to the model), so run feedback appears as one concise assistant insight rather than a synthetic user prompt plus reply.
 
 ### Researcher UI
 

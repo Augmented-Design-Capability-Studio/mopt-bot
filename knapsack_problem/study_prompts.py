@@ -18,6 +18,8 @@ metaheuristic guidance.
 | Prefer fewer selected items / sparsity | `selection_sparsity` |
 
 - `"only_active_terms"`: when true, unspecified weight keys are treated as inactive (zero), matching the participant panel.
+- `"constraint_types"`: optional object mapping weight keys to `"soft"`, `"hard"`, or `"custom"` for
+  participant-panel type labels. Omitted keys default to objective.
 
 **Search:** Same algorithm catalog as other study benchmarks: `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"` with the usual `algorithm_params`, `epochs`, `pop_size`, `random_seed`, and early-stop fields.
 
@@ -46,6 +48,9 @@ Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
 - Emit "weights" only with keys: "value_emphasis", "capacity_overflow", "selection_sparsity".
+- When emitting multiple weight keys, also emit `"constraint_types"` for non-objective terms:
+  keep one primary objective implicit, classify most others as `"soft"`/`"hard"` constraints
+  based on user intent, and use `"custom"` only for explicit user-requested manual weighting.
 - Include "only_active_terms" when the brief supports it.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - Include epochs, pop_size, random_seed, early_stop fields only when the brief supports them.

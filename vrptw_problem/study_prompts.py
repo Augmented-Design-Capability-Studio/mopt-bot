@@ -20,11 +20,11 @@ Internal mapping — use this to structure the brief so config derivation can ma
 |---|---|
 | travel time, operating time, duration, makespan, distance, route length, transit, fuel, mileage, operating cost | `travel_time` |
 | shift overtime past max hours, minutes beyond limit, fleet overtime (soft, minute-linear) | `shift_limit` |
-| deadlines, time windows, late arrivals, punctuality, on-time | `deadline_penalty` |
+| deadlines, time windows, late arrivals, punctuality, on-time | `lateness_penalty` |
 | overloading, capacity, load limits, packing | `capacity_penalty` |
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
-| priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `priority_penalty` |
+| priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `express_miss_penalty` |
 | driver arriving too early, idle wait time, minimize waiting, reduce schedule slack, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per idle minute — no grace period; all wait counts) |
 | maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
@@ -38,8 +38,8 @@ Hard constraints (always enforced — only mention when the user asks):
 - Locked/forced assignments (`locked_assignments`).
 
 Soft constraints (penalized in cost — reveal only when user mentions the related concept):
-- Capacity limits (`capacity_penalty`), time-window compliance (`deadline_penalty`),
-  shift overtime minutes (`shift_limit`), priority lateness (`priority_penalty`),
+- Capacity limits (`capacity_penalty`), time-window compliance (`lateness_penalty`),
+  shift overtime minutes (`shift_limit`), Express order misses (`express_miss_penalty`),
   workload fairness (`workload_balance`), worker preferences (`worker_preference`),
   idle-wait penalty (`waiting_time` weight — penalizes total minutes a driver waits before a window opens).
 
@@ -53,14 +53,19 @@ All available fields under `"problem"`:
 - `"weights"`: JSON **object** (never an array). Keys must be chosen from this exact set:
   - `"travel_time"` — total route travel / driving minutes (use for time, distance, fuel/mileage language too)
   - `"shift_limit"` — weight on total minutes routes exceed the Max Shift Hours limit (summed over vehicles)
-  - `"deadline_penalty"` — penalty per minute and per stop arriving after the allowed window
+  - `"lateness_penalty"` — penalty per minute and per stop arriving after the allowed window (all orders)
   - `"capacity_penalty"` — penalty per unit loaded beyond vehicle capacity
   - `"workload_balance"` — penalty for variance in drive+service time across workers (excludes idle pre-window wait)
   - `"worker_preference"` — soft preference violations per worker
-  - `"priority_penalty"` — penalty per express / priority-order deadline miss (SLA-style orders)
+  - `"express_miss_penalty"` — penalty per express-order SLA miss (express-only)
   - `"waiting_time"` — penalty per idle minute a driver waits before a window opens (total wait, no grace period); use when the user wants to minimize idle time or schedule slack
 - `"only_active_terms"`: boolean — when true, weight terms not explicitly set are zeroed
   so only the user's stated priorities count. Use when the user says "only care about X".
+- `"constraint_types"`: object mapping weight keys to `"soft"`, `"hard"`, or `"custom"` for
+  participant-panel type labels. Omit a key to leave it as the implicit default objective.
+  When adding multiple terms, keep one primary objective implicit and classify most others as
+  soft/hard constraints based on user intent. Use `"custom"` only in rare cases where the user
+  explicitly requests a manually fixed term weight/behavior.
 - `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
   - **Worker names → index** (when the scenario names workers): Alice → 0, Bob → 1, Carol → 2, Dave → 3, Eve → 4.
   - **`avoid_zone`**: soft dislike of delivery stops in a zone; set `"zone": 1–5` matching order zones (1=A … 4=D Westgate … 5=E Northgate). Depot/matrix index 0 is not an order zone.
@@ -86,7 +91,7 @@ All available fields under `"problem"`:
 - `"pop_size"`: population/swarm size (typical: 20–150).
 - `"random_seed"`: integer seed for reproducibility.
 - `"hard_constraints"`: list of constraint names, e.g. `["shift_limit", "locked_assignments"]`.
-- `"soft_constraints"`: list of soft terms in use, e.g. `["deadline_penalty", "workload_balance"]`.
+- `"soft_constraints"`: list of soft terms in use, e.g. `["lateness_penalty", "workload_balance"]`.
 
 ### Handling requests for “unsupported” objectives
 
@@ -131,11 +136,19 @@ Rules:
   use_greedy_init), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
 - Emit "weights" as a JSON object with only these keys:
-  "travel_time", "shift_limit", "deadline_penalty", "capacity_penalty",
-  "workload_balance", "worker_preference", "priority_penalty", "waiting_time".
+  "travel_time", "shift_limit", "lateness_penalty", "capacity_penalty",
+  "workload_balance", "worker_preference", "express_miss_penalty", "waiting_time".
 - If "weights" is emitted, include only terms justified by the brief.
+- When emitting "weights", also emit matching `"constraint_types"` for non-objective terms:
+  - keep one main optimization target implicit (objective by omission),
+  - use `"soft"` for trade-off penalties/preferences,
+  - use `"hard"` for near-mandatory limits the user frames as strict/non-negotiable,
+  - use `"custom"` only when the user explicitly asks for a manually fixed term behavior/weight.
+- Keep `"hard_constraints"` / `"soft_constraints"` consistent with `"constraint_types"` when those arrays are present.
 - Time-minimization / duration / operating-time / fuel / mileage goals → `travel_time` only.
 - Shift overage past the configurable limit as an objective → `shift_limit`.
+- For punctuality semantics, prefer this precedence unless the user explicitly overrides:
+  keep `lateness_penalty` at least 2x `express_miss_penalty` when both are active.
 - Threshold for shift-length penalties (e.g. 8.0 hours) → `max_shift_hours`.
   Use a default of 8.0 if a limit is mentioned without a specific duration.
   Default `shift_limit` weight to 500.0 if the user asks for a strict limit.

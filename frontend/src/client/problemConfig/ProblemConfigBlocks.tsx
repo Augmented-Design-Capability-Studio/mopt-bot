@@ -140,8 +140,8 @@ export function ProblemConfigBlocks({
   if (!hasSomething) {
     return (
       <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>
-        No solver configuration has been created yet. Use chat or the Definition tab to clarify objectives and
-        constraints first, or ask the researcher to push a starter configuration.
+        No solver setup has been created yet. Use chat or the Definition tab to clarify priorities and rules first,
+        or ask the researcher to push a starter setup.
       </p>
     );
   }
@@ -190,7 +190,7 @@ export function ProblemConfigBlocks({
       case "shift_limit":
       case "shift_overtime":
         return Math.abs(w * Number(r.metrics.shift_overtime_minutes ?? 0));
-      case "deadline_penalty":
+      case "lateness_penalty":
         return Math.abs(w * Number(r.violations.time_window_minutes_over ?? 0));
       case "capacity_penalty":
         return Math.abs(w * Number(r.violations.capacity_units_over ?? 0));
@@ -200,7 +200,7 @@ export function ProblemConfigBlocks({
         const prefUnits = Number(r.metrics.driver_preference_penalty ?? r.metrics.driver_preference_units ?? 0);
         return Math.abs(w * prefUnits);
       }
-      case "priority_penalty":
+      case "express_miss_penalty":
         return Math.abs(w * Number(r.violations.priority_deadline_misses ?? 0));
       case "waiting_time":
         return Math.abs(w * Number((r as unknown as { metrics?: { wait_minutes_total?: number } }).metrics?.wait_minutes_total ?? 0));
@@ -220,11 +220,11 @@ export function ProblemConfigBlocks({
     const lexicon: Record<string, RegExp> = {
       travel_time: /\b(travel|distance|fuel|route time|mileage)\b/g,
       shift_limit: /\b(shift|overtime|over[- ]?time|hours|workday|max shift)\b/g,
-      deadline_penalty: /\b(deadline|late|lateness|on[- ]?time|time window)\b/g,
+      lateness_penalty: /\b(deadline|late|lateness|on[- ]?time|time window|punctual)\b/g,
       capacity_penalty: /\b(capacity|overflow|overload|load limit|truck load)\b/g,
       workload_balance: /\b(balance|variance|fairness|even workload|equal routes)\b/g,
       worker_preference: /\b(preference|driver preference|worker preference|preferred)\b/g,
-      priority_penalty: /\b(priority|express|urgent|vip)\b/g,
+      express_miss_penalty: /\b(priority|express|urgent|vip|sla)\b/g,
       waiting_time: /\b(wait|idle|idling|queue)\b/g,
     };
     const matches = [...recent.matchAll(lexicon[key] ?? /$^/g)].length;
@@ -366,7 +366,7 @@ export function ProblemConfigBlocks({
     >
       <BlockSection title="Goal terms">
         <p className="muted goal-terms-helper-text">
-          Drag to reorder by priority. The agent adjusts weights automatically.
+          Drag to reorder priorities. The agent updates importance levels automatically.
         </p>
         <GoalTermsSection
           problem={problem}

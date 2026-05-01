@@ -433,8 +433,11 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
         raise HTTPException(status_code=410, detail="Session ended")
 
     out: list[MessageOut] = []
-    um = derivation.append_message(db, session_id, "user", body.content, True)
-    out.append(MessageOut.model_validate(um))
+    is_run_ack = intent.is_run_acknowledgement_message(body.content)
+    user_visible = not is_run_ack
+    um = derivation.append_message(db, session_id, "user", body.content, user_visible)
+    if user_visible:
+        out.append(MessageOut.model_validate(um))
     updated_panel: dict | None = None
     updated_problem_brief: dict | None = None
     proc_state: SessionProcessingState | None = None
@@ -462,7 +465,6 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             updated_panel = current
             cleanup_requested = intent.is_definition_cleanup_request(body.content)
             clear_requested = intent.is_definition_clear_request(body.content)
-            is_run_ack = intent.is_run_acknowledgement_message(body.content)
             is_answer_save = intent.is_answered_open_question_message(body.content)
             turn = None
             try:

@@ -38,6 +38,19 @@ ALGORITHM_PARAMS_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+CONSTRAINT_TYPES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Per-goal-term classification in the participant panel. "
+        "Keys are weight aliases. Values: soft, hard, custom. "
+        "Objective is the implicit default when a key is omitted."
+    ),
+    "additionalProperties": {
+        "type": "string",
+        "enum": ["soft", "hard", "custom"],
+    },
+}
+
 
 def wrap_panel_patch_schema(problem_inner: dict[str, Any]) -> dict[str, Any]:
     return {

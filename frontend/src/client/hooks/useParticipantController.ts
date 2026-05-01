@@ -42,7 +42,7 @@ import {
 // has not loaded yet (brief transient window at startup).
 const _VRPTW_AGILE_WDK = [
   "travel_time", "shift_limit", "workload_balance",
-  "deadline_penalty", "capacity_penalty", "priority_penalty", "worker_preference",
+  "lateness_penalty", "capacity_penalty", "express_miss_penalty", "worker_preference",
 ] as const;
 import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
 import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
@@ -356,7 +356,12 @@ export function useParticipantController() {
   useEffect(() => {
     if (session?.workflow_mode !== "agile" || session.status !== "active") return;
     if (!agileAutorunStorageKey) return;
-    if (busy || optimizing) return;
+    if (busy || optimizing || aiPending) return;
+    const processing = session.processing;
+    if (!processing) return;
+    if (processing.brief_status === "pending" || processing.config_status === "pending") return;
+    // Auto-run should only use settled Definition/config state.
+    if (processing.brief_status === "failed" || processing.config_status === "failed") return;
     if (editMode !== "none") return;
     if (!intrinsicOptimizationReadyAgile(
       configText,
@@ -376,6 +381,7 @@ export function useParticipantController() {
     actions.runOptimize,
     agileAutorunStorageKey,
     busy,
+    aiPending,
     configText,
     editMode,
     optimizing,

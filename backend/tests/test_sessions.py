@@ -769,7 +769,7 @@ def test_waterfall_can_infer_first_panel_from_complete_problem_brief(monkeypatch
         assert body["panel_config"] is not None
         assert body["panel_config"]["problem"]["algorithm"] == "PSO"
         assert body["panel_config"]["problem"]["weights"]["capacity_penalty"] == 1000.0
-        assert body["panel_config"]["problem"]["weights"]["deadline_penalty"] == 50.0
+        assert body["panel_config"]["problem"]["weights"]["lateness_penalty"] == 50.0
 
         session = client.get(
             f"/sessions/{sid}",
@@ -837,7 +837,7 @@ def test_problem_brief_save_reconciles_panel_from_brief(monkeypatch):
         # travel/fuel, so weights come from capacity + deadline lines only.
         assert panel["weights"] == {
             "capacity_penalty": 1000.0,
-            "deadline_penalty": 50.0,
+            "lateness_penalty": 50.0,
         }
 
 
@@ -923,7 +923,7 @@ def test_chat_can_override_pushed_starter_panel(monkeypatch):
         # Brief items (not goal_summary) drive deterministic seed; no travel/fuel lines in items.
         assert panel["weights"] == {
             "capacity_penalty": 1000.0,
-            "deadline_penalty": 50.0,
+            "lateness_penalty": 50.0,
             "travel_time": 1.0,
             "workload_balance": 4.0,
         }
@@ -1010,7 +1010,7 @@ def test_completed_delivery_brief_syncs_config_without_model_panel_patch(monkeyp
         assert patch.status_code == 200
         panel = patch.json()["panel_config"]["problem"]
         assert panel["algorithm"] == "GA"
-        assert panel["weights"]["deadline_penalty"] == 120.0
+        assert panel["weights"]["lateness_penalty"] == 120.0
         assert panel["weights"]["capacity_penalty"] == 1000.0
         assert panel["weights"]["workload_balance"] == 50.0
         assert panel["weights"]["shift_limit"] == 500.0
@@ -1225,7 +1225,7 @@ def test_partial_problem_brief_patch_preserves_prior_facts_for_config_derivation
         assert send.status_code == 200
         body = send.json()
         assert body["panel_config"]["problem"]["algorithm"] == "SwarmSA"
-        assert body["panel_config"]["problem"]["weights"]["deadline_penalty"] == 120.0
+        assert body["panel_config"]["problem"]["weights"]["lateness_penalty"] == 120.0
         assert body["panel_config"]["problem"]["weights"]["capacity_penalty"] == 1000.0
         assert body["panel_config"]["problem"]["weights"]["workload_balance"] == 50.0
         gathered_texts = [item["text"] for item in body["problem_brief"]["items"] if item["kind"] != "system"]
@@ -1339,9 +1339,9 @@ def test_panel_save_updates_problem_brief_and_round_trips_back_to_config(monkeyp
         assert "max iterations 33" in strategy_line
         assert "population size 21" in strategy_line
         assert "c1=1.8" in strategy_line
-        assert "Travel time weight is set to 1.0." in brief_texts
-        assert "Workload balance weight is set to 100.0." in brief_texts
-        assert "Shift limit weight is set to 88.0." in brief_texts
+        assert "Travel time is a primary objective term (weight 1.0)." in brief_texts
+        assert "Workload balance is a primary objective term (weight 100.0)." in brief_texts
+        assert "Shift limit is a primary objective term (weight 88.0)." in brief_texts
 
         save_brief = client.patch(
             f"/sessions/{sid}/problem-brief",
@@ -1951,7 +1951,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
         captured["current_panel"] = current_panel
         return {
             "problem": {
-                "weights": {"deadline_penalty": 80.0},
+                "weights": {"lateness_penalty": 80.0},
                 "algorithm": "GA",
             }
         }
@@ -1976,7 +1976,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
                         "weights": {
                             "travel_time": 1.0,
                             "shift_limit": 1.0,
-                            "deadline_penalty": 60.0,
+                            "lateness_penalty": 60.0,
                             "capacity_penalty": 100.0,
                             "workload_balance": 15.0,
                         },
@@ -2013,7 +2013,7 @@ def test_definition_sync_uses_brief_only_not_existing_panel(monkeypatch):
         assert patch.status_code == 200
         assert captured["current_panel"] is None
         weights = patch.json()["panel_config"]["problem"]["weights"]
-        assert weights["deadline_penalty"] == 80.0
+        assert weights["lateness_penalty"] == 80.0
         # preserve_missing_managed_fields keeps prior panel weights not contradicted by the brief
         assert weights["travel_time"] == 1.0
         assert weights["shift_limit"] == 1.0
