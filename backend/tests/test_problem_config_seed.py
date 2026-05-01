@@ -1,347 +1,37 @@
-from app.problem_config_seed import derive_problem_panel_from_brief
+from app import problem_config_seed
 
 
-def test_seed_splits_sentences_and_ignores_negated_objectives():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "Optimize routes, but travel time is not important.",
-            "items": [
-                {
-                    "id": "fact-workload",
-                    "text": "Workload balance should be 12. Deadline compliance is the top priority.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        }
-    )
+def test_derive_problem_panel_from_brief_delegates_to_selected_port(monkeypatch):
+    captured = {}
 
-    assert panel is not None
-    weights = panel["problem"]["weights"]
-    assert "travel_time" not in weights
-    assert weights["workload_balance"] == 12.0
-    assert weights["lateness_penalty"] == 120.0
+    class _FakePort:
+        def derive_problem_panel_from_brief(self, brief):
+            captured["brief"] = brief
+            return {"problem": {"weights": {"x": 1}}}
+
+    monkeypatch.setattr(problem_config_seed, "get_study_port", lambda problem_id=None: _FakePort(), raising=False)
+    monkeypatch.setattr("app.problems.registry.get_study_port", lambda problem_id=None: _FakePort())
+
+    brief = {"goal_summary": "anything", "items": []}
+    out = problem_config_seed.derive_problem_panel_from_brief(brief, test_problem_id="custom")
+
+    assert out == {"problem": {"weights": {"x": 1}}}
+    assert captured["brief"] == brief
 
 
-def test_seed_parses_search_strategy_line_from_panel_sync():
-    """Brief items from the panel use 'max iterations 33' without 'set to …' phrasing."""
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "config-search-strategy",
-                    "text": (
-                        "Search strategy: PSO (max iterations 33, population size 21, "
-                        "c1=1.8, c2=2.2, w=0.55)."
-                    ),
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-                {
-                    "id": "config-weight-travel_time",
-                    "text": "Travel time weight is set to 1.0.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-                {
-                    "id": "config-weight-workload_balance",
-                    "text": "Workload balance weight is set to 100.0.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-                {
-                    "id": "config-weight-shift_limit",
-                    "text": "Shift limit weight is set to 88.0.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-            ],
-        }
-    )
-    assert panel is not None
-    problem = panel["problem"]
-    assert problem["algorithm"] == "PSO"
-    assert problem["epochs"] == 33
-    assert problem["pop_size"] == 21
-    assert problem["weights"]["travel_time"] == 1.0
-    assert problem["weights"]["workload_balance"] == 100.0
-    assert problem["weights"]["shift_limit"] == 88.0
+def test_derive_problem_panel_from_brief_uses_default_port_when_problem_id_omitted(monkeypatch):
+    called = {"problem_id": None}
 
+    class _FakePort:
+        def derive_problem_panel_from_brief(self, brief):
+            return {"problem": {"weights": {"x": len(brief.get("items", []))}}}
 
-def test_seed_round_trips_greedy_init_early_stop_and_seed_from_search_strategy_line():
-    """Panel→brief search-strategy phrasing for non-algorithm_params knobs must parse back."""
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "config-search-strategy",
-                    "text": (
-                        "Search strategy: GA (max iterations 100, population size 50, "
-                        "greedy initialization off, stop early on plateau on, plateau patience 12, "
-                        "min improvement epsilon 0.0002, random seed 99)."
-                    ),
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-                {
-                    "id": "config-weight-travel_time",
-                    "text": "Travel time weight is set to 1.0.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-            ],
-        },
-        test_problem_id="vrptw",
-    )
-    assert panel is not None
-    problem = panel["problem"]
-    assert problem["algorithm"] == "GA"
-    assert problem["use_greedy_init"] is False
-    assert problem["early_stop"] is True
-    assert problem["early_stop_patience"] == 12
-    assert abs(problem["early_stop_epsilon"] - 0.0002) < 1e-9
-    assert problem["random_seed"] == 99
+    def _fake_get(problem_id=None):
+        called["problem_id"] = problem_id
+        return _FakePort()
 
+    monkeypatch.setattr("app.problems.registry.get_study_port", _fake_get)
 
-def test_seed_accepts_broader_numeric_phrasings():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-algorithm",
-                    "text": "Use particle swarm optimization. Population size equals 60. Iterations should be 45.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-                {
-                    "id": "fact-deadline",
-                    "text": "Deadline penalty is 65.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-            ],
-        }
-    )
-
-    assert panel is not None
-    problem = panel["problem"]
-    assert problem["algorithm"] == "PSO"
-    assert problem["pop_size"] == 60
-    assert problem["epochs"] == 45
-    assert problem["weights"]["lateness_penalty"] == 65.0
-
-
-def test_seed_parses_snake_case_alias_terms():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-terms",
-                    "text": "Use travel_time weight 1, workload_balance weight 5, capacity_violation weight 100, priority_deadline weight 50, and shift_limit penalty 1000.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        }
-    )
-    assert panel is not None
-    weights = panel["problem"]["weights"]
-    assert weights["travel_time"] == 1.0
-    assert weights["workload_balance"] == 5.0
-    assert weights["capacity_penalty"] == 100.0
-    assert weights["express_miss_penalty"] == 50.0
-    assert panel["problem"]["weights"]["shift_limit"] == 1000.0
-
-
-def test_seed_punctuality_language_does_not_add_express_miss_penalty():
-    """Overall time-window / lateness wording must not imply express-tier SLA weight."""
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-punctuality",
-                    "text": (
-                        "Reduce late arrivals and improve punctuality against customer time windows; "
-                        "penalize on-time violations more strongly."
-                    ),
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        },
-        test_problem_id="vrptw",
-    )
-    assert panel is not None
-    weights = panel["problem"]["weights"]
-    assert "lateness_penalty" in weights
-    assert "express_miss_penalty" not in weights
-
-
-def test_seed_does_not_infer_waiting_time_from_on_time_and_priority_language():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-timing",
-                    "text": "We care about on-time delivery and priority orders.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        }
-    )
-
-    assert panel is not None
-    weights = panel["problem"]["weights"]
-    assert weights["lateness_penalty"] == 200.0
-    assert weights["express_miss_penalty"] == 100.0
-    assert "waiting_time" not in weights
-    assert "early_arrival_threshold_min" not in panel["problem"]
-
-
-def test_seed_requires_explicit_early_arrival_language_for_waiting_time():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-early-arrival",
-                    "text": "Drivers cannot arrive more than 30 minutes early; that early arrival penalty should be 100.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        }
-    )
-
-    assert panel is not None
-    problem = panel["problem"]
-    assert problem["weights"]["waiting_time"] == 100.0
-    assert "early_arrival_threshold_min" not in problem
-
-
-def test_seed_does_not_infer_waiting_time_from_generic_slack_wording():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-slack",
-                    "text": "Please reduce schedule slack and keep on-time delivery stable.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        }
-    )
-    assert panel is not None
-    weights = panel["problem"]["weights"]
-    assert "waiting_time" not in weights
-
-
-def test_seed_does_not_infer_waiting_time_from_bare_cannot_arrive_phrase():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-ambiguous-cannot-arrive",
-                    "text": "We cannot arrive more than planned at each stop.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                }
-            ],
-        }
-    )
-    # No explicit optimization term is present, so deterministic seeding should stay empty.
-    assert panel is None
-
-
-def test_seed_ignores_numeric_goal_summary_for_weights():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "Use capacity penalty 500 and workload weight 25.",
-            "items": [],
-        }
-    )
-    assert panel is None
-
-
-def test_seed_operating_time_maps_to_travel_time_not_fuel():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-time",
-                    "text": "Primary goal is shorter operating time across the plan.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-            ],
-        }
-    )
-    assert panel is not None
-    w = panel["problem"]["weights"]
-    assert "travel_time" in w
-    assert "fuel_cost" not in w
-
-
-def test_seed_explicit_fuel_phrase_maps_to_travel_time_not_fuel_cost():
-    panel = derive_problem_panel_from_brief(
-        {
-            "goal_summary": "",
-            "items": [
-                {
-                    "id": "fact-fuel",
-                    "text": "We also care about fuel use alongside travel time.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
-                },
-            ],
-        }
-    )
-    assert panel is not None
-    w = panel["problem"]["weights"]
-    assert "fuel_cost" not in w
-    assert "travel_time" in w
+    out = problem_config_seed.derive_problem_panel_from_brief({"items": [{}]}, test_problem_id=None)
+    assert called["problem_id"] is None
+    assert out == {"problem": {"weights": {"x": 1}}}

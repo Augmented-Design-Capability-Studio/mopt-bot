@@ -197,6 +197,15 @@ export function ParticipantShell({
   const modelKeyIcon = modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
   const backgroundBriefPending = session?.processing?.brief_status === "pending";
   const backgroundConfigPending = session?.processing?.config_status === "pending";
+  const backgroundProcessingPending = backgroundBriefPending || backgroundConfigPending;
+  const chatPending = aiPending || backgroundProcessingPending || optimizing;
+  const chatPendingLabel = optimizing
+    ? "Running optimization..."
+    : aiPending
+      ? "Thinking..."
+      : backgroundProcessingPending
+        ? "Updating definition and configuration..."
+        : "Working...";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
   const accentClass = workflowAccentClass(session?.workflow_mode);
   const serverPn = (session?.participant_number ?? "").trim();
@@ -478,7 +487,8 @@ export function ParticipantShell({
         <section className={panelClass("none")}>
           <ChatSection
             messages={messages}
-            aiPending={aiPending}
+            aiPending={chatPending}
+            aiPendingLabel={chatPendingLabel}
             invokeModel={invokeModel}
             editMode={editMode}
             chatBusy={chatBusy}

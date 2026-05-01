@@ -8,13 +8,8 @@ import { parseBaseProblemConfig } from "@problemConfig/baseSerialization";
  */
 export function intrinsicOptimizationReadyDemo(configText: string): boolean {
   try {
-    const parsed = JSON.parse(configText) as Record<string, unknown>;
-    const problem = (parsed.problem ?? parsed) as Record<string, unknown>;
-    const weights = problem.weights;
-    const hasAnyWeight =
-      typeof weights === "object" && weights !== null && Object.keys(weights).length > 0;
-    const algo = String((problem.algorithm as string | undefined) ?? "").trim();
-    return hasAnyWeight && algo.length > 0;
+    const { problem } = parseBaseProblemConfig(configText);
+    return Object.keys(problem.weights).length > 0 && problem.algorithm.trim().length > 0;
   } catch {
     return false;
   }

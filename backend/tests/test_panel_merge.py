@@ -14,24 +14,22 @@ def test_deep_merge_parses_stringified_nested_json_objects():
     base = {"problem": {"epochs": 80}}
     patch = {
         "problem": {
-            "weights": '{"travel_time": 1.0, "lateness_penalty": 50.0}',
-            "soft_constraints": '["lateness_penalty", "capacity_penalty"]',
+            "weights": '{"term_a": 1.0, "term_b": 50.0}',
+            "goal_terms": '{"term_a":{"weight":1.0,"type":"objective"},"term_b":{"weight":50.0,"type":"hard"}}',
         }
     }
     out = deep_merge(base, patch)
-    assert out["problem"]["weights"]["travel_time"] == 1.0
-    assert out["problem"]["weights"]["lateness_penalty"] == 50.0
-    assert out["problem"]["soft_constraints"] == [
-        "lateness_penalty",
-        "capacity_penalty",
-    ]
+    assert out["problem"]["weights"]["term_a"] == 1.0
+    assert out["problem"]["weights"]["term_b"] == 50.0
+    assert out["problem"]["goal_terms"]["term_a"]["type"] == "objective"
+    assert out["problem"]["goal_terms"]["term_b"]["type"] == "hard"
 
 
 def test_deep_merge_preserves_existing_weights_when_patch_sets_null():
-    base = {"problem": {"weights": {"travel_time": 1.0}, "epochs": 80}}
+    base = {"problem": {"weights": {"term_a": 1.0}, "epochs": 80}}
     patch = {"problem": {"weights": None, "epochs": 500}}
     out = deep_merge(base, patch)
-    assert out["problem"]["weights"] == {"travel_time": 1.0}
+    assert out["problem"]["weights"] == {"term_a": 1.0}
     assert out["problem"]["epochs"] == 500
 
 
@@ -44,10 +42,10 @@ def test_deep_merge_drops_invalid_weights_when_no_base_weights_exist():
 
 
 def test_deep_merge_preserves_existing_weights_when_patch_has_broken_json_fragment():
-    base = {"problem": {"weights": {"travel_time": 1.0}, "epochs": 80}}
+    base = {"problem": {"weights": {"term_a": 1.0}, "epochs": 80}}
     patch = {"problem": {"weights": "{", "epochs": 500}}
     out = deep_merge(base, patch)
-    assert out["problem"]["weights"] == {"travel_time": 1.0}
+    assert out["problem"]["weights"] == {"term_a": 1.0}
     assert out["problem"]["epochs"] == 500
 
 

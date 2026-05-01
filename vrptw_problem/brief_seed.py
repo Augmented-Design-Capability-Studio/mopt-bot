@@ -174,9 +174,7 @@ def _brief_entries(problem_brief: dict[str, Any]) -> list[str]:
     for item in problem_brief.get("items", []):
         if not isinstance(item, dict):
             continue
-        if str(item.get("status") or "").strip().lower() == "rejected":
-            continue
-        if str(item.get("kind") or "").strip().lower() == "system":
+        if str(item.get("kind") or "").strip().lower() not in {"gathered", "assumption"}:
             continue
         text = str(item.get("text") or "").strip()
         if text:

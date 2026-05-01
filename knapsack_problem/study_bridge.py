@@ -11,6 +11,26 @@ _EARLY_STOP_PATIENCE = 20
 _EARLY_STOP_EPSILON = 1e-4
 
 
+def _apply_goal_terms_overlay(raw_problem: dict[str, Any]) -> dict[str, Any]:
+    out = dict(raw_problem)
+    goal_terms = out.get("goal_terms")
+    if not isinstance(goal_terms, dict):
+        return out
+    weights: dict[str, float] = {}
+    for key, entry in goal_terms.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        if "weight" not in entry:
+            continue
+        try:
+            weights[key] = float(entry.get("weight"))
+        except (TypeError, ValueError):
+            continue
+    if weights:
+        out["weights"] = weights
+    return out
+
+
 def parse_problem_config(
     raw: dict[str, Any],
     *,
@@ -18,6 +38,7 @@ def parse_problem_config(
 ) -> dict[str, Any]:
     from knapsack_problem.evaluator import build_knapsack_weights
 
+    raw = _apply_goal_terms_overlay(raw if isinstance(raw, dict) else {})
     weight_warnings: list[str] = []
     only_active = bool(raw.get("only_active_terms", True))
     wraw = raw.get("weights") or {}

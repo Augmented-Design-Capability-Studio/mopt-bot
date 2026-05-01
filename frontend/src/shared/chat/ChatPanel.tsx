@@ -97,13 +97,13 @@ export function ChatComposer({
 }
 
 /** Shown while the participant is waiting for a model reply. */
-export function ChatAiPendingBubble() {
+export function ChatAiPendingBubble({ label = "Thinking..." }: { label?: string }) {
   return (
     <div className="bubble assistant chat-pending-ai" aria-live="polite">
       <strong>assistant</strong>
       <div className="chat-pending-wrap">
         <span className="chat-spinner" role="status" aria-label="Loading model response" />
-        <span className="muted">Thinking...</span>
+        <span className="muted">{label}</span>
       </div>
     </div>
   );

@@ -42,9 +42,9 @@ type DefinitionSectionProps = {
 
 function makeId(prefix: string): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${prefix}-${crypto.randomUUID()}`;
+    return `${prefix}-${crypto.randomUUID().slice(0, 10)}`;
   }
-  return `${prefix}-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+  return `${prefix}-${Date.now().toString(36)}-${Math.round(Math.random() * 1_000_000)}`;
 }
 
 function updateItems(
@@ -358,7 +358,7 @@ export function DefinitionPanel({
   }
 
   function addItem(kind: "gathered" | "assumption") {
-    const id = makeId(kind);
+    const id = makeId(`item-${kind}`);
     pendingScrollToItemIdRef.current = id;
     persist(
       updateItems(problemBrief, (items) => [
@@ -368,8 +368,6 @@ export function DefinitionPanel({
           text: DEFINITION_NEW_ROW_PLACEHOLDER,
           kind,
           source: "user",
-          status: "active",
-          editable: true,
         },
       ]),
     );
@@ -380,7 +378,7 @@ export function DefinitionPanel({
       updateItems(problemBrief, (items) =>
         items.map((item) =>
           item.id === id && item.kind === "assumption"
-            ? { ...item, kind: "gathered", source: "user", status: "confirmed" }
+            ? { ...item, kind: "gathered", source: "user" }
             : item,
         ),
       ),
@@ -419,7 +417,7 @@ export function DefinitionPanel({
       ...problemBrief,
       open_questions: [
         ...openQuestions,
-        { id: makeId("open-question"), text, status: "open" as ProblemBriefQuestion["status"], answer_text: null },
+        { id: makeId("question-open"), text, status: "open" as ProblemBriefQuestion["status"], answer_text: null },
       ],
     });
   }

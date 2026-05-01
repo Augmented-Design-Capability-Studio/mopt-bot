@@ -15,6 +15,23 @@ def _inner_problem_from_panel(panel_config: dict[str, Any] | None) -> dict[str, 
     return panel_config
 
 
+def _goal_term_keys(problem: dict[str, Any]) -> set[str]:
+    goal_terms = problem.get("goal_terms")
+    keys: set[str] = set()
+    if isinstance(goal_terms, dict):
+        for key, entry in goal_terms.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+            if isinstance(entry.get("weight"), (int, float)) and not isinstance(entry.get("weight"), bool):
+                keys.add(key)
+    if keys:
+        return keys
+    weights = problem.get("weights")
+    if isinstance(weights, dict):
+        return {k for k, v in weights.items() if isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool)}
+    return set()
+
+
 def intrinsic_optimization_ready_agile(
     panel_config: dict[str, Any] | None,
     weight_display_keys: list[str],
@@ -34,26 +51,24 @@ def intrinsic_optimization_ready_agile(
     if not inner:
         return False
 
-    weights = inner.get("weights")
-    if not isinstance(weights, dict):
-        weights = {}
+    goal_term_keys = _goal_term_keys(inner)
 
     algo = str(inner.get("algorithm") or "").strip()
 
     # Fallback: if no display keys defined by the module, accept any weight (demo-style).
     if not weight_display_keys:
-        return bool(weights) and bool(algo)
+        return bool(goal_term_keys) and bool(algo)
 
     show_worker_block = False
     if worker_preference_key is not None:
-        has_worker_weight = worker_preference_key in weights
+        has_worker_weight = worker_preference_key in goal_term_keys
         driver_prefs = inner.get("driver_preferences")
         prefs_list = driver_prefs if isinstance(driver_prefs, list) else []
         show_worker_block = has_worker_weight or len(prefs_list) > 0
 
     display_weight_keys: list[str] = []
     for key in weight_display_keys:
-        if key not in weights:
+        if key not in goal_term_keys:
             continue
         if worker_preference_key is not None and key == worker_preference_key and not show_worker_block:
             continue
@@ -69,8 +84,7 @@ def intrinsic_optimization_ready_waterfall(
 ) -> bool:
     """Waterfall: session must be past cold start; no open questions (list may be empty or all answered)."""
     inner = _inner_problem_from_panel(panel_config)
-    weights = inner.get("weights")
-    has_goal_term = isinstance(weights, dict) and len(weights) > 0
+    has_goal_term = len(_goal_term_keys(inner)) > 0
     has_search_strategy = bool(str(inner.get("algorithm") or "").strip())
     if not has_goal_term and not has_search_strategy:
         return False
@@ -89,8 +103,7 @@ def intrinsic_optimization_ready_demo(panel_config: dict[str, Any] | None) -> bo
     inner = _inner_problem_from_panel(panel_config)
     if not inner:
         return False
-    weights = inner.get("weights")
-    has_any_weight = isinstance(weights, dict) and len(weights) > 0
+    has_any_weight = len(_goal_term_keys(inner)) > 0
     algo = str(inner.get("algorithm") or "").strip()
     return has_any_weight and bool(algo)
 

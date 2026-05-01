@@ -6,13 +6,6 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
-
-SYSTEM_ITEM_IDS = {
-    "backend-template": "system-backend-template",
-    "translation-layer": "system-translation-layer",
-    "schema-scope": "system-schema-scope",
-}
-
 CONFIG_ITEM_PREFIX = "config-"
 _OPEN_QUESTION_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPEN_QUESTION_STOPWORDS = {
@@ -130,40 +123,36 @@ _ANSWERED_SUFFIX_IN_OPQ_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+def _compact_uid() -> str:
+    return uuid4().hex[:10]
 
-def _system_item(item_id: str, text: str) -> dict[str, Any]:
-    return {
-        "id": item_id,
-        "text": text,
-        "kind": "system",
-        "source": "system",
-        "status": "confirmed",
-        "editable": False,
-    }
+
+def _new_item_id(kind: str) -> str:
+    k = "assumption" if kind == "assumption" else "gathered"
+    return f"item-{k}-{_compact_uid()}"
+
+
+def _new_question_id() -> str:
+    return f"question-open-{_compact_uid()}"
 
 
 def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
     from app.problems.registry import get_study_port
 
     port = get_study_port(test_problem_id)
-    system_items = port.default_problem_brief_system_items()
     tmpl = port.problem_brief_template_fields()
     return {
         "goal_summary": "",
         "run_summary": "",
-        "items": [
-            _system_item(str(it["id"]), str(it["text"]))
-            for it in system_items
-            if isinstance(it, dict) and it.get("id") and it.get("text")
-        ],
+        "items": [],
         "open_questions": [],
         "solver_scope": tmpl.get("solver_scope", "general_metaheuristic_translation"),
         "backend_template": tmpl.get("backend_template", "routing_time_windows"),
     }
 
 
-# Placeholders for prompt JSON only (cold chat); database brief keeps real template strings.
 CHAT_PROMPT_COLD_BACKEND_TEMPLATE = "deferred"
+# Back-compat export for tests/tools that still import this symbol.
 CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT = (
     "Session uses a fixed benchmark-backed solver; benchmark details appear once goals are stated."
 )
@@ -172,7 +161,7 @@ CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT = (
 def is_chat_cold_start(brief: dict[str, Any] | None) -> bool:
     """
     True when the participant-facing definition is still empty: no goal summary, no open
-    questions, and no non-system items. Matches server-side gating of the benchmark appendix.
+    questions, and no gathered/assumption items.
     """
     if not brief or not isinstance(brief, dict):
         return True
@@ -187,9 +176,7 @@ def is_chat_cold_start(brief: dict[str, Any] | None) -> bool:
     for item in items:
         if not isinstance(item, dict):
             continue
-        if str(item.get("status") or "").strip().lower() == "rejected":
-            continue
-        if str(item.get("kind") or "").strip().lower() != "system" and str(item.get("text") or "").strip():
+        if str(item.get("kind") or "").strip().lower() in {"gathered", "assumption"} and str(item.get("text") or "").strip():
             return False
     return True
 
@@ -197,8 +184,7 @@ def is_chat_cold_start(brief: dict[str, Any] | None) -> bool:
 def surface_problem_brief_for_chat_prompt(brief: dict[str, Any] | None, *, cold: bool) -> dict[str, Any] | None:
     """
     Return a copy of the brief for LLM system instructions. When cold, mask template fields
-    and neutralize system row text so the model is not primed with benchmark-specific nouns
-    (DB row is unchanged).
+    so the model is not primed with benchmark-specific nouns (DB row is unchanged).
     """
     if brief is None:
         return None
@@ -208,13 +194,6 @@ def surface_problem_brief_for_chat_prompt(brief: dict[str, Any] | None, *, cold:
     surf["backend_template"] = CHAT_PROMPT_COLD_BACKEND_TEMPLATE
     if "solver_scope" in surf:
         surf["solver_scope"] = "general_metaheuristic_translation"
-    items = surf.get("items")
-    if isinstance(items, list):
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("kind") or "").strip().lower() == "system":
-                item["text"] = CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT
     return surf
 
 
@@ -241,7 +220,7 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         text = str(raw.get("text") or "").strip()
         if not text:
             return None
-        question_id = str(raw.get("id") or uuid4())
+        question_id = str(raw.get("id") or _new_question_id())
         status = _normalize_question_status(raw.get("status"))
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
@@ -252,7 +231,7 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
     text = str(raw).strip()
     if not text:
         return None
-    return {"id": str(uuid4()), "text": text, "status": "open", "answer_text": None}
+    return {"id": _new_question_id(), "text": text, "status": "open", "answer_text": None}
 
 
 def _preserve_answered_state(
@@ -427,7 +406,12 @@ def _atomize_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str, 
         source = str(item.get("source") or "").strip().lower()
         # Promoted answered open questions: single logical row (Question — Answer); do not split on commas/and.
         # Upload notifications: single programmatic entry; do not shred into smaller pieces.
-        if item_id.startswith("gathered-oq-") or "\u2014" in text or source == "upload":
+        if (
+            item_id.startswith("gathered-oq-")
+            or item_id.startswith("item-gathered-from-question-")
+            or "\u2014" in text
+            or source == "upload"
+        ):
             out.append(item)
             continue
         chunks = _split_compound_item_text(text)
@@ -471,15 +455,13 @@ def _promote_answered_open_questions_to_gathered(
         key = _gathered_text_key(combined)
         if key not in seen:
             seen.add(key)
-            qid = str(q.get("id") or uuid4())
+            qid = str(q.get("id") or _new_question_id())
             new_items.append(
                 {
-                    "id": f"gathered-oq-{qid}",
+                    "id": f"item-gathered-from-question-{qid}",
                     "text": combined,
                     "kind": "gathered",
                     "source": "user",
-                    "status": "confirmed",
-                    "editable": True,
                 }
             )
     return new_items, kept_q
@@ -500,15 +482,13 @@ def _split_pseudo_answered_open_questions(
         q_part = m.group("q").strip()
         a_part = m.group("a").strip()
         combined = _format_answered_open_question_gathered(q_part, a_part) if q_part else _ensure_terminator(a_part)
-        qid = str(q.get("id") or uuid4())
+        qid = str(q.get("id") or _new_question_id())
         gathered_out.append(
             {
-                "id": f"gathered-oq-{qid}",
+                "id": f"item-gathered-from-question-{qid}",
                 "text": combined,
                 "kind": "gathered",
                 "source": "user",
-                "status": "confirmed",
-                "editable": True,
             }
         )
     return gathered_out, kept
@@ -629,22 +609,20 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
     if not text:
         return None
     kind = str(raw.get("kind", "assumption")).strip().lower()
-    if kind not in {"gathered", "assumption", "system"}:
+    if kind == "system":
+        return None
+    if kind not in {"gathered", "assumption"}:
         kind = "assumption"
     source = str(raw.get("source", "agent")).strip().lower()
-    if source not in {"user", "upload", "agent", "system"}:
+    if source == "system":
         source = "agent"
-    status = str(raw.get("status", "active")).strip().lower()
-    if status not in {"active", "confirmed", "rejected"}:
-        status = "active"
-    editable = bool(raw.get("editable", kind != "system"))
+    if source not in {"user", "upload", "agent"}:
+        source = "agent"
     return {
-        "id": str(raw.get("id") or uuid4()),
+        "id": str(raw.get("id") or _new_item_id(kind)),
         "text": text,
         "kind": kind,
         "source": source,
-        "status": status,
-        "editable": False if kind == "system" else editable,
     }
 
 
@@ -660,23 +638,12 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
         str(raw.get("backend_template") or base["backend_template"]).strip() or base["backend_template"]
     )
 
-    system_items = {
-        item["id"]: deepcopy(item)
-        for item in base["items"]
-        if isinstance(item, dict) and item.get("kind") == "system"
-    }
-
     normalized_items: list[dict[str, Any]] = []
     for entry in raw.get("items", []):
         item = _normalize_item(entry)
         if item is None:
             continue
-        if item["kind"] == "system" and item["id"] in system_items:
-            normalized_items.append(system_items.pop(item["id"]))
-        else:
-            normalized_items.append(item)
-
-    normalized_items.extend(system_items.values())
+        normalized_items.append(item)
     normalized_items = _atomize_problem_brief_items(_reconcile_problem_brief_items(normalized_items))
     questions = _coerce_question_list(raw.get("open_questions"))
     promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
@@ -748,24 +715,12 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
         )
 
     if replace_editable_items and "items" not in patch:
-        preserved_system = [
-            deepcopy(item)
-            for item in merged["items"]
-            if isinstance(item, dict) and str(item.get("kind") or "").strip().lower() == "system"
-        ]
-        merged["items"] = preserved_system
+        merged["items"] = []
         return normalize_problem_brief(merged)
     if "items" in patch and isinstance(patch.get("items"), list):
         incoming_items = [item for raw in patch["items"] if (item := _normalize_item(raw)) is not None]
         if replace_editable_items:
-            preserved_system = [
-                deepcopy(item)
-                for item in merged["items"]
-                if isinstance(item, dict) and str(item.get("kind") or "").strip().lower() == "system"
-            ]
-            merged["items"] = preserved_system + [
-                item for item in incoming_items if str(item.get("kind") or "").strip().lower() != "system"
-            ]
+            merged["items"] = list(incoming_items)
             return normalize_problem_brief(merged)
         existing_items = [deepcopy(item) for item in merged["items"] if isinstance(item, dict)]
         result_items: list[dict[str, Any]] = []
@@ -801,7 +756,7 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
     """
     Enforce workflow-specific invariants at persistence boundaries.
 
-    Waterfall invariant: do not store editable `kind: "assumption"` rows. Convert them into
+    Waterfall invariant: do not store `kind: "assumption"` rows. Convert them into
     `open_questions` so uncertainty is explicitly tracked and gated.
     """
     normalized = normalize_problem_brief(brief)
@@ -826,7 +781,7 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
             continue
         open_questions.append(
             {
-                "id": f"wf-assumption-{str(item.get('id') or '').strip() or 'unknown'}",
+                "id": f"question-open-from-assumption-{str(item.get('id') or '').strip() or _compact_uid()}",
                 "text": f"{_WATERFALL_ASSUMPTION_QUESTION_PREFIX}{text}",
                 "status": "open",
                 "answer_text": None,
@@ -880,8 +835,6 @@ def _config_item(item_id: str, text: str) -> dict[str, Any]:
         "text": text,
         "kind": "gathered",
         "source": "agent",
-        "status": "confirmed",
-        "editable": True,
     }
 
 
@@ -959,7 +912,7 @@ def _slot_from_text(text: str) -> str | None:
 def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     last_index_by_slot: dict[str, int] = {}
     for index, item in enumerate(items):
-        if not isinstance(item, dict) or str(item.get("kind") or "").strip().lower() == "system":
+        if not isinstance(item, dict):
             continue
         slot = _problem_brief_item_slot(item)
         if slot is not None:
@@ -968,9 +921,6 @@ def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str
     reconciled: list[dict[str, Any]] = []
     for index, item in enumerate(items):
         if not isinstance(item, dict):
-            continue
-        if str(item.get("kind") or "").strip().lower() == "system":
-            reconciled.append(item)
             continue
         slot = _problem_brief_item_slot(item)
         if slot is not None and last_index_by_slot.get(slot) != index:

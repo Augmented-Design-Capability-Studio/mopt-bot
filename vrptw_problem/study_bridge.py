@@ -46,6 +46,8 @@ WEIGHT_ALIAS_REVERSE: dict[str, str] = {v: k for k, v in WEIGHT_ALIASES.items()}
 # Internal w1–w7 keys the solver accepts directly (pass-through for legacy configs).
 _WEIGHT_VALID_WN: frozenset[str] = frozenset(WEIGHT_ALIASES.values())
 
+_TERM_TYPE_VALUES = frozenset({"objective", "soft", "hard", "custom"})
+
 # Keyword map: common alternative phrasings → canonical alias.
 # Enables fuzzy recovery when a user (or the agent) types a close but non-exact key.
 _WEIGHT_KEYWORD_MAP: dict[str, str] = {
@@ -224,6 +226,14 @@ def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any]
         return cfg, []
     warnings: list[str] = []
 
+    # Legacy / redundant lists are deprecated; goal-term typing lives in constraint_types (and goal_terms metadata).
+    problem.pop("hard_constraints", None)
+    problem.pop("soft_constraints", None)
+    # Normalize goal_terms input first (if present) so downstream sanitization is consistent.
+    projected = _apply_goal_terms_overlay(problem)
+    problem.clear()
+    problem.update(projected)
+
     weights_raw = problem.get("weights")
     if weights_raw is None:
         problem.pop("weights", None)
@@ -277,7 +287,171 @@ def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any]
         problem["locked_goal_terms"] = out
 
     warnings.extend(_sanitize_algorithm_params_on_problem(problem))
+
+    # Canonical projection for downstream clients: one place to inspect goal-term semantics.
+    _rebuild_goal_terms_metadata(problem)
+    # goal_terms is canonical storage; keep legacy fields out of persisted panel config.
+    problem.pop("weights", None)
+    problem.pop("constraint_types", None)
     return cfg, warnings
+
+
+def _canonical_weight_aliases_from_payload(raw_weights: Any) -> dict[str, float]:
+    if not isinstance(raw_weights, dict):
+        return {}
+    translated, _ = translate_weights_strict(raw_weights)
+    out: dict[str, float] = {}
+    for internal_key, value in translated.items():
+        alias = WEIGHT_ALIAS_REVERSE.get(internal_key)
+        if alias is None:
+            continue
+        try:
+            out[alias] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _apply_goal_terms_overlay(raw_problem: dict[str, Any]) -> dict[str, Any]:
+    """
+    Accept canonical `goal_terms` map and project it onto `weights` + `constraint_types`
+    (+ selected term properties) for solver-facing parsing.
+    """
+    out = dict(raw_problem)
+    goal_terms = out.get("goal_terms")
+    if not isinstance(goal_terms, dict):
+        return out
+
+    overlay_weights: dict[str, float] = {}
+    overlay_constraint_types: dict[str, str] = {}
+    overlay_locked: list[str] = []
+    overlay_driver_preferences: list[Any] | None = None
+    overlay_max_shift_hours: float | None = None
+
+    ranked: list[tuple[int, str]] = []
+    for key, entry in goal_terms.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        if "weight" not in entry:
+            continue
+        try:
+            overlay_weights[key] = float(entry.get("weight"))
+        except (TypeError, ValueError):
+            continue
+
+        term_type = str(entry.get("type") or "").strip().lower()
+        if term_type in {"soft", "hard", "custom"}:
+            overlay_constraint_types[key] = term_type
+        if bool(entry.get("locked")):
+            overlay_locked.append(key)
+        rank_raw = entry.get("rank")
+        try:
+            rank = int(rank_raw)
+            if rank > 0:
+                ranked.append((rank, key))
+        except (TypeError, ValueError):
+            pass
+
+        props = entry.get("properties")
+        if not isinstance(props, dict):
+            continue
+        if key == "worker_preference" and isinstance(props.get("driver_preferences"), list):
+            overlay_driver_preferences = list(props.get("driver_preferences") or [])
+        if key == "shift_limit" and "max_shift_hours" in props:
+            try:
+                overlay_max_shift_hours = float(props.get("max_shift_hours"))
+            except (TypeError, ValueError):
+                pass
+
+    if overlay_weights:
+        out["weights"] = overlay_weights
+    if overlay_constraint_types:
+        base_ct = (
+            dict(out.get("constraint_types"))
+            if isinstance(out.get("constraint_types"), dict)
+            else {}
+        )
+        base_ct.update(overlay_constraint_types)
+        out["constraint_types"] = base_ct
+    if overlay_locked:
+        base_locked = (
+            [x for x in out.get("locked_goal_terms", []) if isinstance(x, str)]
+            if isinstance(out.get("locked_goal_terms"), list)
+            else []
+        )
+        seen = set(base_locked)
+        for key in overlay_locked:
+            if key in seen:
+                continue
+            base_locked.append(key)
+            seen.add(key)
+        out["locked_goal_terms"] = base_locked
+    if overlay_driver_preferences is not None:
+        out["driver_preferences"] = overlay_driver_preferences
+    if overlay_max_shift_hours is not None:
+        out["max_shift_hours"] = overlay_max_shift_hours
+    if ranked:
+        ranked_sorted = [key for _rank, key in sorted(ranked, key=lambda x: x[0])]
+        out["goal_term_order"] = ranked_sorted
+    return out
+
+
+def _rebuild_goal_terms_metadata(problem: dict[str, Any]) -> None:
+    """Build canonical `goal_terms` map from current solver-facing fields."""
+    if not isinstance(problem, dict):
+        return
+    weights = problem.get("weights")
+    if not isinstance(weights, dict):
+        problem.pop("goal_terms", None)
+        return
+    constraint_types = (
+        problem.get("constraint_types")
+        if isinstance(problem.get("constraint_types"), dict)
+        else {}
+    )
+    locked_goal_terms = (
+        [x for x in problem.get("locked_goal_terms", []) if isinstance(x, str)]
+        if isinstance(problem.get("locked_goal_terms"), list)
+        else []
+    )
+    locked_set = set(locked_goal_terms)
+    goal_terms: dict[str, Any] = {}
+    order = (
+        [k for k in problem.get("goal_term_order", []) if isinstance(k, str)]
+        if isinstance(problem.get("goal_term_order"), list)
+        else []
+    )
+    order_idx = {k: i + 1 for i, k in enumerate(order)}
+    max_rank = len(order_idx)
+    for key, value in weights.items():
+        if not isinstance(key, str):
+            continue
+        try:
+            weight_val = float(value)
+        except (TypeError, ValueError):
+            continue
+        entry: dict[str, Any] = {"weight": weight_val}
+        raw_type = str(constraint_types.get(key) or "").strip().lower()
+        entry["type"] = raw_type if raw_type in _TERM_TYPE_VALUES else "objective"
+        if key in locked_set:
+            entry["locked"] = True
+        rank = order_idx.get(key)
+        if rank is None:
+            max_rank += 1
+            rank = max_rank
+        entry["rank"] = rank
+        props: dict[str, Any] = {}
+        if key == "worker_preference" and isinstance(problem.get("driver_preferences"), list):
+            props["driver_preferences"] = deepcopy(problem.get("driver_preferences"))
+        if key == "shift_limit" and isinstance(problem.get("max_shift_hours"), (int, float)):
+            props["max_shift_hours"] = float(problem.get("max_shift_hours"))
+        if props:
+            entry["properties"] = props
+        goal_terms[key] = entry
+    if goal_terms:
+        problem["goal_terms"] = goal_terms
+    else:
+        problem.pop("goal_terms", None)
 
 
 def ensure_vrptw_on_path() -> Path:
@@ -571,6 +745,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     from vrptw_problem.optimizer import EARLY_STOP_DEFAULT_EPSILON, EARLY_STOP_DEFAULT_PATIENCE
     from vrptw_problem.user_input import DEFAULT_MAX_SHIFT_HOURS, build_weights
 
+    raw = _apply_goal_terms_overlay(raw if isinstance(raw, dict) else {})
     weights_raw, weight_warnings = translate_weights_strict(raw.get("weights") or {})
     # Default to explicit-only objective scoring when the field is omitted.
     only_active = bool(raw.get("only_active_terms", True))

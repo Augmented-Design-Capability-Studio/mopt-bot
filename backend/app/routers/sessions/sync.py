@@ -21,6 +21,37 @@ from . import helpers
 log = logging.getLogger(__name__)
 
 
+def _weights_from_problem(problem: dict[str, Any]) -> dict[str, float]:
+    weights = problem.get("weights")
+    if isinstance(weights, dict):
+        return {
+            key: float(value)
+            for key, value in weights.items()
+            if isinstance(key, str) and isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+    goal_terms = problem.get("goal_terms")
+    if isinstance(goal_terms, dict):
+        out: dict[str, float] = {}
+        for key, entry in goal_terms.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+            value = entry.get("weight")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                out[key] = float(value)
+        return out
+    return {}
+
+
+def _apply_weight_overrides_to_goal_terms(problem: dict[str, Any], overrides: dict[str, float]) -> None:
+    goal_terms = problem.get("goal_terms")
+    if not isinstance(goal_terms, dict):
+        return
+    for key, value in overrides.items():
+        entry = goal_terms.get(key)
+        if isinstance(entry, dict):
+            entry["weight"] = float(value)
+
+
 def _run_with_timeout(callable_obj, timeout_sec: float):
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(callable_obj)
@@ -42,22 +73,22 @@ def _canonicalize_locked_goal_terms(
         locked_raw = []
     locked_goal_terms = [key for key in locked_raw if isinstance(key, str)]
 
-    current_weights = current_problem.get("weights")
-    current_weight_keys: set[str] = set()
-    if isinstance(current_weights, dict):
-        current_weight_keys = {
-            key for key, value in current_weights.items() if isinstance(key, str) and isinstance(value, (int, float))
-        }
+    current_weights = _weights_from_problem(current_problem)
+    current_weight_keys: set[str] = set(current_weights.keys())
 
     lockable_keys = set(current_weight_keys)
     canonical_locked = [key for key in locked_goal_terms if key in lockable_keys]
 
-    if isinstance(derived_problem.get("weights"), dict) and isinstance(current_weights, dict):
-        merged_weights = deepcopy(derived_problem["weights"])
-        for key in canonical_locked:
-            if key in current_weight_keys:
-                merged_weights[key] = float(current_weights[key])
-        derived_problem["weights"] = merged_weights
+    if canonical_locked:
+        derived_weights = _weights_from_problem(derived_problem)
+        if derived_weights:
+            merged_weights = dict(derived_weights)
+            for key in canonical_locked:
+                if key in current_weight_keys:
+                    merged_weights[key] = float(current_weights[key])
+            if isinstance(derived_problem.get("weights"), dict):
+                derived_problem["weights"] = merged_weights
+            _apply_weight_overrides_to_goal_terms(derived_problem, merged_weights)
 
     for locked_key, companion_field in companion_fields.items():
         if locked_key in canonical_locked:
@@ -76,7 +107,9 @@ def _canonicalize_locked_goal_terms(
 
 def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem: dict) -> dict:
     managed_keys = (
+        "goal_terms",
         "weights",
+        "constraint_types",
         "only_active_terms",
         "algorithm",
         "algorithm_params",
@@ -91,17 +124,16 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
         {"early_stop", "early_stop_patience", "early_stop_epsilon", "use_greedy_init"}
     )
     merged = deepcopy(derived_problem)
-    current_weights = current_problem.get("weights")
-    derived_weights = merged.get("weights")
-    if isinstance(current_weights, dict):
-        if isinstance(derived_weights, dict):
-            combined = deepcopy(current_weights)
-            combined.update(derived_weights)
-            merged["weights"] = combined
-        else:
-            merged["weights"] = deepcopy(current_weights)
+    current_weights = _weights_from_problem(current_problem)
+    derived_weights = _weights_from_problem(merged)
+    if current_weights:
+        combined = dict(current_weights)
+        combined.update(derived_weights)
+        if isinstance(merged.get("weights"), dict):
+            merged["weights"] = deepcopy(combined)
+        _apply_weight_overrides_to_goal_terms(merged, combined)
     for key in managed_keys:
-        if key == "weights":
+        if key in {"weights", "goal_terms"}:
             continue
         if key in always_preserve_current_if_present and key in current_problem:
             merged[key] = deepcopy(current_problem[key])
@@ -114,7 +146,9 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
 def _managed_problem_fields() -> tuple[str, ...]:
     """Managed keys are re-derived from brief each turn unless preserve mode is requested."""
     return (
+        "goal_terms",
         "weights",
+        "constraint_types",
         "only_active_terms",
         "algorithm",
         "algorithm_params",

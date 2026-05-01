@@ -7,6 +7,7 @@ from typing import Any
 from app.problems.schema_shared import (
     ALGORITHM_PARAMS_SCHEMA,
     CONSTRAINT_TYPES_SCHEMA,
+    GOAL_TERMS_SCHEMA,
     wrap_panel_patch_schema,
 )
 
@@ -35,14 +36,13 @@ KNAPSACK_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         },
         "algorithm_params": ALGORITHM_PARAMS_SCHEMA,
         "constraint_types": CONSTRAINT_TYPES_SCHEMA,
+        "goal_terms": GOAL_TERMS_SCHEMA,
         "epochs": {"type": "integer"},
         "pop_size": {"type": "integer"},
         "random_seed": {"type": "integer"},
         "early_stop": {"type": "boolean"},
         "early_stop_patience": {"type": "integer"},
         "early_stop_epsilon": {"type": "number"},
-        "hard_constraints": {"type": "array", "items": {"type": "string"}},
-        "soft_constraints": {"type": "array", "items": {"type": "string"}},
     },
     "additionalProperties": False,
 }

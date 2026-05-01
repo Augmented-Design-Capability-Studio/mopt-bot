@@ -174,9 +174,6 @@ def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_m
         if not isinstance(raw, dict):
             continue
         kind = str(raw.get("kind") or "").strip().lower()
-        if kind == "system":
-            kept_items.append(raw)
-            continue
         # On run-ack turns we normally keep only durable config-slot rows. Agile is allowed
         # a very small provisional assumption update to support iterative refinement.
         if kind == "assumption" and mode == "agile":

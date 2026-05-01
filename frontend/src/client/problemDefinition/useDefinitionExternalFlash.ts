@@ -82,10 +82,9 @@ export function useDefinitionExternalFlash(
     const nextItems: Record<string, "new" | "upd"> = {};
     const prevById = new Map(prev.items.map((i) => [i.id, i] as const));
     for (const item of problemBrief.items) {
-      if (item.kind === "system") continue;
       const o = prevById.get(item.id);
       if (!o) nextItems[item.id] = "new";
-      else if (o.text !== item.text || o.status !== item.status) nextItems[item.id] = "upd";
+      else if (o.text !== item.text || o.kind !== item.kind || o.source !== item.source) nextItems[item.id] = "upd";
     }
 
     const nextQs: Record<string, "new" | "upd"> = {};
@@ -104,7 +103,6 @@ export function useDefinitionExternalFlash(
 
     const nextItemIds = new Set(problemBrief.items.map((i) => i.id));
     for (const item of prev.items) {
-      if (item.kind === "system") continue;
       if (nextItemIds.has(item.id)) continue;
       if (item.kind === "gathered") {
         const idx = gatheredList(prev.items).findIndex((i) => i.id === item.id);

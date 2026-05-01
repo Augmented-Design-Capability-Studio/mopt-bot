@@ -49,12 +49,10 @@ export function promoteAnsweredOpenQuestionsToGathered(brief: ProblemBrief): Pro
     if (!seenGathered.has(key)) {
       seenGathered.add(key);
       items.push({
-        id: `gathered-oq-${question.id}`,
+        id: `item-gathered-from-question-${question.id}`,
         text: combined,
         kind: "gathered",
         source: "user",
-        status: "confirmed",
-        editable: true,
       });
     }
   }
@@ -79,7 +77,6 @@ export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
     items: brief.items
       .map((item) => ({ ...item, text: item.text.trim() }))
       .filter((item) => {
-        if (item.kind === "system") return true;
         if (item.text.length === 0) return false;
         if (
           (item.kind === "gathered" || item.kind === "assumption") &&
@@ -119,7 +116,7 @@ export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemB
       before == null ||
       before.text !== item.text ||
       before.kind !== item.kind ||
-      before.status !== item.status
+      before.source !== item.source
     );
   }).length;
   const previousQuestionsById = new Map(previous.open_questions.map((question) => [question.id, question] as const));

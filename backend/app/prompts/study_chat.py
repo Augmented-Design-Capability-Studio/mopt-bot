@@ -327,11 +327,10 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
 - `"assistant_message"`: string shown to the participant in chat. Must follow all domain
   rules: no routing/fleet/vehicle/scheduling examples unless the user already used that
   domain. For greetings, stay brief and domain-neutral.
-- `"problem_brief_patch"`: object or null. Use this when you want to update the editable
-  middle layer (goal summary, gathered facts, assumptions, system facts, open questions).
+- `"problem_brief_patch"`: object or null. Use this when you want to update the
+  middle layer (goal summary, gathered facts, assumptions, open questions).
   Use `run_summary` for one concise rolling run-context entry.
-  If `replace_editable_items` is true, emit a coherent full replacement `items` array for all
-  editable rows (while preserving system rows).
+  If `replace_editable_items` is true, emit a coherent full replacement `items` array.
 - If you claim that you removed or corrected conflicting definition facts, emit a non-null
   `problem_brief_patch` that includes the corrected fact for that setting.
 - Keep `goal_summary` qualitative only: no explicit numeric weights, penalties, algorithm params,
@@ -350,21 +349,16 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   already gave (no `(Answered: …)` or similar in `open_questions[].text`). Put resolved Q&A in
   `items` as `kind: "gathered"` instead, and omit closed questions from `open_questions`.
 - `"cleanup_mode"`: boolean. Mirror whether this turn is a cleanup/reorganize turn.
-- When you emit `problem_brief_patch.items`, actively consolidate overlap:
-  - mark redundant or directly contradicted existing facts with `"status": "rejected"`.
-  - keep the best current fact `"confirmed"` when possible.
-  - preserve existing `"kind": "system"` items unchanged and non-editable.
+- When you emit `problem_brief_patch.items`, actively consolidate overlap: keep the
+  newest coherent fact set and avoid duplicate or contradictory rows.
 
 ## problem_brief_patch.items rules — follow these exactly
 
-**Rule 1 — Preserve system facts.** If you emit `items`, copy forward existing
-`"kind": "system"` entries unchanged and keep them non-editable.
+**Rule 1 — Keep a coherent fact set.** When a new fact supersedes an older one (for example,
+new algorithm choice, updated population size, or changed weight target), keep only the
+latest version instead of carrying contradictory duplicates.
 
-**Rule 2 — Keep a coherent fact set.** When a new fact supersedes an older one (for example,
-new algorithm choice, updated population size, or changed weight target), keep the new fact
-active and mark the superseded one `"rejected"` instead of leaving both active.
-
-**Rule 3 — Only include keys you are changing.** Omit untouched fields.
+**Rule 2 — Only include keys you are changing.** Omit untouched fields.
 
 **Rule 4 — Cleanup requests must be holistic.** If the user asks to clean up, consolidate,
 deduplicate, reorganize, or remove definition entries, set `cleanup_mode=true` and
@@ -384,7 +378,7 @@ that line into multiple rows for parsing—still prefer emitting separate rows w
 ### Valid example
 
 ```json
-{"assistant_message": "I consolidated gathered info and assumptions into one coherent set and removed redundant entries.", "cleanup_mode": true, "replace_editable_items": true, "replace_open_questions": false, "problem_brief_patch": {"items": [{"id": "fact-pop-size-150", "text": "Population size is set to 150.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}, {"id": "fact-balance-assumption", "text": "Assume moderate workload balance unless the user sets a stricter target.", "kind": "assumption", "source": "agent", "status": "active", "editable": true}, {"id": "system-backend-template", "text": "Current backend template matches the active study benchmark (see system seed items for this session).", "kind": "system", "source": "system", "status": "confirmed", "editable": false}, {"id": "system-translation-layer", "text": "The assistant may discuss the task in general optimization terms and translate that intent into the active solver configuration.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}, {"id": "system-schema-scope", "text": "Final configuration fields map onto the currently supported backend rather than an arbitrary custom codebase.", "kind": "system", "source": "system", "status": "confirmed", "editable": false}]}}
+{"assistant_message":"I consolidated gathered info and assumptions into one coherent set and removed redundant entries.","cleanup_mode":true,"replace_editable_items":true,"replace_open_questions":false,"problem_brief_patch":{"items":[{"id":"item-gathered-1","text":"Population size is set to 150.","kind":"gathered","source":"user"},{"id":"item-assumption-1","text":"Assume moderate workload balance unless the user sets a stricter target.","kind":"assumption","source":"agent"}]}}
 ```
 
 ### Invalid examples (never produce these)
@@ -393,11 +387,8 @@ that line into multiple rows for parsing—still prefer emitting separate rows w
 // WRONG — missing required assistant_message
 {"problem_brief_patch": {"goal_summary": "..." }}
 
-// WRONG — dropped system entries when replacing items
-{"assistant_message": "Updated.", "problem_brief_patch": {"items": [{"id": "fact-1", "text": "Only this", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}]}}
-
-// WRONG — claims conflict was removed but leaves both active
-{"assistant_message": "I removed the old population setting.", "problem_brief_patch": {"items": [{"id": "fact-pop-size-100", "text": "Population size is set to 100.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}, {"id": "fact-pop-size-150", "text": "Population size is set to 150.", "kind": "gathered", "source": "user", "status": "confirmed", "editable": true}]}}
+// WRONG — claims conflict was removed but keeps contradictory duplicates
+{"assistant_message":"I removed the old population setting.","problem_brief_patch":{"items":[{"id":"item-gathered-old","text":"Population size is set to 100.","kind":"gathered","source":"user"},{"id":"item-gathered-new","text":"Population size is set to 150.","kind":"gathered","source":"user"}]}}
 ```
 """.strip()
 
@@ -444,9 +435,8 @@ Reply as JSON only (no markdown fences) with exactly these keys:
 Rules:
 
 - This task is hidden from the participant; do not generate visible chat text here.
-- Preserve existing `"kind": "system"` items unchanged and non-editable.
-- Keep the brief coherent: if a newer fact supersedes an older fact, keep the newer fact
-  active and mark the superseded one `"rejected"` instead of leaving both active.
+- Keep the brief coherent: if a newer fact supersedes an older fact, keep only the newer
+  fact instead of leaving contradictory duplicates.
 - Keep `goal_summary` qualitative and short. Never encode explicit weights, penalties,
   algorithm parameters, or run-budget numbers in `goal_summary`; store those details in
   `items` (`gathered` or `assumption`) only.
@@ -477,7 +467,7 @@ Rules:
   `problem_brief_patch.open_questions` and avoid replacing `items` unless needed for one
   resolved Q&A carry-over.
 - On cleanup turns, you may rephrase **a single** gathered row (e.g. from answered open
-  questions, id prefix `gathered-oq-`, or `Question — Answer` text) into clearer declarative wording.
+  questions, id prefix `item-gathered-from-question-`, or `Question — Answer` text) into clearer declarative wording.
   Do **not** merge **multiple goal terms** into one row while doing so.
 - When the user answers a previously open question, add the substance under
   `problem_brief_patch.items` as `kind: "gathered"` and drop that question from
@@ -494,17 +484,15 @@ STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES = """
 Your JSON has **no** `assistant_message`; only `problem_brief_patch`, `replace_editable_items`,
 `replace_open_questions`, and `cleanup_mode`. When you emit `problem_brief_patch.items`, follow:
 
-**Rule 1 — Preserve system facts.** Copy existing `"kind": "system"` entries unchanged and non-editable.
+**Rule 1 — Coherent fact set.** When a newer fact supersedes an older one, keep only the newer fact instead of contradictory duplicates.
 
-**Rule 2 — Coherent fact set.** When a newer fact supersedes an older one, keep the newer active and mark the superseded row `"rejected"`.
+**Rule 2 — Only include keys you are changing.**
 
-**Rule 3 — Only include keys you are changing.**
+**Rule 3 — Holistic cleanup.** On clean-up / consolidate / deduplicate requests, set `cleanup_mode=true`, `replace_editable_items=true`, and emit the **full** replacement gathered + assumption list. For **open questions**, omit `open_questions` to leave them unchanged, **or** set `replace_open_questions=true` with the **complete** list to keep (use this to **prune** obsolete questions on cleanup or on a normal turn whenever justified).
 
-**Rule 4 — Holistic cleanup.** On clean-up / consolidate / deduplicate requests, set `cleanup_mode=true`, `replace_editable_items=true`, and emit the **full** replacement gathered + assumption list. For **open questions**, omit `open_questions` to leave them unchanged, **or** set `replace_open_questions=true` with the **complete** list to keep (use this to **prune** obsolete questions on cleanup or on a normal turn whenever justified).
+**Rule 4 — One goal term per row (objectives and constraint handling).** Each soft objective term and each constraint-handling term (capacity-style penalties, deadline / express-SLA penalties, shift hard limits, etc.) must be its **own** `gathered` row with weight or penalty text. Do **not** collapse several terms into one comma-separated line, one long `Constraint handling:` sentence, or one bundled “Active objectives:” sentence — **split into separate rows**, including on cleanup turns.
 
-**Rule 5 — One goal term per row (objectives and constraint handling).** Each soft objective term and each constraint-handling term (capacity-style penalties, deadline / express-SLA penalties, shift hard limits, etc.) must be its **own** `gathered` row with weight or penalty text. Do **not** collapse several terms into one comma-separated line, one long `Constraint handling:` sentence, or one bundled “Active objectives:” sentence — **split into separate rows**, including on cleanup turns.
-
-**Overlap vs bundling:** Mark redundant facts `"rejected"` or rephrase **one** fact more clearly. Never merge **multiple distinct goal terms** into a single row to “save space.”
+**Overlap vs bundling:** Remove redundant facts or rephrase **one** fact more clearly. Never merge **multiple distinct goal terms** into a single row to “save space.”
 
 **Incremental vs cleanup:** The “at most one new objective or constraint per **chat turn**” rule applies to **incremental** updates. A **holistic cleanup** snapshot must still list **every** current term as its **own** row (many rows are expected).
 

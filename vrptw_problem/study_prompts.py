@@ -146,7 +146,8 @@ Rules:
   - use `"soft"` for trade-off penalties/preferences,
   - use `"hard"` for near-mandatory limits the user frames as strict/non-negotiable,
   - use `"custom"` only when the user explicitly asks for a manually fixed term behavior/weight.
-- Keep `"hard_constraints"` / `"soft_constraints"` consistent with `"constraint_types"` when those arrays are present.
+- Prefer representing term semantics via `constraint_types` and optional `goal_terms` metadata
+  (type/weight/lock/properties per key), not separate hard/soft term lists.
 - Time-minimization / duration / operating-time / fuel / mileage goals → `travel_time` only.
 - Shift overage past the configurable limit as an objective → `shift_limit`.
 - **Omit `express_miss_penalty` from emitted weights** unless the brief explicitly ties to

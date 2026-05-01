@@ -4,27 +4,27 @@ from types import SimpleNamespace
 
 from app.optimization_gate import can_run_optimization, intrinsic_optimization_ready_agile, intrinsic_optimization_ready_waterfall
 from app.problem_brief import default_problem_brief, normalize_problem_brief
+from app.problems.registry import get_study_port
 from app.routers.sessions import helpers as session_helpers
 
-# VRPTW weight keys and worker-preference key used in agile gate tests.
-_VRPTW_WDK = [
-    "travel_time", "shift_limit", "workload_balance",
-    "lateness_penalty", "capacity_penalty", "express_miss_penalty", "worker_preference",
-]
-_VRPTW_WPK = "worker_preference"
+# Default problem keys used for problem-agnostic backend gate tests.
+_DEFAULT_PORT = get_study_port("vrptw")
+_DEFAULT_WDK = _DEFAULT_PORT.weight_display_keys()
+_DEFAULT_WPK = _DEFAULT_PORT.worker_preference_key()
+_W1 = _DEFAULT_WDK[0]
 
 # Knapsack weight keys (no worker preference key).
 _KNAPSACK_WDK = ["value_emphasis", "capacity_overflow", "selection_sparsity"]
 
 
 def test_intrinsic_agile_requires_goal_weight_and_algorithm():
-    assert intrinsic_optimization_ready_agile(None, _VRPTW_WDK, _VRPTW_WPK) is False
-    assert intrinsic_optimization_ready_agile({}, _VRPTW_WDK, _VRPTW_WPK) is False
-    assert intrinsic_optimization_ready_agile({"weights": {"travel_time": 1}}, _VRPTW_WDK, _VRPTW_WPK) is False
-    assert intrinsic_optimization_ready_agile({"algorithm": "PSO"}, _VRPTW_WDK, _VRPTW_WPK) is False
-    panel_ok = json.loads(json.dumps({"problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}}))
-    assert intrinsic_optimization_ready_agile(panel_ok, _VRPTW_WDK, _VRPTW_WPK) is True
-    assert intrinsic_optimization_ready_agile({"problem": {"weights": {"travel_time": 1}, "algorithm": "GA"}}, _VRPTW_WDK, _VRPTW_WPK) is True
+    assert intrinsic_optimization_ready_agile(None, _DEFAULT_WDK, _DEFAULT_WPK) is False
+    assert intrinsic_optimization_ready_agile({}, _DEFAULT_WDK, _DEFAULT_WPK) is False
+    assert intrinsic_optimization_ready_agile({"weights": {_W1: 1}}, _DEFAULT_WDK, _DEFAULT_WPK) is False
+    assert intrinsic_optimization_ready_agile({"algorithm": "PSO"}, _DEFAULT_WDK, _DEFAULT_WPK) is False
+    panel_ok = json.loads(json.dumps({"problem": {"weights": {_W1: 1}, "algorithm": "GA"}}))
+    assert intrinsic_optimization_ready_agile(panel_ok, _DEFAULT_WDK, _DEFAULT_WPK) is True
+    assert intrinsic_optimization_ready_agile({"problem": {"weights": {_W1: 1}, "algorithm": "GA"}}, _DEFAULT_WDK, _DEFAULT_WPK) is True
 
 
 def test_intrinsic_agile_knapsack_weights_count():
@@ -32,7 +32,7 @@ def test_intrinsic_agile_knapsack_weights_count():
     panel = {"problem": {"weights": {"value_emphasis": 1}, "algorithm": "GA"}}
     assert intrinsic_optimization_ready_agile(panel, _KNAPSACK_WDK, None) is True
     # Knapsack weights should NOT satisfy the gate when checked against VRPTW keys.
-    assert intrinsic_optimization_ready_agile(panel, _VRPTW_WDK, _VRPTW_WPK) is False
+    assert intrinsic_optimization_ready_agile(panel, _DEFAULT_WDK, _DEFAULT_WPK) is False
 
 
 def test_intrinsic_agile_empty_display_keys_falls_back_to_any_weight():
@@ -48,7 +48,7 @@ def test_intrinsic_waterfall_requires_engagement():
     assert intrinsic_optimization_ready_waterfall(
         brief,
         optimization_gate_engaged=True,
-        panel_config={"problem": {"weights": {"travel_time": 10}}},
+        panel_config={"problem": {"weights": {_W1: 10}}},
     ) is True
 
 
@@ -59,7 +59,7 @@ def test_intrinsic_waterfall_requires_config_or_strategy():
     assert intrinsic_optimization_ready_waterfall(
         brief,
         optimization_gate_engaged=True,
-        panel_config={"problem": {"weights": {"travel_time": 10}}},
+        panel_config={"problem": {"weights": {_W1: 10}}},
     ) is True
     assert intrinsic_optimization_ready_waterfall(
         brief,
@@ -70,7 +70,7 @@ def test_intrinsic_waterfall_requires_config_or_strategy():
 
 def test_intrinsic_waterfall_engaged_empty_oq_no_panel_fallback():
     brief = normalize_problem_brief(default_problem_brief())
-    panel = json.loads(json.dumps({"problem": {"weights": {"travel_time": 10}}}))
+    panel = json.loads(json.dumps({"problem": {"weights": {_W1: 10}}}))
     assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config=panel) is True
     assert can_run_optimization("waterfall", False, False, panel, brief, optimization_gate_engaged=True) is True
 
@@ -94,13 +94,13 @@ def test_can_run_researcher_override():
 
 def test_can_run_agile_intrinsic():
     brief = default_problem_brief()
-    panel = json.loads(json.dumps({"problem": {"weights": {"travel_time": 10}, "algorithm": "GA"}}))
+    panel = json.loads(json.dumps({"problem": {"weights": {_W1: 10}, "algorithm": "GA"}}))
     assert can_run_optimization("agile", False, False, panel, brief, optimization_gate_engaged=False) is True
 
 
 def test_can_run_researcher_block_overrides_intrinsic():
     brief = default_problem_brief()
-    panel = json.loads(json.dumps({"problem": {"weights": {"travel_time": 10}, "algorithm": "GA"}}))
+    panel = json.loads(json.dumps({"problem": {"weights": {_W1: 10}, "algorithm": "GA"}}))
     assert can_run_optimization("agile", True, True, panel, brief, optimization_gate_engaged=False) is False
     assert can_run_optimization("agile", False, True, panel, brief, optimization_gate_engaged=False) is False
 
@@ -140,7 +140,7 @@ def test_waterfall_participant_sync_sets_true_when_intrinsic_ready():
     row = SimpleNamespace(
         workflow_mode="waterfall",
         test_problem_id="vrptw",
-        panel_config_json=json.dumps({"problem": {"weights": {"travel_time": 10}}}),
+        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}}}),
         problem_brief_json=json.dumps(brief),
         optimization_allowed=False,
         optimization_gate_engaged=True,
@@ -155,7 +155,7 @@ def test_waterfall_participant_sync_no_op_when_already_allowed_and_ready():
     row = SimpleNamespace(
         workflow_mode="waterfall",
         test_problem_id="vrptw",
-        panel_config_json=json.dumps({"problem": {"weights": {"travel_time": 10}}}),
+        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}}}),
         problem_brief_json=json.dumps(brief),
         optimization_allowed=True,
         optimization_gate_engaged=True,
@@ -168,7 +168,7 @@ def test_agile_participant_sync_sets_allowed_from_panel():
     row = SimpleNamespace(
         workflow_mode="agile",
         test_problem_id="vrptw",
-        panel_config_json=json.dumps({"problem": {"weights": {"travel_time": 1}, "algorithm": "PSO"}}),
+        panel_config_json=json.dumps({"problem": {"weights": {_W1: 1}, "algorithm": "PSO"}}),
         problem_brief_json=json.dumps(default_problem_brief()),
         optimization_allowed=False,
         optimization_gate_engaged=False,

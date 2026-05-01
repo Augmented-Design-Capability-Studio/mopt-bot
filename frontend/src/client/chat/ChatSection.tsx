@@ -10,6 +10,7 @@ import type { EditMode } from "../lib/participantTypes";
 type ChatSectionProps = {
   messages: Message[];
   aiPending: boolean;
+  aiPendingLabel?: string;
   invokeModel: boolean;
   editMode: EditMode;
   chatBusy: boolean;
@@ -29,6 +30,7 @@ type ChatSectionProps = {
 export function ChatSection({
   messages,
   aiPending,
+  aiPendingLabel,
   invokeModel,
   editMode,
   chatBusy,
@@ -48,7 +50,12 @@ export function ChatSection({
   return (
     <ChatPanel
       title="Chat & upload"
-      messages={<MessageBubbleList messages={messages} afterMessages={aiPending ? <ChatAiPendingBubble /> : null} />}
+      messages={
+        <MessageBubbleList
+          messages={messages}
+          afterMessages={aiPending ? <ChatAiPendingBubble label={aiPendingLabel} /> : null}
+        />
+      }
       scrollTriggerKey={scrollTriggerKey}
       betweenLogAndComposer={
         <details className="muted chat-model-details" {...(chatLocked ? { open: false } : {})}>

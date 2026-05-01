@@ -69,7 +69,7 @@ Architecture or layout changes should be reflected in both this file and `README
 
 ### Problem brief as middle layer
 
-The brief is the single source of truth between chat and panel config. Config is always *derived from* the brief, never written directly. Brief structure includes `goal_summary`, a single rolling `run_summary`, `gathered_info`, `assumptions`, and `open_questions` (with `status`/`answer_text`). Cleanup should consolidate run/session bookkeeping noise into `run_summary` instead of leaving per-run rows in gathered/assumptions/questions.
+The brief is the single source of truth between chat and panel config. Config is always *derived from* the brief, never written directly. Brief structure includes `goal_summary`, a single rolling `run_summary`, `items` (`kind: "gathered"` or `kind: "assumption"`) with `source` (`user` / `agent` / `upload`), and `open_questions` (with `status`/`answer_text`). Cleanup should consolidate run/session bookkeeping noise into `run_summary` instead of leaving per-run rows in gathered/assumptions/questions.
 
 After merging a Gemini `panel_patch`, `sync_panel_from_problem_brief` (`backend/app/routers/sessions/sync.py`) backfills any missing search-strategy keys (`algorithm`, `epochs`, `pop_size`, and `algorithm_params` when the resolved algorithm matches the seed) from deterministic `*_problem/brief_seed.py` logic. That prevents partial model output (weights-only patches) from stripping the Problem Config search strategy block or breaking agile intrinsic readiness.
 
@@ -81,12 +81,13 @@ Panel→brief injection for the `config-search-strategy` gathered row (`_brief_i
 - **Waterfall**: `optimization_gate_engaged` flag set (first participant chat or saved open question) and no open questions with `status: "open"`.
 - **Researcher override**: `optimization_allowed` flag on the session.
 
-Waterfall Definition invariant: do not persist editable `kind: "assumption"` rows; missing information is tracked as `open_questions` until confirmed.
+Waterfall Definition invariant: do not persist `kind: "assumption"` rows; missing information is tracked as `open_questions` until confirmed.
 
 ### LLM prompts
 
 All prompts live in `backend/app/prompts/` (primarily `study_chat.py`). The system instruction injects the current brief, last 4 run summaries, and researcher steering notes. Workflow-specific addenda (`STUDY_CHAT_WORKFLOW_WATERFALL` / `STUDY_CHAT_WORKFLOW_AGILE`) are appended based on `session.workflow_mode`. Domain-specific appendices come from each problem package (`*_study_prompts.py`), merged in `backend/app/services/llm.py`. Run-ack turns are constrained to avoid run-by-run memory growth: brief updates should stay condensed, avoid upload/run bookkeeping rows, and favor durable config-slot updates over new assumptions. Participant-facing replies should stay very short by default, use plain operational wording first (for example priorities and importance levels), and only introduce technical optimization terms when needed for precision. In visible chat across all modes, internal schema/config key names should stay hidden unless the participant explicitly asks for field-level names, and wording should avoid "activate/enable/turn on" framing in favor of neutral optimization phrasing ("increase emphasis", "prioritize more", "adjust toward").
 When new goal terms are introduced, config derivation should also assign term types in `problem.constraint_types` (`soft`, `hard`, `custom`; objective is implicit by omission): keep one main objective and classify most additional terms as soft/hard constraints, with `custom` reserved for explicit manual fixed-weight asks.
+Legacy `hard_constraints` / `soft_constraints` arrays are deprecated and should not be emitted; goal-term meaning is represented through `weights` + `constraint_types` (+ optional `goal_terms` metadata and lock state).
 Definition rows synced from panel config should describe goal-term type first (objective/soft/hard/custom-locked) before numeric value details. In participant Problem Config, goal-term lock controls should remain available; custom terms are treated as user-owned locked values unless manually unlocked.
 
 ### Domain packages

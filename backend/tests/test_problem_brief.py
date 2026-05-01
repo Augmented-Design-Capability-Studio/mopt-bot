@@ -42,7 +42,7 @@ def test_normalize_promotes_answered_open_question_to_gathered():
         i for i in out["items"] if str(i.get("kind")) == "gathered" and not str(i.get("id", "")).startswith("system")
     ]
     assert any(i.get("text") == "How many? — Ten." for i in gathered_non_system)
-    assert any(i.get("id") == "gathered-oq-q1" for i in gathered_non_system)
+    assert any(i.get("id") == "item-gathered-from-question-q1" for i in gathered_non_system)
 
 
 def test_gathered_oq_row_not_atomized_on_commas_and_and():

@@ -14,7 +14,42 @@ from app.problems.types import TestProblemMeta, WeightDefinition
 from knapsack_problem.panel_schema import panel_patch_response_json_schema
 
 
-
+def _rebuild_goal_terms(problem: dict[str, Any]) -> None:
+    constraint_types = (
+        problem.get("constraint_types")
+        if isinstance(problem.get("constraint_types"), dict)
+        else {}
+    )
+    locked = (
+        set(x for x in problem.get("locked_goal_terms", []) if isinstance(x, str))
+        if isinstance(problem.get("locked_goal_terms"), list)
+        else set()
+    )
+    order = (
+        [k for k in problem.get("goal_term_order", []) if isinstance(k, str)]
+        if isinstance(problem.get("goal_term_order"), list)
+        else []
+    )
+    order_idx = {k: i + 1 for i, k in enumerate(order)}
+    max_rank = len(order_idx)
+    goal_terms: dict[str, Any] = {}
+    for k, v in (problem.get("weights") or {}).items():
+        if not isinstance(k, str) or not isinstance(v, (int, float)) or isinstance(v, bool):
+            continue
+        t = str(constraint_types.get(k) or "").strip().lower()
+        term_type = t if t in {"soft", "hard", "custom"} else "objective"
+        rank = order_idx.get(k)
+        if rank is None:
+            max_rank += 1
+            rank = max_rank
+        goal_terms[k] = {
+            "weight": float(v),
+            "type": term_type,
+            "rank": rank,
+            **({"locked": True} if k in locked else {}),
+        }
+    if goal_terms:
+        problem["goal_terms"] = goal_terms
 
 
 class KnapsackStudyPort:
@@ -43,6 +78,8 @@ class KnapsackStudyPort:
         if not isinstance(problem, dict):
             return cfg, []
         warnings: list[str] = []
+        problem.pop("hard_constraints", None)
+        problem.pop("soft_constraints", None)
         weights_raw = problem.get("weights")
         if weights_raw is None:
             problem.pop("weights", None)
@@ -58,6 +95,10 @@ class KnapsackStudyPort:
             problem["weights"] = clean
         ap_raw = problem.get("algorithm_params")
         if ap_raw is None:
+            if isinstance(problem.get("weights"), dict):
+                _rebuild_goal_terms(problem)
+                problem.pop("weights", None)
+                problem.pop("constraint_types", None)
             return cfg, warnings
         if not isinstance(ap_raw, dict):
             problem.pop("algorithm_params", None)
@@ -73,6 +114,10 @@ class KnapsackStudyPort:
         else:
             problem.pop("algorithm_params", None)
         warnings.extend(w)
+        if isinstance(problem.get("weights"), dict):
+            _rebuild_goal_terms(problem)
+            problem.pop("weights", None)
+            problem.pop("constraint_types", None)
         return cfg, warnings
 
     def parse_problem_config(self, raw: dict[str, Any]) -> dict[str, Any]:

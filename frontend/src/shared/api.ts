@@ -189,10 +189,8 @@ export type SessionProcessingState = {
 export type ProblemBriefItem = {
   id: string;
   text: string;
-  kind: "gathered" | "assumption" | "system";
-  source: "user" | "upload" | "agent" | "system";
-  status: "active" | "confirmed" | "rejected";
-  editable: boolean;
+  kind: "gathered" | "assumption";
+  source: "user" | "upload" | "agent";
 };
 
 export type ProblemBriefQuestion = {

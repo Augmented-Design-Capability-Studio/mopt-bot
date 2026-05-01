@@ -52,12 +52,10 @@ _PROBLEM_BRIEF_ITEM_SCHEMA: dict[str, Any] = {
     "properties": {
         "id": {"type": "string"},
         "text": {"type": "string"},
-        "kind": {"type": "string", "enum": ["gathered", "assumption", "system"]},
-        "source": {"type": "string", "enum": ["user", "upload", "agent", "system"]},
-        "status": {"type": "string", "enum": ["active", "confirmed", "rejected"]},
-        "editable": {"type": "boolean"},
+        "kind": {"type": "string", "enum": ["gathered", "assumption"]},
+        "source": {"type": "string", "enum": ["user", "upload", "agent"]},
     },
-    "required": ["id", "text", "kind", "source", "status", "editable"],
+    "required": ["id", "text", "kind", "source"],
 }
 
 _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
@@ -236,8 +234,7 @@ def resolve_workflow_phase(
         item
         for item in items
         if isinstance(item, dict)
-        and str(item.get("kind") or "").strip().lower() != "system"
-        and str(item.get("status") or "").strip().lower() != "rejected"
+        and str(item.get("kind") or "").strip().lower() in {"gathered", "assumption"}
         and str(item.get("text") or "").strip()
     ]
     has_panel = bool(current_panel and isinstance(current_panel, dict))

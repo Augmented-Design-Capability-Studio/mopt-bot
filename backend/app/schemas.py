@@ -45,10 +45,8 @@ class SessionPatch(BaseModel):
 class ProblemBriefItem(BaseModel):
     id: str
     text: str
-    kind: Literal["gathered", "assumption", "system"]
-    source: Literal["user", "upload", "agent", "system"]
-    status: Literal["active", "confirmed", "rejected"]
-    editable: bool = True
+    kind: Literal["gathered", "assumption"]
+    source: Literal["user", "upload", "agent"]
 
 
 class ProblemBriefQuestion(BaseModel):

@@ -51,6 +51,33 @@ CONSTRAINT_TYPES_SCHEMA: dict[str, Any] = {
     },
 }
 
+GOAL_TERM_ENTRY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Canonical per-goal-term representation. `weight` is numeric emphasis, "
+        "`type` is objective/soft/hard/custom, `locked` mirrors lock state, and "
+        "`properties` carries optional term-specific metadata."
+    ),
+    "properties": {
+        "weight": {"type": "number"},
+        "type": {"type": "string", "enum": ["objective", "soft", "hard", "custom"]},
+        "locked": {"type": "boolean"},
+        "rank": {"type": "integer", "minimum": 1},
+        "properties": {"type": "object"},
+    },
+    "required": ["weight"],
+    "additionalProperties": False,
+}
+
+GOAL_TERMS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Goal-term map keyed by weight alias (e.g. travel_time, capacity_penalty). "
+        "Each entry can include weight, type, lock flag, and optional term-specific properties."
+    ),
+    "additionalProperties": GOAL_TERM_ENTRY_SCHEMA,
+}
+
 
 def wrap_panel_patch_schema(problem_inner: dict[str, Any]) -> dict[str, Any]:
     return {
