@@ -9,7 +9,6 @@ def test_derive_problem_panel_from_brief_delegates_to_selected_port(monkeypatch)
             captured["brief"] = brief
             return {"problem": {"weights": {"x": 1}}}
 
-    monkeypatch.setattr(problem_config_seed, "get_study_port", lambda problem_id=None: _FakePort(), raising=False)
     monkeypatch.setattr("app.problems.registry.get_study_port", lambda problem_id=None: _FakePort())
 
     brief = {"goal_summary": "anything", "items": []}

@@ -99,7 +99,6 @@ def test_system_instruction_includes_vrptw_benchmark_appendix():
         test_problem_id="vrptw",
     )
     assert "Active benchmark — fleet scheduling (VRPTW)" in system
-    assert "Active benchmark" in system
 
 
 def test_system_instruction_includes_knapsack_benchmark_appendix():
@@ -109,7 +108,6 @@ def test_system_instruction_includes_knapsack_benchmark_appendix():
         test_problem_id="knapsack",
     )
     assert "Active benchmark — 0/1 knapsack" in system
-    assert "Active benchmark" in system
 
 
 def test_system_prompt_openers_skip_appendix_when_cold_knapsack():
