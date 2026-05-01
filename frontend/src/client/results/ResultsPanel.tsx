@@ -4,6 +4,7 @@ import { displayRunNumber, type ProblemBrief, type RunResult, type Session, type
 
 import type { EditMode } from "../lib/participantTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
+import { parseBaseProblemConfig } from "../problemConfig/baseSerialization";
 import { ConvergencePlot } from "./ConvergencePlot";
 import { getProblemModule } from "../problemRegistry";
 import { RawJsonDialog } from "../components/RawJsonDialog";
@@ -98,6 +99,49 @@ export function ResultsPanel({
 }: ResultsPanelProps) {
   const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, problemMeta);
   const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, hasUploadedData, problemMeta);
+  const mode = (session?.workflow_mode ?? "").toLowerCase();
+  const diagnosticRunGateReason = (() => {
+    if (session == null) return "Session is not loaded yet.";
+    const blockedByResearcher = Boolean(session.optimization_runs_blocked_by_researcher);
+    if (blockedByResearcher) return "Blocked by researcher setting: Run button is disabled for this session.";
+    if ((mode === "agile" || mode === "demo") && !hasUploadedData) {
+      return "Gate unmet: upload at least one file before running optimization.";
+    }
+    let goalTermCount = 0;
+    let hasAlgorithm = false;
+    try {
+      const { problem } = parseBaseProblemConfig(configText);
+      goalTermCount = Object.keys(problem.weights).length;
+      hasAlgorithm = problem.algorithm.trim().length > 0;
+    } catch {
+      // fall back to status-only messaging when config cannot be parsed
+    }
+    if (mode === "waterfall") {
+      const openQuestionCount = problemBrief?.open_questions.filter((q) => q.status === "open").length ?? 0;
+      const engaged = Boolean(session.optimization_gate_engaged);
+      return `Waterfall gate unmet: optimization_gate_engaged=${engaged ? "true" : "false"}, open_questions=${openQuestionCount}, goal_terms=${goalTermCount}, algorithm_set=${hasAlgorithm ? "true" : "false"}.`;
+    }
+    if (mode === "agile" || mode === "demo") {
+      return `${mode} gate unmet: goal_terms=${goalTermCount}, algorithm_set=${hasAlgorithm ? "true" : "false"}, optimization_allowed=${session.optimization_allowed ? "true" : "false"}.`;
+    }
+    return `Gate unmet: workflow_mode=${session.workflow_mode || "unknown"}, optimization_allowed=${session.optimization_allowed ? "true" : "false"}.`;
+  })();
+  const runBlockedBySession = sessionTerminated;
+  const runBlockedByEditMode = editMode !== "none";
+  // Keep Run availability tied to run-specific state (optimizing + gate), not global busy UI state.
+  const runBlockedByOptimizeProgress = optimizing;
+  const runBlockedByGate = !canRunOptimization;
+  const runButtonDisabled =
+    runBlockedBySession || runBlockedByEditMode || runBlockedByOptimizeProgress || runBlockedByGate;
+  const runButtonReason = runBlockedBySession
+    ? "This session has ended."
+    : runBlockedByEditMode
+      ? "Save or cancel your current edits before running optimization."
+      : runBlockedByOptimizeProgress
+        ? "An optimization run is already in progress."
+        : runBlockedByGate
+          ? runDisabledHint || diagnosticRunGateReason
+          : undefined;
   const [showRawJsonDialog, setShowRawJsonDialog] = useState(false);
   const [vizTabId, setVizTabId] = useState<string>("__convergence__");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
@@ -316,20 +360,18 @@ export function ResultsPanel({
             <span className="muted" title="Number of prior runs included as candidates for the next optimization">
               Candidates: {candidateRunIds.length}
             </span>
-            <button
-              type="button"
-              className="btn-primary results-main-action-btn"
-              data-tutorial-anchor="run-optimize"
-              disabled={busy || !canRunOptimization || editMode !== "none" || sessionTerminated}
-              title={
-                !canRunOptimization && !sessionTerminated && editMode === "none"
-                  ? runDisabledHint || "Cannot run optimization yet."
-                  : undefined
-              }
-              onClick={() => void onRunOptimize()}
-            >
-              Run optimization
-            </button>
+            <span title={runButtonReason}>
+              <button
+                type="button"
+                className="btn-primary results-main-action-btn"
+                data-tutorial-anchor="run-optimize"
+                disabled={runButtonDisabled}
+                title={runButtonReason}
+                onClick={() => void onRunOptimize()}
+              >
+                Run optimization
+              </button>
+            </span>
           </div>
           <button
             type="button"

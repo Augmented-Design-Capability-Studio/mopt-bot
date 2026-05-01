@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { RunScheduleStop, RunVisualization } from "@shared/api";
 import type { ProblemVizProps } from "@problemConfig/problemModule";
+import { extractRunWeights } from "./runWeights";
 
 function formatClock(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -26,13 +27,16 @@ function stopPreferenceHit(stop: RunScheduleStop): boolean {
 /** Per-vehicle Gantt-style schedule (fleet / VRPTW results). */
 export function FleetScheduleViz({ currentRun }: ProblemVizProps) {
   const currentResult = currentRun.result;
-  const runProblem = (currentRun.request?.problem ?? {}) as Record<string, unknown>;
+  const runProblem = currentRun.request?.problem ?? {};
+  const runWeights = extractRunWeights(runProblem);
 
-  const driverPrefs = Array.isArray(runProblem.driver_preferences) ? runProblem.driver_preferences : [];
-  const runWeights =
-    runProblem.weights && typeof runProblem.weights === "object" && !Array.isArray(runProblem.weights)
-      ? (runProblem.weights as Record<string, unknown>)
-      : {};
+  const driverPrefs: unknown[] =
+    typeof runProblem === "object" &&
+    runProblem !== null &&
+    !Array.isArray(runProblem) &&
+    Array.isArray((runProblem as Record<string, unknown>).driver_preferences)
+      ? ((runProblem as Record<string, unknown>).driver_preferences as unknown[])
+      : [];
   const wpw = Number(runWeights.worker_preference);
   const schedulePreferencesActive = driverPrefs.length > 0 && Number.isFinite(wpw) && wpw > 0;
   const scheduleEarlyArrivalActive =

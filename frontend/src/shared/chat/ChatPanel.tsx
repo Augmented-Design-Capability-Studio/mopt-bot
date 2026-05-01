@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { ChatBubbleTemplate } from "./ChatBubbleTemplate";
 
 /** Enter sends, Shift+Enter newline - used only by {@link ChatComposer}. */
 function onChatSendKeyDown(
@@ -99,13 +100,14 @@ export function ChatComposer({
 /** Shown while the participant is waiting for a model reply. */
 export function ChatAiPendingBubble({ label = "Thinking..." }: { label?: string }) {
   return (
-    <div className="bubble assistant chat-pending-ai" aria-live="polite">
-      <strong>assistant</strong>
-      <div className="chat-pending-wrap">
-        <span className="chat-spinner" role="status" aria-label="Loading model response" />
-        <span className="muted">{label}</span>
-      </div>
-    </div>
+    <ChatBubbleTemplate
+      roleVariant="assistant"
+      heading={<strong>assistant</strong>}
+      spinnerLabel={label}
+      spinnerAriaLabel="Loading model response"
+      className="chat-pending-ai"
+      ariaLive="polite"
+    />
   );
 }
 

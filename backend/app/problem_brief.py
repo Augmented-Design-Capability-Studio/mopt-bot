@@ -49,6 +49,19 @@ _OPEN_QUESTION_STOPWORDS = {
     "you",
     "your",
 }
+_UPLOAD_OPEN_QUESTION_KEYWORDS = (
+    "upload",
+    "uploaded",
+    "file",
+    "files",
+    "csv",
+    "pdf",
+    "spreadsheet",
+    "dataset",
+    "data sheet",
+    "driver info",
+    "order data",
+)
 
 @functools.lru_cache(maxsize=None)
 def _all_weight_slot_markers() -> dict[str, tuple[str, ...]]:
@@ -341,15 +354,82 @@ def _sanitize_run_summary(text: Any) -> str:
 
 
 def _split_into_goal_term_clauses(text: str) -> list[str]:
-    """Split a compound line listing multiple objective/constraint terms (semicolon, comma, and)."""
+    """Split a compound line listing multiple objective/constraint terms.
+
+    Important: ignore separators inside parentheses/brackets so
+    '(Objective, Weight 1.0)' stays a single clause.
+    """
     normalized = " ".join(str(text or "").split()).strip()
     if not normalized:
         return []
-    return [
-        p.strip(" ,")
-        for p in re.split(r"\s*(?:;|,\s+and\s+|\s+and\s+|,\s+)\s*", normalized)
-        if p.strip(" ,")
-    ]
+    out: list[str] = []
+    buf: list[str] = []
+    paren_depth = 0
+    bracket_depth = 0
+    i = 0
+    n = len(normalized)
+    while i < n:
+        ch = normalized[i]
+        if ch == "(":
+            paren_depth += 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ")":
+            paren_depth = max(0, paren_depth - 1)
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "[":
+            bracket_depth += 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "]":
+            bracket_depth = max(0, bracket_depth - 1)
+            buf.append(ch)
+            i += 1
+            continue
+        at_top_level = paren_depth == 0 and bracket_depth == 0
+        if at_top_level and ch == ";":
+            part = "".join(buf).strip(" ,")
+            if part:
+                out.append(part)
+            buf = []
+            i += 1
+            continue
+        if at_top_level and ch == ",":
+            j = i + 1
+            while j < n and normalized[j].isspace():
+                j += 1
+            if j + 3 <= n and normalized[j:j + 3].lower() == "and":
+                k = j + 3
+                if k >= n or normalized[k].isspace():
+                    part = "".join(buf).strip(" ,")
+                    if part:
+                        out.append(part)
+                    buf = []
+                    i = k
+                    continue
+            part = "".join(buf).strip(" ,")
+            if part:
+                out.append(part)
+            buf = []
+            i += 1
+            continue
+        if at_top_level and normalized[i:i + 5].lower() == " and ":
+            part = "".join(buf).strip(" ,")
+            if part:
+                out.append(part)
+            buf = []
+            i += 5
+            continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip(" ,")
+    if tail:
+        out.append(tail)
+    return out
 
 
 def _split_compound_item_text(text: str) -> list[str]:
@@ -600,6 +680,64 @@ def cleanup_open_questions(
         "removed_total": original_count - len(deduped_questions),
     }
     return cleaned, metadata
+
+
+def question_is_upload_related(question: Any) -> bool:
+    """Heuristic marker for open questions that are asking for uploaded source files."""
+    if not isinstance(question, dict):
+        return False
+    text = str(question.get("text") or "").strip().lower()
+    if not text:
+        return False
+    return any(keyword in text for keyword in _UPLOAD_OPEN_QUESTION_KEYWORDS)
+
+
+def upload_satisfies_open_question(
+    question: Any,
+    uploaded_file_names: list[str],
+) -> bool:
+    """
+    Placeholder validator for future upload-content checks.
+
+    TODO: inspect uploaded file contents/metadata and return False when required
+    information is still missing for a specific question.
+    """
+    if not question_is_upload_related(question):
+        return False
+    _ = uploaded_file_names
+    return True
+
+
+def resolve_upload_open_questions_after_upload(brief: Any, uploaded_file_names: list[str]) -> dict[str, Any]:
+    """Auto-resolve upload-related open questions when upload validation passes."""
+    normalized = normalize_problem_brief(brief)
+    clean_files = [str(name).strip() for name in uploaded_file_names if str(name).strip()]
+    if not clean_files:
+        return normalized
+
+    changed = False
+    updated_questions: list[dict[str, Any]] = []
+    for question in normalized.get("open_questions") or []:
+        if not isinstance(question, dict):
+            continue
+        if (
+            _normalize_question_status(question.get("status")) == "open"
+            and upload_satisfies_open_question(question, clean_files)
+        ):
+            changed = True
+            updated_questions.append(
+                {
+                    **question,
+                    "status": "answered",
+                    "answer_text": f"Uploaded file(s) received: {', '.join(clean_files)}.",
+                }
+            )
+            continue
+        updated_questions.append(question)
+
+    if not changed:
+        return normalized
+    return normalize_problem_brief({**normalized, "open_questions": updated_questions})
 
 
 def _normalize_item(raw: Any) -> dict[str, Any] | None:

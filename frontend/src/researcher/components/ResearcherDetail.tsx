@@ -334,13 +334,15 @@ export function ResearcherDetail({
               messages={
                 <MessageBubbleList
                   messages={messages}
-                  getBubbleClassName={(message) => {
-                    if (message.role === "user") return "bubble user";
-                    if (message.role === "researcher" || !message.visible_to_participant) {
-                      return "bubble researcher-hidden";
-                    }
-                    return "bubble assistant";
+                  mode="simplified"
+                  getRoleVariant={(message) => {
+                    if (message.role === "user") return "user";
+                    if (message.role === "researcher" || !message.visible_to_participant) return "researcher-hidden";
+                    return "assistant";
                   }}
+                  getBubbleClassName={(message) =>
+                    message.role === "researcher" || !message.visible_to_participant ? "bubble-researcher-hidden-note" : undefined
+                  }
                   renderHeading={(message) => (
                     <strong>
                       {message.role}

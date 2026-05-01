@@ -69,7 +69,7 @@ Architecture or layout changes should be reflected in both this file and `README
 
 ### Problem brief as middle layer
 
-The brief is the single source of truth between chat and panel config. Config is always *derived from* the brief, never written directly. Brief structure includes `goal_summary`, a single rolling `run_summary`, `items` (`kind: "gathered"` or `kind: "assumption"`) with `source` (`user` / `agent` / `upload`), and `open_questions` (with `status`/`answer_text`). Cleanup should consolidate run/session bookkeeping noise into `run_summary` instead of leaving per-run rows in gathered/assumptions/questions.
+The brief is the single source of truth between chat and panel config. Config is always *derived from* the brief, never written directly. Brief structure includes `goal_summary`, a single rolling `run_summary`, `items` (`kind: "gathered"` or `kind: "assumption"`) with `source` (`user` / `agent` / `upload`), and `open_questions` (with `status`/`answer_text`). Cleanup should consolidate run/session bookkeeping noise into `run_summary` instead of leaving per-run rows in gathered/assumptions/questions. Upload turns (participant and researcher-simulated) also run deterministic open-question reconciliation: upload-related open questions are auto-resolved when upload evidence is present, via a placeholder validator hook that currently always passes and is reserved for future file-content checks.
 
 After merging a Gemini `panel_patch`, `sync_panel_from_problem_brief` (`backend/app/routers/sessions/sync.py`) backfills any missing search-strategy keys (`algorithm`, `epochs`, `pop_size`, and `algorithm_params` when the resolved algorithm matches the seed) from deterministic `*_problem/brief_seed.py` logic. That prevents partial model output (weights-only patches) from stripping the Problem Config search strategy block or breaking agile intrinsic readiness.
 
@@ -80,6 +80,7 @@ Panel→brief injection for the `config-search-strategy` gathered row (`_brief_i
 - **Agile**: saved `problem` has ≥1 goal-term weight and a non-empty algorithm.
 - **Waterfall**: `optimization_gate_engaged` flag set (first participant chat or saved open question) and no open questions with `status: "open"`.
 - **Researcher override**: `optimization_allowed` flag on the session.
+- **Participant Run button disablement**: use run-specific blockers (gate unmet, session terminated, edit mode active, or optimize in progress), not unrelated global busy indicators.
 
 Waterfall Definition invariant: do not persist `kind: "assumption"` rows; missing information is tracked as `open_questions` until confirmed.
 
@@ -89,6 +90,7 @@ All prompts live in `backend/app/prompts/` (primarily `study_chat.py`). The syst
 When new goal terms are introduced, config derivation should also assign term types in `problem.constraint_types` (`soft`, `hard`, `custom`; objective is implicit by omission): keep one main objective and classify most additional terms as soft/hard constraints, with `custom` reserved for explicit manual fixed-weight asks.
 Legacy `hard_constraints` / `soft_constraints` arrays are deprecated and should not be emitted; goal-term meaning is represented through `weights` + `constraint_types` (+ optional `goal_terms` metadata and lock state).
 Definition rows synced from panel config should describe goal-term type first (objective/soft/hard/custom-locked) before numeric value details. In participant Problem Config, goal-term lock controls should remain available; custom terms are treated as user-owned locked values unless manually unlocked.
+Goal-term validity is enforced strictly at save/sync boundaries: every `goal_terms` entry needs an explicit valid `type`, `goal_term_order` cannot reference missing terms, and derived terms must be grounded in Definition `items` (assumption/gathered evidence). Invalid/hallucinated term sets are rejected (422 for direct participant save/sync), background derivation stores a structured `processing_error` and posts a brief participant-visible retry prompt.
 
 ### Domain packages
 

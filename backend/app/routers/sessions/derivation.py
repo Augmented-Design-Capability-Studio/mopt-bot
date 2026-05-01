@@ -473,6 +473,23 @@ def _run_background_derivation(
             helpers.touch_session(row)
             helpers.sync_optimization_allowed_after_participant_mutation(row)
             db.commit()
+    except sync.GoalTermValidationError as exc:
+        log.exception("Background derivation goal-term validation failed for session %s", session_id)
+        with SessionLocal() as db:
+            row = db.get(StudySession, session_id)
+            if row is not None and row.processing_revision == revision:
+                helpers.fail_processing_state(row, exc.processing_error_text())
+                append_message(
+                    db,
+                    session_id,
+                    "assistant",
+                    "I could not sync the configuration because goal terms were inconsistent with the current definition. "
+                    "Please retry sync after confirming the Definition items cover each goal term.",
+                    True,
+                    kind="panel",
+                )
+                db.commit()
+        return
     except Exception:
         log.exception("Background derivation failed for session %s", session_id)
         persist_processing_failure(session_id, revision, "Background problem derivation failed")

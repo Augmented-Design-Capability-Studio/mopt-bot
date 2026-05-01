@@ -1,5 +1,6 @@
 import type { RunMetrics, RunViolations } from "@shared/api";
 import type { ViolationSummaryProps } from "@problemConfig/problemModule";
+import { extractRunWeights } from "./runWeights";
 
 function canonicalWeightKey(key: string): string {
   if (key === "deadline_penalty") return "lateness_penalty";
@@ -138,13 +139,9 @@ export function ViolationSummary({ currentRun }: ViolationSummaryProps) {
   const currentResult = currentRun.result;
   if (!currentResult) return null;
 
-  const runProblem = (currentRun.request?.problem ?? {}) as Record<string, unknown>;
-  const runWeights =
-    runProblem.weights && typeof runProblem.weights === "object" && !Array.isArray(runProblem.weights)
-      ? (runProblem.weights as Record<string, unknown>)
-      : {};
+  const runProblem = currentRun.request?.problem ?? {};
+  const runWeights = extractRunWeights(runProblem);
   const activeWeightKeys = Object.keys(runWeights)
-    .filter((key) => Number.isFinite(Number(runWeights[key])))
     .map(canonicalWeightKey);
 
   const { violations, metrics } = currentResult;

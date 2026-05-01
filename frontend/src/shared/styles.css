@@ -346,9 +346,59 @@ select:focus-visible {
   background: #eef6ef;
 }
 
+.bubble-status--info {
+  border-left-color: #4f6f90;
+  background: #eef4fb;
+}
+
+.bubble-status--success {
+  border-left-color: #5f8168;
+  background: #eef6ef;
+}
+
+.bubble-status--warning {
+  border-left-color: #8b5c2a;
+  background: #fdf3e6;
+}
+
+.bubble-status--error {
+  border-left-color: #a35555;
+  background: #fdecec;
+}
+
+.bubble-status button {
+  margin-top: 0.35rem;
+}
+
 .bubble.researcher-hidden {
   border-left: 4px solid #9b6ea8;
   background: #f6eef9;
+}
+
+.bubble-researcher-hidden-note .bubble-template-heading {
+  color: #6f4a79;
+}
+
+.bubble-template {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.bubble-template-heading {
+  font-weight: 600;
+}
+
+.bubble-template--simplified {
+  padding: 0.25rem 0.45rem;
+}
+
+.bubble-template--simplified .bubble-template-heading {
+  font-size: 0.86rem;
+}
+
+.bubble-template-trailing {
+  margin-top: 0.2rem;
 }
 
 .bubble-markdown > :first-child {
@@ -489,6 +539,15 @@ select:focus-visible {
   scrollbar-width: thin;
 }
 
+.chat-upload-chips--bubble {
+  flex: 0 1 auto;
+  padding-top: 0.2rem;
+}
+
+.chat-upload-chips--bubble .chat-upload-chip {
+  max-width: 14rem;
+}
+
 .chat-upload-chip {
   display: inline-flex;
   align-items: center;
@@ -529,6 +588,10 @@ select:focus-visible {
   cursor: pointer;
   font-size: 1rem;
   color: var(--muted);
+}
+
+.bubble-template .chat-upload-chip-remove:disabled {
+  opacity: 0.5;
 }
 
 .chat-upload-chip-remove:hover {
@@ -1265,7 +1328,7 @@ select:focus-visible {
   color: #1b5e20;
 }
 
-.config-panel-waterfall-alert {
+.status-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1273,14 +1336,29 @@ select:focus-visible {
   margin: 0 0 0.55rem;
   padding: 0.45rem 0.55rem;
   border-radius: 4px;
-  border: 1px solid rgba(200, 140, 60, 0.55);
-  background: rgba(255, 230, 190, 0.35);
-  box-shadow: 0 0 14px rgba(220, 160, 60, 0.28);
   font-size: 0.88rem;
   line-height: 1.35;
 }
 
-.config-panel-waterfall-alert-jump {
+.status-banner--warning {
+  border: 1px solid rgba(200, 140, 60, 0.55);
+  background: rgba(255, 230, 190, 0.35);
+  box-shadow: 0 0 14px rgba(220, 160, 60, 0.28);
+}
+
+.status-banner--error {
+  border: 1px solid rgba(170, 80, 80, 0.52);
+  background: rgba(255, 220, 220, 0.35);
+  box-shadow: 0 0 14px rgba(190, 90, 90, 0.24);
+}
+
+.status-banner--info {
+  border: 1px solid rgba(110, 130, 160, 0.5);
+  background: rgba(220, 235, 250, 0.35);
+  box-shadow: 0 0 14px rgba(120, 150, 190, 0.22);
+}
+
+.status-banner-action {
   margin-left: auto;
   font: inherit;
   border: none;
@@ -1291,7 +1369,7 @@ select:focus-visible {
   padding: 0;
 }
 
-.config-panel-waterfall-alert-jump:hover {
+.status-banner-action:hover {
   color: var(--fg, #222);
 }
 

@@ -19,6 +19,7 @@ import { resolveActiveTutorialStep } from "../../tutorial/transitions";
 import { ChatSection } from "../chat/ChatSection";
 import { type EditMode } from "../lib/participantTypes";
 import type { ParticipantOpsState } from "../lib/participantOps";
+import { formatProcessingError } from "../lib/processingErrors";
 import { ConfigPanel } from "../problemConfig/ConfigPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
@@ -207,6 +208,7 @@ export function ParticipantShell({
         ? "Updating definition and configuration..."
         : "Working...";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
+  const backgroundProcessingErrorMessage = formatProcessingError(backgroundProcessingError);
   const accentClass = workflowAccentClass(session?.workflow_mode);
   const serverPn = (session?.participant_number ?? "").trim();
   const localPn = participantLabel.trim();
@@ -503,6 +505,9 @@ export function ParticipantShell({
             onSendChat={onSendChat}
             onSimulateUpload={onSimulateUpload}
             onRemoveSimulatedUploadChip={onRemoveSimulatedUploadChip}
+            processingErrorMessage={backgroundProcessingErrorMessage}
+            onRetrySync={onSyncProblemConfig}
+            retryBusy={syncingProblemConfig || backgroundProcessingPending}
           />
         </section>
 

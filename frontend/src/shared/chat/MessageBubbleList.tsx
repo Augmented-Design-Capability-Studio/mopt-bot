@@ -1,21 +1,24 @@
 import { memo, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import type { Message } from "@shared/api";
+import { ChatBubbleTemplate, type ChatBubbleMode, type ChatBubbleRoleVariant } from "./ChatBubbleTemplate";
 
 export function messageBubbleKey(message: Message, index: number): number | string {
   return message.id < 0 ? `tmp-${message.id}-${index}` : message.id;
 }
 
-const defaultGetBubbleClassName = (message: Message) =>
-  `bubble ${message.role === "user" ? "user" : "assistant"}`;
+const defaultRoleVariant = (message: Message): ChatBubbleRoleVariant =>
+  message.role === "user" ? "user" : "assistant";
 const defaultRenderHeading = (message: Message) => <strong>{message.role}</strong>;
 
 type MessageBubbleListProps = {
   messages: Message[];
-  getBubbleClassName?: (message: Message) => string;
+  mode?: ChatBubbleMode;
+  getRoleVariant?: (message: Message) => ChatBubbleRoleVariant;
+  getBubbleClassName?: (message: Message) => string | undefined;
   renderHeading?: (message: Message) => ReactNode;
+  renderMessageMarkdown?: (message: Message) => string;
+  renderSupplemental?: (message: Message) => ReactNode;
   afterMessages?: ReactNode;
 };
 
@@ -25,31 +28,26 @@ type MessageBubbleListProps = {
  */
 export const MessageBubbleList = memo(function MessageBubbleList({
   messages,
-  getBubbleClassName = defaultGetBubbleClassName,
+  mode = "full",
+  getRoleVariant = defaultRoleVariant,
+  getBubbleClassName,
   renderHeading = defaultRenderHeading,
+  renderMessageMarkdown = (message) => message.content,
+  renderSupplemental,
   afterMessages,
 }: MessageBubbleListProps) {
   return (
     <>
       {messages.map((message, index) => (
-        <div key={messageBubbleKey(message, index)} className={getBubbleClassName(message)}>
-          {renderHeading(message)}
-          <div className="bubble-markdown">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
-                code: ({ node: _node, className, children, ...props }) => (
-                  <code className={`mono ${className ?? ""}`.trim()} {...props}>
-                    {children}
-                  </code>
-                ),
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
-          </div>
-        </div>
+        <ChatBubbleTemplate
+          key={messageBubbleKey(message, index)}
+          roleVariant={getRoleVariant(message)}
+          mode={mode}
+          className={getBubbleClassName?.(message)}
+          heading={renderHeading(message)}
+          markdown={renderMessageMarkdown(message)}
+          trailing={renderSupplemental?.(message)}
+        />
       ))}
       {afterMessages}
     </>

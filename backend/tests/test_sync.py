@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.problems.registry import get_study_port
 from app.routers.sessions import sync
 
@@ -230,4 +232,81 @@ def test_sync_backfills_search_strategy_when_llm_returns_weights_only(monkeypatc
     assert prob["epochs"] == 100
     assert prob["pop_size"] == 50
     assert prob["algorithm_params"] == {"pc": 0.9, "pm": 0.05}
+
+
+def test_validate_problem_goal_terms_rejects_missing_type():
+    with pytest.raises(sync.GoalTermValidationError) as excinfo:
+        sync.validate_problem_goal_terms(
+            problem={
+                "goal_terms": {
+                    "travel_time": {"weight": 1.0},
+                }
+            },
+            problem_brief={"items": [{"id": "config-weight-travel_time", "kind": "gathered", "text": "travel"}]},
+            weight_slot_markers={"travel_time": ("travel",)},
+        )
+    assert any(r["code"] == "goal_term_type_invalid" for r in excinfo.value.reasons)
+
+
+def test_validate_problem_goal_terms_rejects_hallucinated_terms():
+    with pytest.raises(sync.GoalTermValidationError) as excinfo:
+        sync.validate_problem_goal_terms(
+            problem={
+                "goal_terms": {
+                    "travel_time": {"weight": 1.0, "type": "objective"},
+                    "capacity_penalty": {"weight": 1000.0, "type": "hard"},
+                }
+            },
+            problem_brief={
+                "items": [
+                    {"id": "config-weight-travel_time", "kind": "gathered", "text": "minimize travel time"}
+                ]
+            },
+            weight_slot_markers={"travel_time": ("travel",), "capacity_penalty": ("capacity",)},
+        )
+    assert any(r["code"] == "goal_term_hallucinated" for r in excinfo.value.reasons)
+
+
+def test_sync_panel_from_brief_retries_after_validation_failure(monkeypatch):
+    row = SimpleNamespace(
+        panel_config_json=json.dumps({"problem": {"algorithm": "GA"}}),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+        id="retry-session",
+    )
+    calls = {"count": 0}
+
+    def _fake_llm(**_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "problem": {
+                    "goal_terms": {
+                        "travel_time": {"weight": 1.0, "type": "objective"},
+                        "capacity_penalty": {"weight": 1000.0, "type": "hard"},
+                    }
+                }
+            }
+        return {
+            "problem": {
+                "goal_terms": {
+                    "travel_time": {"weight": 1.0, "type": "objective"},
+                }
+            }
+        }
+
+    monkeypatch.setattr("app.services.llm.generate_config_from_brief", _fake_llm)
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief={
+            "items": [{"id": "config-weight-travel_time", "kind": "gathered", "text": "minimize travel"}]
+        },
+        api_key="fake-key",
+        model_name="fake-model",
+    )
+    assert panel is not None
+    assert calls["count"] == 2
 

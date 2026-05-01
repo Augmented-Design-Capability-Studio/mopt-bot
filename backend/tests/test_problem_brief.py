@@ -9,8 +9,10 @@ from app.problem_brief import (
     is_chat_cold_start,
     locked_goal_terms_prompt_section,
     merge_problem_brief_patch,
+    question_is_upload_related,
     coerce_problem_brief_for_workflow,
     normalize_problem_brief,
+    resolve_upload_open_questions_after_upload,
     surface_problem_brief_for_chat_prompt,
     sync_problem_brief_from_panel,
 )
@@ -165,6 +167,37 @@ def test_cleanup_open_questions_infers_resolved_when_fact_overlap_is_high():
     assert meta["removed_inferred"] == 1
 
 
+def test_question_is_upload_related_detects_upload_prompts():
+    assert question_is_upload_related({"text": "Can you upload ORDERS.csv and DRIVER_INFO.csv?"}) is True
+    assert question_is_upload_related({"text": "Should we penalize late arrivals?"}) is False
+
+
+def test_resolve_upload_open_questions_after_upload_promotes_to_gathered():
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            open_questions=[
+                {
+                    "id": "q-upload",
+                    "text": "Please upload order and driver files before we proceed.",
+                    "status": "open",
+                    "answer_text": None,
+                },
+                {
+                    "id": "q-policy",
+                    "text": "Any overtime policy?",
+                    "status": "open",
+                    "answer_text": None,
+                },
+            ]
+        )
+    )
+    updated = resolve_upload_open_questions_after_upload(brief, ["ORDERS.csv", "DRIVER_INFO.csv"])
+    remaining_ids = [q["id"] for q in updated["open_questions"]]
+    assert remaining_ids == ["q-policy"]
+    gathered_texts = [item["text"] for item in updated["items"] if item.get("kind") == "gathered"]
+    assert any("Uploaded file(s) received: ORDERS.csv, DRIVER_INFO.csv." in text for text in gathered_texts)
+
+
 def test_coerce_waterfall_converts_assumptions_into_open_questions():
     brief = normalize_problem_brief(
         _minimal_brief_payload(
@@ -270,6 +303,30 @@ def test_normalize_atomizes_compound_gathered_item():
     out = normalize_problem_brief(raw)
     gathered = [item for item in out["items"] if item["kind"] == "gathered" and item["id"].startswith("fact-1")]
     assert len(gathered) >= 2
+
+
+def test_normalize_does_not_split_commas_inside_parentheses():
+    raw = _minimal_brief_payload(
+        items=[
+            {
+                "id": "goal-travel-time",
+                "text": "Minimize overall travel time (Objective, Weight 1.0).",
+                "kind": "gathered",
+                "source": "user",
+            },
+            {
+                "id": "constraint-capacity",
+                "text": "Enforce vehicle capacity limits (Hard constraint, Weight 1000.0).",
+                "kind": "gathered",
+                "source": "user",
+            },
+        ]
+    )
+    out = normalize_problem_brief(raw)
+    gathered = [item for item in out["items"] if item["kind"] == "gathered"]
+    assert [g["id"] for g in gathered] == ["goal-travel-time", "constraint-capacity"]
+    assert gathered[0]["text"] == "Minimize overall travel time (Objective, Weight 1.0)."
+    assert gathered[1]["text"] == "Enforce vehicle capacity limits (Hard constraint, Weight 1000.0)."
 
 
 def test_locked_goal_terms_prompt_section_lists_keys():

@@ -19,7 +19,13 @@ from app.database import get_db
 from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port, register_study_ports
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
-from app.problem_brief import coerce_problem_brief_for_workflow, default_problem_brief, merge_problem_brief_patch, normalize_problem_brief
+from app.problem_brief import (
+    coerce_problem_brief_for_workflow,
+    default_problem_brief,
+    merge_problem_brief_patch,
+    normalize_problem_brief,
+    resolve_upload_open_questions_after_upload,
+)
 from app.schemas import (
     CleanupOpenQuestionsBody,
     MessageCreate,
@@ -62,6 +68,12 @@ def _session_has_uploaded_data(db: Session, session_id: str) -> bool:
         .first()
         is not None
     )
+
+
+def _parse_simulated_upload_file_names(content: str) -> list[str]:
+    if not content.startswith(SIMULATED_UPLOAD_MESSAGE_PREFIX):
+        return []
+    return [name.strip() for name in content[len(SIMULATED_UPLOAD_MESSAGE_PREFIX) :].split(",") if name.strip()]
 
 
 def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any], has_uploaded_data: bool) -> str:
@@ -443,6 +455,17 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
     updated_panel: dict | None = None
     updated_problem_brief: dict | None = None
     proc_state: SessionProcessingState | None = None
+    uploaded_file_names = _parse_simulated_upload_file_names(body.content)
+    if uploaded_file_names:
+        row.tutorial_uploaded_files = True
+        current_problem_brief = helpers.problem_brief_dict(row)
+        next_problem_brief = resolve_upload_open_questions_after_upload(current_problem_brief, uploaded_file_names)
+        if next_problem_brief != current_problem_brief:
+            row.problem_brief_json = json.dumps(next_problem_brief)
+            updated_problem_brief = next_problem_brief
+        helpers.touch_session(row)
+        db.commit()
+        db.refresh(row)
 
     if body.invoke_model:
         from app.crypto_util import decrypt_secret
@@ -592,6 +615,23 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     db.commit()
                     db.refresh(row)
                     proc_state = helpers.processing_state(row)
+                except sync.GoalTermValidationError as exc:
+                    log.exception("Inline brief/config sync goal-term validation failed for session %s", session_id)
+                    row = db.get(StudySession, session_id) or row
+                    helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
+                    db.commit()
+                    db.refresh(row)
+                    proc_state = helpers.processing_state(row)
+                    msg = derivation.append_message(
+                        db,
+                        session_id,
+                        "assistant",
+                        "I could not sync configuration because goal terms are inconsistent with the definition. "
+                        "Please review Definition items and retry sync.",
+                        True,
+                        kind="panel",
+                    )
+                    out.append(MessageOut.model_validate(msg))
                 except Exception:
                     log.exception("Inline brief/config sync failed for session %s", session_id)
                     row = db.get(StudySession, session_id) or row
@@ -1142,6 +1182,18 @@ def patch_participant_panel(
     from app.problems.registry import get_study_port
 
     port = get_study_port(row.test_problem_id)
+    try:
+        sync.validate_problem_goal_terms(
+            problem=(
+                body.panel_config.get("problem")
+                if isinstance(body.panel_config.get("problem"), dict)
+                else body.panel_config
+            ),
+            problem_brief=helpers.problem_brief_dict(row),
+            weight_slot_markers=port.weight_slot_markers(),
+        )
+    except sync.GoalTermValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
     sanitized_config, weight_warnings = port.sanitize_panel_config(body.panel_config)
 
     row.panel_config_json = json.dumps(sanitized_config)
@@ -1197,15 +1249,30 @@ def patch_participant_problem_brief(
 
     from app.crypto_util import decrypt_secret
 
-    sync.sync_panel_from_problem_brief(
-        row,
-        db,
-        next_problem_brief,
-        api_key=decrypt_secret(row.gemini_key_encrypted),
-        model_name=row.gemini_model or get_settings().default_gemini_model,
-        workflow_mode=row.workflow_mode,
-        preserve_missing_managed_fields=True,
-    )
+    try:
+        sync.sync_panel_from_problem_brief(
+            row,
+            db,
+            next_problem_brief,
+            api_key=decrypt_secret(row.gemini_key_encrypted),
+            model_name=row.gemini_model or get_settings().default_gemini_model,
+            workflow_mode=row.workflow_mode,
+            preserve_missing_managed_fields=True,
+        )
+    except sync.GoalTermValidationError as exc:
+        helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
+        db.commit()
+        db.refresh(row)
+        derivation.append_message(
+            db,
+            session_id,
+            "assistant",
+            "I could not sync configuration because goal terms do not match the current definition items. "
+            "Please review the Definition tab and retry sync.",
+            True,
+            kind="panel",
+        )
+        raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
     helpers.settle_processing_state(row)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -1348,15 +1415,29 @@ def sync_panel_from_problem_brief_route(
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    updated_panel, _ = sync.sync_panel_from_problem_brief(
-        row,
-        db,
-        problem_brief,
-        api_key=decrypt_secret(row.gemini_key_encrypted),
-        model_name=row.gemini_model or get_settings().default_gemini_model,
-        workflow_mode=row.workflow_mode,
-        preserve_missing_managed_fields=True,
-    )
+    try:
+        updated_panel, _ = sync.sync_panel_from_problem_brief(
+            row,
+            db,
+            problem_brief,
+            api_key=decrypt_secret(row.gemini_key_encrypted),
+            model_name=row.gemini_model or get_settings().default_gemini_model,
+            workflow_mode=row.workflow_mode,
+            preserve_missing_managed_fields=True,
+        )
+    except sync.GoalTermValidationError as exc:
+        helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
+        db.commit()
+        db.refresh(row)
+        derivation.append_message(
+            db,
+            session_id,
+            "assistant",
+            "Configuration sync failed validation (goal terms vs definition items). Retry sync after adjusting the definition.",
+            True,
+            kind="panel",
+        )
+        raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
     if updated_panel is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

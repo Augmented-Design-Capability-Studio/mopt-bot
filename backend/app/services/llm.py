@@ -800,6 +800,7 @@ def generate_config_from_brief(
     workflow_mode: str = "waterfall",
     recent_runs_summary: list[dict[str, Any]] | None = None,
     test_problem_id: str | None = None,
+    validation_feedback: list[dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     """One-shot structured call that derives a panel patch from a brief."""
     if not api_key.strip():
@@ -818,6 +819,13 @@ def generate_config_from_brief(
         "Current panel JSON (auxiliary only; do not preserve managed fields from it):\n"
         f"{json.dumps(current_panel or {}, ensure_ascii=False)}\n"
     )
+    if validation_feedback:
+        feedback_blob = json.dumps(validation_feedback, ensure_ascii=False)
+        user_prompt += (
+            "\nPrevious candidate was rejected by strict validation. "
+            "Fix all listed issues and return a corrected `problem` object only.\n"
+            f"Validation errors:\n{feedback_blob}\n"
+        )
     port = get_study_port(test_problem_id)
     system_instruction = "\n\n".join(
         [

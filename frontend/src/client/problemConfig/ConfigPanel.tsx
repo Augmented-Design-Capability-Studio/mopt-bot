@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import type { Message, ProblemBrief, RunResult, Session, SnapshotSummary, TestProblemMeta } from "@shared/api";
+import { StatusBanner } from "@shared/status/StatusBanner";
 
 import type { EditMode } from "../lib/participantTypes";
 import type { ParticipantOpsState } from "../lib/participantOps";
@@ -310,25 +311,20 @@ export function ConfigPanel({
       </div>
       <div className="panel-body">
         {waterfallOpenQuestionsAlert ? (
-          <div className="config-panel-waterfall-alert" role="status">
-            <span>{waterfallOpenQuestionsAlert}</span>
-            <button
-              type="button"
-              className="config-panel-waterfall-alert-jump"
-              onClick={() => {
-                setPendingDefinitionOpenQuestionsScroll(true);
-                setActiveTab("definition");
-                setDefinitionUnread(false);
-              }}
-            >
-              Scroll to open questions
-            </button>
-          </div>
+          <StatusBanner
+            tone="warning"
+            actionLabel="Scroll to open questions"
+            onAction={() => {
+              setPendingDefinitionOpenQuestionsScroll(true);
+              setActiveTab("definition");
+              setDefinitionUnread(false);
+            }}
+          >
+            {waterfallOpenQuestionsAlert}
+          </StatusBanner>
         ) : null}
         {waterfallClarifyAlert ? (
-          <div className="config-panel-waterfall-alert" role="status">
-            <span>{waterfallClarifyAlert}</span>
-          </div>
+          <StatusBanner tone="warning">{waterfallClarifyAlert}</StatusBanner>
         ) : null}
         <div className="tabs">
           {([
@@ -377,11 +373,9 @@ export function ConfigPanel({
           ))}
         </div>
 
-        {backgroundProcessingError && !definitionEditing && !configEditing && (
-          <p className="muted" style={{ margin: "0.35rem 0 0" }}>
-            Background update issue: {backgroundProcessingError}
-          </p>
-        )}
+        {backgroundProcessingError && !definitionEditing && !configEditing ? (
+          <StatusBanner tone="error">Background update issue: {backgroundProcessingError}</StatusBanner>
+        ) : null}
 
         {processingStallWarn && backgroundProcessingPending && !configEditing && !definitionEditing && (
           <p className="muted" style={{ margin: "0.35rem 0 0" }}>

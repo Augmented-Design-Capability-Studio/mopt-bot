@@ -1,9 +1,11 @@
 import type { RefObject } from "react";
 
 import type { Message } from "@shared/api";
-import { buildProblemFileUrl } from "@shared/api";
 import { ChatAiPendingBubble, ChatPanel } from "@shared/chat/ChatPanel";
+import { ChatStatusBubble } from "@shared/chat/ChatStatusBubble";
 import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
+import { UploadFileChips } from "@shared/chat/UploadFileChips";
+import { parseFilenamesFromSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 
 import type { EditMode } from "../lib/participantTypes";
 
@@ -25,6 +27,9 @@ type ChatSectionProps = {
   onSendChat: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
   onRemoveSimulatedUploadChip: (fileName: string) => void;
+  processingErrorMessage?: string | null;
+  onRetrySync?: () => void | Promise<void>;
+  retryBusy?: boolean;
 };
 
 export function ChatSection({
@@ -45,15 +50,41 @@ export function ChatSection({
   onSendChat,
   onSimulateUpload,
   onRemoveSimulatedUploadChip,
+  processingErrorMessage,
+  onRetrySync,
+  retryBusy = false,
 }: ChatSectionProps) {
   const scrollTriggerKey = `${messages.length}-${messages[messages.length - 1]?.id ?? ""}-${aiPending}`;
+  const uploadDisplayText = "Uploaded file(s):";
   return (
     <ChatPanel
       title="Chat & upload"
       messages={
         <MessageBubbleList
           messages={messages}
-          afterMessages={aiPending ? <ChatAiPendingBubble label={aiPendingLabel} /> : null}
+          renderMessageMarkdown={(message) =>
+            parseFilenamesFromSimulatedUploadMessage(message.content) ? uploadDisplayText : message.content
+          }
+          renderSupplemental={(message) => {
+            const fileNames = parseFilenamesFromSimulatedUploadMessage(message.content);
+            if (!fileNames || fileNames.length === 0) return null;
+            return <UploadFileChips fileNames={fileNames} problemId={problemId} className="chat-upload-chips--bubble" />;
+          }}
+          afterMessages={
+            <>
+              {aiPending ? <ChatAiPendingBubble label={aiPendingLabel} /> : null}
+              {processingErrorMessage ? (
+                <ChatStatusBubble tone="error">
+                  <p>{processingErrorMessage}</p>
+                  {onRetrySync ? (
+                    <button type="button" onClick={() => void onRetrySync()} disabled={retryBusy}>
+                      {retryBusy ? "Retrying..." : "Retry sync"}
+                    </button>
+                  ) : null}
+                </ChatStatusBubble>
+              ) : null}
+            </>
+          }
         />
       }
       scrollTriggerKey={scrollTriggerKey}
@@ -95,36 +126,13 @@ export function ChatSection({
           >
             Upload file(s)...
           </button>
-          <div className="chat-upload-chips" aria-label="Simulated uploads">
-            {simulatedUploadChips.map((name) => {
-              const downloadUrl = problemId ? buildProblemFileUrl(problemId, name) : null;
-              return (
-                <span key={name} className="chat-upload-chip" title={name}>
-                  {downloadUrl ? (
-                    <a
-                      href={downloadUrl}
-                      download={name}
-                      className="chat-upload-chip-name chat-upload-chip-link"
-                      title={`Download ${name}`}
-                    >
-                      {name}
-                    </a>
-                  ) : (
-                    <span className="chat-upload-chip-name">{name}</span>
-                  )}
-                  <button
-                    type="button"
-                    className="chat-upload-chip-remove"
-                    aria-label={`Remove ${name} from upload list`}
-                    disabled={editMode !== "none" || chatLocked}
-                    onClick={() => onRemoveSimulatedUploadChip(name)}
-                  >
-                    ×
-                  </button>
-                </span>
-              );
-            })}
-          </div>
+          <UploadFileChips
+            fileNames={simulatedUploadChips}
+            problemId={problemId}
+            removable
+            removeDisabled={editMode !== "none" || chatLocked}
+            onRemove={onRemoveSimulatedUploadChip}
+          />
         </div>
       }
       composer={{

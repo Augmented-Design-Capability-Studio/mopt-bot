@@ -2430,6 +2430,66 @@ def test_researcher_simulated_upload_unblocks_agile_run_gate(monkeypatch):
         assert allowed.status_code == 200
 
 
+def test_upload_message_auto_clears_upload_open_question(monkeypatch):
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-upload-open-question-sync")
+    monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-upload-open-question-sync")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "waterfall"},
+            headers={"Authorization": "Bearer test-client-upload-open-question-sync"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch_brief = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Need files before confirming details.",
+                    "items": [],
+                    "open_questions": [
+                        {
+                            "id": "oq-upload",
+                            "text": "Please upload ORDERS.csv and DRIVER_INFO.csv before we proceed.",
+                            "status": "open",
+                            "answer_text": None,
+                        },
+                        {
+                            "id": "oq-policy",
+                            "text": "Should overtime be capped at 8h?",
+                            "status": "open",
+                            "answer_text": None,
+                        },
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-upload-open-question-sync"},
+        )
+        assert patch_brief.status_code == 200
+
+        upload = client.post(
+            f"/sessions/{sid}/messages",
+            json={"content": "I'm uploading the following file(s): ORDERS.csv, DRIVER_INFO.csv", "invoke_model": False},
+            headers={"Authorization": "Bearer test-client-upload-open-question-sync"},
+        )
+        assert upload.status_code == 200
+        body = upload.json()
+        assert body["problem_brief"] is not None
+        remaining = body["problem_brief"]["open_questions"]
+        assert len(remaining) == 1
+        assert remaining[0]["id"] == "oq-policy"
+        gathered = [
+            item["text"]
+            for item in body["problem_brief"]["items"]
+            if item.get("kind") == "gathered"
+        ]
+        assert any("Uploaded file(s) received: ORDERS.csv, DRIVER_INFO.csv." in text for text in gathered)
+
+
 def test_researcher_reset_session_clears_activity_but_keeps_identity_and_model(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-reset-session")
     monkeypatch.setenv("MOPT_RESEARCHER_SECRET", "test-researcher-reset-session")
