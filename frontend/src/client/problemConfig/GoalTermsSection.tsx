@@ -472,7 +472,7 @@ export function GoalTermsSection({
 
         const leftCol = (
           <div className="goal-term-row-left-col">
-            <span className="goal-term-rank-badge" aria-label={`Priority ${rankIndex + 1}`}>
+            <span className="goal-term-rank-badge" aria-label={`Rank ${rankIndex + 1}`}>
               {rankIndex + 1}
             </span>
             <span className="goal-term-drag-handle" aria-hidden="true" title="Drag to reorder">

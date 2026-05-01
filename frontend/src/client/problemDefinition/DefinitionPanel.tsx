@@ -36,6 +36,8 @@ type DefinitionSectionProps = {
   removedItems?: Array<{ id: string; text: string; index: number }>;
   onRestoreItem?: (id: string) => void;
   suppressTransientMarkers?: boolean;
+  /** When set (Assumptions section), show ↑ under remove to promote a row to gathered info. */
+  onPromoteItem?: (id: string) => void;
 };
 
 function makeId(prefix: string): string {
@@ -83,8 +85,10 @@ function DefinitionSection({
   removedItems = [],
   onRestoreItem,
   suppressTransientMarkers = false,
+  onPromoteItem,
 }: DefinitionSectionProps) {
   const locked = sessionTerminated || !editable;
+  const rowMinHeight = "3rem";
 
   return (
     <section className="definition-section">
@@ -119,19 +123,43 @@ function DefinitionSection({
               className={`definition-item kind-${item.kind} ${isPlaceholderItem(item) ? "definition-item-placeholder-glow" : ""} ${rowExtraClassName?.(item) ?? ""}`.trim()}
             >
                 <div className="definition-item-content">
-                  <div className="definition-item-overlay-controls">
+                  <div
+                    className="definition-item-overlay-controls"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "0.12rem",
+                    }}
+                  >
                     {!sessionTerminated ? (
-                      <button
-                        type="button"
-                        className="definition-icon-btn definition-remove-btn"
-                        aria-label="Remove row"
-                        onClick={() => {
-                          onEnsureDefinitionEditing();
-                          onRemoveItem(item.id, index);
-                        }}
-                      >
-                        X
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="definition-icon-btn definition-remove-btn"
+                          aria-label="Remove row"
+                          onClick={() => {
+                            onEnsureDefinitionEditing();
+                            onRemoveItem(item.id, index);
+                          }}
+                        >
+                          X
+                        </button>
+                        {onPromoteItem ? (
+                          <button
+                            type="button"
+                            className="definition-icon-btn definition-promote-btn"
+                            aria-label="Promote to gathered info"
+                            title="Promote to gathered info"
+                            onClick={() => {
+                              onEnsureDefinitionEditing();
+                              onPromoteItem(item.id);
+                            }}
+                          >
+                            ⬆
+                          </button>
+                        ) : null}
+                      </>
                     ) : null}
                   </div>
                   {editable ? (
@@ -140,7 +168,8 @@ function DefinitionSection({
                       className="definition-inline-textarea definition-inline-textarea-bare"
                       value={item.text}
                       disabled={locked}
-                      rows={1}
+                      rows={2}
+                      style={{ minHeight: rowMinHeight }}
                       onFocus={() => onEnsureDefinitionEditing()}
                       onChange={(e) => onUpdateItemText(item.id, e.target.value)}
                       onInput={onTextareaInput}
@@ -149,6 +178,7 @@ function DefinitionSection({
                     <button
                       type="button"
                       className="definition-inline-display definition-inline-display-bare"
+                      style={{ minHeight: rowMinHeight, display: "flex", alignItems: "flex-start" }}
                       title="Edit..."
                       disabled={sessionTerminated}
                       onClick={(e) => {
@@ -342,6 +372,18 @@ export function DefinitionPanel({
           editable: true,
         },
       ]),
+    );
+  }
+
+  function promoteAssumptionToGathered(id: string) {
+    persist(
+      updateItems(problemBrief, (items) =>
+        items.map((item) =>
+          item.id === id && item.kind === "assumption"
+            ? { ...item, kind: "gathered", source: "user", status: "confirmed" }
+            : item,
+        ),
+      ),
     );
   }
 
@@ -629,13 +671,14 @@ export function DefinitionPanel({
           onTextareaInput={autoGrowTextarea}
           rowExtraClassName={(item) => flashClassForItem(item.id)}
           suppressTransientMarkers={suppressTransientMarkers}
-          removedItems={removedItems.assumption.map((entry) => ({
-            id: entry.id,
-            text: entry.item.text,
-            index: entry.index,
-          }))}
-          onRestoreItem={(id) => restoreRemovedItem("assumption", id)}
-        />
+        removedItems={removedItems.assumption.map((entry) => ({
+          id: entry.id,
+          text: entry.item.text,
+          index: entry.index,
+        }))}
+        onRestoreItem={(id) => restoreRemovedItem("assumption", id)}
+        onPromoteItem={promoteAssumptionToGathered}
+      />
       ) : null}
 
     </div>

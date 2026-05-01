@@ -63,6 +63,12 @@ type ResultsPanelProps = {
   onToggleCandidateRun: (runId: number, checked: boolean) => void;
 };
 
+function isRunStillPending(run: RunResult | undefined): boolean {
+  if (!run) return false;
+  if (run.clientPending) return true;
+  return !run.ok && run.result == null && !run.error_message;
+}
+
 export function ResultsPanel({
   runs,
   activeRun,
@@ -106,7 +112,7 @@ export function ResultsPanel({
         ? currentResult.algorithm
         : null;
   const hasResult = currentResult !== null;
-  const showOptimizeProgress = optimizing || Boolean(currentRun?.clientPending);
+  const showOptimizeProgress = optimizing || isRunStillPending(currentRun);
   const convergence = currentResult?.convergence ?? [];
   const runtimeSeconds =
     typeof currentResult?.runtime_seconds === "number" && Number.isFinite(currentResult.runtime_seconds)
@@ -195,7 +201,7 @@ export function ResultsPanel({
                 className={`tab ${index === activeRun ? "active" : ""} ${unreadHere ? "tab-has-update" : ""}`}
                 onClick={() => onSetActiveRun(index)}
               >
-                {run.clientPending ? (
+                {isRunStillPending(run) ? (
                   <span className="chat-spinner" style={{ width: "0.7rem", height: "0.7rem", borderWidth: "2px" }} />
                 ) : null}
                 Run #{displayRunNumber(run, index)} {run.ok ? "" : "✗"}

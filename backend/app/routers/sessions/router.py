@@ -465,12 +465,12 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             current = helpers.panel_dict(row)
             current_problem_brief = helpers.problem_brief_dict(row)
             updated_panel = current
-            cleanup_requested = intent.is_definition_cleanup_request(body.content)
-            clear_requested = intent.is_definition_clear_request(body.content)
             is_answer_save = intent.is_answered_open_question_message(body.content)
             turn = None
             try:
-                from app.services.llm import generate_chat_turn
+                from app.services.llm import classify_definition_intents, generate_chat_turn
+
+                cleanup_requested, clear_requested = classify_definition_intents(body.content, key, model)
 
                 turn = generate_chat_turn(
                     body.content,
@@ -493,10 +493,14 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             am = derivation.append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
             run_intent = None
+            assistant_invites_run_now = False
             # Auto-posted run-complete messages must never be classified as "run now" intent.
             if not is_run_ack:
                 try:
-                    from app.services.llm import classify_run_trigger_intent
+                    from app.services.llm import (
+                        classify_assistant_run_invitation,
+                        classify_run_trigger_intent,
+                    )
 
                     run_intent = classify_run_trigger_intent(
                         user_text=body.content,
@@ -505,6 +509,13 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                         model_name=model,
                         workflow_mode=row.workflow_mode,
                     )
+                    if run_intent.intent_type == "affirm_invite":
+                        assistant_invites_run_now = classify_assistant_run_invitation(
+                            assistant_text=text,
+                            api_key=key,
+                            model_name=model,
+                            workflow_mode=row.workflow_mode,
+                        )
                 except Exception:
                     log.exception("Run-trigger intent classification failed for session %s", session_id)
             if turn and (
@@ -646,7 +657,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 run_intent is not None
                 and run_intent.should_trigger_run
                 and run_intent.intent_type in {"affirm_invite", "direct_request"}
-                and not intent.assistant_reply_is_asking_about_run(text)
+                and not assistant_invites_run_now
             ):
                 if can_run_now:
                     has_recent_run_reply = (

@@ -36,7 +36,10 @@
       "PowerShell(.\\\\venv\\\\Scripts\\\\pytest.exe -v 2>&1)",
       "Bash(python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)",
       "Bash(.venv/Scripts/python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)",
-      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)"
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python -m pytest tests/test_problem_brief.py tests/test_sessions.py -x -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python -m pytest backend/tests/test_problem_brief.py backend/tests/test_sessions.py -x -q)",
+      "Bash(.\\\\node_modules\\\\.bin\\\\tsc --noEmit)",
+      "Bash(node_modules/.bin/tsc --noEmit)"
     ]
   }
 }

@@ -395,6 +395,68 @@ def test_direct_run_request_with_closed_gate_returns_guidance(monkeypatch):
         assert called["ran"] is False
 
 
+def test_affirmation_after_config_change_does_not_autorun_across_workflow_modes(monkeypatch):
+    """
+    If assistant's current reply is itself a run invitation ("run now or adjust?"),
+    a bare user affirmation should not auto-trigger run in the same turn.
+    """
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-affirm-invite-no-autorun-secret")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.crypto_util.decrypt_secret", lambda _: "fake-key")
+    monkeypatch.setattr(
+        "app.services.llm.generate_chat_turn",
+        lambda *args, **kwargs: ChatModelTurn(
+            assistant_message=(
+                "I added workload balance emphasis. Shall we run the optimizer again with this setup, "
+                "or would you like to make other adjustments first?"
+            ),
+            panel_patch=None,
+            problem_brief_patch={"items": []},
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.classify_run_trigger_intent",
+        lambda *args, **kwargs: RunTriggerIntentTurn(
+            should_trigger_run=True,
+            intent_type="affirm_invite",
+            confidence=0.92,
+            rationale="User replied yes.",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.classify_assistant_run_invitation",
+        lambda *args, **kwargs: True,
+    )
+    called = {"count": 0}
+
+    def fake_post_run(*args, **kwargs):
+        called["count"] += 1
+        return None
+
+    router_module = importlib.import_module("app.routers.sessions.router")
+    monkeypatch.setattr(router_module, "post_run", fake_post_run)
+    monkeypatch.setattr(router_module, "can_run_optimization", lambda *args, **kwargs: True)
+
+    with TestClient(create_app()) as client:
+        for mode in ("agile", "waterfall", "demo"):
+            create = client.post(
+                "/sessions",
+                json={"workflow_mode": mode},
+                headers={"Authorization": "Bearer test-client-affirm-invite-no-autorun-secret"},
+            )
+            assert create.status_code == 200
+            sid = create.json()["id"]
+            send = client.post(
+                f"/sessions/{sid}/messages",
+                json={"content": "yes, that'd be great", "invoke_model": True},
+                headers={"Authorization": "Bearer test-client-affirm-invite-no-autorun-secret"},
+            )
+            assert send.status_code == 200
+
+    assert called["count"] == 0
+
+
 def test_skip_hidden_brief_update_skips_background_and_settles_processing(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-skip-hidden-brief-secret")
     get_settings.cache_clear()

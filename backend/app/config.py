@@ -1,13 +1,19 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Always resolve backend/.env by path relative to this file so the server
+# works regardless of what directory uvicorn is launched from.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = str(_BACKEND_DIR / ".env")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="MOPT_",
-        env_file=(".env", "../.env"),
+        env_file=(_ENV_FILE, ".env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )

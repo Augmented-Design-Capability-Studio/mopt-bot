@@ -104,10 +104,13 @@ _SIGNAL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bearly arrival penalty\b", re.IGNORECASE),
         re.compile(r"\barrive(?:s|d)?\s+(?:too\s+)?early\b", re.IGNORECASE),
         re.compile(r"\barriving\s+(?:too\s+)?early\b", re.IGNORECASE),
+        re.compile(r"\bcannot arrive more than\s+\d+(?:\.\d+)?\s*(?:minutes?|mins?|min|hours?|hrs?|h)\s+early\b", re.IGNORECASE),
         re.compile(r"\bearly dwell\b", re.IGNORECASE),
         re.compile(r"\bdwell before (?:the )?window\b", re.IGNORECASE),
-        re.compile(r"\bpre.?window\b", re.IGNORECASE),
-        re.compile(r"\bcannot arrive more than\b", re.IGNORECASE),
+        re.compile(r"\bpre[-\s]?window wait\b", re.IGNORECASE),
+        re.compile(r"\bidle wait(?:ing)?\b", re.IGNORECASE),
+        re.compile(r"\bwaiting time\b", re.IGNORECASE),
+        re.compile(r"\bwait(?:ing)? before (?:the )?window\b", re.IGNORECASE),
     ),
     "max_shift_hours": (
         re.compile(r"\bshift duration\b", re.IGNORECASE),
@@ -234,6 +237,17 @@ def _default_algorithm_block(algorithm: str) -> dict[str, Any]:
 
 
 def _mentions(entries: list[str], key: str) -> list[str]:
+    if key == "waiting_time":
+        # Keep this term opt-in: ignore broad "slack"/buffer wording unless explicit
+        # early-arrival or waiting language is present.
+        out: list[str] = []
+        for text in entries:
+            lowered = text.lower()
+            if "slack" in lowered and "early" not in lowered and "wait" not in lowered:
+                continue
+            if _contains_any(text, _SIGNAL_PATTERNS[key]) and not _contains_negation(text):
+                out.append(text)
+        return out
     return [
         text
         for text in entries
@@ -485,7 +499,9 @@ def derive_problem_panel_from_brief(
     if priority_entries and "express_miss_penalty" not in weights:
         weights["express_miss_penalty"] = _extract_explicit_value_for_key(priority_entries, "express_miss_penalty") or 100.0
 
-    # By default prioritize global punctuality over express misses unless user explicitly overrides.
+    # When *both* keys appear in the brief, bump lateness so global time-window pressure is not
+    # weaker than express-tier SLA pressure. Applies only after each key was independently
+    # justified by brief fragments (not when a downstream step invented one key from the other).
     if "lateness_penalty" in weights and "express_miss_penalty" in weights:
         weights["lateness_penalty"] = max(
             weights["lateness_penalty"],

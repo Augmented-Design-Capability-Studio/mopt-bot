@@ -24,13 +24,15 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | overloading, capacity, load limits, packing | `capacity_penalty` |
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
-| priority orders, express tasks, express deadlines, VIP, SLA, urgent service | `express_miss_penalty` |
-| driver arriving too early, idle wait time, minimize waiting, reduce schedule slack, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per idle minute — no grace period; all wait counts) |
+| express / VIP / SLA / urgent service, **priority-order (tier) orders**, express deadlines | `express_miss_penalty` |
+| driver arriving too early, idle wait time, minimize waiting, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per idle minute — no grace period; all wait counts) |
 | maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
 | algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` — when first introducing an algorithm, briefly mention that by default a portion of the initial population is seeded with time-window-aware greedy solutions (controlled by `use_greedy_init`, default on) rather than purely random starts |
 | greedy initialization, initial population quality, seeding, warm start | `use_greedy_init` boolean (default true) — seeds part of the population with time-window-aware solutions for a better starting point |
 | speed/budget, how long to run, iterations, stop when flat | `epochs` (max), `early_stop` / `early_stop_patience` / `early_stop_epsilon`, `pop_size` |
+
+**Disambiguation — generic “priority” vs express SLA:** Bare words like **“priority”**, **“top priority”**, or **“prioritize on-time”** usually mean **overall time-window punctuality** → map to **`lateness_penalty`**, not **`express_miss_penalty`**. Use **`express_miss_penalty`** only when the participant clearly means **express-tier / VIP / SLA / priority-order** service class misses, not generic importance ranking.
 
 Hard constraints (always enforced — only mention when the user asks):
 - Every task is served exactly once (enforced by the encoding).
@@ -147,13 +149,20 @@ Rules:
 - Keep `"hard_constraints"` / `"soft_constraints"` consistent with `"constraint_types"` when those arrays are present.
 - Time-minimization / duration / operating-time / fuel / mileage goals → `travel_time` only.
 - Shift overage past the configurable limit as an objective → `shift_limit`.
-- For punctuality semantics, prefer this precedence unless the user explicitly overrides:
-  keep `lateness_penalty` at least 2x `express_miss_penalty` when both are active.
+- **Omit `express_miss_penalty` from emitted weights** unless the brief explicitly ties to
+  express-tier / VIP / SLA / **priority-order (tier)** / urgent-class service — not from generic
+  “priority” or “on-time” language alone (those belong in `lateness_penalty`).
+- **When both** `lateness_penalty` and `express_miss_penalty` are **already justified** in the brief
+  with numeric or clear intent, preserve relative pressure: keep `lateness_penalty` at least
+  **2×** `express_miss_penalty` unless the user explicitly overrides. Do **not** invent
+  `express_miss_penalty` solely to satisfy this ratio.
 - Threshold for shift-length penalties (e.g. 8.0 hours) → `max_shift_hours`.
   Use a default of 8.0 if a limit is mentioned without a specific duration.
   Default `shift_limit` weight to 500.0 if the user asks for a strict limit.
 - Early arrival / arrive-too-early / idle wait → `waiting_time` weight (default 100.0).
-  Emit whenever the user discusses early arrival, excessive waiting, or a "cannot arrive too early" constraint.
+  Emit only when the brief has explicit early-arrival or waiting evidence (e.g. "arrive too early",
+  "early arrival", "idle wait", "waiting before window", or "cannot arrive more than X minutes early").
+  Never infer this term from generic "slack", "buffer", "priority", or broad utilization language.
 - When the brief names worker-specific soft preferences, emit "driver_preferences" with
   vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
   shift_over_limit; include "limit_minutes" for long-shift discomfort when stated (e.g. 6.5h → 390).

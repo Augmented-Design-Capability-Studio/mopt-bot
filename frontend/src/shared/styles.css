@@ -1375,6 +1375,12 @@ select:focus-visible {
   color: #b94a4a;
 }
 
+.definition-promote-btn {
+  font-size: 0.86rem;
+  font-weight: 100;
+  line-height: 1;
+}
+
 .results-visualization-scroll {
   flex: 1;
   min-height: 0;

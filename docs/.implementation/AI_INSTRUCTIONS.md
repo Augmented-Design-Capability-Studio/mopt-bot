@@ -10,7 +10,7 @@ MOPT is a research platform for evaluating an AI-assisted optimization interface
 
 The study is a **2×2 between-subjects design**: expertise (novice vs expert) × workflow mode (Agile vs Waterfall).
 
-- **Agile**: AI makes assumptions, proposes configurations, and runs optimization early and frequently.
+- **Agile**: AI makes **assumptions** (`kind: "assumption"`, `source: "agent"`) for agent-originated defaults, proposes configurations, and runs optimization early and frequently; **`gathered`** is for participant-stated or **confirmed** facts (including after **↑ promote** from Assumptions in the Definition UI). Introducing a **new** solver **weight key** (goal term) requires **explicit participant consent in chat**—retuning keys already in play does not. **`open_questions`** stay sparse (none is fine); prefer assumptions for provisional gaps (qualitative ~70/30 bias, not a quota).
 - **Waterfall**: Optimization is gated until all open questions are resolved; full specification expected upfront.
 - **Demo**: Blended mode for live demonstrations (not a study condition).
 
@@ -91,7 +91,7 @@ Definition rows synced from panel config should describe goal-term type first (o
 
 ### Domain packages
 
-Each domain owns: weight definitions (`study_meta.py`), Gemini panel schema (`panel_schema.py`), chat prompt appendix (`study_prompts.py`), brief seeding (`brief_seed.py`), and neutral JSON bridge (`study_bridge.py`). Generic backend code accesses all domain behavior through `get_study_port()` from the registry. For VRPTW, canonical punctuality keys are `lateness_penalty` (all-order lateness) and `express_miss_penalty` (express-only misses); legacy `deadline_penalty` / `priority_penalty` are compatibility aliases normalized at read boundaries only.
+Each domain owns: weight definitions (`study_meta.py`), Gemini panel schema (`panel_schema.py`), chat prompt appendix (`study_prompts.py`), brief seeding (`brief_seed.py`), and neutral JSON bridge (`study_bridge.py`). Generic backend code accesses all domain behavior through `get_study_port()` from the registry. For VRPTW, canonical punctuality keys are `lateness_penalty` (all-order lateness) and `express_miss_penalty` (express-only misses); legacy `deadline_penalty` / `priority_penalty` are compatibility aliases normalized at read boundaries only. VRPTW **`study_prompts.py`** instructs config derivation **not** to emit `express_miss_penalty` unless the brief explicitly references express / VIP / SLA / **priority-order tier** language (generic “priority” or on-time emphasis maps to **`lateness_penalty`** only).
 
 ### API shape
 

@@ -23,6 +23,11 @@ const EAGER_POLL_DURATION_MS = 10000;
 const PROCESSING_PENDING_SESSION_POLL_MS = 2500;
 const TUTORIAL_REFRESH_SIGNAL_KEY = "mopt_participant_tutorial_refresh";
 
+function isRunStillPending(run: RunResult): boolean {
+  if (run.clientPending) return true;
+  return !run.ok && run.result == null && !run.error_message;
+}
+
 type UseParticipantSessionSyncArgs = {
   token: string;
   sessionId: string;
@@ -53,6 +58,8 @@ type UseParticipantSessionSyncArgs = {
   setError: (value: string | null) => void;
   setRecentRows: (value: RecentSessionRow[]) => void;
   setModelName: (value: string) => void;
+  /** Default model from server config (.env MOPT_DEFAULT_GEMINI_MODEL); used when no session model is set. */
+  defaultModel: string;
 };
 
 export function useParticipantSessionSync({
@@ -84,6 +91,7 @@ export function useParticipantSessionSync({
   setError,
   setRecentRows,
   setModelName,
+  defaultModel,
 }: UseParticipantSessionSyncArgs) {
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -251,9 +259,9 @@ export function useParticipantSessionSync({
         if (hasNewRun) return nextRuns.length - 1;
         return previous >= nextRuns.length ? nextRuns.length - 1 : previous;
       });
-      if (optimizingRef.current && !nextRuns.some((r) => r.clientPending)) {
-        setOptimizing(false);
-      }
+      const hasPendingRun = nextRuns.some(isRunStillPending);
+      if (hasPendingRun) setOptimizing(true);
+      else if (optimizingRef.current) setOptimizing(false);
     } catch (error) {
       if (sessionIdRef.current !== requestedId) return;
       if (isSessionGoneError(error)) {
@@ -332,10 +340,12 @@ export function useParticipantSessionSync({
   useEffect(() => {
     if (showModelDialog && !modelDialogWasOpenRef.current) {
       const model = session?.gemini_model?.trim();
-      if (model) setModelName(model);
+      // Fall back to server's configured default (from .env) so the dialog
+      // pre-selects the right model even when the session has no stored model.
+      setModelName(model || defaultModel);
     }
     modelDialogWasOpenRef.current = showModelDialog;
-  }, [modelDialogWasOpenRef, session, setModelName, showModelDialog]);
+  }, [defaultModel, modelDialogWasOpenRef, session, setModelName, showModelDialog]);
 
   useEffect(() => {
     if (!authed) return;

@@ -177,6 +177,33 @@ def test_seed_parses_snake_case_alias_terms():
     assert panel["problem"]["weights"]["shift_limit"] == 1000.0
 
 
+def test_seed_punctuality_language_does_not_add_express_miss_penalty():
+    """Overall time-window / lateness wording must not imply express-tier SLA weight."""
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-punctuality",
+                    "text": (
+                        "Reduce late arrivals and improve punctuality against customer time windows; "
+                        "penalize on-time violations more strongly."
+                    ),
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+        },
+        test_problem_id="vrptw",
+    )
+    assert panel is not None
+    weights = panel["problem"]["weights"]
+    assert "lateness_penalty" in weights
+    assert "express_miss_penalty" not in weights
+
+
 def test_seed_does_not_infer_waiting_time_from_on_time_and_priority_language():
     panel = derive_problem_panel_from_brief(
         {
@@ -223,6 +250,47 @@ def test_seed_requires_explicit_early_arrival_language_for_waiting_time():
     problem = panel["problem"]
     assert problem["weights"]["waiting_time"] == 100.0
     assert "early_arrival_threshold_min" not in problem
+
+
+def test_seed_does_not_infer_waiting_time_from_generic_slack_wording():
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-slack",
+                    "text": "Please reduce schedule slack and keep on-time delivery stable.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+        }
+    )
+    assert panel is not None
+    weights = panel["problem"]["weights"]
+    assert "waiting_time" not in weights
+
+
+def test_seed_does_not_infer_waiting_time_from_bare_cannot_arrive_phrase():
+    panel = derive_problem_panel_from_brief(
+        {
+            "goal_summary": "",
+            "items": [
+                {
+                    "id": "fact-ambiguous-cannot-arrive",
+                    "text": "We cannot arrive more than planned at each stop.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+        }
+    )
+    # No explicit optimization term is present, so deterministic seeding should stay empty.
+    assert panel is None
 
 
 def test_seed_ignores_numeric_goal_summary_for_weights():

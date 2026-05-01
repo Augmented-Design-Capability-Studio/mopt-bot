@@ -46,8 +46,10 @@ import { hasSimulatedUploadMessage, parseFilenamesFromSimulatedUploadMessage } f
 import { useParticipantSessionActions } from "./useParticipantSessionActions";
 import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle";
 import { useParticipantSessionSync } from "./useParticipantSessionSync";
+import { useGeminiConfig } from "@shared/geminiModelSuggestions";
 
 export function useParticipantController() {
+  const { defaultModel } = useGeminiConfig();
   const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [pendingUrlSessionId, setPendingUrlSessionId] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -169,6 +171,7 @@ export function useParticipantController() {
     setError,
     setRecentRows,
     setModelName,
+    defaultModel,
   });
 
   const lifecycle = useParticipantSessionLifecycle({

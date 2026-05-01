@@ -126,6 +126,29 @@ BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     },
 }
 
+_DEFINITION_INTENT_JSON_SCHEMA: dict[str, Any] = {
+    "title": "DefinitionIntentClassification",
+    "type": "object",
+    "properties": {
+        "cleanup_intent": {"type": "boolean"},
+        "clear_intent": {"type": "boolean"},
+    },
+    "required": ["cleanup_intent", "clear_intent"],
+}
+
+_DEFINITION_INTENT_SYSTEM = (
+    "You are a lightweight intent classifier for a research optimization chat tool. "
+    "Participants are study users writing free-form English messages.\n\n"
+    "Classify the message for exactly two intents:\n"
+    "- cleanup_intent: true if the user wants to remove, deduplicate, merge, tidy, or reorganize "
+    "items in the Definition panel (e.g. 'tidy up the list', 'there are duplicates', "
+    "'remove the repeated stuff', 'clean that up', 'consolidate the gathered items').\n"
+    "- clear_intent: true if the user wants to wipe all Definition content and start over from "
+    "scratch (e.g. 'start over', 'reset everything', 'forget what I told you', 'fresh start', "
+    "'wipe the slate', 'begin again from zero').\n\n"
+    "Return ONLY valid JSON. Default both to false when the message is ambiguous or off-topic."
+)
+
 RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "title": "RunTriggerIntentTurn",
     "type": "object",
@@ -136,6 +159,15 @@ RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "rationale": {"type": "string"},
     },
     "required": ["should_trigger_run", "intent_type"],
+}
+
+RUN_INVITATION_CLASSIFICATION_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "AssistantRunInvitationClassification",
+    "type": "object",
+    "properties": {
+        "is_run_invitation": {"type": "boolean"},
+    },
+    "required": ["is_run_invitation"],
 }
 
 WorkflowPhase = Literal["discovery", "structuring", "configuration"]
@@ -689,6 +721,78 @@ def classify_run_trigger_intent(
     except Exception as e:
         log.warning("Run-trigger intent classification failed (%s); defaulting to no-trigger", e)
         return RunTriggerIntentTurn()
+
+
+def classify_assistant_run_invitation(
+    assistant_text: str,
+    api_key: str,
+    model_name: str,
+    workflow_mode: str = "waterfall",
+) -> bool:
+    """Classify whether the assistant reply is asking the participant to start a run."""
+    from app.routers.sessions import intent as session_intent
+
+    text = str(assistant_text or "").strip()
+    if not text:
+        return False
+    if not api_key or not model_name:
+        return session_intent.assistant_reply_is_asking_about_run(text)
+    client = genai.Client(api_key=api_key)
+    system_instruction = "\n\n".join(
+        [
+            "You classify whether an assistant message is inviting the participant to run optimization now.",
+            _workflow_prompt(workflow_mode),
+            (
+                "Return JSON only with {\"is_run_invitation\": boolean}. "
+                "True only when the assistant is asking to start/run/trigger optimization now "
+                "(including forked prompts like 'run now or make other adjustments first?'). "
+                "False for statements that only describe config changes or discuss possible future runs."
+            ),
+        ]
+    )
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=RUN_INVITATION_CLASSIFICATION_RESPONSE_JSON_SCHEMA,
+    )
+    try:
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=text,
+            config=config,
+        )
+        parsed = resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
+        return bool(parsed.get("is_run_invitation"))
+    except Exception as e:
+        log.warning("Assistant run-invitation classification failed (%s); falling back to regex", e)
+        return session_intent.assistant_reply_is_asking_about_run(text)
+
+
+def classify_definition_intents(content: str, api_key: str, model_name: str) -> tuple[bool, bool]:
+    """
+    Classify whether a user message requests definition cleanup or a full clear.
+    Returns (cleanup_intent, clear_intent). Falls back to regex on any failure.
+    """
+    from app.routers.sessions import intent as _intent
+
+    if not api_key or not model_name:
+        return _intent.is_definition_cleanup_request(content), _intent.is_definition_clear_request(content)
+    try:
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=_DEFINITION_INTENT_SYSTEM,
+            response_mime_type="application/json",
+            response_json_schema=_DEFINITION_INTENT_JSON_SCHEMA,
+        )
+        chat = client.chats.create(model=model_name, config=config, history=[])
+        resp = chat.send_message(content)
+        data: dict[str, Any] = (
+            resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
+        )
+        return bool(data.get("cleanup_intent")), bool(data.get("clear_intent"))
+    except Exception as e:
+        log.warning("Definition intent classification failed (%s); falling back to regex", e)
+        return _intent.is_definition_cleanup_request(content), _intent.is_definition_clear_request(content)
 
 
 def generate_config_from_brief(

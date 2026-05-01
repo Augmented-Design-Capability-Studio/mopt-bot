@@ -224,7 +224,7 @@ export function ProblemConfigBlocks({
       capacity_penalty: /\b(capacity|overflow|overload|load limit|truck load)\b/g,
       workload_balance: /\b(balance|variance|fairness|even workload|equal routes)\b/g,
       worker_preference: /\b(preference|driver preference|worker preference|preferred)\b/g,
-      express_miss_penalty: /\b(priority|express|urgent|vip|sla)\b/g,
+      express_miss_penalty: /\b(express|urgent|vip|sla|priority[-\s]?orders?|rush|critical)\b/gi,
       waiting_time: /\b(wait|idle|idling|queue)\b/g,
     };
     const matches = [...recent.matchAll(lexicon[key] ?? /$^/g)].length;
