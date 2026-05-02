@@ -206,6 +206,11 @@ export function useParticipantSessionSync({
         }
         setMessages((current) => mergeMessagesFromPoll(current, nextMessages));
         setLastMsgId((previous) => Math.max(previous, maxIncoming));
+        // Pull a fresh session snapshot too so processing state (brief/config "pending")
+        // becomes visible immediately. Otherwise, when a new user message lands via
+        // polling (e.g. researcher pushed dummy files / simulated upload), the chat
+        // pending-spinner only updates on the slower session poll cadence.
+        void syncSessionRef.current();
       }
     } catch (error) {
       if (sessionIdRef.current !== requestedId) return;

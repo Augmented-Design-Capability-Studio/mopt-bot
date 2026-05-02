@@ -42,7 +42,18 @@
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/ ../vrptw_problem/tests/ ../knapsack_problem/tests/ -x -q)",
       "Bash(venv/Scripts/pytest.exe backend/tests/ vrptw_problem/tests/ knapsack_problem/tests/ -x -q)",
-      "Bash(venv/Scripts/pytest.exe backend/tests/test_llm_schema.py backend/tests/test_problem_config_seed.py -v)"
+      "Bash(venv/Scripts/pytest.exe backend/tests/test_llm_schema.py backend/tests/test_problem_config_seed.py -v)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest \"/c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_sessions.py\" -k \"test_participant_can_patch_problem_brief\")",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/.venv/Scripts/python.exe -m pytest tests/test_problem_brief.py -x -q)",
+      "Bash(git -C /c/Users/whyhowie/git-repo/mopt-bot stash show -p)",
+      "Read(//tmp/**)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest tests/test_problem_brief.py -x -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest -x -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest --deselect tests/test_sessions.py::test_create_session_returns_null_panel_config -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_problem_brief.py /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_sync.py /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_chat_context_policy.py /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_chat_temperature.py -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest /c/Users/whyhowie/git-repo/mopt-bot/backend/tests -q --ignore=/c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_sessions.py)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_sessions.py -q --no-header)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_problem_brief.py backend/tests/test_chat_context_policy.py backend/tests/test_capabilities.py backend/tests/test_docs_index.py backend/tests/test_chat_temperature.py backend/tests/test_llm_schema.py -q)"
     ]
   }
 }

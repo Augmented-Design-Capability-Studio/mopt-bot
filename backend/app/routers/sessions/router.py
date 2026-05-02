@@ -483,6 +483,17 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             out.append(MessageOut.model_validate(am))
             proc_state = helpers.processing_state(db.get(StudySession, session_id) or row)
         else:
+            # Mark processing pending BEFORE the (potentially multi-second) model call so any
+            # client polling during the call window sees the in-flight state and shows a
+            # response-spinner bubble. Without this, researcher-driven posts (e.g. simulated
+            # uploads via /researcher/simulate-participant-upload) and any other path where
+            # the participant frontend has no local aiPending hook would have no indication
+            # that an AI reply is being prepared until the assistant message itself arrives.
+            # The patch / else / interpret-only branches below still set the final state
+            # (settle to "ready" or keep "pending" if background derivation was launched).
+            helpers.mark_processing_pending(row)
+            db.commit()
+            db.refresh(row)
             hist, researcher_steers, recent_runs_summary = context.load_turn_context(db, session_id, um.id)
             text = "The model request failed. Try again or continue without AI."
             current = helpers.panel_dict(row)
@@ -647,10 +658,11 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 db.refresh(row)
                 proc_state = helpers.processing_state(row)
             else:
+                # Processing was already marked pending before the model call (see early
+                # mark above); reuse that same revision for the background derivation so we
+                # don't double-increment processing_revision per turn.
                 row = db.get(StudySession, session_id) or row
-                revision = helpers.mark_processing_pending(row)
-                db.commit()
-                db.refresh(row)
+                revision = int(row.processing_revision or 0)
                 proc_state = helpers.processing_state(row)
                 derivation.launch_background_derivation(
                     session_id=session_id,

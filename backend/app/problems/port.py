@@ -39,6 +39,9 @@ class StudyProblemPort(Protocol):
 
     def derive_problem_panel_from_brief(self, problem_brief: dict[str, Any]) -> dict[str, Any] | None: ...
 
+    def visualization_capabilities(self) -> list[str]:
+        """Participant-facing visual summaries shown after runs."""
+
     def weight_item_labels(self) -> dict[str, str]:
         """Human labels for problem_brief / panel sync (goal term keys)."""
 

@@ -37,6 +37,7 @@ export function ChatBubbleTemplate({
     "bubble",
     roleVariant,
     "bubble-template",
+    roleVariant === "assistant" ? "bubble-agentic" : null,
     mode === "simplified" ? "bubble-template--simplified" : "bubble-template--full",
     tone ? `bubble-status bubble-status--${tone}` : null,
     className ?? null,
@@ -45,7 +46,11 @@ export function ChatBubbleTemplate({
     .join(" ");
 
   return (
-    <div className={classes} {...(ariaLive ? { "aria-live": ariaLive } : {})}>
+    <div
+      className={classes}
+      data-bubble-role={roleVariant}
+      {...(ariaLive ? { "aria-live": ariaLive } : {})}
+    >
       {heading ? <div className="bubble-template-heading">{heading}</div> : null}
       {spinnerLabel ? (
         <div className="chat-pending-wrap">

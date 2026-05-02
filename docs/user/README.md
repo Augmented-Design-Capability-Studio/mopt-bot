@@ -15,6 +15,9 @@ These guides are written for participants and operational users. They focus on w
 3. `ASKING_THE_AGENT.md`  
    Suggested prompts users can ask the assistant (including "what did you program?") and what kind of answers to expect.
 
+4. `AGENT_CAPABILITIES.md`  
+   What the chat assistant can do for you — translating goals, explaining setups, interpreting runs, walking through module code, and pointing you at the right UI surface.
+
 ## Search Tips
 
 Use your editor search with these keywords:

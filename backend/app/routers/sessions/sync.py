@@ -281,7 +281,14 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
         "use_greedy_init",
     )
     always_preserve_current_if_present = frozenset(
-        {"early_stop", "early_stop_patience", "early_stop_epsilon", "use_greedy_init"}
+        {
+            "early_stop",
+            "early_stop_patience",
+            "early_stop_epsilon",
+            "use_greedy_init",
+            # Researcher-controlled switch: never overwritten by brief→panel derivation.
+            "only_active_terms",
+        }
     )
     merged = deepcopy(derived_problem)
     current_goal_terms = _goal_terms_from_problem(current_problem)

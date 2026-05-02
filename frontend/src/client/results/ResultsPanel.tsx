@@ -280,7 +280,7 @@ export function ResultsPanel({
               title="Revert to this config"
               onClick={() => void onLoadConfigFromRun(currentRun)}
             >
-              Use This Config
+              Reuse This Config
             </button>
             <label
               className={`result-top-action-btn result-top-action-checkbox ${candidateRunIds.includes(currentRun.id) ? "checked" : ""}`}

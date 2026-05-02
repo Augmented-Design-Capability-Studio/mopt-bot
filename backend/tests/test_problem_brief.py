@@ -399,6 +399,70 @@ def test_sync_problem_brief_from_panel_writes_goal_term_types_before_values():
     assert "Workload balance uses a custom locked value (weight 9.0)." in texts
 
 
+def test_sync_problem_brief_from_panel_preserves_assumption_provenance():
+    """Agent-introduced assumption rows must not be silently promoted to gathered
+    via the panel round-trip. When the existing brief has an assumption row
+    populating a config slot, the panel-derived row inherits assumption/agent."""
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            items=[
+                {
+                    "id": "config-weight-capacity_penalty",
+                    "text": "Load capacity is a soft constraint term (weight 5.0).",
+                    "kind": "assumption",
+                    "source": "agent",
+                },
+            ],
+        )
+    )
+    panel = {
+        "problem": {
+            "weights": {"capacity_penalty": 5.0},
+            "constraint_types": {"capacity_penalty": "soft"},
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel)
+    capacity_rows = [
+        item for item in out["items"]
+        if item.get("id") == "config-weight-capacity_penalty"
+    ]
+    assert len(capacity_rows) == 1
+    assert capacity_rows[0]["kind"] == "assumption"
+    assert capacity_rows[0]["source"] == "agent"
+
+
+def test_sync_problem_brief_from_panel_keeps_existing_gathered_as_gathered():
+    """If the existing slot row is gathered, panel sync must not regress it to assumption."""
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            items=[
+                {
+                    "id": "config-weight-travel_time",
+                    "text": "Travel time is a primary objective term (weight 2.0).",
+                    "kind": "gathered",
+                    "source": "user",
+                },
+            ],
+        )
+    )
+    panel = {"problem": {"weights": {"travel_time": 3.0}}}
+    out = sync_problem_brief_from_panel(base, panel)
+    rows = [item for item in out["items"] if item.get("id") == "config-weight-travel_time"]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "gathered"
+
+
+def test_sync_problem_brief_from_panel_new_slot_defaults_to_gathered():
+    """A weight that was not previously in the brief defaults to gathered/agent (current behavior)."""
+    base = normalize_problem_brief(_minimal_brief_payload(items=[]))
+    panel = {"problem": {"weights": {"travel_time": 2.0}}}
+    out = sync_problem_brief_from_panel(base, panel)
+    rows = [item for item in out["items"] if item.get("id") == "config-weight-travel_time"]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "gathered"
+    assert rows[0]["source"] == "agent"
+
+
 def test_normalize_atomizes_constraint_handling_gathered_item():
     raw = _minimal_brief_payload(
         items=[

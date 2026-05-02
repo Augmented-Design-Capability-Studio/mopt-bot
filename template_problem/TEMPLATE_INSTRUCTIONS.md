@@ -39,6 +39,7 @@ The most important are:
 - `sanitize_panel_config()` — validate + clean the stored panel JSON
 - `solve_request_to_result()` — call your solver, raise `RunCancelled` on cancel
 - `derive_problem_panel_from_brief()` — deterministic LLM fallback
+- `visualization_capabilities()` — plain-language list of participant-visible post-run views
 
 ### 3. Implement `study_bridge.py`
 `parse_problem_config()` translates neutral weight aliases → internal solver keys.

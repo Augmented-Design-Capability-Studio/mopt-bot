@@ -79,12 +79,27 @@ def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_m
 
 def test_visible_chat_instruction_enforces_plain_language_over_internal_keys():
     system = _build_visible_chat_system_instruction(
+        user_text="Help me prioritize outcomes.",
         current_problem_brief={"goal_summary": "Improve delivery consistency.", "items": [], "open_questions": []},
         workflow_mode="agile",
     )
     assert "Participant-facing wording guardrails" in system
     assert "**not** use raw key names" in system
     assert "avoid \"activate/enable/turn on\" phrasing" in system
+    assert "Conversation temperature" in system
+    assert "Capabilities" in system
+
+
+def test_visible_chat_instruction_cold_generic_query_avoids_module_capability_rows():
+    system = _build_visible_chat_system_instruction(
+        user_text="how do you optimize?",
+        current_problem_brief=default_problem_brief("vrptw"),
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+    )
+    assert "Capabilities" in system
+    assert "Goal terms you can adjust:" not in system
+    assert "Participant-visible post-run views:" not in system
 
 
 def _warm_brief() -> dict:

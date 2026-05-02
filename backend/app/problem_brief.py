@@ -746,6 +746,13 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
     text = str(raw.get("text", "")).strip()
     if not text:
         return None
+    item_id = str(raw.get("id") or "").strip()
+    lowered_text = text.lower()
+    if item_id == "config-only-active-terms" or (
+        "only active objective terms should be applied" in lowered_text
+        or "inactive objective terms may also remain available" in lowered_text
+    ):
+        return None
     kind = str(raw.get("kind", "assumption")).strip().lower()
     if kind == "system":
         return None
@@ -932,10 +939,42 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
 def sync_problem_brief_from_panel(
     base_brief: Any, panel_config: Any, test_problem_id: str | None = None
 ) -> dict[str, Any]:
-    """Mirror saved config choices back into the editable problem brief."""
+    """Mirror saved config choices back into the editable problem brief.
+
+    Provenance preservation: when an existing brief row already populates a config
+    slot as `kind: "assumption"`, the panel-derived row inherits that assumption
+    kind/source. Without this, an agent's proposed assumption would be silently
+    promoted to `kind: "gathered"` on every panel round-trip, erasing the
+    distinction between agent-proposed defaults and participant-confirmed facts.
+    """
     base = normalize_problem_brief(base_brief)
     merged = deepcopy(base)
+
+    existing_slot_provenance: dict[str, tuple[str, str]] = {}
+    for item in merged["items"]:
+        if not isinstance(item, dict):
+            continue
+        slot = _problem_brief_item_slot(item)
+        if slot is None:
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in {"gathered", "assumption"}:
+            continue
+        source = str(item.get("source") or "").strip().lower()
+        existing_slot_provenance[slot] = (kind, source)
+
     panel_items = _brief_items_from_panel(panel_config, test_problem_id=test_problem_id)
+    for item in panel_items:
+        slot = _problem_brief_item_slot(item)
+        if slot is None:
+            continue
+        prev = existing_slot_provenance.get(slot)
+        if prev is None or prev[0] != "assumption":
+            continue
+        prev_source = prev[1] if prev[1] in {"user", "upload", "agent"} else "agent"
+        item["kind"] = "assumption"
+        item["source"] = prev_source
+
     panel_slots = {
         slot
         for item in panel_items
@@ -1102,15 +1141,9 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
     if pop_size is None:
         pop_size = DEFAULT_POP_SIZE
 
-    if "only_active_terms" in problem and isinstance(problem.get("only_active_terms"), bool):
-        items.append(
-            _config_item(
-                "config-only-active-terms",
-                "Only active objective terms should be applied."
-                if problem["only_active_terms"]
-                else "Inactive objective terms may also remain available.",
-            )
-        )
+    # `only_active_terms` is a researcher-controlled switch (set on the panel JSON),
+    # not a participant-facing fact. It is intentionally NOT mirrored into the brief
+    # so it never surfaces in the definition panel or the chat payload to the model.
 
     weights = problem.get("weights")
     constraint_types = (

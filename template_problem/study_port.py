@@ -153,6 +153,13 @@ class TemplateProblemPort:
         # worker-preference list being non-empty, or None if not applicable.
         return None
 
+    def visualization_capabilities(self) -> list[str]:
+        # TODO: describe what participants see after each run.
+        return [
+            "Convergence trend across iterations",
+            "Run metric summary cards",
+        ]
+
     # ------------------------------------------------------------------ #
     # LLM prompt contributions                                             #
     # ------------------------------------------------------------------ #

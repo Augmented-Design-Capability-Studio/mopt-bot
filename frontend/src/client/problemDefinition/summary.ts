@@ -107,11 +107,17 @@ export function isProblemBriefDirtyAfterClean(baseline: ProblemBrief, current: P
   return JSON.stringify(cleanProblemBriefForCompare(baseline)) !== JSON.stringify(cleanProblemBriefForCompare(current));
 }
 
-export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemBrief): string {
-  const previousItemsById = new Map(previous.items.map((item) => [item.id, item] as const));
-  const addedOrRemovedItemCount = Math.abs(next.items.length - previous.items.length);
-  const changedRows = next.items.filter((item) => {
-    const before = previousItemsById.get(item.id);
+function countKindDelta(
+  prev: ProblemBriefItem[],
+  next: ProblemBriefItem[],
+  kind: ProblemBriefItem["kind"],
+): number {
+  const prevOfKind = prev.filter((item) => item.kind === kind);
+  const nextOfKind = next.filter((item) => item.kind === kind);
+  const prevById = new Map(prevOfKind.map((item) => [item.id, item] as const));
+  const sizeDelta = Math.abs(nextOfKind.length - prevOfKind.length);
+  const changedRows = nextOfKind.filter((item) => {
+    const before = prevById.get(item.id);
     return (
       before == null ||
       before.text !== item.text ||
@@ -119,10 +125,17 @@ export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemB
       before.source !== item.source
     );
   }).length;
-  const previousQuestionsById = new Map(previous.open_questions.map((question) => [question.id, question] as const));
-  const questionDelta = Math.abs(next.open_questions.length - previous.open_questions.length);
-  const changedQuestions = next.open_questions.filter((question) => {
-    const before = previousQuestionsById.get(question.id);
+  return sizeDelta + changedRows;
+}
+
+function countQuestionDelta(
+  prev: ProblemBriefQuestion[],
+  next: ProblemBriefQuestion[],
+): number {
+  const prevById = new Map(prev.map((question) => [question.id, question] as const));
+  const sizeDelta = Math.abs(next.length - prev.length);
+  const changedRows = next.filter((question) => {
+    const before = prevById.get(question.id);
     return (
       before == null ||
       before.text !== question.text ||
@@ -130,10 +143,22 @@ export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemB
       (before.answer_text ?? "") !== (question.answer_text ?? "")
     );
   }).length;
-  const goalChanged = previous.goal_summary.trim() !== next.goal_summary.trim() ? 1 : 0;
-  const runSummaryChanged = previous.run_summary.trim() !== next.run_summary.trim() ? 1 : 0;
-  const total = addedOrRemovedItemCount + changedRows + questionDelta + changedQuestions + goalChanged + runSummaryChanged;
-  if (total <= 0) return "no material changes";
-  if (total === 1) return "1 brief update";
-  return `${total} brief updates`;
+  return sizeDelta + changedRows;
+}
+
+export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemBrief): string {
+  const factDelta = countKindDelta(previous.items, next.items, "gathered");
+  const assumptionDelta = countKindDelta(previous.items, next.items, "assumption");
+  const questionDelta = countQuestionDelta(previous.open_questions, next.open_questions);
+  const goalChanged = previous.goal_summary.trim() !== next.goal_summary.trim();
+  const runSummaryChanged = previous.run_summary.trim() !== next.run_summary.trim();
+
+  const parts: string[] = [];
+  if (factDelta) parts.push(`${factDelta} fact${factDelta > 1 ? "s" : ""}`);
+  if (assumptionDelta) parts.push(`${assumptionDelta} assumption${assumptionDelta > 1 ? "s" : ""}`);
+  if (questionDelta) parts.push(`${questionDelta} open question${questionDelta > 1 ? "s" : ""}`);
+  if (goalChanged) parts.push("goal summary");
+  if (runSummaryChanged) parts.push("run summary");
+  if (parts.length === 0) return "no material changes";
+  return parts.join(", ");
 }

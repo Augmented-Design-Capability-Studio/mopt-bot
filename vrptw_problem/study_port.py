@@ -72,6 +72,14 @@ class VrptwStudyPort:
     def worker_preference_key(self) -> str | None:
         return meta_worker_preference_key()
 
+    def visualization_capabilities(self) -> list[str]:
+        return [
+            "Convergence trend across iterations",
+            "Run metric cards (cost, travel, workload spread)",
+            "Constraint-violation summary cards",
+            "Fleet schedule timeline and route details",
+        ]
+
     def study_prompt_appendix(self) -> str | None:
         from vrptw_problem.study_prompts import VRPTW_STUDY_PROMPT_APPENDIX
 
@@ -150,37 +158,7 @@ class VrptwStudyPort:
     ) -> str:
         if not run_ok:
             return f"Run #{session_run_number} failed: {error_message or 'error'}."
-        if cost is None:
-            return f"Run #{session_run_number} finished (cost not recorded)."
-        summary_parts = [f"Run #{session_run_number} finished — cost {cost:.2f}"]
-        if result:
-            v = result.get("violations") or {}
-            tw_stops = int(v.get("time_window_stop_count", 0))
-            tw_mins = float(v.get("time_window_minutes_over", 0))
-            cap_over = int(v.get("capacity_units_over", 0))
-            prio_miss = int(v.get("priority_deadline_misses", 0))
-            shift_pen = float(v.get("shift_limit_penalty", 0))
-            m = result.get("metrics") or {}
-            travel = float(m.get("total_travel_minutes", 0))
-            wl_var = float(m.get("workload_variance", 0))
-            viol_strs: list[str] = []
-            if tw_stops:
-                viol_strs.append(f"{tw_stops} time-window stops late ({tw_mins:.1f} min over)")
-            if cap_over:
-                viol_strs.append(f"{cap_over} units over capacity")
-            if prio_miss:
-                viol_strs.append(f"{prio_miss} priority-order deadline misses")
-            if shift_pen:
-                viol_strs.append("shift limit exceeded")
-            if viol_strs:
-                summary_parts.append("Violations: " + "; ".join(viol_strs))
-            else:
-                summary_parts.append("No constraint violations")
-            summary_parts.append(f"Travel: {travel:.1f} min · workload variance: {wl_var:.1f}")
-            weight_warnings = result.get("weight_warnings") or []
-            for w in weight_warnings:
-                summary_parts.append(f"Note: {w}")
-        return ". ".join(summary_parts) + "."
+        return f"Run #{session_run_number} finished. You may check the Results & Visualization panel for more detail."
 
 
 STUDY_PORT = VrptwStudyPort()

@@ -1,7 +1,7 @@
 from app.problems.registry import get_study_port
 
 
-def test_vrptw_run_summary_keeps_routing_metrics():
+def test_vrptw_run_summary_minimal_visible_message():
     port = get_study_port("vrptw")
     result = {
         "cost": 1.0,
@@ -15,5 +15,21 @@ def test_vrptw_run_summary_keeps_routing_metrics():
         result=result,
         error_message=None,
     )
-    assert "Travel:" in text
-    assert "workload variance" in text.lower()
+    assert "Run #2 finished" in text
+    assert "panel" in text.lower()
+    assert "Travel:" not in text
+    assert "workload variance" not in text.lower()
+    assert "violations" not in text.lower()
+
+
+def test_vrptw_run_summary_failed():
+    port = get_study_port("vrptw")
+    text = port.format_optimization_run_chat_summary(
+        session_run_number=1,
+        run_ok=False,
+        cost=None,
+        result=None,
+        error_message="timed out",
+    )
+    assert "Run #1 failed" in text
+    assert "timed out" in text

@@ -1,7 +1,7 @@
 from app.problems.registry import get_study_port
 
 
-def test_knapsack_run_summary_avoids_vrptw_vocabulary():
+def test_knapsack_run_summary_minimal_visible_message():
     port = get_study_port("knapsack")
     result = {
         "cost": 12.3,
@@ -28,7 +28,8 @@ def test_knapsack_run_summary_avoids_vrptw_vocabulary():
         result=result,
         error_message=None,
     )
+    assert "Run #1 finished" in text
+    assert "panel" in text.lower()
     assert "Travel" not in text
-    assert "workload variance" not in text.lower()
-    assert "packed value" in text.lower()
-    assert "items selected" in text.lower()
+    assert "packed value" not in text.lower()
+    assert "items selected" not in text.lower()

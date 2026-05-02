@@ -300,6 +300,21 @@ select:focus-visible {
   margin-top: 0.25rem;
 }
 
+.chat-pending-ai {
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-pending-ai::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 15%, rgba(255, 255, 255, 0.45) 50%, transparent 85%);
+  transform: translateX(-120%);
+  animation: chat-pending-shimmer 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
 .chat-spinner {
   display: inline-block;
   width: 1rem;
@@ -385,6 +400,11 @@ select:focus-visible {
   gap: 0.15rem;
 }
 
+.bubble-agentic {
+  animation: bubble-agentic-in 180ms ease-out;
+  transform-origin: left center;
+}
+
 .bubble-template-heading {
   font-weight: 600;
 }
@@ -446,7 +466,24 @@ select:focus-visible {
   display: flex;
   gap: 0.35rem;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
+}
+
+.chat-input-row > button {
+  background: #d6e4f0;
+  color: #1a3a52;
+  border: solid 1px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.chat-input-row > button:hover:not(:disabled) {
+  background: #bcd3e8;
+}
+
+.chat-input-row > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .chat-input-row textarea {
@@ -487,8 +524,33 @@ select:focus-visible {
   }
 }
 
+@keyframes chat-pending-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes bubble-agentic-in {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.995);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-input-row.chat-attention-pulse textarea {
+    animation: none;
+  }
+
+  .chat-pending-ai::after,
+  .bubble-agentic {
     animation: none;
   }
 }
@@ -740,6 +802,35 @@ select:focus-visible {
   border-bottom: 2px solid var(--border);
 }
 
+.definition-section-toggle {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.definition-section-toggle:hover {
+  color: var(--fg, #333);
+}
+
+.definition-section-toggle-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.definition-section-chevron {
+  font-size: 0.65rem;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1;
+}
+
 .definition-count {
   border: 1px solid var(--border);
   background: var(--panel);
@@ -780,6 +871,25 @@ select:focus-visible {
 .definition-section.is-editing {
   border-color: #8a7f6a;
   box-shadow: inset 0 0 0 1px #e2d8c5;
+}
+
+/* Agent-introduced assumptions: subtle warm-tinted left border + small label so the
+   participant can tell which assumptions came from the assistant vs which they
+   added or already promoted themselves. */
+.definition-item.kind-assumption.source-agent {
+  border-left: 3px solid rgba(200, 140, 60, 0.7);
+  padding-left: 0.55rem;
+}
+
+.definition-item.kind-assumption.source-agent::before {
+  content: "Agent";
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(140, 105, 55, 0.85);
+  margin-bottom: 1px;
 }
 
 .definition-header-actions {

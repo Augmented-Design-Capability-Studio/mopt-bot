@@ -452,6 +452,7 @@ export function ConfigPanel({
                     type="button"
                     onClick={() => setDefSnapshotMenuOpen((o) => !o)}
                     disabled={sessionTerminated}
+                    title="Save or restore a previous problem setup"
                     aria-expanded={defSnapshotMenuOpen}
                     aria-haspopup="menu"
                   >
@@ -470,6 +471,18 @@ export function ConfigPanel({
                         style={menuItemStyle}
                       >
                         Save to snapshot
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!canLoadFromLastRun || sessionTerminated}
+                        onClick={() => {
+                          onLoadConfigFromLastRun?.();
+                          setDefSnapshotMenuOpen(false);
+                        }}
+                        style={menuItemStyle}
+                      >
+                        From most recent run
                       </button>
                       <button
                         type="button"
@@ -580,7 +593,7 @@ export function ConfigPanel({
                   type="button"
                   onClick={() => setConfigSnapshotMenuOpen((o) => !o)}
                   disabled={sessionTerminated || configSurfaceLocked}
-                  title={configSurfaceLocked ? "Wait for background config update" : undefined}
+                  title={configSurfaceLocked ? "Wait for background config update" : "Save or restore a previous problem setup"}
                   aria-expanded={configSnapshotMenuOpen}
                   aria-haspopup="menu"
                 >

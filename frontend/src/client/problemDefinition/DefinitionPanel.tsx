@@ -38,6 +38,8 @@ type DefinitionSectionProps = {
   suppressTransientMarkers?: boolean;
   /** When set (Assumptions section), show ↑ under remove to promote a row to gathered info. */
   onPromoteItem?: (id: string) => void;
+  collapsed?: boolean;
+  onToggle?: () => void;
 };
 
 function makeId(prefix: string): string {
@@ -86,41 +88,60 @@ function DefinitionSection({
   onRestoreItem,
   suppressTransientMarkers = false,
   onPromoteItem,
+  collapsed = false,
+  onToggle,
 }: DefinitionSectionProps) {
   const locked = sessionTerminated || !editable;
   const rowMinHeight = "3rem";
 
   return (
     <section className="definition-section">
-      <div className="definition-section-heading">{title}</div>
-      <div className="definition-section-header">
-        <div>
-          <div className="muted">{description}</div>
+      {onToggle ? (
+        <button
+          type="button"
+          className="definition-section-heading definition-section-toggle"
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+        >
+          <span>{title}</span>
+          <span className="definition-section-toggle-meta">
+            <span className="definition-count">{items.length}</span>
+            <span className="definition-section-chevron" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+          </span>
+        </button>
+      ) : (
+        <div className="definition-section-heading">{title}</div>
+      )}
+      {!collapsed && (
+        <>
+        <div className="definition-section-header">
+          <div>
+            <div className="muted">{description}</div>
+          </div>
+          <div className="definition-header-actions">
+            {!sessionTerminated ? (
+              <button
+                type="button"
+                className="definition-icon-btn definition-add-btn"
+                aria-label={`Add ${title}`}
+                onClick={() => {
+                  onEnsureDefinitionEditing();
+                  onAddItem();
+                }}
+              >
+                +
+              </button>
+            ) : null}
+            <span className="definition-count">{items.length}</span>
+          </div>
         </div>
-        <div className="definition-header-actions">
-          {!sessionTerminated ? (
-            <button
-              type="button"
-              className="definition-icon-btn definition-add-btn"
-              aria-label={`Add ${title}`}
-              onClick={() => {
-                onEnsureDefinitionEditing();
-                onAddItem();
-              }}
-            >
-              +
-            </button>
-          ) : null}
-          <span className="definition-count">{items.length}</span>
-        </div>
-      </div>
-      <div className="definition-list">
+        <div className="definition-list">
         {items.map((item, index) => (
           <Fragment key={item.id}>
             {deletedMarkerIndex === index ? <div className="definition-delete-marker" aria-hidden="true" /> : null}
             <div
               id={`definition-item-${item.id}`}
-              className={`definition-item kind-${item.kind} ${isPlaceholderItem(item) ? "definition-item-placeholder-glow" : ""} ${rowExtraClassName?.(item) ?? ""}`.trim()}
+              className={`definition-item kind-${item.kind} source-${item.source} ${isPlaceholderItem(item) ? "definition-item-placeholder-glow" : ""} ${rowExtraClassName?.(item) ?? ""}`.trim()}
             >
                 <div className="definition-item-content">
                   <div
@@ -240,7 +261,9 @@ function DefinitionSection({
             </div>
           </div>
           ))}
-      </div>
+        </div>
+        </>
+      )}
     </section>
   );
 }
@@ -283,6 +306,13 @@ export function DefinitionPanel({
   const openQuestions = problemBrief.open_questions;
   const openLocked = sessionTerminated || !editable || openQuestionsBusy;
   const showAssumptions = (workflowMode ?? "").toLowerCase() !== "waterfall";
+
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
+    runSummary: true,
+  });
+  const toggleSection = useCallback((key: string) => {
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const showDeletedMarker = useCallback((section: "gathered" | "assumption" | "open", index: number) => {
     if (deletedMarkerTimeoutRef.current != null) {
@@ -470,105 +500,135 @@ export function DefinitionPanel({
         translate into solver weights.
       </p> */}
       <section className="definition-section">
-        <div className="definition-section-heading">Goal Summary</div>
-        <div className="definition-item">
-          <div className="definition-item-content definition-item-content-goal">
-            {editable ? (
-              <textarea
-                id="definition-goal-summary"
-                className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
-                value={problemBrief.goal_summary}
-                disabled={sessionTerminated}
-                rows={1}
-                onFocus={() => onEnsureDefinitionEditing()}
-                onChange={(e) => updateGoalSummary(e.target.value)}
-                onInput={autoGrowTextarea}
-                placeholder="Summarize what a good plan should prioritize."
-              />
-            ) : (
-              <button
-                type="button"
-                className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
-                title="Edit..."
-                disabled={sessionTerminated}
-                onClick={(e) =>
-                  ensureDefinitionEditingFromLocked(
-                    "#definition-goal-summary",
-                    estimatedCaretIndexFromClick(problemBrief.goal_summary || "", e),
-                  )
-                }
-              >
-                {problemBrief.goal_summary || "Summarize what a good plan should prioritize."}
-              </button>
-            )}
+        <button
+          type="button"
+          className="definition-section-heading definition-section-toggle"
+          onClick={() => toggleSection("goalSummary")}
+          aria-expanded={!collapsedSections.goalSummary}
+        >
+          <span>Goal Summary</span>
+          <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.goalSummary ? "▸" : "▾"}</span>
+        </button>
+        {!collapsedSections.goalSummary && (
+          <div className="definition-item">
+            <div className="definition-item-content definition-item-content-goal">
+              {editable ? (
+                <textarea
+                  id="definition-goal-summary"
+                  className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
+                  value={problemBrief.goal_summary}
+                  disabled={sessionTerminated}
+                  rows={1}
+                  onFocus={() => onEnsureDefinitionEditing()}
+                  onChange={(e) => updateGoalSummary(e.target.value)}
+                  onInput={autoGrowTextarea}
+                  placeholder="Summarize what a good plan should prioritize."
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
+                  title="Edit..."
+                  disabled={sessionTerminated}
+                  onClick={(e) =>
+                    ensureDefinitionEditingFromLocked(
+                      "#definition-goal-summary",
+                      estimatedCaretIndexFromClick(problemBrief.goal_summary || "", e),
+                    )
+                  }
+                >
+                  {problemBrief.goal_summary || "Summarize what a good plan should prioritize."}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       <section className="definition-section">
-        <div className="definition-section-heading">Run Summary</div>
-        <div className="definition-item">
-          <div className="definition-item-content definition-item-content-goal">
-            {editable ? (
-              <textarea
-                id="definition-run-summary"
-                className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
-                value={problemBrief.run_summary}
-                disabled={sessionTerminated}
-                rows={1}
-                onFocus={() => onEnsureDefinitionEditing()}
-                onChange={(e) => updateRunSummary(e.target.value)}
-                onInput={autoGrowTextarea}
-                placeholder="Rolling summary of recent run outcomes and implications."
-              />
-            ) : (
-              <button
-                type="button"
-                className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
-                title="Edit..."
-                disabled={sessionTerminated}
-                onClick={(e) =>
-                  ensureDefinitionEditingFromLocked(
-                    "#definition-run-summary",
-                    estimatedCaretIndexFromClick(problemBrief.run_summary || "", e),
-                  )
-                }
-              >
-                {problemBrief.run_summary || "Rolling summary of recent run outcomes and implications."}
-              </button>
-            )}
+        <button
+          type="button"
+          className="definition-section-heading definition-section-toggle"
+          onClick={() => toggleSection("runSummary")}
+          aria-expanded={!collapsedSections.runSummary}
+        >
+          <span>Run Summary</span>
+          <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.runSummary ? "▸" : "▾"}</span>
+        </button>
+        {!collapsedSections.runSummary && (
+          <div className="definition-item">
+            <div className="definition-item-content definition-item-content-goal">
+              {editable ? (
+                <textarea
+                  id="definition-run-summary"
+                  className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
+                  value={problemBrief.run_summary}
+                  disabled={sessionTerminated}
+                  rows={1}
+                  onFocus={() => onEnsureDefinitionEditing()}
+                  onChange={(e) => updateRunSummary(e.target.value)}
+                  onInput={autoGrowTextarea}
+                  placeholder="Rolling summary of recent run outcomes and implications."
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
+                  title="Edit..."
+                  disabled={sessionTerminated}
+                  onClick={(e) =>
+                    ensureDefinitionEditingFromLocked(
+                      "#definition-run-summary",
+                      estimatedCaretIndexFromClick(problemBrief.run_summary || "", e),
+                    )
+                  }
+                >
+                  {problemBrief.run_summary || "Rolling summary of recent run outcomes and implications."}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       <section className="definition-section" id="definition-open-questions">
-        <div
-          className="definition-section-heading"
-          style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+        <button
+          type="button"
+          className="definition-section-heading definition-section-toggle"
+          onClick={() => toggleSection("openQuestions")}
+          aria-expanded={!collapsedSections.openQuestions}
         >
-          <span>Open Questions</span>
-          {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
-        </div>
-        <div className="definition-section-header">
-          <div>
-            <div className="muted">Questions we still need to answer to improve the plan.</div>
-          </div>
-          <div className="definition-header-actions">
-            {!sessionTerminated ? (
-              <button
-                type="button"
-                className="definition-icon-btn definition-add-btn"
-                aria-label="Add open question"
-                onClick={addOpenQuestion}
-                disabled={openQuestionsBusy}
-              >
-                +
-              </button>
-            ) : null}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+            <span>Open Questions</span>
+            {openQuestionsBusy ? <span className="inline-spinner" aria-label="Cleaning open questions" /> : null}
+          </span>
+          <span className="definition-section-toggle-meta">
             <span className="definition-count">{openQuestions.length}</span>
+            <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.openQuestions ? "▸" : "▾"}</span>
+          </span>
+        </button>
+        {!collapsedSections.openQuestions && (
+          <>
+          <div className="definition-section-header">
+            <div>
+              <div className="muted">Questions we still need to answer to improve the plan.</div>
+            </div>
+            <div className="definition-header-actions">
+              {!sessionTerminated ? (
+                <button
+                  type="button"
+                  className="definition-icon-btn definition-add-btn"
+                  aria-label="Add open question"
+                  onClick={addOpenQuestion}
+                  disabled={openQuestionsBusy}
+                >
+                  +
+                </button>
+              ) : null}
+              <span className="definition-count">{openQuestions.length}</span>
+            </div>
           </div>
-        </div>
-        <div className="definition-list">
+          <div className="definition-list">
           {openQuestions.map((question, index) => {
             return (
               <Fragment key={question.id}>
@@ -629,7 +689,9 @@ export function DefinitionPanel({
             <div className="definition-delete-marker" aria-hidden="true" />
           ) : null}
           {openQuestions.length === 0 ? <div className="muted definition-empty">Nothing here yet.</div> : null}
-        </div>
+          </div>
+          </>
+        )}
       </section>
 
       <DefinitionSection
@@ -652,6 +714,8 @@ export function DefinitionPanel({
           index: entry.index,
         }))}
         onRestoreItem={(id) => restoreRemovedItem("gathered", id)}
+        collapsed={collapsedSections.gatheredInfo}
+        onToggle={() => toggleSection("gatheredInfo")}
       />
 
       {showAssumptions ? (
@@ -669,14 +733,16 @@ export function DefinitionPanel({
           onTextareaInput={autoGrowTextarea}
           rowExtraClassName={(item) => flashClassForItem(item.id)}
           suppressTransientMarkers={suppressTransientMarkers}
-        removedItems={removedItems.assumption.map((entry) => ({
-          id: entry.id,
-          text: entry.item.text,
-          index: entry.index,
-        }))}
-        onRestoreItem={(id) => restoreRemovedItem("assumption", id)}
-        onPromoteItem={promoteAssumptionToGathered}
-      />
+          removedItems={removedItems.assumption.map((entry) => ({
+            id: entry.id,
+            text: entry.item.text,
+            index: entry.index,
+          }))}
+          onRestoreItem={(id) => restoreRemovedItem("assumption", id)}
+          onPromoteItem={promoteAssumptionToGathered}
+          collapsed={collapsedSections.assumptions}
+          onToggle={() => toggleSection("assumptions")}
+        />
       ) : null}
 
     </div>

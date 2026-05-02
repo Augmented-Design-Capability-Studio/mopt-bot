@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Literal
 
 from google import genai
@@ -34,6 +35,15 @@ from app.prompts.study_chat import (
     STUDY_CHAT_WORKFLOW_WATERFALL,
 )
 from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn, RunTriggerIntentTurn
+from app.services.capabilities import build_capabilities_block
+from app.services.chat_context_policy import (
+    ChatContextProfile,
+    ContextTemperature,
+    build_execution_mode_block,
+    build_temperature_guardrails_block,
+    resolve_context_profile,
+)
+from app.services.docs_index import search_reference_excerpts
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +178,15 @@ RUN_INVITATION_CLASSIFICATION_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "required": ["is_run_invitation"],
 }
 
+CHAT_TEMPERATURE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "ChatTemperatureClassification",
+    "type": "object",
+    "properties": {
+        "temperature": {"type": "string", "enum": ["cold", "warm", "hot"]},
+    },
+    "required": ["temperature"],
+}
+
 WorkflowPhase = Literal["discovery", "structuring", "configuration"]
 
 
@@ -206,6 +225,59 @@ def _run_ack_prompt(workflow_mode: str) -> str:
     else:
         wf_addendum = STUDY_CHAT_RUN_ACK_WATERFALL
     return f"{STUDY_CHAT_RUN_ACK_BASE}\n{wf_addendum}"
+
+
+def classify_chat_temperature(
+    *,
+    user_text: str,
+    current_problem_brief: dict[str, Any] | None,
+    current_panel: dict[str, Any] | None,
+    recent_runs_summary: list[dict[str, Any]] | None,
+    api_key: str,
+    model_name: str,
+) -> ContextTemperature:
+    brief = current_problem_brief or {}
+    has_goal_summary = bool(str(brief.get("goal_summary") or "").strip())
+    item_count = len(brief.get("items") or []) if isinstance(brief.get("items"), list) else 0
+    open_question_count = (
+        len(brief.get("open_questions") or []) if isinstance(brief.get("open_questions"), list) else 0
+    )
+    panel_problem = current_panel.get("problem") if isinstance(current_panel, dict) else None
+    has_panel_problem = bool(panel_problem and isinstance(panel_problem, dict))
+    has_runs = bool(recent_runs_summary)
+
+    evidence = {
+        "has_goal_summary": has_goal_summary,
+        "item_count": item_count,
+        "open_question_count": open_question_count,
+        "has_panel_problem": has_panel_problem,
+        "has_runs": has_runs,
+    }
+    system_instruction = (
+        "Classify chat context temperature for a participant-facing optimization assistant.\n"
+        "Return JSON only with key `temperature` in {cold,warm,hot}.\n"
+        "Rules:\n"
+        "- cold: generic capability/small-talk questions without concrete task details.\n"
+        "- warm: concrete problem-definition intent appears, but no deep config/run context.\n"
+        "- hot: concrete config tuning or run-result comparison context.\n"
+        "A generic message like 'how do you optimize?' should be cold unless session evidence is already warm/hot."
+    )
+    user_payload = (
+        f"User message:\n{user_text}\n\n"
+        f"Session evidence JSON:\n{json.dumps(evidence, ensure_ascii=False)}"
+    )
+    client = genai.Client(api_key=api_key)
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=CHAT_TEMPERATURE_RESPONSE_JSON_SCHEMA,
+    )
+    resp = client.models.generate_content(model=model_name, contents=user_payload, config=config)
+    parsed = resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
+    temp = str(parsed.get("temperature") or "").strip().lower()
+    if temp not in {"cold", "warm", "hot"}:
+        raise ValueError("Invalid chat temperature classification")
+    return temp  # type: ignore[return-value]
 
 
 def _system_prompt_openers(
@@ -320,6 +392,7 @@ def _build_structured_system_instruction(
 
 
 def _build_visible_chat_system_instruction(
+    user_text: str,
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
     current_panel: dict[str, Any] | None = None,
@@ -328,6 +401,8 @@ def _build_visible_chat_system_instruction(
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
     test_problem_id: str | None = None,
+    api_key: str | None = None,
+    model_name: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -344,14 +419,56 @@ def _build_visible_chat_system_instruction(
         if brief_for_prompt is not None
         else "{}"
     )
+    fallback_profile = resolve_context_profile(
+        user_text=user_text,
+        current_problem_brief=current_problem_brief,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+    )
+    profile = fallback_profile
+    if api_key and model_name:
+        try:
+            model_temperature = classify_chat_temperature(
+                user_text=user_text,
+                current_problem_brief=current_problem_brief,
+                current_panel=current_panel,
+                recent_runs_summary=recent_runs_summary,
+                api_key=api_key,
+                model_name=model_name,
+            )
+            profile = ChatContextProfile(
+                temperature=model_temperature,
+                execution_mode=fallback_profile.execution_mode,
+            )
+        except Exception as exc:
+            log.warning("Chat-temperature classification failed (%s); using fallback heuristics", exc)
+    mention_mealpy = "mealpy" in str(user_text or "").lower() or "library" in str(user_text or "").lower()
+    capabilities_block = build_capabilities_block(
+        test_problem_id=test_problem_id,
+        mention_mealpy=mention_mealpy,
+        temperature=profile.temperature,
+    )
+    doc_excerpts = search_reference_excerpts(
+        repo_root=Path(__file__).resolve().parents[3],
+        user_text=user_text,
+        test_problem_id=test_problem_id,
+        temperature=profile.temperature,
+    )
+
     parts = [
         *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
+        build_temperature_guardrails_block(profile.temperature),
+        build_execution_mode_block(profile.execution_mode),
+        capabilities_block,
         STUDY_CHAT_VISIBLE_REPLY_TASK,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    if doc_excerpts:
+        parts.append("Reference excerpts (participant-safe docs):")
+        parts.append("\n\n".join(f"- {excerpt}" for excerpt in doc_excerpts))
     lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_blob:
         parts.append(lock_blob)
@@ -487,6 +604,7 @@ def _plain_fallback_reply(
     test_problem_id: str | None = None,
 ) -> str:
     system = _build_visible_chat_system_instruction(
+        user_text=user_text,
         current_problem_brief=current_problem_brief,
         workflow_mode=workflow_mode,
         current_panel=current_panel,
@@ -495,6 +613,8 @@ def _plain_fallback_reply(
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
         test_problem_id=test_problem_id,
+        api_key=api_key,
+        model_name=model_name,
     )
     client = genai.Client(api_key=api_key)
     chat = client.chats.create(
@@ -524,6 +644,7 @@ def generate_visible_chat_reply(
 ) -> str:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_visible_chat_system_instruction(
+        user_text=user_text,
         current_problem_brief=current_problem_brief,
         workflow_mode=workflow_mode,
         current_panel=current_panel,
@@ -532,6 +653,8 @@ def generate_visible_chat_reply(
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
         test_problem_id=test_problem_id,
+        api_key=api_key,
+        model_name=model_name,
     )
     chat = client.chats.create(
         model=model_name,
