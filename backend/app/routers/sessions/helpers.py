@@ -22,8 +22,13 @@ TUTORIAL_STEP_ORDER: tuple[str, ...] = (
     "update-definition",
     "inspect-config",
     "first-run",
+    "inspect-results",
+    "explain-run",
     "update-config",
     "second-run",
+    "mark-candidate",
+    "third-run",
+    "tutorial-complete",
 )
 
 
@@ -37,23 +42,51 @@ def _tutorial_step_index(step: str | None) -> int:
 
 
 def rewind_tutorial_tracking_from_step(row: StudySession, step: str | None) -> None:
+    """Clear completion flags for steps at-or-after the given step.
+
+    Step ordering matches TUTORIAL_STEP_ORDER. `inspect-definition` is retained
+    in the order for back-compat; the active step lists may skip it.
+    """
     idx = _tutorial_step_index(step)
+    # chat-info (0)
     if idx <= 0:
         row.tutorial_chat_started = False
+    # upload-files (1)
     if idx <= 1:
         row.tutorial_uploaded_files = False
+    # inspect-definition (2) - legacy step, kept for back-compat only.
     if idx <= 2:
         row.tutorial_definition_tab_visited = False
+    # update-definition (3)
     if idx <= 3:
         row.tutorial_definition_saved = False
+    # inspect-config (4)
     if idx <= 4:
         row.tutorial_config_tab_visited = False
+    # first-run (5)
     if idx <= 5:
         row.tutorial_first_run_done = False
+    # inspect-results (6)
     if idx <= 6:
-        row.tutorial_config_saved = False
+        row.tutorial_results_inspected = False
+    # explain-run (7)
     if idx <= 7:
+        row.tutorial_explain_used = False
+    # update-config (8)
+    if idx <= 8:
+        row.tutorial_config_saved = False
+    # second-run (9)
+    if idx <= 9:
         row.tutorial_second_run_done = False
+    # mark-candidate (10)
+    if idx <= 10:
+        row.tutorial_candidate_marked = False
+    # third-run (11)
+    if idx <= 11:
+        row.tutorial_third_run_done = False
+    # tutorial-complete (12)
+    if idx <= 12:
+        row.tutorial_completed = False
 
 
 def clean_participant_number(value: str | None) -> str | None:
@@ -191,6 +224,11 @@ def session_to_out(row: StudySession) -> SessionOut:
         tutorial_config_saved=bool(getattr(row, "tutorial_config_saved", False)),
         tutorial_first_run_done=bool(getattr(row, "tutorial_first_run_done", False)),
         tutorial_second_run_done=bool(getattr(row, "tutorial_second_run_done", False)),
+        tutorial_results_inspected=bool(getattr(row, "tutorial_results_inspected", False)),
+        tutorial_explain_used=bool(getattr(row, "tutorial_explain_used", False)),
+        tutorial_candidate_marked=bool(getattr(row, "tutorial_candidate_marked", False)),
+        tutorial_third_run_done=bool(getattr(row, "tutorial_third_run_done", False)),
+        tutorial_completed=bool(getattr(row, "tutorial_completed", False)),
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
         gemini_model=row.gemini_model or get_settings().default_gemini_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),

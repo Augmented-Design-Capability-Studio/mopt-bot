@@ -11,6 +11,11 @@ export type ParticipantTutorialPatch = {
   tutorial_config_saved?: boolean;
   tutorial_first_run_done?: boolean;
   tutorial_second_run_done?: boolean;
+  tutorial_results_inspected?: boolean;
+  tutorial_explain_used?: boolean;
+  tutorial_candidate_marked?: boolean;
+  tutorial_third_run_done?: boolean;
+  tutorial_completed?: boolean;
 };
 
 export type TutorialEvent =
@@ -20,7 +25,10 @@ export type TutorialEvent =
   | "definition-saved"
   | "config-tab-clicked"
   | "config-saved"
-  | "run-completed";
+  | "run-completed"
+  | "results-inspected"
+  | "explain-used"
+  | "candidate-marked";
 
 export function patchForTutorialEvent(event: TutorialEvent, session: Session | null): ParticipantTutorialPatch | null {
   if (!session?.participant_tutorial_enabled) return null;
@@ -38,10 +46,17 @@ export function patchForTutorialEvent(event: TutorialEvent, session: Session | n
     case "config-saved":
       return session.tutorial_config_saved ? null : { tutorial_config_saved: true };
     case "run-completed":
-      return session.tutorial_first_run_done
-        ? session.tutorial_second_run_done
-          ? null
-          : { tutorial_second_run_done: true }
-        : { tutorial_first_run_done: true };
+      // Three-run progression: first → second → third. Each run completion
+      // advances the lowest unfinished flag.
+      if (!session.tutorial_first_run_done) return { tutorial_first_run_done: true };
+      if (!session.tutorial_second_run_done) return { tutorial_second_run_done: true };
+      if (!session.tutorial_third_run_done) return { tutorial_third_run_done: true };
+      return null;
+    case "results-inspected":
+      return session.tutorial_results_inspected ? null : { tutorial_results_inspected: true };
+    case "explain-used":
+      return session.tutorial_explain_used ? null : { tutorial_explain_used: true };
+    case "candidate-marked":
+      return session.tutorial_candidate_marked ? null : { tutorial_candidate_marked: true };
   }
 }

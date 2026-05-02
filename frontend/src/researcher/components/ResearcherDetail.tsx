@@ -81,12 +81,19 @@ export function ResearcherDetail({
   const tutorialStepLabels: Record<TutorialStepId, string> = {
     "chat-info": "Step 1 - Start in chat",
     "upload-files": "Step 2 - Upload files",
-    "inspect-definition": "Step 3 - Inspect Definition",
-    "update-definition": "Step 4 - Update definition",
-    "inspect-config": "Step 5 - Inspect Problem Config",
-    "first-run": "Step 6 - Trigger first run",
-    "update-config": "Step 7 - Edit problem config",
-    "second-run": "Step 8 - Run again",
+    // Legacy step retained for back-compat with sessions whose stored override
+    // references it; new step lists drop this read-only inspect.
+    "inspect-definition": "(legacy) Inspect Definition",
+    "update-definition": "Step 3 - Update Definition",
+    "inspect-config": "Step 4 - Inspect Problem Config",
+    "first-run": "Step 5 - First run",
+    "inspect-results": "Step 6 - Look at results",
+    "explain-run": "Step 7 - Use Explain",
+    "update-config": "Step 8 - Targeted config change",
+    "second-run": "Step 9 - Run again",
+    "mark-candidate": "Step 10 - Mark as candidate",
+    "third-run": "Step 11 - Third run from candidate",
+    "tutorial-complete": "Wrap-up - All set",
   };
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [participantNumberDraft, setParticipantNumberDraft] = useState("");

@@ -119,34 +119,6 @@ class VrptwStudyPort:
             "backend_template": "routing_time_windows",
         }
 
-    def default_problem_brief_system_items(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": "system-backend-template",
-                "text": "Current backend template uses a routing and time-window optimization schema.",
-                "kind": "system",
-                "source": "system",
-                "status": "confirmed",
-                "editable": False,
-            },
-            {
-                "id": "system-translation-layer",
-                "text": "The assistant may discuss the task in general optimization terms and translate that intent into the active solver configuration.",
-                "kind": "system",
-                "source": "system",
-                "status": "confirmed",
-                "editable": False,
-            },
-            {
-                "id": "system-schema-scope",
-                "text": "Final configuration fields map onto the currently supported backend rather than an arbitrary custom codebase.",
-                "kind": "system",
-                "source": "system",
-                "status": "confirmed",
-                "editable": False,
-            },
-        ]
-
     def format_optimization_run_chat_summary(
         self,
         *,

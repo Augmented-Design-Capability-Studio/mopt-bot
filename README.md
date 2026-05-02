@@ -196,6 +196,20 @@ From the **repository root** (runs backend + domain packages per `pytest.ini`):
 .\venv\Scripts\pytest.exe -q
 ```
 
+The default suite is fully offline — `backend/tests/conftest.py` autouse-stubs every Gemini helper with its production fallback, so no real API calls are made.
+
+### Running live Gemini tests
+
+`backend/tests/test_live_gemini.py` (marker `live_gemini`) exercises the real Gemini API. Without a key, it auto-skips and the terminal summary prints a one-block setup banner.
+
+To enable locally, drop the key into `backend/.secrets/gemini_api_key` (a one-line file; the `backend/.secrets/` directory is gitignored — only `README.md` is committed) **or** export `GEMINI_API_KEY`. Then:
+
+```powershell
+.\venv\Scripts\pytest.exe backend/tests -m live_gemini -v
+```
+
+The first auth/connection failure auto-skips the remaining live tests in that session to save quota — re-run after fixing the key. See `backend/.secrets/README.md`.
+
 ## Smoke checklist (manual)
 
 1. Researcher token: list sessions, open one, export JSON (versioned **session archive**, `export_schema_version` **2**: session row, messages with `meta`, runs, snapshots, sorted **`timeline`** for review tools; filename `session-{id}-archive.json`). Up to **2000** brief/panel **snapshots** per session are retained (older pruned). Open the export in the analyzer **Timeline** tab to align chat, snapshots, and runs by time.

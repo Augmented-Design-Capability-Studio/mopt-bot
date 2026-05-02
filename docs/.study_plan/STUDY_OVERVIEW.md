@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This study evaluates an AI-assisted optimization interface as a **design artifact**. Participants role-play as a domain expert — someone with working knowledge of optimization trade-offs who would otherwise hire a programmer to configure and run a solver — and use the interface to engage with an optimization problem from that standpoint. The core question they are implicitly answering is: *"Does this interface let me, as a domain expert, do work I would otherwise have to hand off to a programmer?"*
+This study evaluates an AI-assisted optimization interface as a **design artifact**. Participants are positioned as the stakeholder responsible for the scheduling decisions in the scenario — they direct the AI assistant to formulate and solve the problem, but are not expected to write code or implement solutions themselves. They engage as themselves, with whatever optimization or logistics knowledge they already have. The core question is: *Does this interface let a non-implementer stakeholder do meaningful work with an optimization solver that would otherwise have to be handed off to a programmer?*
 
-The study is a 2×2 between-subjects design: **optimization expertise** (novice vs expert) × **workflow mode** (Agile vs Waterfall).
+The study uses a single between-subjects factor — **workflow mode** (Agile vs Waterfall) — as the primary contrast. Optimization expertise is measured as a continuous covariate (0–5 score on a brief literacy instrument administered at screening) and reported as a moderator rather than used to assign condition.
 
-## Participant Role
+## Participant Stance
 
-Participants adopt the perspective of a domain expert who understands the problem space (scheduling, routing, trade-offs) but does not write code. Both novice and expert groups take this role; the distinction is the depth of optimization knowledge they bring to it. After the session, participants are interviewed about their experience and their critique of the interface.
+Participants are positioned as the person responsible for the scheduling decisions in this scenario. They decide what matters (priorities, trade-offs, constraints) and direct the AI assistant to produce solutions; they are not expected to write code or implement solutions themselves. Participants engage as themselves — bringing whatever optimization or logistics knowledge they already have — rather than role-playing a fictional persona. After the session, participants are interviewed about their experience and their critique of the interface.
 
 ## System
 
@@ -22,10 +22,10 @@ The underlying task is a fixed logistics scenario (fleet scheduling with time wi
 
 ## Experimental Conditions
 
-| Factor | Levels |
-|--------|--------|
-| Expertise | Novice / Expert |
-| Workflow | Agile (iterative; runs enabled early; assumptions used as provisional stand-ins) / Waterfall (specification-first; runs gated on resolved questions; missing info tracked as open questions, not assumptions) |
+| Variable | Role | Levels / Range |
+|----------|------|----------------|
+| Workflow mode | Primary between-subjects factor | Agile (iterative; runs enabled early; assumptions used as provisional stand-ins) / Waterfall (specification-first; runs gated on resolved questions; missing info tracked as open questions, not assumptions) |
+| Optimization expertise | Continuous covariate | 0–5 score on the optimization literacy instrument, administered at screening |
 
 ## Data Collected
 
@@ -34,9 +34,9 @@ The underlying task is a fixed logistics scenario (fleet scheduling with time wi
 - Optimization metrics (cost, violations, convergence)
 - Post-session interview and questionnaire (interface critique)
 
-## Deception and Debriefing
+## Disclosure
 
-The system is presented as a general-purpose optimization assistant; it is configured around a single fixed problem instance. This is disclosed at debriefing, when participants also learn the broader research questions and how their data will be used.
+Participants are informed at consent that they will interact with a research prototype with bounded coverage — a single fixed scheduling scenario presented through an interface that resembles a more general optimization assistant. The fictional company and scenario are framing devices, not deception. The full research questions and intended uses of the data are revisited in a post-session conversation.
 
 ## Ethics
 

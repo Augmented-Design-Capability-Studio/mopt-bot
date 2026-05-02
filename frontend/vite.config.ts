@@ -10,6 +10,7 @@ export default defineConfig({
       "@vrptw": path.resolve(__dirname, "../vrptw_problem/frontend"),
       "@knapsack": path.resolve(__dirname, "../knapsack_problem/frontend"),
       "@problemConfig": path.resolve(__dirname, "src/client/problemConfig"),
+      "@tutorial": path.resolve(__dirname, "src/tutorial"),
     },
   },
   server: {

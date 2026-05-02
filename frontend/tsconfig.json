@@ -21,7 +21,8 @@
       "@shared/*": ["src/shared/*"],
       "@vrptw/*": ["../vrptw_problem/frontend/*"],
       "@knapsack/*": ["../knapsack_problem/frontend/*"],
-      "@problemConfig/*": ["src/client/problemConfig/*"]
+      "@problemConfig/*": ["src/client/problemConfig/*"],
+      "@tutorial/*": ["src/tutorial/*"]
     }
   },
   "include": ["src", "../vrptw_problem/frontend", "../knapsack_problem/frontend"]

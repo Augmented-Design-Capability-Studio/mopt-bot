@@ -52,9 +52,16 @@ type ConfigPanelProps = {
   isConfigDirty?: boolean;
   onActiveTabChange?: (tab: PanelTab) => void;
   onUserTabClick?: (tab: PanelTab) => void;
+  /**
+   * External request to switch the active middle-panel tab. The pair acts like
+   * a one-shot signal: when `tabSwitchNonce` increments, the panel switches to
+   * `tabSwitchTarget`. Used by the tutorial bubble's switch-tab action.
+   */
+  tabSwitchNonce?: number;
+  tabSwitchTarget?: PanelTab;
 };
 
-type PanelTab = "definition" | "config";
+export type PanelTab = "definition" | "config";
 
 const PROCESSING_UI_UNLOCK_MS = 90_000;
 
@@ -118,6 +125,8 @@ export function ConfigPanel({
   isConfigDirty = false,
   onActiveTabChange,
   onUserTabClick,
+  tabSwitchNonce,
+  tabSwitchTarget,
 }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("definition");
   const [pendingDefinitionOpenQuestionsScroll, setPendingDefinitionOpenQuestionsScroll] = useState(false);
@@ -173,6 +182,15 @@ export function ConfigPanel({
   useEffect(() => {
     onActiveTabChange?.(activeTab);
   }, [activeTab, onActiveTabChange]);
+
+  useEffect(() => {
+    if (tabSwitchNonce === undefined || !tabSwitchTarget) return;
+    setActiveTab(tabSwitchTarget);
+    if (tabSwitchTarget === "definition") setDefinitionUnread(false);
+    if (tabSwitchTarget === "config") setConfigUnread(false);
+    // Watch nonce only; the same target with a fresh nonce should re-fire.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabSwitchNonce]);
 
   useEffect(() => {
     if (activeTab !== "definition" || !pendingDefinitionOpenQuestionsScroll) return;

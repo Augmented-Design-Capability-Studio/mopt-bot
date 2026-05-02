@@ -1,5 +1,6 @@
 import type { ProblemModule } from "@problemConfig/problemModule";
 import { KnapsackSelectionViz } from "./KnapsackSelectionViz";
+import { KNAPSACK_TUTORIAL_CONTENT } from "./tutorial";
 
 function formatRunViolationSummary(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
@@ -20,4 +21,5 @@ function formatRunViolationSummary(result: unknown): string | null {
 export const MODULE: ProblemModule = {
   vizTabs: [{ id: "knapsack_selection", label: "Item Selection", component: KnapsackSelectionViz }],
   formatRunViolationSummary,
+  tutorialContent: KNAPSACK_TUTORIAL_CONTENT,
 };

@@ -15,6 +15,7 @@ import type { ProblemModule } from "@problemConfig/problemModule";
 // import { TemplateViz } from "./TemplateViz";
 // import { TemplateViolationSummary } from "./TemplateViolationSummary";
 // import { parseRoutesForEval } from "./schedule";
+// import { TEMPLATE_TUTORIAL_CONTENT } from "./tutorial";
 
 // TODO: implement if this problem supports plain-text violation summaries in the AI chat.
 // function formatRunViolationSummary(result: unknown): string | null {
@@ -44,4 +45,9 @@ export const MODULE: ProblemModule = {
 
   // TODO: add formatRunViolationSummary for the AI chat message after a run.
   // formatRunViolationSummary,
+
+  // TODO: add tutorialContent if this problem ships an in-app tutorial. Without
+  // it, the generic fallback bodies in frontend/src/tutorial/defaultContent.ts
+  // are used when a researcher enables the tutorial for a session.
+  // tutorialContent: TEMPLATE_TUTORIAL_CONTENT,
 };

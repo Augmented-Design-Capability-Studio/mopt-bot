@@ -47,3 +47,10 @@ Do NOT use system/global `python` or `pip` when working in this repo.
 - If a change affects workflow semantics, update `README.md` and `AI_INSTRUCTIONS.md`
 **Why:** Agile vs. waterfall is the primary study IV. Collapsing them would corrupt the study.
 **How to apply:** Before any workflow-touching change, ask: does this treat both modes the same? Is that intentional?
+
+---
+
+## 6. `live_gemini` test failures may be key/network — not product bugs
+Tests in `backend/tests/test_live_gemini.py` (marker `live_gemini`) call the real Gemini API. They auto-skip without a key, and once one fails for an auth or connection reason the rest of the live tests in the same session are auto-skipped to save quota. Setup: `backend/.secrets/gemini_api_key` (file, gitignored) **or** the `GEMINI_API_KEY` env var.
+**Why:** Without this context, an agent debugging a `live_gemini` failure may chase phantom code bugs.
+**How to apply:** When a `live_gemini` test fails, first confirm the key file exists, is non-empty, and isn't expired/revoked before assuming the production code regressed. See `backend/.secrets/README.md`.

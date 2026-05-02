@@ -136,8 +136,18 @@ Auto-posted run-complete interpretation context remains hidden from participant-
 
 The researcher sets workflow mode (agile/waterfall), the run-button availability, and the participant tutorial visibility. Steering messages are injected into the participant's session and remain invisible to them. The researcher can push a sparse starter problem config and batch-delete sessions.
 
+**Tutorial bubbles are off by default.** New sessions are created with `participant_tutorial_enabled = False`; toggle the checkbox in the researcher detail view to enable in-app step bubbles for that session. Per-problem step content (titles, bodies, action buttons such as "Use starter prompt") lives in each problem module's `frontend/tutorial.ts`; problems without their own content fall back to the generic bodies in `frontend/src/tutorial/defaultContent.ts`.
+
 ---
 
 ## 6. Ethics and Logging
 
 Chat logs are the primary data artifact. API keys and participant identifiers must not appear in application logs. Real `.env` values must not be committed — document variable names and placeholders only.
+
+---
+
+## 7. Tests
+
+The non-live suite is fully offline. `backend/tests/conftest.py` autouse-stubs the Gemini classifier helpers (`classify_definition_intents`, `classify_chat_temperature`, `classify_assistant_run_invitation`) and the background-thread helpers (`generate_problem_brief_update`, `generate_config_from_brief`) using each function's production fallback path. Individual tests can `monkeypatch.setattr` over those defaults.
+
+`backend/tests/test_live_gemini.py` (marker `live_gemini`) calls the real Gemini API. It auto-skips without a key. Setup: drop the key into `backend/.secrets/gemini_api_key` (file, gitignored) **or** export `GEMINI_API_KEY`. The first failure for an auth/connection reason auto-blocks the rest of that session's live tests to save quota. **A `live_gemini` failure can be a missing/invalid/expired key — verify the key before assuming a product regression.** See `backend/.secrets/README.md`.

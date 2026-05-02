@@ -8,6 +8,7 @@ import { parseBaseProblemConfig } from "../problemConfig/baseSerialization";
 import { ConvergencePlot } from "./ConvergencePlot";
 import { getProblemModule } from "../problemRegistry";
 import { RawJsonDialog } from "../components/RawJsonDialog";
+import type { TutorialEvent } from "../../tutorial/events";
 
 function normalizeRoutesForCompare(raw: unknown): number[][] | null {
   if (!Array.isArray(raw)) return null;
@@ -62,6 +63,8 @@ type ResultsPanelProps = {
   onLoadConfigFromRun: (run: RunResult) => void | Promise<void>;
   candidateRunIds: number[];
   onToggleCandidateRun: (runId: number, checked: boolean) => void;
+  /** Fires tutorial events triggered by interactions with the Results panel. */
+  onTutorialEvent?: (event: TutorialEvent) => void;
 };
 
 function isRunStillPending(run: RunResult | undefined): boolean {
@@ -96,6 +99,7 @@ export function ResultsPanel({
   onLoadConfigFromRun,
   candidateRunIds,
   onToggleCandidateRun,
+  onTutorialEvent,
 }: ResultsPanelProps) {
   const canRunOptimization = computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, problemMeta);
   const runDisabledHint = runOptimizationDisabledHint(session, configText, problemBrief, hasUploadedData, problemMeta);
@@ -267,9 +271,14 @@ export function ResultsPanel({
             <button
               type="button"
               className="result-top-action-btn"
+              data-tutorial-anchor="explain-button"
               disabled={busy || sessionTerminated}
               title="Explain more about this result"
-              onClick={() => void onExplainRun(currentRun)}
+              onClick={() => {
+                onTutorialEvent?.("results-inspected");
+                onTutorialEvent?.("explain-used");
+                void onExplainRun(currentRun);
+              }}
             >
               Explain
             </button>
@@ -284,11 +293,18 @@ export function ResultsPanel({
             </button>
             <label
               className={`result-top-action-btn result-top-action-checkbox ${candidateRunIds.includes(currentRun.id) ? "checked" : ""}`}
+              data-tutorial-anchor="candidate-checkbox"
             >
               <input
                 type="checkbox"
                 checked={candidateRunIds.includes(currentRun.id)}
-                onChange={(e) => onToggleCandidateRun(currentRun.id, e.target.checked)}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    onTutorialEvent?.("results-inspected");
+                    onTutorialEvent?.("candidate-marked");
+                  }
+                  onToggleCandidateRun(currentRun.id, e.target.checked);
+                }}
                 disabled={busy || sessionTerminated || !currentRun.ok}
               />
               Include as candidate
@@ -317,7 +333,11 @@ export function ResultsPanel({
             Optimization in progress - searching for a better plan...
           </div>
         ) : hasResult ? (
-          <div className="results-visualization-scroll">
+          <div
+            className="results-visualization-scroll"
+            data-tutorial-anchor="results-viz"
+            onClick={() => onTutorialEvent?.("results-inspected")}
+          >
             {mod.ViolationSummary && currentRun ? (
               <mod.ViolationSummary currentRun={currentRun} />
             ) : null}

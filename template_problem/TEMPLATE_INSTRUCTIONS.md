@@ -79,6 +79,13 @@ At minimum export `MODULE: ProblemModule = { vizTabs: [] }`.
 Add `buildGoalTermsExtension`, `ViolationSummary`, `parseEvalRoutes`, and
 `formatRunViolationSummary` as your problem needs them.
 
+To ship an in-app tutorial for this problem, add a sibling `frontend/tutorial.ts`
+that exports a `TutorialContent` (see `@tutorial/types`) and attach it to
+`MODULE.tutorialContent`. Without it, the generic fallback bodies in
+`frontend/src/tutorial/defaultContent.ts` are used when the researcher enables
+the tutorial. The eight tutorial step IDs (`chat-info` through `second-run`) are
+stable across problems; only titles, bodies, and per-step actions vary.
+
 ### 10. Test
 Add tests under `myproblem_problem/tests/` following the patterns in
 `backend/tests/test_vrptw_encoder.py` and `backend/tests/test_vrptw_optimizer.py`.

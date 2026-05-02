@@ -48,6 +48,7 @@ When architectural changes, workflow branches, or repo structures shift:
 - **Always verify changes:** Before concluding a task, you must run the project's test suite to ensure no regressions were introduced.
 - **Run Command:** Run `.\venv\Scripts\pytest.exe -q` from the repository root.
 - **Smoke Tests:** If applicable, perform the manual smoke checklist described in `README.md` (e.g., verifying frontend/backend connectivity, basic runs).
+- **Live-Gemini tests** in `backend/tests/test_live_gemini.py` (marked `live_gemini`) hit the real API. They auto-skip without a key. **A failure there can be a missing/invalid/expired API key — not necessarily a product bug.** See `backend/.secrets/README.md` for setup; never commit anything in that directory other than the `README.md`.
 
 ## 7. Extending These Rules
 

@@ -132,12 +132,21 @@ export type TestProblemMeta = {
 export const TUTORIAL_STEP_IDS = [
   "chat-info",
   "upload-files",
+  // `inspect-definition` is retained for backward compatibility with sessions
+  // whose stored `tutorial_step_override` references it. The active default
+  // and per-problem step lists no longer include it (the Definition tab is
+  // already visible by default, so a "look at it" step adds no signal).
   "inspect-definition",
   "update-definition",
   "inspect-config",
   "first-run",
+  "inspect-results",
+  "explain-run",
   "update-config",
   "second-run",
+  "mark-candidate",
+  "third-run",
+  "tutorial-complete",
 ] as const;
 
 export type TutorialStepId = (typeof TUTORIAL_STEP_IDS)[number];
@@ -169,6 +178,11 @@ export type Session = {
   tutorial_config_saved?: boolean;
   tutorial_first_run_done?: boolean;
   tutorial_second_run_done?: boolean;
+  tutorial_results_inspected?: boolean;
+  tutorial_explain_used?: boolean;
+  tutorial_candidate_marked?: boolean;
+  tutorial_third_run_done?: boolean;
+  tutorial_completed?: boolean;
   /** Waterfall: true after first participant chat or once the brief lists open questions (cold start gate). */
   optimization_gate_engaged?: boolean;
   gemini_model: string | null;

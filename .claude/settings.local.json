@@ -53,7 +53,11 @@
       "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_problem_brief.py /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_sync.py /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_chat_context_policy.py /c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_chat_temperature.py -q)",
       "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest /c/Users/whyhowie/git-repo/mopt-bot/backend/tests -q --ignore=/c/Users/whyhowie/git-repo/mopt-bot/backend/tests/test_sessions.py)",
       "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_sessions.py -q --no-header)",
-      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_problem_brief.py backend/tests/test_chat_context_policy.py backend/tests/test_capabilities.py backend/tests/test_docs_index.py backend/tests/test_chat_temperature.py backend/tests/test_llm_schema.py -q)"
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_problem_brief.py backend/tests/test_chat_context_policy.py backend/tests/test_capabilities.py backend/tests/test_docs_index.py backend/tests/test_chat_temperature.py backend/tests/test_llm_schema.py -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_problem_brief.py backend/tests/test_chat_context_policy.py backend/tests/test_capabilities.py backend/tests/test_docs_index.py backend/tests/test_chat_temperature.py backend/tests/test_llm_schema.py backend/tests/test_optimization_gate.py -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest tests/test_problem_brief.py tests/test_chat_context_policy.py tests/test_capabilities.py tests/test_docs_index.py tests/test_chat_temperature.py tests/test_llm_schema.py tests/test_optimization_gate.py -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest --ignore=tests/test_sessions.py --ignore=tests/test_live_gemini.py -q)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -c \"from app import schemas; print\\(schemas.ParticipantTutorialUpdate.model_fields.keys\\(\\)\\)\")"
     ]
   }
 }

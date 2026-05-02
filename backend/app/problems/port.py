@@ -74,9 +74,6 @@ class StudyProblemPort(Protocol):
     def panel_patch_response_json_schema(self) -> dict[str, Any]:
         """Gemini ``response_json_schema`` for a ``{ "problem": ... }`` object."""
 
-    def default_problem_brief_system_items(self) -> list[dict[str, Any]]:
-        """Optional system items inserted into default_problem_brief for this problem."""
-
     def locked_companion_fields(self) -> dict[str, str]:
         """Map of weight key → companion field preserved when that key is locked.
 

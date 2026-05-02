@@ -13,8 +13,9 @@ import { BackendConnectionControl } from "@shared/status/BackendConnectionContro
 import { StatusChip } from "@shared/status/StatusChip";
 import { anchorForTutorialStep } from "../../tutorial/anchors";
 import { patchForTutorialEvent, type ParticipantTutorialPatch } from "../../tutorial/events";
-import { completionFromSession, getTutorialStepOverride, tutorialStepsForMode } from "../../tutorial/state";
+import { completionFromSession, getTutorialStepOverride, getTutorialSteps } from "../../tutorial/state";
 import { resolveActiveTutorialStep } from "../../tutorial/transitions";
+import type { TutorialAction } from "../../tutorial/types";
 
 import { ChatSection } from "../chat/ChatSection";
 import { type EditMode } from "../lib/participantTypes";
@@ -214,28 +215,19 @@ export function ParticipantShell({
   const localPn = participantLabel.trim();
   const displayParticipant = serverPn || localPn;
   const tutorialEnabled = Boolean(session?.participant_tutorial_enabled) && !sessionTerminated;
-  const tutorialResetRevision = session?.content_reset_revision ?? 0;
-  const tutorialKeyBase = `${sessionId}:participant-tutorial:${tutorialResetRevision}`;
-  const [manuallyDismissed, setManuallyDismissed] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [bubbleStyle, setBubbleStyle] = useState<BubbleStyle>({ right: 16, bottom: 16 });
   const [bubblePinned, setBubblePinned] = useState(false);
+  const [tabSwitchRequest, setTabSwitchRequest] = useState<{ nonce: number; target: "definition" | "config" } | null>(null);
   const bubbleRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
-  const prevTutorialEnabledRef = useRef<boolean>(tutorialEnabled);
   const prevTutorialOverrideRef = useRef<TutorialStepId | null>(null);
-  useEffect(() => {
-    if (!sessionId) return;
-    try {
-      const dismissed = sessionStorage.getItem(`${tutorialKeyBase}:dismissed`) === "1";
-      setManuallyDismissed(dismissed);
-    } catch {
-      setManuallyDismissed(false);
-    }
-  }, [sessionId, tutorialKeyBase]);
 
   const completedByStepId = useMemo(() => completionFromSession(session), [session]);
-  const tutorialSteps = useMemo(() => tutorialStepsForMode(session?.workflow_mode), [session?.workflow_mode]);
+  const tutorialSteps = useMemo(
+    () => getTutorialSteps(session?.test_problem_id, session?.workflow_mode),
+    [session?.test_problem_id, session?.workflow_mode],
+  );
   const tutorialSessionStepId = useMemo(() => getTutorialStepOverride(session), [session]);
   const activeTutorialStep = useMemo(
     () => resolveActiveTutorialStep(tutorialSteps, completedByStepId, tutorialSessionStepId),
@@ -248,43 +240,17 @@ export function ParticipantShell({
     return anchorForTutorialStep(activeTutorialStep.id, editMode);
   }, [activeTutorialStep, editMode]);
 
+  // Bubble visibility is now driven entirely by the researcher toggle plus
+  // step progression. There is no participant-side dismiss affordance — the
+  // wrap-up step's "Got it!" button is the only user-driven way to end the
+  // tutorial, and it does so by flipping `participant_tutorial_enabled` off.
   useEffect(() => {
-    if (!tutorialEnabled) {
+    if (!tutorialEnabled || tutorialDone) {
       setShowTutorial(false);
       return;
     }
-    if (tutorialDone) {
-      setShowTutorial(false);
-      try {
-        sessionStorage.setItem(`${tutorialKeyBase}:dismissed`, "1");
-      } catch {
-        // ignore
-      }
-      return;
-    }
-    setShowTutorial(!manuallyDismissed);
-  }, [manuallyDismissed, tutorialDone, tutorialEnabled, tutorialKeyBase]);
-
-  const handleDismissTutorial = useCallback(() => {
-    setShowTutorial(false);
-    setManuallyDismissed(true);
-    try {
-      sessionStorage.setItem(`${tutorialKeyBase}:dismissed`, "1");
-    } catch {
-      // ignore
-    }
-    void onSetParticipantTutorialState?.({ participant_tutorial_enabled: false });
-  }, [onSetParticipantTutorialState, tutorialKeyBase]);
-
-  const handleShowTutorial = useCallback(() => {
-    setManuallyDismissed(false);
     setShowTutorial(true);
-    try {
-      sessionStorage.removeItem(`${tutorialKeyBase}:dismissed`);
-    } catch {
-      // ignore
-    }
-  }, [tutorialKeyBase]);
+  }, [tutorialDone, tutorialEnabled]);
 
   useEffect(() => {
     if (!tutorialEnabled || !showTutorial || !activeTutorialAnchor) {
@@ -343,35 +309,14 @@ export function ParticipantShell({
   }, [activeTutorialAnchor]);
 
   useEffect(() => {
-    const prev = prevTutorialEnabledRef.current;
-    // Researcher toggled tutorial back on for this session: clear local dismissal.
-    if (!prev && tutorialEnabled) {
-      setManuallyDismissed(false);
-      setShowTutorial(true);
-      try {
-        sessionStorage.removeItem(`${tutorialKeyBase}:dismissed`);
-      } catch {
-        // ignore
-      }
-    }
-    prevTutorialEnabledRef.current = tutorialEnabled;
-  }, [tutorialEnabled, tutorialKeyBase]);
-
-  useEffect(() => {
     const prev = prevTutorialOverrideRef.current;
     const next = tutorialSessionStepId;
-    // Researcher selected a new step: re-open bubble even if participant had previously dismissed it.
+    // Researcher selected a new step: surface the bubble at that step.
     if (tutorialEnabled && next && next !== prev) {
-      setManuallyDismissed(false);
       setShowTutorial(true);
-      try {
-        sessionStorage.removeItem(`${tutorialKeyBase}:dismissed`);
-      } catch {
-        // ignore
-      }
     }
     prevTutorialOverrideRef.current = next;
-  }, [tutorialEnabled, tutorialKeyBase, tutorialSessionStepId]);
+  }, [tutorialEnabled, tutorialSessionStepId]);
 
   useEffect(() => {
     if (!tutorialEnabled || !activeTutorialStep) return;
@@ -431,6 +376,36 @@ export function ParticipantShell({
     dragStateRef.current = null;
   }, []);
 
+  const handleTutorialAction = useCallback(
+    (action: TutorialAction) => {
+      switch (action.kind) {
+        case "fill-chat-input":
+          onChatInputChange(action.payload);
+          break;
+        case "copy-clipboard":
+          if (typeof navigator !== "undefined" && navigator.clipboard) {
+            void navigator.clipboard.writeText(action.payload).catch(() => {
+              // Clipboard write rejected (permissions, insecure context); silently no-op.
+            });
+          }
+          break;
+        case "switch-tab":
+          setTabSwitchRequest((prev) => ({ nonce: (prev?.nonce ?? 0) + 1, target: action.target }));
+          break;
+        case "complete-tutorial":
+          // Mark wrap-up acknowledged AND turn the bubble off in one patch so the
+          // bubble doesn't briefly re-appear at the wrap-up step before the
+          // completion flag round-trips from the backend.
+          void onSetParticipantTutorialState?.({
+            tutorial_completed: true,
+            participant_tutorial_enabled: false,
+          });
+          break;
+      }
+    },
+    [onChatInputChange, onSetParticipantTutorialState],
+  );
+
   return (
     <div className="app-shell">
       <header className={accentClass ? `app-header ${accentClass}` : "app-header"}>
@@ -449,11 +424,6 @@ export function ParticipantShell({
           Session {sessionId.slice(0, 8)}…{sessionTerminated ? " · ended" : ""}
         </span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-          {tutorialEnabled ? (
-            <button type="button" onClick={handleShowTutorial}>
-              Show tutorial
-            </button>
-          ) : null}
           <StatusChip
             label="Assistant settings"
             status={modelKeyStatus}
@@ -562,6 +532,8 @@ export function ParticipantShell({
                     : null;
               if (tutorialPatch) void onSetParticipantTutorialState?.(tutorialPatch);
             }}
+            tabSwitchNonce={tabSwitchRequest?.nonce}
+            tabSwitchTarget={tabSwitchRequest?.target}
           />
         )}
 
@@ -592,6 +564,10 @@ export function ParticipantShell({
             onLoadConfigFromRun={onLoadConfigFromRun}
             candidateRunIds={candidateRunIds}
             onToggleCandidateRun={onToggleCandidateRun}
+            onTutorialEvent={(event) => {
+              const patch = patchForTutorialEvent(event, session);
+              if (patch) void onSetParticipantTutorialState?.(patch);
+            }}
           />
         )}
       </div>
@@ -621,18 +597,26 @@ export function ParticipantShell({
         >
           <div className="participant-tutorial-head">
             <div className="participant-tutorial-title">{activeTutorialStep.title}</div>
-            <button
-              type="button"
-              className="definition-icon-btn"
-              aria-label="Hide tutorial"
-              title="Hide tutorial"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={handleDismissTutorial}
-            >
-              X
-            </button>
           </div>
           <p>{activeTutorialStep.body}</p>
+          {activeTutorialStep.actions && activeTutorialStep.actions.length > 0 ? (
+            <div className="participant-tutorial-actions">
+              {activeTutorialStep.actions.map((action, idx) => (
+                <button
+                  key={`${action.kind}-${idx}`}
+                  type="button"
+                  className="participant-tutorial-action-btn"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => handleTutorialAction(action)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="participant-tutorial-drag-hint" aria-hidden="true">
+            Drag this bubble to move it
+          </div>
         </aside>
       ) : null}
     </div>

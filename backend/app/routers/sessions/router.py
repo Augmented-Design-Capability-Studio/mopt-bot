@@ -129,6 +129,7 @@ def create_session(
         config_status="idle",
         processing_error=None,
         optimization_allowed=False,
+        participant_tutorial_enabled=False,
     )
     db.add(row)
     db.commit()
@@ -375,6 +376,11 @@ def reset_session(
     row.tutorial_config_saved = False
     row.tutorial_first_run_done = False
     row.tutorial_second_run_done = False
+    row.tutorial_results_inspected = False
+    row.tutorial_explain_used = False
+    row.tutorial_candidate_marked = False
+    row.tutorial_third_run_done = False
+    row.tutorial_completed = False
     helpers.settle_processing_state(row, cancel_revision=True)
     row.config_status = "idle"
     row.updated_at = datetime.now(timezone.utc)
@@ -1402,6 +1408,16 @@ def patch_participant_tutorial(
         row.tutorial_first_run_done = bool(body.tutorial_first_run_done)
     if "tutorial_second_run_done" in body.model_fields_set and body.tutorial_second_run_done is not None:
         row.tutorial_second_run_done = bool(body.tutorial_second_run_done)
+    if "tutorial_results_inspected" in body.model_fields_set and body.tutorial_results_inspected is not None:
+        row.tutorial_results_inspected = bool(body.tutorial_results_inspected)
+    if "tutorial_explain_used" in body.model_fields_set and body.tutorial_explain_used is not None:
+        row.tutorial_explain_used = bool(body.tutorial_explain_used)
+    if "tutorial_candidate_marked" in body.model_fields_set and body.tutorial_candidate_marked is not None:
+        row.tutorial_candidate_marked = bool(body.tutorial_candidate_marked)
+    if "tutorial_third_run_done" in body.model_fields_set and body.tutorial_third_run_done is not None:
+        row.tutorial_third_run_done = bool(body.tutorial_third_run_done)
+    if "tutorial_completed" in body.model_fields_set and body.tutorial_completed is not None:
+        row.tutorial_completed = bool(body.tutorial_completed)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
@@ -1541,6 +1557,11 @@ def export_session(
             "tutorial_config_saved": bool(getattr(row, "tutorial_config_saved", False)),
             "tutorial_first_run_done": bool(getattr(row, "tutorial_first_run_done", False)),
             "tutorial_second_run_done": bool(getattr(row, "tutorial_second_run_done", False)),
+            "tutorial_results_inspected": bool(getattr(row, "tutorial_results_inspected", False)),
+            "tutorial_explain_used": bool(getattr(row, "tutorial_explain_used", False)),
+            "tutorial_candidate_marked": bool(getattr(row, "tutorial_candidate_marked", False)),
+            "tutorial_third_run_done": bool(getattr(row, "tutorial_third_run_done", False)),
+            "tutorial_completed": bool(getattr(row, "tutorial_completed", False)),
             "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
             "gemini_key_configured": bool(row.gemini_key_encrypted),

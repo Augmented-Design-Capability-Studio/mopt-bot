@@ -9,3 +9,7 @@ alwaysApply: false
 Use the **`google-genai`** package (`from google import genai`, `genai.Client`, `client.chats`, etc.). Do **not** add or rely on deprecated **`google-generativeai`**.
 
 Prefer the **Chat** API (`client.chats.create` + `chat.send_message` with `history` and `system_instruction` / `GenerateContentConfig`) for conversational flows instead of one-off `generate_content` on the model unless there is a clear non-chat use case.
+
+## Live tests
+
+Tests in `backend/tests/test_live_gemini.py` (marked `live_gemini`) call the real Gemini API. They auto-skip without a key. **A failure there can be a missing/invalid/expired API key — not necessarily a product bug.** See `backend/.secrets/README.md` for setup; the secrets directory is gitignored.

@@ -1,4 +1,5 @@
 import type { RunResult } from "@shared/api";
+import type { TutorialContent } from "@tutorial/types";
 import type { GoalTermsExtension } from "./GoalTermsSection";
 import type { MarkerKind } from "./useProblemConfigDiffMarkers";
 import type { ActivateHint } from "./controls";
@@ -69,4 +70,9 @@ export type ProblemModule = {
    * Returns null to omit violation details from the message.
    */
   formatRunViolationSummary?: (result: unknown) => string | null;
+  /**
+   * Optional: per-problem tutorial bubble content (titles, bodies, action buttons).
+   * When omitted, the generic fallback in `frontend/src/tutorial/defaultContent.ts` is used.
+   */
+  tutorialContent?: TutorialContent;
 };

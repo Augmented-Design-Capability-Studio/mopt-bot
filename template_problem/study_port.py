@@ -220,28 +220,6 @@ class TemplateProblemPort:
             "backend_template": "template_problem",  # TODO: rename
         }
 
-    def default_problem_brief_system_items(self) -> list[dict[str, Any]]:
-        # TODO: return system-level items inserted into a new session's brief.
-        # These describe the backend to the LLM without exposing the domain name.
-        return [
-            {
-                "id": "system-backend-template",
-                "text": "Current backend template uses a [TODO: describe the problem schema here].",
-                "kind": "system",
-                "source": "system",
-                "status": "confirmed",
-                "editable": False,
-            },
-            {
-                "id": "system-translation-layer",
-                "text": "The assistant may discuss the task in general optimization terms and translate that intent into the active solver configuration.",
-                "kind": "system",
-                "source": "system",
-                "status": "confirmed",
-                "editable": False,
-            },
-        ]
-
     def format_optimization_run_chat_summary(
         self,
         *,

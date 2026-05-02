@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This study evaluates an AI-assisted optimization interface as a **design artifact**. Participants role-play as a domain expert — someone with working knowledge of optimization trade-offs who would otherwise hire a programmer to configure and run a solver — and interact with the interface from that standpoint. The interface is built around a fixed logistics scenario (QuickBite Fleet Scheduling, a VRPTW instance) presented as a general optimization assistant. The main research focus is on **how the interface supports or fails the domain-expert perspective**: whether it meaningfully changes what such an expert can do without handing the task to a programmer, and how that experience differs across expertise levels and workflow modes.
+This study evaluates an AI-assisted optimization interface as a **design artifact**. Participants are positioned as the stakeholder responsible for the scheduling decisions in the scenario — they direct the AI assistant to formulate and solve the problem, but are not expected to write code or implement solutions themselves. They engage as themselves, with whatever optimization or logistics knowledge they bring; this is a stance, not a role-play. The interface is built around a fixed logistics scenario (QuickBite Fleet Scheduling, a VRPTW instance) presented as a research prototype with bounded coverage. The main research focus is on **how the interface supports or fails a non-implementer stakeholder**: whether it meaningfully changes what such a person can accomplish without handing the task to a programmer, and how that experience differs across optimization expertise and workflow modes.
 
 ---
 
@@ -16,7 +16,7 @@ This study evaluates an AI-assisted optimization interface as a **design artifac
 
 ### 2. System Overview (As Experienced by Participants)
 
-Participants are asked to engage with the system from the standpoint of a **domain expert**: someone who understands the problem space (scheduling, routing, optimization trade-offs) but does not write code themselves. The reference frame given to participants is a practitioner who would otherwise hire a programmer to configure and run a solver — and who is now evaluating whether this interface changes that equation.
+Participants are positioned as the **stakeholder responsible for the scheduling decisions** in this scenario. They decide what matters (priorities, trade-offs, constraints) and direct the AI assistant to translate those into solver configurations and runs; they are not expected to implement solutions themselves. This is a *stance*, not a role-play: participants engage as themselves, with whatever logistics or optimization knowledge they already have, rather than performing a fictional persona. The implicit question they are exploring is whether this interface changes what such a stakeholder can accomplish without handing the task to a programmer.
 
 The system appears to be a **general-purpose metaheuristic optimization assistant** with three main components:
 
@@ -42,11 +42,13 @@ Possible between-/within-subject factors:
 - **Visualization design**
   - **Static**: pre-rendered tables and plots.
   - **Interactive**: hover, zoom, or filter to explore routes, violations, and workloads.
-- **Expertise level**
-  - **Novice**: limited prior experience with optimization or logistics problem formulation.
-  - **Expert**: strong background in optimization, operations research, or logistics. Both groups adopt the domain-expert role-play regardless of actual programming ability — the distinction is the depth of optimization knowledge they bring to that role.
+- **Optimization expertise (continuous covariate, not a between-subjects factor)**
+  - Measured via the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md): a 5-item conceptual test of hard/soft constraints, multi-objective trade-offs, local-vs-global, stochasticity, and model-vs-reality. Score range 0–5.
+  - Administered at screening (in the same survey as the scheduling-literacy gate); optionally re-administered after the orientation step to capture post-onboarding literacy.
+  - Recorded for every participant and used as a moderator in analysis, **not** as a basis for assigning condition.
+  - Programming ability is not part of this construct: what is measured is conceptual understanding of optimization, not implementation skill.
 
-The primary 2×2 design is **expertise (novice vs expert) × workflow (agile vs waterfall)**, with other factors held constant or used as secondary manipulations.
+The primary contrast is **workflow mode (Agile vs Waterfall)** as a between-subjects factor. Optimization expertise is reported as a continuous moderator. Other factors above (user agency, visualization design) are held constant in the main study and may be explored in follow-up variants.
 
 ### 4. Data Collected
 
@@ -71,43 +73,45 @@ The primary 2×2 design is **expertise (novice vs expert) × workflow (agile vs 
 
 ### 5. User Study Procedure
 
-Participants complete the study remotely or in a controlled lab setting using a computer-based interface.
+Participants complete the study remotely or in a controlled lab setting using a computer-based interface. Total session length is approximately **60–75 minutes**, in addition to the screening survey, which is taken asynchronously beforehand. A condensed researcher's opening script for steps 1–4 is in [`SESSION_OPENING_SCRIPT.md`](SESSION_OPENING_SCRIPT.md).
 
-1. **Introduction and consent**
-   - Participants review and sign a consent form and receive a brief overview of the study.
-2. **Task briefing and role framing**
-   - Participants are presented with the optimization problem and the system interface.
-   - Participants are asked to take the perspective of a domain expert who understands the problem space but would otherwise hire a programmer to run the solver. They are encouraged to engage with the system from that standpoint and to notice where the interface does or does not serve that perspective.
-3. **Pre-interaction assessment**
-   - Participants complete a short questionnaire or brief discussion to confirm task understanding and provide background information (e.g., prior experience with optimization, programming, or related domains).
-4. **Interaction phase**
+1. **Introduction and consent** (~5 min)
+   - Researcher reads the purpose statement and walks the participant through the consent form. Recording starts after consent.
+2. **Stance framing** (~3 min)
+   - Participants are told they are the person responsible for these scheduling decisions: they direct the AI assistant, but are not expected to write code or implement solutions themselves. They engage as themselves and are encouraged to notice where the interface does or does not support the kind of work they would want to do from that position.
+3. **Optimization orientation** (~5–8 min, including a ~3–4 min video)
+   - A short, uniform **video** (script: [`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md)) built around the knapsack problem that installs the conceptual baseline needed to engage with the interface: hard vs. soft constraints, multi-objective trade-offs, stochasticity in solver results, and the gap between a scoring model and reality.
+   - The orientation deliberately uses knapsack rather than the VRPTW task or the bookstore scenario from the scheduling-literacy screener, so concepts are introduced on neutral ground.
+   - Identical across workflow conditions, so it does not confound the Agile/Waterfall comparison.
+   - Optionally followed by re-administering the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md) to capture post-orientation literacy, which is closer to the real-user condition than the screening-time score.
+4. **Task briefing** (~5 min)
+   - Participants watch a short video introducing the QuickBite scheduling scenario and receive a one-page reference document for use during the session. The system interface is also introduced.
+5. **Pre-interaction check** (~3–5 min)
+   - A short check that the participant has understood the task and the orientation. Brief because background information was already collected at screening.
+6. **Interaction phase** (~30–40 min)
    - Participants interact with an AI agent through a chat-based interface to formulate and solve the problem.
    - The AI agent may gather information, make assumptions, and generate executable optimization procedures.
    - Participants review results, modify specifications, and iteratively refine solutions.
-5. **Time constraint**
-   - Participants work on the task for a fixed duration (e.g., 30–40 minutes) or until they reach a satisfactory solution.
-6. **Post-task questionnaire and interview**
+   - The phase ends when the participant reaches a satisfactory solution or the time cap is reached.
+7. **Post-task questionnaire and interview** (~10–15 min)
    - Participants complete a survey covering perceptions of the system, confidence in their solution, and overall usability.
    - A semi-structured interview elicits critique of the interface as an artifact: what it enabled, what it didn’t, and whether it changed the nature of their involvement compared to handing the task to a programmer.
-7. **Debriefing**
-   - Participants receive a full explanation of the study purpose, the system’s actual capabilities and limitations, how their data will be used, and the broader research questions.
+8. **Post-session discussion** (~5 min)
+   - Participants receive a full explanation of the study purpose, the system’s actual capabilities and limitations, how their data will be used, and the broader research questions. (The prototype's bounded scope is already disclosed at consent; this step revisits it and answers any remaining questions.)
 
-### 6. Deception, Risks, and Mitigation
+### 6. Risk and Disclosure
 
-- **Deception**
-  - The system is presented as more general-purpose than it actually is; only a single VRPTW instance is truly supported.
-  - This is necessary to elicit natural problem formulation behavior and realistic expectations about AI capabilities.
-- **Debriefing**
-  - At the end of the study, participants are explicitly informed of:
-    - The true scope and configuration of the system.
-    - How their data will be used.
-    - The broader research questions.
+- **Disclosure (no deception)**
+  - Participants are informed at consent that they will interact with a research prototype with bounded coverage — a single fixed scheduling scenario presented through an interface that resembles a more general optimization assistant. They are aware that the study evaluates the interface itself, not their performance.
+  - The fictional company name and scenario details are scenario framing, not deception: participants know the scenario is illustrative.
 - **Risks**
   - Minimal risk study.
-  - Primary risk is mild confusion or frustration related to system limitations.
+  - Primary risk is mild confusion or frustration related to prototype limitations.
   - Mitigations:
-    - Availability of experimenters for clarification.
-    - Clear debrief and opportunity to withdraw data if desired (subject to IRB/protocol).
+    - Availability of experimenters for clarification during the session.
+    - Opportunity to withdraw data if desired (subject to IRB/protocol).
+- **Post-session discussion**
+  - At the end of the session, participants receive a full explanation of the study purpose, the broader research questions, and how their data will be used. This is a continuation of the disclosure that began at consent.
 
 ### 7. Intended Uses of This Document
 

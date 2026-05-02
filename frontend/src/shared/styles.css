@@ -1949,9 +1949,42 @@ select:focus-visible {
 }
 
 .participant-tutorial-actions {
-  margin-top: 0.45rem;
+  margin-top: 0.5rem;
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   justify-content: flex-end;
+  cursor: default;
+}
+
+.participant-tutorial-action-btn {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--border);
+  background: #f4f1ea;
+  color: var(--text);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.participant-tutorial-action-btn:hover:not(:disabled) {
+  background: #ebe7dd;
+}
+
+.participant-tutorial-action-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.participant-tutorial-drag-hint {
+  margin-top: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  opacity: 0.75;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+  font-style: italic;
 }
 
 /* Indeterminate progress bar shown while an optimization run is in-flight */

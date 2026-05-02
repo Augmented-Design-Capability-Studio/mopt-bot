@@ -166,6 +166,16 @@ def _ensure_sessions_tutorial_tracking_columns() -> None:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_first_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_first_run_done"))
     if "tutorial_second_run_done" not in columns:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_second_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_second_run_done"))
+    if "tutorial_results_inspected" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_results_inspected BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_results_inspected"))
+    if "tutorial_explain_used" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_explain_used BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_explain_used"))
+    if "tutorial_candidate_marked" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_candidate_marked BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_candidate_marked"))
+    if "tutorial_third_run_done" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_third_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_third_run_done"))
+    if "tutorial_completed" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_completed BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_completed"))
     if not statements:
         return
     with engine.begin() as conn:
