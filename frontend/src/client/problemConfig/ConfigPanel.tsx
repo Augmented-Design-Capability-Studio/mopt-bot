@@ -39,6 +39,7 @@ type ConfigPanelProps = {
   onRequestDefinitionCleanup: () => void | Promise<void>;
   onRequestOpenQuestionCleanup: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
+  onRecoverGoalTerms?: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
@@ -112,6 +113,7 @@ export function ConfigPanel({
   onRequestDefinitionCleanup,
   onRequestOpenQuestionCleanup,
   onSyncProblemConfig,
+  onRecoverGoalTerms,
   onEnterConfigEdit,
   onCancelConfigEdit,
   onLoadConfigFromLastRun,
@@ -344,6 +346,21 @@ export function ConfigPanel({
         {waterfallClarifyAlert ? (
           <StatusBanner tone="warning">{waterfallClarifyAlert}</StatusBanner>
         ) : null}
+        {backgroundProcessingError ? (() => {
+          const isGoalTermValidation = backgroundProcessingError.startsWith("goal_term_validation:");
+          const message = isGoalTermValidation
+            ? "Problem Config is out of sync with the Definition (the goal-term keys don't match). Click Recover to clear the conflicting goal terms and re-derive a clean Problem Config from your Definition."
+            : `Background update issue: ${backgroundProcessingError}`;
+          return (
+            <StatusBanner
+              tone="error"
+              actionLabel={isGoalTermValidation && onRecoverGoalTerms ? "Recover" : undefined}
+              onAction={isGoalTermValidation && onRecoverGoalTerms ? () => void onRecoverGoalTerms() : undefined}
+            >
+              {message}
+            </StatusBanner>
+          );
+        })() : null}
         <div className="tabs">
           {([
             ["definition", "Definition"],
@@ -391,10 +408,6 @@ export function ConfigPanel({
           ))}
         </div>
 
-        {backgroundProcessingError && !definitionEditing && !configEditing ? (
-          <StatusBanner tone="error">Background update issue: {backgroundProcessingError}</StatusBanner>
-        ) : null}
-
         {processingStallWarn && backgroundProcessingPending && !configEditing && !definitionEditing && (
           <p className="muted" style={{ margin: "0.35rem 0 0" }}>
             Background update is taking longer than expected. The config area was unlocked so you can keep working;
@@ -412,6 +425,7 @@ export function ConfigPanel({
                   sessionTerminated={sessionTerminated}
                   workflowMode={session?.workflow_mode ?? null}
                   openQuestionsBusy={participantOps.cleaningOpenQuestions}
+                  processingOqIds={participantOps.processingOqIds}
                   suppressTransientMarkers={definitionSaveShieldActive || configBlockingUi}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}

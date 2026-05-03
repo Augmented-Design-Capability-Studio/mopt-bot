@@ -14,8 +14,8 @@ function knapsackStepsForMode(mode: string | undefined): TutorialStep[] {
     : "Tell the assistant about the knapsack task in plain language. The agent will help you make quick assumptions so you can iterate fast. You can paste the starter prompt below to skip typing.";
 
   const updateDefinitionBody = isWaterfall
-    ? "Resolve the open questions in the Definition tab — those are gating the first run. You can also edit any Gathered row inline if a confirmed fact needs adjustment. Then **Save**."
-    : "On the Definition tab, promote any agent assumption you agree with using ⬆, edit a row if you want to refine it, then **Save**.";
+    ? "Click the **Definition** tab. Each open question has an answer field — type your answer inline. Answering them is required before the first run is unlocked. You can also edit any Gathered row, then click **Save**."
+    : "Click the **Definition** tab. Promote any agent assumption you agree with using ⬆, edit a row to refine it if you want, then click **Save**.";
 
   return [
     {
@@ -35,22 +35,18 @@ function knapsackStepsForMode(mode: string | undefined): TutorialStep[] {
       id: "update-definition",
       title: "Step 3 - Update Definition",
       body: updateDefinitionBody,
-      actions: [
-        { kind: "switch-tab", label: "Open Definition", target: "definition" },
-      ],
     },
     {
       id: "inspect-config",
       title: "Step 4 - Inspect Problem Config",
-      body: "Open Problem Config and have a look at the numeric setup. Each goal term has a **type** (Obj / Soft / Hard / Custom), a **rank** (drag to reorder), and an **importance level** you can edit. You don't need to change anything yet.",
-      actions: [
-        { kind: "switch-tab", label: "Open Problem Config", target: "config" },
-      ],
+      body: "Click the **Problem Config** tab. Each goal term has a **type** (Obj / Soft / Hard / Custom), a **rank** (drag to reorder), and an **importance level** you can edit. You don't need to change anything yet.",
     },
     {
       id: "first-run",
       title: "Step 5 - First run",
-      body: "Click **Run optimization** to get a baseline.",
+      body: isWaterfall
+        ? "Click **Run optimization** to get a baseline. If the button is locked, double-check that every open question in the Definition tab has an answer."
+        : "Click **Run optimization** to get a baseline.",
     },
     {
       id: "inspect-results",

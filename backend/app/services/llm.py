@@ -20,6 +20,7 @@ from app.problems.registry import get_study_port
 from app.prompts.study_chat import (
     STUDY_CHAT_BRIEF_UPDATE_TASK,
     STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
+    STUDY_CHAT_OQ_CLASSIFY_TASK,
     STUDY_CHAT_PHASE_CONFIGURATION,
     STUDY_CHAT_PHASE_DISCOVERY,
     STUDY_CHAT_PHASE_STRUCTURING,
@@ -34,7 +35,14 @@ from app.prompts.study_chat import (
     STUDY_CHAT_WORKFLOW_DEMO,
     STUDY_CHAT_WORKFLOW_WATERFALL,
 )
-from app.schemas import ChatModelTurn, ProblemBriefUpdateTurn, RunTriggerIntentTurn
+from app.schemas import (
+    ChatModelTurn,
+    OpenQuestionClassification,
+    OpenQuestionClassifierInput,
+    OpenQuestionClassifierTurn,
+    ProblemBriefUpdateTurn,
+    RunTriggerIntentTurn,
+)
 from app.services.capabilities import build_capabilities_block
 from app.services.chat_context_policy import (
     ChatContextProfile,
@@ -133,6 +141,33 @@ BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "cleanup_mode": {"type": "boolean"},
     },
 }
+
+OQ_CLASSIFIER_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "OpenQuestionClassifierTurn",
+    "type": "object",
+    "properties": {
+        "classifications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question_id": {"type": "string"},
+                    "bucket": {
+                        "type": "string",
+                        "enum": ["gathered", "assumption", "new_open_question"],
+                    },
+                    "rephrased_text": {"type": "string"},
+                    "assumption_text": {"type": "string"},
+                    "new_question_text": {"type": "string"},
+                    "choices": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["question_id", "bucket"],
+            },
+        },
+    },
+    "required": ["classifications"],
+}
+
 
 _DEFINITION_INTENT_JSON_SCHEMA: dict[str, Any] = {
     "title": "DefinitionIntentClassification",
@@ -504,6 +539,7 @@ def _build_brief_update_system_instruction(
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
+    is_config_save: bool = False,
     test_problem_id: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
@@ -558,6 +594,10 @@ def _build_brief_update_system_instruction(
             "omit that question from open_questions, and set replace_open_questions=true. "
             "Do not add gathered items that only describe uploads or session status."
         )
+    if is_config_save:
+        from app.prompts.study_chat import STUDY_CHAT_CONFIG_SAVE_RATIONALE
+
+        parts.append(STUDY_CHAT_CONFIG_SAVE_RATIONALE)
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn (user asked to clean up / consolidate / deduplicate the definition). "
@@ -680,6 +720,7 @@ def generate_problem_brief_update(
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
+    is_config_save: bool = False,
     test_problem_id: str | None = None,
 ) -> ProblemBriefUpdateTurn:
     client = genai.Client(api_key=api_key)
@@ -692,6 +733,7 @@ def generate_problem_brief_update(
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
         is_answered_open_question=is_answered_open_question,
+        is_config_save=is_config_save,
         test_problem_id=test_problem_id,
     )
     history = _history_to_contents(history_lines)
@@ -723,6 +765,74 @@ def generate_problem_brief_update(
     except Exception as e:
         log.warning("Brief-update structured call failed (%s); returning empty patch", e)
         return ProblemBriefUpdateTurn()
+
+
+def classify_answered_open_questions(
+    *,
+    inputs: list[OpenQuestionClassifierInput],
+    workflow_mode: str,
+    current_problem_brief: dict[str, Any] | None,
+    api_key: str,
+    model_name: str,
+    test_problem_id: str | None = None,
+) -> list[OpenQuestionClassification]:
+    """Rephrase + bucket-route a batch of just-answered OQs per workflow rules.
+
+    Returns one classification per input. On any failure (network, parse, missing
+    key) returns an empty list — caller falls back to existing promotion logic so
+    the participant's save is never blocked.
+    """
+    if not inputs:
+        return []
+    brief_for_prompt = surface_problem_brief_for_chat_prompt(
+        current_problem_brief, cold=is_chat_cold_start(current_problem_brief)
+    )
+    brief_blob = (
+        json.dumps(brief_for_prompt, indent=2, ensure_ascii=False)
+        if brief_for_prompt is not None
+        else "{}"
+    )
+    parts = [
+        *_system_prompt_openers(test_problem_id, current_problem_brief),
+        _workflow_prompt(workflow_mode),
+        STUDY_CHAT_OQ_CLASSIFY_TASK,
+        f"Workflow mode for this batch: **{workflow_mode}**",
+        "Brief snapshot (use it for terminology consistency only — do not echo it back):",
+        brief_blob,
+    ]
+    system_instruction = "\n\n".join(parts)
+    payload = {
+        "answered_open_questions": [item.model_dump() for item in inputs],
+    }
+    user_text = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=OQ_CLASSIFIER_RESPONSE_JSON_SCHEMA,
+    )
+    try:
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=user_text,
+            config=config,
+        )
+        raw = resp.text
+        log.info(
+            "OQ-classify Gemini raw response: %s",
+            raw if raw is not None else "<no text>",
+        )
+        if isinstance(resp.parsed, dict):
+            turn = OpenQuestionClassifierTurn.model_validate(resp.parsed)
+        elif raw:
+            turn = OpenQuestionClassifierTurn.model_validate_json(raw)
+        else:
+            return []
+        return list(turn.classifications)
+    except Exception as e:
+        log.warning("OQ-classify structured call failed (%s); returning empty", e)
+        return []
 
 
 def generate_chat_turn(

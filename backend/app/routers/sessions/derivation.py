@@ -367,6 +367,7 @@ def _run_background_derivation(
     clear_requested: bool,
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
+    is_config_save: bool = False,
     test_problem_id: str | None = None,
 ) -> None:
     try:
@@ -387,6 +388,7 @@ def _run_background_derivation(
                     cleanup_mode=cleanup_requested,
                     is_run_acknowledgement=is_run_acknowledgement,
                     is_answered_open_question=is_answered_open_question,
+                    is_config_save=is_config_save,
                     test_problem_id=test_problem_id,
                 ),
                 timeout_sec,

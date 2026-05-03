@@ -42,20 +42,22 @@ function defaultStepsForMode(mode: string | undefined): TutorialStep[] {
       id: "update-definition",
       title: "Step 3 - Update Definition",
       body: isAgile
-        ? "Adjust assumptions or gathered facts in Definition, then Save."
+        ? "Click the **Definition** tab. Adjust assumptions or gathered facts inline, then click **Save**."
         : isWaterfall
-          ? "Resolve clarifications/open questions where possible, edit any rows that need refinement, then Save."
-          : "Update Definition content and click Save.",
+          ? "Click the **Definition** tab and answer the open questions inline — those answers gate the first run. You can also edit any Gathered row, then click **Save**."
+          : "Click the **Definition** tab, update content as needed, and click **Save**.",
     },
     {
       id: "inspect-config",
       title: "Step 4 - Inspect Problem Config",
-      body: "Open the Problem Config tab and review the numeric setup the solver will use. You don't need to change anything yet.",
+      body: "Click the **Problem Config** tab and review the numeric setup the solver will use. You don't need to change anything yet.",
     },
     {
       id: "first-run",
       title: "Step 5 - First run",
-      body: "Start the first optimization run with the Run button (or by asking in chat).",
+      body: isWaterfall
+        ? "Start the first optimization run with the Run button. If the button is locked, double-check that every open question in the Definition tab has an answer."
+        : "Start the first optimization run with the Run button (or by asking in chat).",
     },
     {
       id: "inspect-results",

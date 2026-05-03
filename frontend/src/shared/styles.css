@@ -802,18 +802,39 @@ select:focus-visible {
   border-bottom: 2px solid var(--border);
 }
 
-.definition-section-toggle {
-  all: unset;
+button.definition-section-toggle {
+  font: inherit;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--fg-muted, #666);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid var(--border);
+  padding: 0 0 0.25rem 0;
+  margin: 0;
   box-sizing: border-box;
   display: flex;
   width: 100%;
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
+  text-align: left;
 }
 
-.definition-section-toggle:hover {
+button.definition-section-toggle.is-collapsed {
+  border-bottom-style: dashed;
+  color: var(--muted, #888);
+}
+
+button.definition-section-toggle:hover {
   color: var(--fg, #333);
+}
+
+button.definition-section-toggle:focus-visible {
+  outline: 2px solid var(--focus, #4a90e2);
+  outline-offset: 2px;
 }
 
 .definition-section-toggle-meta {
@@ -825,10 +846,19 @@ select:focus-visible {
 }
 
 .definition-section-chevron {
-  font-size: 0.65rem;
+  font-size: 0.8rem;
   letter-spacing: 0;
   text-transform: none;
   line-height: 1;
+  display: inline-block;
+  width: 0.9rem;
+  text-align: center;
+  color: var(--fg, #333);
+  transition: transform 120ms ease;
+}
+
+button.definition-section-toggle.is-collapsed .definition-section-chevron {
+  transform: rotate(0deg);
 }
 
 .definition-count {
@@ -1074,6 +1104,74 @@ select:focus-visible {
 .definition-answer-textarea {
   min-height: 1.65rem;
   margin-top: 0.18rem;
+}
+
+.definition-item-processing {
+  position: relative;
+  opacity: 0.85;
+}
+
+.definition-item-processing::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0) 30%,
+    rgba(245, 245, 240, 0.55) 50%,
+    rgba(255, 255, 255, 0) 70%
+  );
+  background-size: 200% 100%;
+  animation: definition-processing-shimmer 1.4s linear infinite;
+  border-radius: inherit;
+}
+
+@keyframes definition-processing-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.definition-answer-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.definition-answer-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border, #d8d4cb);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  background: #fff;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.definition-answer-choice:hover {
+  border-color: var(--accent, #6a6a6a);
+}
+
+.definition-answer-choice.is-selected {
+  border-color: var(--accent, #6a6a6a);
+  background: #f5f3ee;
+}
+
+.definition-answer-choice input[type="radio"] {
+  margin: 0;
+}
+
+.definition-answer-textarea-fallback {
+  margin-top: 0.1rem;
+  font-size: 0.85rem;
 }
 
 .definition-delete-marker {

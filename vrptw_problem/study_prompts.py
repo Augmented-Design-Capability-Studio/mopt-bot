@@ -141,6 +141,13 @@ Rules:
   "travel_time", "shift_limit", "lateness_penalty", "capacity_penalty",
   "workload_balance", "worker_preference", "express_miss_penalty", "waiting_time".
 - If "weights" is emitted, include only terms justified by the brief.
+- **Only emit a weight key when the participant explicitly asked for that concept
+  to be emphasized or penalized.** If the brief or open-question answers indicate
+  the participant **rejected**, **denied**, said **"no"** to, or expressed **no
+  preference** about a concept (e.g. "no workload-balance preference", "don't
+  care about waiting", "we don't need a shift cap"), **omit the corresponding
+  weight key entirely** — do not include it with a small weight, an inactive
+  flag, or any other placeholder. When in doubt, omit.
 - When emitting "weights", also emit matching `"constraint_types"` for non-objective terms:
   - keep one main optimization target implicit (objective by omission),
   - use `"soft"` for trade-off penalties/preferences,

@@ -82,7 +82,23 @@ def validate_problem_goal_terms(
     problem: dict[str, Any] | None,
     problem_brief: dict[str, Any] | None,
     weight_slot_markers: dict[str, tuple[str, ...]],
+    check_grounding: bool = True,
 ) -> None:
+    """Validate goal-term shape, type, order, and (optionally) brief grounding.
+
+    `check_grounding=True` is the default for LLM-derived panels — the brief is
+    treated as the source of truth, so any panel goal_term key not grounded by
+    a brief item is flagged as `goal_term_hallucinated`. Note that the
+    `goal_term_missing` direction (brief grounds X, panel doesn't have X) is
+    intentionally **not** reported any more: the text-marker grounding in
+    `_grounded_goal_term_keys` is lossy (e.g. "no sparsity preference" still
+    matches the marker "sparsity"), and the missing-side check perversely
+    forced LLMs to keep hallucinated rejected terms during retry-with-feedback.
+
+    `check_grounding=False` is for user-driven panel saves, where the participant
+    is authoritative — they may add or remove goal_terms freely. The brief
+    catches up on the same turn via the chat-driven hidden brief update.
+    """
     if not isinstance(problem, dict):
         return
     goal_terms = problem.get("goal_terms")
@@ -131,32 +147,25 @@ def validate_problem_goal_terms(
                     }
                 )
 
-    grounded_keys = _grounded_goal_term_keys(problem_brief, weight_slot_markers=weight_slot_markers)
-    if grounded_keys:
-        missing = sorted(grounded_keys - present_keys)
-        hallucinated = sorted(present_keys - grounded_keys)
-        for key in missing:
-            reasons.append(
-                {
-                    "code": "goal_term_missing",
-                    "message": f"grounded goal term '{key}' is missing from goal_terms.",
-                }
-            )
-        for key in hallucinated:
-            reasons.append(
-                {
-                    "code": "goal_term_hallucinated",
-                    "message": f"goal term '{key}' is not grounded in definition items.",
-                }
-            )
-    elif present_keys:
-        for key in sorted(present_keys):
-            reasons.append(
-                {
-                    "code": "goal_term_hallucinated",
-                    "message": f"goal term '{key}' is not grounded in definition items.",
-                }
-            )
+    if check_grounding:
+        grounded_keys = _grounded_goal_term_keys(problem_brief, weight_slot_markers=weight_slot_markers)
+        if grounded_keys:
+            hallucinated = sorted(present_keys - grounded_keys)
+            for key in hallucinated:
+                reasons.append(
+                    {
+                        "code": "goal_term_hallucinated",
+                        "message": f"goal term '{key}' is not grounded in definition items.",
+                    }
+                )
+        elif present_keys:
+            for key in sorted(present_keys):
+                reasons.append(
+                    {
+                        "code": "goal_term_hallucinated",
+                        "message": f"goal term '{key}' is not grounded in definition items.",
+                    }
+                )
 
     if reasons:
         raise GoalTermValidationError(reasons)

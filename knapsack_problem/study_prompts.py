@@ -47,7 +47,18 @@ Given the current problem brief, produce a single JSON object with exactly:
 Rules:
 - Prefer values explicitly stated in the problem brief.
 - Do not preserve old managed values just because they existed before.
-- Emit "weights" only with keys: "value_emphasis", "capacity_overflow", "selection_sparsity".
+- Available weight keys: "value_emphasis", "capacity_overflow", "selection_sparsity".
+- **Only emit a weight key when the participant explicitly asked for that concept
+  to be emphasized or penalized.** Do not emit a key just because it is available
+  in the schema. Specifically:
+    - If the brief or open-question answers indicate the participant **rejected**,
+      **denied**, said **"no"** to, or expressed **no preference** about a concept
+      (e.g. "no sparsity preference", "don't care about item count",
+      "we don't need to limit items"), **omit the corresponding weight key**.
+      Do NOT include it with a small weight, an inactive flag, or any other
+      placeholder — leave it out of `weights` entirely.
+    - When in doubt about whether a concept was requested, **omit it** rather
+      than include it. The participant can always ask to add it later.
 - When emitting multiple weight keys, also emit `"constraint_types"` for non-objective terms:
   keep one primary objective implicit, classify most others as `"soft"`/`"hard"` constraints
   based on user intent, and use `"custom"` only for explicit user-requested manual weighting.

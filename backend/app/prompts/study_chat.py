@@ -262,6 +262,67 @@ STUDY_CHAT_RUN_ACK_DEMO = """
 
 
 # ---------------------------------------------------------------------------
+# Open-question answer classifier — used by classify_answered_open_questions().
+# Routes each just-answered OQ into one of three buckets per workflow mode.
+# ---------------------------------------------------------------------------
+
+STUDY_CHAT_OQ_CLASSIFY_TASK = """
+You receive a batch of open questions a participant just answered in the Definition panel.
+For each one, decide a **bucket** and emit the appropriate payload. Output only the structured
+JSON shape requested — no chat, no markdown.
+
+## Buckets
+
+- **gathered**: the participant gave a **concrete, usable** answer. Emit `bucket="gathered"` and
+  `rephrased_text` — one short sentence in the present tense that reads as a fact, **without** the
+  question scaffolding. Examples:
+  - Q "How strict is the capacity limit?" + A "30 max" → "Capacity is capped at 30 per route."
+  - Q "Should overtime be penalized?" + A "yes, heavily" → "Overtime is penalized heavily."
+  - Q "Are deadlines hard?" + A "they're firm but small slips ok" → "Deadlines are firm; small slips are tolerable."
+  Strip filler ("I think", "maybe"), keep substance. Never echo the question text. Do not start
+  with "Q:" / "A:" / "Question —". Capitalize the first letter; end with a period.
+
+- **assumption** (agile workflows only): the answer is **hedged** — phrases like "i don't know",
+  "not sure", "you decide", "either way", "doesn't matter", "whatever you think", "up to you", or
+  the answer carries no substantive information (under ~2 substantive words). Emit
+  `bucket="assumption"` and `assumption_text` — one short sentence stating the **modeling choice
+  you would make on their behalf**, in plain language (not config-key jargon). Example:
+  - Q "How strict is the capacity limit?" + A "you decide" → "Assume capacity is a soft constraint
+    with moderate penalty (so a small overflow is allowed when it improves overall cost)."
+
+- **new_open_question** (waterfall workflows only): the answer is hedged (same triggers as
+  assumption above). Emit `bucket="new_open_question"` with `new_question_text` — a **simpler**
+  re-ask of the same underlying decision — and `choices` — 2 to 4 mutually exclusive,
+  concretely-actionable options. Choices must be short noun phrases or imperatives, not full
+  sentences. Example:
+  - Q "How strict is the capacity limit?" + A "you decide" →
+    new_question_text: "Roughly how strict is the capacity limit?"
+    choices: ["Hard cap, never exceed", "Soft, small overflow is ok", "Doesn't matter much"]
+
+## Hedge detection
+
+Treat as hedged when the answer:
+- matches: i don't know, idk, not sure, no idea, you decide, you choose, your call, up to you,
+  either way, doesn't matter, whatever, whatever you think, whichever, no preference
+- is empty or whitespace-only
+- is shorter than ~2 substantive words (filler-only like "yeah", "ok", "fine" without context)
+
+A concrete answer with **mild** hedging ("around 30 I think", "probably soft") is **not** hedged —
+extract the substance and emit `bucket="gathered"`.
+
+## Workflow gating (strict)
+
+- **Waterfall**: never emit `bucket="assumption"`. If hedged, always `bucket="new_open_question"`.
+  Never invent assumptions on the participant's behalf in waterfall — the participant must answer.
+- **Agile**: never emit `bucket="new_open_question"`. If hedged, always `bucket="assumption"`.
+  Agile prefers progress over re-asking.
+- **Demo / unspecified**: behave like agile (use assumption for hedged answers).
+
+The workflow mode for this batch is provided in the system instruction — honor it strictly.
+""".strip()
+
+
+# ---------------------------------------------------------------------------
 # Run-acknowledgement rules — appended when the user message is an auto-posted
 # run-complete context (e.g. "Run #1 just completed - cost 123..."). Prevents
 # run-result contamination of the problem definition while allowing targeted
@@ -552,6 +613,47 @@ Your JSON has **no** `assistant_message`; only `problem_brief_patch`, `replace_e
 
 **Cleanup + saved panel:** When the system message includes **current saved panel configuration** JSON, treat `problem.weights`, `algorithm`, `epochs`, `pop_size`, and benchmark-specific penalties or extras as **authoritative**. Write matching numeric detail into the appropriate gathered rows; the server also merges canonical config lines from the panel after cleanup so values are not lost.
 """.strip()
+
+
+# Appended to the hidden brief-update system instruction when the user message
+# is the synthetic "I manually updated the problem configuration" turn (see
+# `intent.is_config_save_context_message`). The participant just edited the
+# Problem Config panel; the panel is authoritative for this turn ("reverse
+# validation"), and we want the LLM to refresh the matching brief rows in
+# natural-language style instead of leaving the deterministic mirror's flat
+# boilerplate.
+STUDY_CHAT_CONFIG_SAVE_RATIONALE = """
+## Config-save context (panel is authoritative this turn)
+
+The participant just saved a Problem Config edit. The user message lists the
+exact settings that changed (often with old → new values). For this turn:
+
+- **Treat the panel as the source of truth.** Do not push back on goal-term
+  removals or additions the participant made — the brief should follow the
+  panel, not the other way around.
+- **Refresh affected brief rows in natural language.** For each goal term whose
+  weight, type, rank, or presence changed, find any existing brief row whose
+  subject is that term and update the text to reflect the new value while
+  **preserving the prior rationale** the participant or you previously stated
+  (e.g. "value emphasis bumped from 5 to 7 by the participant — keeping the
+  push for fuller bags"). Avoid flat boilerplate like "X is a primary objective
+  term (weight Y)."
+- **Note the manual adjustment naturally.** Phrases like "the participant
+  raised this to 7", "set by the participant to a hard 200", "removed by the
+  participant", or "the participant kept this at 5" make it clear the value
+  came from a deliberate panel edit, not from your inference.
+- **Removed terms.** If a term was removed from goal_terms, update or drop the
+  matching brief row to reflect the rejection — don't restate the term as if
+  still active. If there is a related answered open question or assumption
+  about that term, leave its rationale visible (the participant has it on
+  record), but make clear the term is no longer being optimized.
+- **Other settings.** For algorithm, iterations, population, and other non-goal
+  fields that changed, update the search-strategy row(s) similarly and keep it
+  one concise gathered row per slot.
+- **Don't introduce new unrelated assumptions or open questions** on this turn.
+  Stay focused on reflecting the participant's manual edits faithfully.
+""".strip()
+
 
 STUDY_CHAT_PHASE_DISCOVERY = """
 ## Phase guidance: discovery

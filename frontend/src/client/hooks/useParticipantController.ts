@@ -546,6 +546,7 @@ export function useParticipantController() {
     saveConfig: actions.saveConfig,
     saveProblemBrief: actions.saveProblemBrief,
     syncProblemConfig: actions.syncProblemConfig,
+    recoverGoalTerms: actions.recoverGoalTerms,
     runOptimize: actions.runOptimize,
     cancelOptimize: actions.cancelOptimize,
     runEvaluateEdited: actions.runEvaluateEdited,

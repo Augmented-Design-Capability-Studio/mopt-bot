@@ -212,6 +212,9 @@ export type ProblemBriefQuestion = {
   text: string;
   status: "open" | "answered";
   answer_text: string | null;
+  // Set on follow-up questions raised by the waterfall hedge classifier.
+  // When non-empty, render the OQ card as radio buttons over these labels.
+  choices?: string[] | null;
 };
 
 export type ProblemBrief = {

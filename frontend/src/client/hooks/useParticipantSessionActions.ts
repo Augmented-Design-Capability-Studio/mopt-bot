@@ -22,7 +22,7 @@ import { patchForTutorialEvent, type ParticipantTutorialPatch } from "../../tuto
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { computeCanRunOptimization } from "../lib/optimizationGate";
-import { configChangeSummary } from "../problemConfig/configSummary";
+import { configChangeDetailedSummary, configChangeSummary } from "../problemConfig/configSummary";
 import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
@@ -400,6 +400,7 @@ export function useParticipantSessionActions({
     }
     const previousPanel = session?.panel_config ?? null;
     const changedKeys = configChangeSummary(previousPanel, parsed);
+    const detailedChanges = configChangeDetailedSummary(previousPanel, parsed);
     const acknowledgement = "";
     setBusy(true);
     setParticipantOps((prev) => ({ ...prev, savingConfig: true }));
@@ -416,15 +417,31 @@ export function useParticipantSessionActions({
       const tutorialPatch = patchForTutorialEvent("config-saved", nextSession);
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) {
+        // Run the hidden brief update so the LLM can refresh affected brief
+        // rows in natural language (preserving prior rationale, noting that
+        // the participant adjusted the value themselves). The backend
+        // detects this context message and injects the rationale-preservation
+        // prompt fragment.
         void postContextMessage(
-          `I manually updated the problem configuration. Changed settings: ${changedKeys}. Please acknowledge in 1-2 short sentences, use participant-friendly names, and keep the impact explanation concise.`,
+          `I manually updated the problem configuration. Changed settings: ${changedKeys}. ` +
+            `Detailed changes: ${detailedChanges}. ` +
+            `Please acknowledge in 1-2 short sentences using participant-friendly names, then update the brief rows for the affected settings while preserving any prior rationale.`,
           true,
-          { skipHiddenBriefUpdate: true },
+          { skipHiddenBriefUpdate: false },
         );
       }
       void refetchSnapshots?.();
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Save failed");
+      const raw = error instanceof Error ? error.message : "Save failed";
+      // Goal-term-validation errors are caused by stale/hallucinated panel
+      // goal_terms that no longer match the brief. Surface the Recover button
+      // path instead of the raw JSON detail, and refresh the session so the
+      // banner picks up the latest processing_error.
+      const friendly = raw.includes("goal_term_validation") || raw.includes("Goal-term validation")
+        ? "Save blocked: Problem Config goal terms are out of sync with the Definition. Use the Recover button in the banner above the tabs to clear and re-derive."
+        : raw;
+      setError(friendly);
+      void syncSession();
     } finally {
       setParticipantOps((prev) => ({ ...prev, savingConfig: false }));
       setBusy(false);
@@ -445,6 +462,7 @@ export function useParticipantSessionActions({
     setProblemBrief,
     setSession,
     setParticipantTutorialState,
+    syncSession,
     token,
   ]);
 
@@ -457,9 +475,28 @@ export function useParticipantSessionActions({
     if (!previousBrief) return false;
     const changedSummary = problemBriefChangeSummary(previousBrief, cleanedBrief);
     const acknowledgement = `Problem definition saved (${changedSummary}).`;
+
+    // Identify OQs whose status flipped to "answered" with a non-empty answer in this save.
+    // Each such card shows a spinning shield until the PATCH response returns — the backend
+    // classifier rephrases concrete answers and routes hedged ones to assumptions or to a
+    // simpler follow-up question.
+    const baselineOqStatusById = new Map(
+      previousBrief.open_questions.map((q) => [q.id, q.status] as const),
+    );
+    const flippedOqIds: string[] = [];
+    for (const q of cleanedBrief.open_questions) {
+      const wasAnswered = baselineOqStatusById.get(q.id) === "answered";
+      const nowAnswered = q.status === "answered" && (q.answer_text ?? "").trim().length > 0;
+      if (nowAnswered && !wasAnswered) flippedOqIds.push(q.id);
+    }
+
     savingProblemBriefRef.current = true;
     setBusy(true);
-    setParticipantOps((prev) => ({ ...prev, savingDefinition: true }));
+    setParticipantOps((prev) => {
+      const nextProcessing = new Set(prev.processingOqIds);
+      for (const id of flippedOqIds) nextProcessing.add(id);
+      return { ...prev, savingDefinition: true, processingOqIds: nextProcessing };
+    });
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
         method: "PATCH",
@@ -491,7 +528,11 @@ export function useParticipantSessionActions({
       return false;
     } finally {
       savingProblemBriefRef.current = false;
-      setParticipantOps((prev) => ({ ...prev, savingDefinition: false }));
+      setParticipantOps((prev) => {
+        const nextProcessing = new Set(prev.processingOqIds);
+        for (const id of flippedOqIds) nextProcessing.delete(id);
+        return { ...prev, savingDefinition: false, processingOqIds: nextProcessing };
+      });
       setBusy(false);
     }
   }, [
@@ -655,6 +696,34 @@ export function useParticipantSessionActions({
     setError,
     setParticipantOps,
     setSyncingProblemConfig,
+    setProblemBrief,
+    setSession,
+    token,
+  ]);
+
+  const recoverGoalTerms = useCallback(async () => {
+    if (!token || !sessionId) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/recover-goal-terms`, token, {
+        method: "POST",
+      });
+      setSession(nextSession);
+      problemPanelHydrationRef.current = "follow";
+      setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+      setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Recovery failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    problemPanelHydrationRef,
+    sessionId,
+    setBusy,
+    setConfigText,
+    setError,
     setProblemBrief,
     setSession,
     token,
@@ -870,7 +939,7 @@ export function useParticipantSessionActions({
     const runCost = run.cost == null ? "?" : run.cost.toFixed(2);
     const violationSummary = getProblemModule(session?.test_problem_id ?? "").formatRunViolationSummary?.(run.result) ?? "—";
     await postContextMessage(
-      `Please explain Run #${runNo} in plain language for the participant. Include: (1) strengths, (2) likely local-improvement opportunities they may notice, (3) why a metaheuristic can still return this solution under current trade-offs, and (4) one or two concrete next-run adjustments. Context: cost=${runCost}, violations=${violationSummary}.`,
+      `Please explain Run #${runNo} in plain language for me. Include: (1) strengths, (2) likely local-improvement opportunities they may notice, (3) why a metaheuristic can still return this solution under current trade-offs, and (4) one or two concrete next-run adjustments. Context: cost=${runCost}, violations=${violationSummary}.`,
       true,
     );
   }, [postContextMessage, session?.status, session?.test_problem_id, sessionId, token]);
@@ -927,6 +996,7 @@ export function useParticipantSessionActions({
     saveConfig,
     saveProblemBrief,
     syncProblemConfig,
+    recoverGoalTerms,
     restoreFromSnapshot,
     runOptimize,
     runEvaluateEdited,

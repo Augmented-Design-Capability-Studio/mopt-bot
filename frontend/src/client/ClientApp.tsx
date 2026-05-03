@@ -78,6 +78,7 @@ export function ClientApp() {
       onEnsureDefinitionEditing={controller.ensureDefinitionEditing}
       isDefinitionDirty={controller.isDefinitionDirty}
       onSyncProblemConfig={controller.syncProblemConfig}
+      onRecoverGoalTerms={controller.recoverGoalTerms}
       onEnterConfigEdit={controller.enterConfigEdit}
       onCancelConfigEdit={controller.cancelConfigEdit}
       onLoadConfigFromLastRun={controller.loadConfigFromLastRun}

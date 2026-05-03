@@ -21,8 +21,16 @@ _ANSWERED_OPEN_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bI answered an open question\b", re.IGNORECASE),
 )
 _INTERPRET_ONLY_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bI manually updated the problem configuration\b", re.IGNORECASE),
+    # Run-completion turns are interpretation-only by design (the run output is
+    # not a brief edit). Config-save turns USED to be in this list, but they
+    # now run the hidden brief update so the LLM can refresh affected brief
+    # rows in natural language and preserve any prior rationale.
     re.compile(r"\bRun\s*#\d+.*just completed\b", re.IGNORECASE),
+)
+
+
+_CONFIG_SAVE_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bI manually updated the problem configuration\b", re.IGNORECASE),
 )
 _CLEAR_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bclear\b.{0,40}\b(definition|brief|gathered|assumption|open question|everything|all)\b", re.IGNORECASE),
@@ -68,6 +76,20 @@ def is_interpret_only_context_message(content: str) -> bool:
     if not text:
         return False
     return any(pattern.search(text) for pattern in _INTERPRET_ONLY_CONTEXT_PATTERNS)
+
+
+def is_config_save_context_message(content: str) -> bool:
+    """True for the synthetic 'I manually updated the problem configuration' turn.
+
+    These turns DO run the hidden brief update — the prompt assembly uses this
+    helper to add a rationale-preservation fragment so the LLM rewrites the
+    affected brief rows naturally instead of leaving the deterministic mirror
+    boilerplate in place.
+    """
+    text = content.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _CONFIG_SAVE_CONTEXT_PATTERNS)
 
 
 _ASSISTANT_RUN_INVITATION_PATTERNS: tuple[re.Pattern[str], ...] = (

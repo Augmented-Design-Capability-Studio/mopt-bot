@@ -84,6 +84,17 @@ Panel→brief injection for the `config-search-strategy` gathered row (`_brief_i
 
 Waterfall Definition invariant: do not persist `kind: "assumption"` rows; missing information is tracked as `open_questions` until confirmed.
 
+### Open-question answer routing (on save)
+
+When the participant saves the Definition, the PATCH `/sessions/{id}/problem-brief` handler diffs incoming vs persisted `open_questions` to find OQs that just transitioned to `status: "answered"`. Each such answer is sent to a dedicated batched classifier (`classify_answered_open_questions` in `backend/app/services/llm.py`, prompt `STUDY_CHAT_OQ_CLASSIFY_TASK`) which rephrases concrete answers and bucket-routes hedged ones per workflow:
+
+- **Concrete answer** (any mode) → `gathered` item with the LLM-rephrased fact (one short sentence; no "Question — Answer" scaffolding).
+- **Hedged answer** ("you decide" / "i don't know" / "not sure" / etc):
+  - **Waterfall** → the original OQ is replaced with a *simpler* follow-up `open_question` carrying 2–4 concrete `choices` (rendered as radio buttons on the OQ card). Never an assumption — preserves the waterfall "no assumptions" invariant.
+  - **Agile / demo** → the OQ is dropped and an `assumption` item (source `agent`) is appended; the agile-mode chat rule "announce assumptions in visible chat" still applies.
+
+A failed/empty classifier response (network, parse, missing key) falls through to the legacy `_promote_answered_open_questions_to_gathered` path, so saves are never blocked. The `ProblemBriefQuestion` schema gained an optional `choices: list[str] | None` for follow-up cards. Per-card processing state on the frontend (`participantOps.processingOqIds`) shows a spinning shield and locks input on each just-answered card while the round-trip is in flight.
+
 ### LLM prompts
 
 All prompts live in `backend/app/prompts/` (primarily `study_chat.py`). The system instruction injects the current brief, last 4 run summaries, and researcher steering notes, plus temperature-aware context policy. Temperature is resolved model-first in `backend/app/services/llm.py` (cold/warm/hot classifier), with deterministic fallback from `backend/app/services/chat_context_policy.py` when classifier output is unavailable (session evidence only: brief/panel/runs; no keyword/regex matching):

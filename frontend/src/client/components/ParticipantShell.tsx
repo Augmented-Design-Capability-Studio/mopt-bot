@@ -90,6 +90,7 @@ type ParticipantShellProps = {
   onEnsureDefinitionEditing: () => void;
   isDefinitionDirty: boolean;
   onSyncProblemConfig: () => void | Promise<void>;
+  onRecoverGoalTerms?: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
@@ -165,6 +166,7 @@ export function ParticipantShell({
   onEnsureDefinitionEditing,
   isDefinitionDirty,
   onSyncProblemConfig,
+  onRecoverGoalTerms,
   onEnterConfigEdit,
   onCancelConfigEdit,
   onLoadConfigFromLastRun,
@@ -512,6 +514,7 @@ export function ParticipantShell({
             onRequestDefinitionCleanup={onRequestDefinitionCleanup}
             onRequestOpenQuestionCleanup={onRequestOpenQuestionCleanup}
             onSyncProblemConfig={onSyncProblemConfig}
+            onRecoverGoalTerms={onRecoverGoalTerms}
             onEnterConfigEdit={onEnterConfigEdit}
             onCancelConfigEdit={onCancelConfigEdit}
             onLoadConfigFromLastRun={onLoadConfigFromLastRun}

@@ -31,6 +31,7 @@ from app.schemas import (
     MessageCreate,
     MessageOut,
     ModelSettingsBody,
+    OpenQuestionClassifierInput,
     ParticipantPanelUpdate,
     ParticipantProblemBriefUpdate,
     ParticipantTutorialUpdate,
@@ -55,6 +56,156 @@ from . import context, derivation, helpers, intent, sync
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 log = logging.getLogger(__name__)
 SIMULATED_UPLOAD_MESSAGE_PREFIX = "I'm uploading the following file(s): "
+
+
+def _route_oq_answers_through_classifier(
+    *,
+    incoming_brief: dict[str, Any],
+    persisted_open_questions: list[dict[str, Any]],
+    workflow_mode: str,
+    api_key: str | None,
+    model_name: str,
+    test_problem_id: str | None,
+) -> dict[str, Any]:
+    """Mutate `incoming_brief` so newly-answered OQs are rephrased + bucketed by the LLM.
+
+    For each OQ that flipped to status="answered" with non-empty answer_text:
+    - bucket="gathered": drop the OQ, append a `gathered` item with the rephrased text.
+    - bucket="assumption" (agile/demo only): drop the OQ, append an `assumption` item.
+    - bucket="new_open_question" (waterfall only): replace the OQ with a simpler follow-up
+      carrying `choices`.
+    Inputs the classifier doesn't return (or that fail mode-gating) stay as answered OQs
+    so the legacy `_promote_answered_open_questions_to_gathered` step in normalization
+    handles them as fallback.
+    """
+    if not api_key:
+        return incoming_brief
+    open_questions = incoming_brief.get("open_questions") or []
+    if not isinstance(open_questions, list):
+        return incoming_brief
+
+    persisted_by_id = {
+        str(q.get("id") or ""): q
+        for q in persisted_open_questions
+        if isinstance(q, dict)
+    }
+
+    inputs: list[OpenQuestionClassifierInput] = []
+    for q in open_questions:
+        if not isinstance(q, dict):
+            continue
+        if str(q.get("status") or "").strip().lower() != "answered":
+            continue
+        answer = str(q.get("answer_text") or "").strip()
+        if not answer:
+            continue
+        qid = str(q.get("id") or "").strip()
+        prior = persisted_by_id.get(qid)
+        already_answered = (
+            prior is not None
+            and str(prior.get("status") or "open").strip().lower() == "answered"
+        )
+        if already_answered:
+            continue
+        text = str(q.get("text") or "").strip()
+        if not text:
+            continue
+        inputs.append(
+            OpenQuestionClassifierInput(
+                question_id=qid or text,
+                question_text=text,
+                answer_text=answer,
+            )
+        )
+
+    if not inputs:
+        return incoming_brief
+
+    from app.services.llm import classify_answered_open_questions
+
+    classifications = classify_answered_open_questions(
+        inputs=inputs,
+        workflow_mode=workflow_mode,
+        current_problem_brief=incoming_brief,
+        api_key=api_key,
+        model_name=model_name,
+        test_problem_id=test_problem_id,
+    )
+    if not classifications:
+        return incoming_brief
+
+    classified_by_id: dict[str, Any] = {}
+    for entry in classifications:
+        classified_by_id[str(entry.question_id)] = entry
+
+    mode = (workflow_mode or "").strip().lower()
+    next_questions: list[dict[str, Any]] = []
+    items = list(incoming_brief.get("items") or [])
+
+    for q in open_questions:
+        if not isinstance(q, dict):
+            next_questions.append(q)
+            continue
+        qid = str(q.get("id") or "").strip()
+        c = classified_by_id.get(qid) or classified_by_id.get(str(q.get("text") or "").strip())
+        if c is None:
+            next_questions.append(q)
+            continue
+
+        if c.bucket == "new_open_question" and mode == "waterfall":
+            new_text = (c.new_question_text or "").strip()
+            new_choices = [s.strip() for s in (c.choices or []) if isinstance(s, str) and s.strip()]
+            if not new_text or len(new_choices) < 2:
+                next_questions.append(q)
+                continue
+            next_questions.append(
+                {
+                    "id": f"{qid}-followup" if qid else f"question-followup-{len(next_questions)}",
+                    "text": new_text,
+                    "status": "open",
+                    "answer_text": None,
+                    "choices": new_choices,
+                }
+            )
+            continue
+
+        if c.bucket == "assumption" and mode in ("agile", "demo"):
+            assumption_text = (c.assumption_text or "").strip()
+            if not assumption_text:
+                next_questions.append(q)
+                continue
+            items.append(
+                {
+                    "id": f"item-assumption-from-question-{qid}" if qid else f"item-assumption-{len(items)}",
+                    "text": assumption_text,
+                    "kind": "assumption",
+                    "source": "agent",
+                }
+            )
+            continue
+
+        if c.bucket == "gathered":
+            rephrased = (c.rephrased_text or "").strip()
+            if not rephrased:
+                next_questions.append(q)
+                continue
+            items.append(
+                {
+                    "id": f"item-gathered-from-question-{qid}" if qid else f"item-gathered-{len(items)}",
+                    "text": rephrased,
+                    "kind": "gathered",
+                    "source": "user",
+                }
+            )
+            continue
+
+        # Mode mismatch (e.g. classifier emitted assumption for waterfall) — leave the OQ
+        # answered so legacy normalization promotes it the old way.
+        next_questions.append(q)
+
+    incoming_brief["items"] = items
+    incoming_brief["open_questions"] = next_questions
+    return incoming_brief
 
 
 def _session_has_uploaded_data(db: Session, session_id: str) -> bool:
@@ -506,6 +657,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             current_problem_brief = helpers.problem_brief_dict(row)
             updated_panel = current
             is_answer_save = intent.is_answered_open_question_message(body.content)
+            is_config_save = intent.is_config_save_context_message(body.content)
             turn = None
             try:
                 from app.services.llm import classify_definition_intents, generate_chat_turn
@@ -686,6 +838,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     clear_requested=clear_requested,
                     is_run_acknowledgement=is_run_ack,
                     is_answered_open_question=is_answer_save,
+                    is_config_save=is_config_save,
                     test_problem_id=row.test_problem_id,
                 )
 
@@ -1200,18 +1353,50 @@ def patch_participant_panel(
     from app.problems.registry import get_study_port
 
     port = get_study_port(row.test_problem_id)
-    try:
-        sync.validate_problem_goal_terms(
-            problem=(
-                body.panel_config.get("problem")
-                if isinstance(body.panel_config.get("problem"), dict)
-                else body.panel_config
-            ),
-            problem_brief=helpers.problem_brief_dict(row),
-            weight_slot_markers=port.weight_slot_markers(),
-        )
-    except sync.GoalTermValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
+
+    # Only validate goal_terms when the participant actually changed them.
+    # A pre-existing mismatch (e.g. a stale LLM-hallucinated key) shouldn't
+    # block a save that only edits unrelated fields like algorithm or epochs;
+    # the Recover banner is the path to clean that up.
+    submitted_problem = (
+        body.panel_config.get("problem")
+        if isinstance(body.panel_config.get("problem"), dict)
+        else body.panel_config
+    )
+    submitted_goal_terms = (
+        submitted_problem.get("goal_terms") if isinstance(submitted_problem, dict) else None
+    )
+    current_panel = helpers.panel_dict(row)
+    current_problem = (
+        current_panel.get("problem")
+        if isinstance(current_panel, dict) and isinstance(current_panel.get("problem"), dict)
+        else current_panel
+    )
+    current_goal_terms = (
+        current_problem.get("goal_terms") if isinstance(current_problem, dict) else None
+    )
+    goal_terms_changed = submitted_goal_terms != current_goal_terms
+
+    if goal_terms_changed:
+        try:
+            # Reverse validation: on a participant-driven panel save the user
+            # is authoritative. Skip the brief-grounding check; only enforce
+            # shape / type / order. The hidden brief update on this same turn
+            # refreshes brief rows to reflect the participant's edit.
+            sync.validate_problem_goal_terms(
+                problem=submitted_problem,
+                problem_brief=helpers.problem_brief_dict(row),
+                weight_slot_markers=port.weight_slot_markers(),
+                check_grounding=False,
+            )
+        except sync.GoalTermValidationError as exc:
+            # Set processing_error so the Recover banner appears on the next
+            # session refresh; still 422 because the submitted goal_terms are
+            # rejected and not persisted.
+            helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
+            db.commit()
+            db.refresh(row)
+            raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
     sanitized_config, weight_warnings = port.sanitize_panel_config(body.panel_config)
 
     row.panel_config_json = json.dumps(sanitized_config)
@@ -1255,8 +1440,31 @@ def patch_participant_problem_brief(
     if row.status != "active":
         raise HTTPException(status_code=410, detail="Session ended")
 
+    from app.crypto_util import decrypt_secret
+
+    # Capture persisted open questions BEFORE we coerce the incoming brief so we can
+    # diff and route just-answered OQs through the LLM classifier.
+    persisted_brief_raw: dict[str, Any]
+    try:
+        persisted_brief_raw = json.loads(row.problem_brief_json) if row.problem_brief_json else {}
+    except json.JSONDecodeError:
+        persisted_brief_raw = {}
+    persisted_open_questions = persisted_brief_raw.get("open_questions") or []
+    if not isinstance(persisted_open_questions, list):
+        persisted_open_questions = []
+
+    incoming_brief = body.problem_brief.model_dump()
+    incoming_brief = _route_oq_answers_through_classifier(
+        incoming_brief=incoming_brief,
+        persisted_open_questions=[q for q in persisted_open_questions if isinstance(q, dict)],
+        workflow_mode=row.workflow_mode or "waterfall",
+        api_key=decrypt_secret(row.gemini_key_encrypted),
+        model_name=row.gemini_model or get_settings().default_gemini_model,
+        test_problem_id=row.test_problem_id,
+    )
+
     next_problem_brief = coerce_problem_brief_for_workflow(
-        body.problem_brief.model_dump(),
+        incoming_brief,
         row.workflow_mode,
     )
     row.problem_brief_json = json.dumps(next_problem_brief)
@@ -1265,8 +1473,7 @@ def patch_participant_problem_brief(
     db.commit()
     db.refresh(row)
 
-    from app.crypto_util import decrypt_secret
-
+    panel_sync_failed = False
     try:
         sync.sync_panel_from_problem_brief(
             row,
@@ -1278,6 +1485,12 @@ def patch_participant_problem_brief(
             preserve_missing_managed_fields=True,
         )
     except sync.GoalTermValidationError as exc:
+        # The brief itself was already committed above. Don't fail the request
+        # just because the panel re-derivation can't validate — that turns a
+        # successful save into a confusing 422. Instead, surface the issue via
+        # `processing_error` so the Recover banner appears and the participant
+        # can clear the conflicting state in one click.
+        panel_sync_failed = True
         helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
         db.commit()
         db.refresh(row)
@@ -1285,16 +1498,17 @@ def patch_participant_problem_brief(
             db,
             session_id,
             "assistant",
-            "I could not sync configuration because goal terms do not match the current definition items. "
-            "Please review the Definition tab and retry sync.",
+            "Saved your Definition, but I couldn't re-derive Problem Config — the goal-term keys are "
+            "out of sync. Use the **Recover** button in the banner above the tabs to clear the "
+            "conflicting goal terms and re-derive a clean Problem Config.",
             True,
             kind="panel",
         )
-        raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
-    helpers.settle_processing_state(row)
-    row.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(row)
+    if not panel_sync_failed:
+        helpers.settle_processing_state(row)
+        row.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(row)
 
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()
@@ -1302,7 +1516,7 @@ def patch_participant_problem_brief(
 
     create_snapshot(db, session_id, EVENT_MANUAL_SAVE)
 
-    if body.acknowledgement:
+    if body.acknowledgement and not panel_sync_failed:
         derivation.append_message(db, session_id, "assistant", body.acknowledgement, True, kind="panel")
     return helpers.session_to_out(row)
 
@@ -1443,6 +1657,7 @@ def sync_panel_from_problem_brief_route(
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+    sync_failed = False
     try:
         updated_panel, _ = sync.sync_panel_from_problem_brief(
             row,
@@ -1454,6 +1669,12 @@ def sync_panel_from_problem_brief_route(
             preserve_missing_managed_fields=True,
         )
     except sync.GoalTermValidationError as exc:
+        # Surface via processing_error → Recover banner instead of failing the
+        # request. The participant explicitly clicked Sync; a hard 422 just
+        # leaves them stuck without a clear next step. The banner + Recover
+        # button is the next step.
+        sync_failed = True
+        updated_panel = None
         helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
         db.commit()
         db.refresh(row)
@@ -1461,20 +1682,86 @@ def sync_panel_from_problem_brief_route(
             db,
             session_id,
             "assistant",
-            "Configuration sync failed validation (goal terms vs definition items). Retry sync after adjusting the definition.",
+            "I couldn't sync Problem Config from the Definition — the goal-term keys don't match. "
+            "Use the **Recover** button in the banner above the tabs to clear the conflict.",
             True,
             kind="panel",
         )
-        raise HTTPException(status_code=422, detail=exc.detail_text()) from exc
-    if updated_panel is None:
+    if updated_panel is None and not sync_failed:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Problem definition is not specific enough to sync a solver configuration yet",
         )
-    helpers.settle_processing_state(row)
-    row.updated_at = datetime.now(timezone.utc)
+    if not sync_failed:
+        helpers.settle_processing_state(row)
+        row.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(row)
+    if helpers.sync_optimization_allowed_after_participant_mutation(row):
+        db.commit()
+        db.refresh(row)
+    return helpers.session_to_out(row)
+
+
+@router.post("/{session_id}/recover-goal-terms", response_model=SessionOut)
+def post_recover_goal_terms(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    """Break a goal-term validation deadlock.
+
+    When `validate_problem_goal_terms` rejects an LLM-derived panel because
+    its `goal_terms` keys don't match what the brief grounds, subsequent saves
+    keep failing for the same reason and the participant is stuck. This route:
+
+      1. Clears `panel.problem.{goal_terms, weights, constraint_types, locked_goal_terms}`
+         so the next sync starts from an empty term set.
+      2. Resets the session processing state (clears `processing_error`).
+      3. Re-derives the panel from the existing brief using the deterministic
+         seed only (no LLM), guaranteeing keys grounded in brief items.
+
+    Brief content is preserved — the user's stated goals are not lost.
+    """
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status != "active":
+        raise HTTPException(status_code=410, detail="Session ended")
+
+    panel = helpers.panel_dict(row)
+    if isinstance(panel, dict) and isinstance(panel.get("problem"), dict):
+        problem = panel["problem"]
+        for key in ("goal_terms", "weights", "constraint_types", "locked_goal_terms"):
+            problem.pop(key, None)
+        row.panel_config_json = json.dumps(panel)
+
+    helpers.settle_processing_state(row, cancel_revision=True)
+    helpers.touch_session(row)
     db.commit()
     db.refresh(row)
+
+    problem_brief = helpers.problem_brief_dict(row)
+    try:
+        sync.sync_panel_from_problem_brief(
+            row,
+            db,
+            problem_brief,
+            api_key=None,
+            model_name=None,
+            workflow_mode=row.workflow_mode,
+            preserve_missing_managed_fields=False,
+        )
+    except sync.GoalTermValidationError:
+        # Even the deterministic seed couldn't produce a clean panel for this
+        # brief. Leave the panel cleared and the error reset; the participant
+        # can edit Definition or chat to articulate goals again.
+        row = db.get(StudySession, session_id) or row
+        helpers.settle_processing_state(row, cancel_revision=True)
+        helpers.touch_session(row)
+        db.commit()
+        db.refresh(row)
+
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()
         db.refresh(row)

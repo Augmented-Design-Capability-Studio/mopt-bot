@@ -2,64 +2,6 @@ import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shar
 
 import { DEFINITION_NEW_ROW_PLACEHOLDER } from "./constants";
 
-function gatheredTextDedupKey(text: string): string {
-  return text.trim().toLowerCase();
-}
-
-function sentenceStart(s: string): string {
-  const t = s.trim();
-  if (!t) return t;
-  return t.length > 1 ? t[0].toUpperCase() + t.slice(1) : t.toUpperCase();
-}
-
-function ensureTerminator(s: string): string {
-  let t = s.trim();
-  if (!t) return t;
-  if (!".!?".includes(t[t.length - 1])) t += ".";
-  return sentenceStart(t);
-}
-
-/** Mirrors backend `problem_brief._format_answered_open_question_gathered` for PATCH parity. */
-function formatPromotedOqGathered(question: string, answer: string): string {
-  const a = (answer ?? "").trim();
-  if (!a) return "";
-  const q = (question ?? "").trim();
-  const combined = q ? `${q} — ${a}` : a;
-  return ensureTerminator(combined);
-}
-
-/** Move answered open questions (with non-empty answer) into gathered items; drop from open_questions. */
-export function promoteAnsweredOpenQuestionsToGathered(brief: ProblemBrief): ProblemBrief {
-  const seenGathered = new Set(
-    brief.items.filter((i) => i.kind === "gathered").map((i) => gatheredTextDedupKey(i.text)),
-  );
-  const items: ProblemBriefItem[] = [...brief.items];
-  const open_questions: ProblemBriefQuestion[] = [];
-
-  for (const question of brief.open_questions) {
-    const answerText = (question.answer_text ?? "").trim();
-    const isAnswered = question.status === "answered" && answerText.length > 0;
-    if (!isAnswered) {
-      open_questions.push(question);
-      continue;
-    }
-    const qText = question.text.trim();
-    const combined = formatPromotedOqGathered(qText, answerText);
-    const key = gatheredTextDedupKey(combined);
-    if (!seenGathered.has(key)) {
-      seenGathered.add(key);
-      items.push({
-        id: `item-gathered-from-question-${question.id}`,
-        text: combined,
-        kind: "gathered",
-        source: "user",
-      });
-    }
-  }
-
-  return { ...brief, items, open_questions };
-}
-
 export function cloneProblemBrief(brief: ProblemBrief): ProblemBrief {
   return {
     ...brief,
@@ -68,9 +10,11 @@ export function cloneProblemBrief(brief: ProblemBrief): ProblemBrief {
   };
 }
 
-/** Same cleaning as PATCH /problem-brief (placeholder rows omitted). Used for dirty checks. */
+/** Trim/normalize the brief for PATCH and dirty-checks. Answered OQs are sent through
+ * to the backend as-is — the server-side classifier rephrases them into gathered facts
+ * (or routes hedged answers to assumptions / a simpler follow-up question). */
 export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
-  const trimmed: ProblemBrief = {
+  return {
     ...brief,
     goal_summary: brief.goal_summary.trim(),
     run_summary: brief.run_summary.trim(),
@@ -100,7 +44,6 @@ export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
       })
       .filter((question) => question.text.length > 0),
   };
-  return promoteAnsweredOpenQuestionsToGathered(trimmed);
 }
 
 export function isProblemBriefDirtyAfterClean(baseline: ProblemBrief, current: ProblemBrief): boolean {

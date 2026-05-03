@@ -228,6 +228,19 @@ def _normalize_question_answer_text(raw: Any) -> str | None:
     return text or None
 
 
+def _normalize_question_choices(raw: Any) -> list[str] | None:
+    if not isinstance(raw, list):
+        return None
+    cleaned: list[str] = []
+    for entry in raw:
+        if entry is None:
+            continue
+        text = str(entry).strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned if cleaned else None
+
+
 def _normalize_question(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         text = str(raw.get("text") or "").strip()
@@ -238,7 +251,11 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
             answer_text = None
-        return {"id": question_id, "text": text, "status": status, "answer_text": answer_text}
+        out = {"id": question_id, "text": text, "status": status, "answer_text": answer_text}
+        choices = _normalize_question_choices(raw.get("choices"))
+        if choices is not None:
+            out["choices"] = choices
+        return out
     if raw is None:
         return None
     text = str(raw).strip()

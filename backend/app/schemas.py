@@ -65,6 +65,10 @@ class ProblemBriefQuestion(BaseModel):
     text: str
     status: Literal["open", "answered"] = "open"
     answer_text: str | None = None
+    # Concrete-choice list rendered as radio buttons on the OQ card. Set by the
+    # waterfall hedge classifier when re-asking a simpler follow-up; None for
+    # free-text questions.
+    choices: list[str] | None = None
 
 
 class ProblemBrief(BaseModel):
@@ -189,6 +193,36 @@ class ProblemBriefUpdateTurn(BaseModel):
     replace_editable_items: bool = False
     replace_open_questions: bool = False
     cleanup_mode: bool = False
+
+
+class OpenQuestionClassifierInput(BaseModel):
+    """One OQ answer to be rephrased + bucketed by the classifier."""
+
+    question_id: str
+    question_text: str
+    answer_text: str
+
+
+class OpenQuestionClassification(BaseModel):
+    """Classifier output for one OQ answer.
+
+    bucket="gathered": rephrased_text holds the concise gathered-info line.
+    bucket="assumption": assumption_text holds the agent-decided assumption (agile only).
+    bucket="new_open_question": new_question_text + choices hold the simpler follow-up (waterfall only).
+    """
+
+    question_id: str
+    bucket: Literal["gathered", "assumption", "new_open_question"]
+    rephrased_text: str | None = None
+    assumption_text: str | None = None
+    new_question_text: str | None = None
+    choices: list[str] | None = None
+
+
+class OpenQuestionClassifierTurn(BaseModel):
+    """Top-level structured response from classify_answered_open_questions."""
+
+    classifications: list[OpenQuestionClassification] = Field(default_factory=list)
 
 
 class PostMessagesResponse(BaseModel):

@@ -12,6 +12,9 @@ export type DefinitionPanelProps = {
   editable: boolean;
   sessionTerminated: boolean;
   openQuestionsBusy?: boolean;
+  /** OQ ids whose answer is being rephrased + bucket-routed by the backend.
+   *  Each such card shows a spinning shield and locks input until the response settles. */
+  processingOqIds?: ReadonlySet<string>;
   /** When `waterfall`, the Assumptions section is hidden (runs are gated on open questions). */
   workflowMode?: string | null;
   onChange: (value: ProblemBrief) => void;
@@ -99,14 +102,14 @@ function DefinitionSection({
       {onToggle ? (
         <button
           type="button"
-          className="definition-section-heading definition-section-toggle"
+          className={`definition-section-toggle ${collapsed ? "is-collapsed" : ""}`.trim()}
           onClick={onToggle}
           aria-expanded={!collapsed}
         >
           <span>{title}</span>
           <span className="definition-section-toggle-meta">
             <span className="definition-count">{items.length}</span>
-            <span className="definition-section-chevron" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+            <span className="definition-section-chevron" aria-hidden="true">{collapsed ? "▶" : "▼"}</span>
           </span>
         </button>
       ) : (
@@ -268,11 +271,14 @@ function DefinitionSection({
   );
 }
 
+const EMPTY_OQ_PROCESSING_SET: ReadonlySet<string> = new Set<string>();
+
 export function DefinitionPanel({
   problemBrief,
   editable,
   sessionTerminated,
   openQuestionsBusy = false,
+  processingOqIds = EMPTY_OQ_PROCESSING_SET,
   workflowMode,
   onChange,
   onEnsureDefinitionEditing,
@@ -502,12 +508,12 @@ export function DefinitionPanel({
       <section className="definition-section">
         <button
           type="button"
-          className="definition-section-heading definition-section-toggle"
+          className={`definition-section-toggle ${collapsedSections.goalSummary ? "is-collapsed" : ""}`.trim()}
           onClick={() => toggleSection("goalSummary")}
           aria-expanded={!collapsedSections.goalSummary}
         >
           <span>Goal Summary</span>
-          <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.goalSummary ? "▸" : "▾"}</span>
+          <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.goalSummary ? "▶" : "▼"}</span>
         </button>
         {!collapsedSections.goalSummary && (
           <div className="definition-item">
@@ -548,12 +554,12 @@ export function DefinitionPanel({
       <section className="definition-section">
         <button
           type="button"
-          className="definition-section-heading definition-section-toggle"
+          className={`definition-section-toggle ${collapsedSections.runSummary ? "is-collapsed" : ""}`.trim()}
           onClick={() => toggleSection("runSummary")}
           aria-expanded={!collapsedSections.runSummary}
         >
           <span>Run Summary</span>
-          <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.runSummary ? "▸" : "▾"}</span>
+          <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.runSummary ? "▶" : "▼"}</span>
         </button>
         {!collapsedSections.runSummary && (
           <div className="definition-item">
@@ -594,7 +600,7 @@ export function DefinitionPanel({
       <section className="definition-section" id="definition-open-questions">
         <button
           type="button"
-          className="definition-section-heading definition-section-toggle"
+          className={`definition-section-toggle ${collapsedSections.openQuestions ? "is-collapsed" : ""}`.trim()}
           onClick={() => toggleSection("openQuestions")}
           aria-expanded={!collapsedSections.openQuestions}
         >
@@ -604,7 +610,7 @@ export function DefinitionPanel({
           </span>
           <span className="definition-section-toggle-meta">
             <span className="definition-count">{openQuestions.length}</span>
-            <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.openQuestions ? "▸" : "▾"}</span>
+            <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.openQuestions ? "▶" : "▼"}</span>
           </span>
         </button>
         {!collapsedSections.openQuestions && (
@@ -630,15 +636,27 @@ export function DefinitionPanel({
           </div>
           <div className="definition-list">
           {openQuestions.map((question, index) => {
+            const isProcessing = processingOqIds.has(question.id);
+            const cardLocked = openLocked || isProcessing;
+            const choices = (question.choices ?? []).filter((c) => c && c.trim().length > 0);
+            const hasChoices = choices.length > 0;
             return (
               <Fragment key={question.id}>
                 {deletedMarker?.section === "open" && deletedMarker.index === index ? (
                   <div className="definition-delete-marker" aria-hidden="true" />
                 ) : null}
-                <div className={`definition-item definition-item-open ${flashClassForQuestion(question.id)}`.trim()}>
+                <div
+                  className={`definition-item definition-item-open ${isProcessing ? "definition-item-processing" : ""} ${flashClassForQuestion(question.id)}`.trim()}
+                >
                     <div className="definition-item-content definition-item-content-open">
                       <div className="definition-item-overlay-controls">
-                        {!sessionTerminated ? (
+                        {isProcessing ? (
+                          <span
+                            className="inline-spinner"
+                            aria-label="Rephrasing your answer"
+                            title="Rephrasing your answer"
+                          />
+                        ) : !sessionTerminated ? (
                           <button
                             type="button"
                             className="definition-icon-btn definition-remove-btn"
@@ -651,13 +669,59 @@ export function DefinitionPanel({
                         ) : null}
                       </div>
                       <div className="definition-question-text">{question.text}</div>
-                      {editable ? (
+                      {hasChoices ? (
+                        <div
+                          className="definition-answer-choices"
+                          role="radiogroup"
+                          aria-label="Pick one"
+                        >
+                          {choices.map((choice) => {
+                            const checked = (question.answer_text ?? "").trim() === choice.trim();
+                            return (
+                              <label
+                                key={choice}
+                                className={`definition-answer-choice ${checked ? "is-selected" : ""}`.trim()}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`definition-oq-choice-${question.id}`}
+                                  value={choice}
+                                  checked={checked}
+                                  disabled={cardLocked}
+                                  onChange={() => {
+                                    onEnsureDefinitionEditing();
+                                    updateOpenQuestionAnswer(question.id, choice);
+                                  }}
+                                />
+                                <span>{choice}</span>
+                              </label>
+                            );
+                          })}
+                          {editable ? (
+                            <textarea
+                              id={`definition-open-question-answer-${question.id}`}
+                              className="definition-inline-textarea definition-answer-textarea definition-answer-textarea-fallback"
+                              value={
+                                choices.includes((question.answer_text ?? "").trim())
+                                  ? ""
+                                  : question.answer_text ?? ""
+                              }
+                              placeholder="Or type your own..."
+                              disabled={cardLocked}
+                              rows={1}
+                              onFocus={() => onEnsureDefinitionEditing()}
+                              onChange={(e) => updateOpenQuestionAnswer(question.id, e.target.value)}
+                              onInput={autoGrowTextarea}
+                            />
+                          ) : null}
+                        </div>
+                      ) : editable ? (
                         <textarea
                           id={`definition-open-question-answer-${question.id}`}
                           className="definition-inline-textarea definition-answer-textarea"
                           value={question.answer_text ?? ""}
                           placeholder="Type answer..."
-                          disabled={openLocked}
+                          disabled={cardLocked}
                           rows={1}
                           onFocus={() => onEnsureDefinitionEditing()}
                           onChange={(e) => updateOpenQuestionAnswer(question.id, e.target.value)}
