@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 function safeJsonPretty(raw: string): { ok: true; text: string } | { ok: false; text: string } {
   try {
@@ -121,6 +121,12 @@ export function AnalyzerApp() {
       return null;
     }
   }, [parsed.ok, text]);
+
+  useEffect(() => {
+    const sess = archiveObj?.session as Record<string, unknown> | undefined;
+    const pn = typeof sess?.participant_number === "string" ? sess.participant_number.trim() : "";
+    document.title = pn ? `Analyzer #${pn}` : "Analyzer";
+  }, [archiveObj]);
 
   const header = useMemo(() => {
     if (!archiveObj) return null;

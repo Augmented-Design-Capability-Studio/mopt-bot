@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { Message, ProblemBrief, RunResult, Session, SnapshotSummary, TestProblemMeta } from "@shared/api";
 import { StatusBanner } from "@shared/status/StatusBanner";
 
-import type { EditMode } from "../lib/participantTypes";
-import type { ParticipantOpsState } from "../lib/participantOps";
+import type { EditMode } from "../lib/clientTypes";
+import type { ClientOpsState } from "../lib/clientOps";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 import { SnapshotDialog } from "./SnapshotDialog";
@@ -17,7 +17,7 @@ type ConfigPanelProps = {
   invokeModel: boolean;
   busy: boolean;
   syncingProblemConfig: boolean;
-  participantOps: ParticipantOpsState;
+  clientOps: ClientOpsState;
   backgroundBriefPending: boolean;
   backgroundConfigPending: boolean;
   backgroundProcessingError?: string | null;
@@ -92,7 +92,7 @@ export function ConfigPanel({
   invokeModel,
   busy,
   syncingProblemConfig,
-  participantOps,
+  clientOps,
   backgroundBriefPending,
   backgroundConfigPending,
   backgroundProcessingError,
@@ -294,8 +294,8 @@ export function ConfigPanel({
     return "Start in chat (or wait until open questions appear in the definition) before optimization can run.";
   }, [problemBrief, session]);
 
-  const definitionSaveInFlight = participantOps.savingDefinition;
-  const configSyncInFlight = participantOps.syncingConfig || syncingProblemConfig;
+  const definitionSaveInFlight = clientOps.savingDefinition;
+  const configSyncInFlight = clientOps.syncingConfig || syncingProblemConfig;
   const processingSpinnerActive = backgroundProcessingPending && !forceUnlockProcessingUi;
   const definitionSaveShieldActive = definitionEditing && definitionSaveInFlight;
   const canSyncToConfig =
@@ -424,8 +424,8 @@ export function ConfigPanel({
                   editable={editableDefinition}
                   sessionTerminated={sessionTerminated}
                   workflowMode={session?.workflow_mode ?? null}
-                  openQuestionsBusy={participantOps.cleaningOpenQuestions}
-                  processingOqIds={participantOps.processingOqIds}
+                  openQuestionsBusy={clientOps.cleaningOpenQuestions}
+                  processingOqIds={clientOps.processingOqIds}
                   suppressTransientMarkers={definitionSaveShieldActive || configBlockingUi}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}
@@ -580,7 +580,7 @@ export function ConfigPanel({
                       <button
                         type="button"
                         role="menuitem"
-                        disabled={!definitionCleanupEnabled || participantOps.cleaningOpenQuestions}
+                        disabled={!definitionCleanupEnabled || clientOps.cleaningOpenQuestions}
                         title={
                           definitionCleanupEnabled
                             ? "Clean only the open-questions list by removing resolved or duplicate questions."
@@ -592,7 +592,7 @@ export function ConfigPanel({
                         }}
                         style={menuItemStyle}
                       >
-                        {participantOps.cleaningOpenQuestions ? "Cleaning open questions..." : "Clean up open questions"}
+                        {clientOps.cleaningOpenQuestions ? "Cleaning open questions..." : "Clean up open questions"}
                       </button>
                     </div>
                   ) : null}

@@ -8,9 +8,11 @@ export type ParticipantTutorialPatch = {
   tutorial_definition_tab_visited?: boolean;
   tutorial_definition_saved?: boolean;
   tutorial_config_tab_visited?: boolean;
+  tutorial_config_first_saved?: boolean;
   tutorial_config_saved?: boolean;
   tutorial_first_run_done?: boolean;
   tutorial_second_run_done?: boolean;
+  tutorial_run_summary_read?: boolean;
   tutorial_results_inspected?: boolean;
   tutorial_explain_used?: boolean;
   tutorial_candidate_marked?: boolean;
@@ -44,7 +46,13 @@ export function patchForTutorialEvent(event: TutorialEvent, session: Session | n
     case "config-tab-clicked":
       return session.tutorial_config_tab_visited ? null : { tutorial_config_tab_visited: true };
     case "config-saved":
-      return session.tutorial_config_saved ? null : { tutorial_config_saved: true };
+      // Two-step progression: Step 4 (inspect-config) advances on the first
+      // save (`tutorial_config_first_saved`), Step 8 (update-config) advances
+      // on the second save (`tutorial_config_saved`). Mirrors the run-completed
+      // cascade. Each save flips the lowest unfinished flag.
+      if (!session.tutorial_config_first_saved) return { tutorial_config_first_saved: true };
+      if (!session.tutorial_config_saved) return { tutorial_config_saved: true };
+      return null;
     case "run-completed":
       // Three-run progression: first → second → third. Each run completion
       // advances the lowest unfinished flag.

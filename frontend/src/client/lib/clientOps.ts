@@ -1,4 +1,4 @@
-export type ParticipantOpsState = {
+export type ClientOpsState = {
   savingConfig: boolean;
   savingDefinition: boolean;
   cleaningOpenQuestions: boolean;
@@ -10,7 +10,7 @@ export type ParticipantOpsState = {
   processingOqIds: ReadonlySet<string>;
 };
 
-export const DEFAULT_PARTICIPANT_OPS_STATE: ParticipantOpsState = {
+export const DEFAULT_CLIENT_OPS_STATE: ClientOpsState = {
   savingConfig: false,
   savingDefinition: false,
   cleaningOpenQuestions: false,

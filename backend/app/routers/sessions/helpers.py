@@ -22,6 +22,7 @@ TUTORIAL_STEP_ORDER: tuple[str, ...] = (
     "update-definition",
     "inspect-config",
     "first-run",
+    "read-run-summary",
     "inspect-results",
     "explain-run",
     "update-config",
@@ -60,32 +61,37 @@ def rewind_tutorial_tracking_from_step(row: StudySession, step: str | None) -> N
     # update-definition (3)
     if idx <= 3:
         row.tutorial_definition_saved = False
-    # inspect-config (4)
+    # inspect-config (4): clear both the legacy tab-visited flag and the new
+    # first-saved flag that now gates Step 4 advancement.
     if idx <= 4:
         row.tutorial_config_tab_visited = False
+        row.tutorial_config_first_saved = False
     # first-run (5)
     if idx <= 5:
         row.tutorial_first_run_done = False
-    # inspect-results (6)
+    # read-run-summary (6)
     if idx <= 6:
-        row.tutorial_results_inspected = False
-    # explain-run (7)
+        row.tutorial_run_summary_read = False
+    # inspect-results (7)
     if idx <= 7:
-        row.tutorial_explain_used = False
-    # update-config (8)
+        row.tutorial_results_inspected = False
+    # explain-run (8)
     if idx <= 8:
-        row.tutorial_config_saved = False
-    # second-run (9)
+        row.tutorial_explain_used = False
+    # update-config (9)
     if idx <= 9:
-        row.tutorial_second_run_done = False
-    # mark-candidate (10)
+        row.tutorial_config_saved = False
+    # second-run (10)
     if idx <= 10:
-        row.tutorial_candidate_marked = False
-    # third-run (11)
+        row.tutorial_second_run_done = False
+    # mark-candidate (11)
     if idx <= 11:
-        row.tutorial_third_run_done = False
-    # tutorial-complete (12)
+        row.tutorial_candidate_marked = False
+    # third-run (12)
     if idx <= 12:
+        row.tutorial_third_run_done = False
+    # tutorial-complete (13)
+    if idx <= 13:
         row.tutorial_completed = False
 
 
@@ -221,9 +227,11 @@ def session_to_out(row: StudySession) -> SessionOut:
         tutorial_definition_tab_visited=bool(getattr(row, "tutorial_definition_tab_visited", False)),
         tutorial_definition_saved=bool(getattr(row, "tutorial_definition_saved", False)),
         tutorial_config_tab_visited=bool(getattr(row, "tutorial_config_tab_visited", False)),
+        tutorial_config_first_saved=bool(getattr(row, "tutorial_config_first_saved", False)),
         tutorial_config_saved=bool(getattr(row, "tutorial_config_saved", False)),
         tutorial_first_run_done=bool(getattr(row, "tutorial_first_run_done", False)),
         tutorial_second_run_done=bool(getattr(row, "tutorial_second_run_done", False)),
+        tutorial_run_summary_read=bool(getattr(row, "tutorial_run_summary_read", False)),
         tutorial_results_inspected=bool(getattr(row, "tutorial_results_inspected", False)),
         tutorial_explain_used=bool(getattr(row, "tutorial_explain_used", False)),
         tutorial_candidate_marked=bool(getattr(row, "tutorial_candidate_marked", False)),

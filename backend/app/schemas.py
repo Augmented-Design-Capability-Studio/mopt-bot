@@ -22,6 +22,7 @@ TutorialStepIdLiteral = Literal[
     "update-definition",
     "inspect-config",
     "first-run",
+    "read-run-summary",
     "inspect-results",
     "explain-run",
     "update-config",
@@ -113,9 +114,11 @@ class SessionOut(BaseModel):
     tutorial_definition_tab_visited: bool = False
     tutorial_definition_saved: bool = False
     tutorial_config_tab_visited: bool = False
+    tutorial_config_first_saved: bool = False
     tutorial_config_saved: bool = False
     tutorial_first_run_done: bool = False
     tutorial_second_run_done: bool = False
+    tutorial_run_summary_read: bool = False
     tutorial_results_inspected: bool = False
     tutorial_explain_used: bool = False
     tutorial_candidate_marked: bool = False
@@ -291,9 +294,11 @@ class ParticipantTutorialUpdate(BaseModel):
     tutorial_definition_tab_visited: bool | None = None
     tutorial_definition_saved: bool | None = None
     tutorial_config_tab_visited: bool | None = None
+    tutorial_config_first_saved: bool | None = None
     tutorial_config_saved: bool | None = None
     tutorial_first_run_done: bool | None = None
     tutorial_second_run_done: bool | None = None
+    tutorial_run_summary_read: bool | None = None
     tutorial_results_inspected: bool | None = None
     tutorial_explain_used: bool | None = None
     tutorial_candidate_marked: bool | None = None

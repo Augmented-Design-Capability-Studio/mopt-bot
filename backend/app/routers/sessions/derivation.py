@@ -368,6 +368,7 @@ def _run_background_derivation(
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
     is_config_save: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> None:
     try:
@@ -389,6 +390,7 @@ def _run_background_derivation(
                     is_run_acknowledgement=is_run_acknowledgement,
                     is_answered_open_question=is_answered_open_question,
                     is_config_save=is_config_save,
+                    is_tutorial_active=is_tutorial_active,
                     test_problem_id=test_problem_id,
                 ),
                 timeout_sec,
@@ -448,23 +450,30 @@ def _run_background_derivation(
             db.commit()
             db.refresh(row)
 
-            # If the hidden brief pass made no effective change, skip the config LLM and use
-            # heuristic derivation only (same stability as sync when the brief is unchanged).
-            brief_unchanged = json.dumps(
-                normalize_problem_brief(effective_problem_brief), sort_keys=True, default=str
-            ) == json.dumps(normalize_problem_brief(base_problem_brief), sort_keys=True, default=str)
-            config_api_key = None if brief_unchanged else api_key
+            # On a config-save turn the participant just authored the panel via
+            # the form; re-deriving the panel from the brief here can flip
+            # goal-term types or weights back (the LLM/heuristic derivation is
+            # not guaranteed to reproduce the exact panel the user just saved).
+            # The PATCH endpoint already synced the brief from that panel, so
+            # the brief and panel are consistent — skip the panel re-derivation.
+            if not is_config_save:
+                # If the hidden brief pass made no effective change, skip the config LLM and use
+                # heuristic derivation only (same stability as sync when the brief is unchanged).
+                brief_unchanged = json.dumps(
+                    normalize_problem_brief(effective_problem_brief), sort_keys=True, default=str
+                ) == json.dumps(normalize_problem_brief(base_problem_brief), sort_keys=True, default=str)
+                config_api_key = None if brief_unchanged else api_key
 
-            sync.sync_panel_from_problem_brief(
-                row,
-                db,
-                effective_problem_brief,
-                api_key=config_api_key,
-                model_name=model_name,
-                workflow_mode=workflow_mode,
-                recent_runs_summary=recent_runs_summary,
-                preserve_missing_managed_fields=True,
-            )
+                sync.sync_panel_from_problem_brief(
+                    row,
+                    db,
+                    effective_problem_brief,
+                    api_key=config_api_key,
+                    model_name=model_name,
+                    workflow_mode=workflow_mode,
+                    recent_runs_summary=recent_runs_summary,
+                    preserve_missing_managed_fields=True,
+                )
 
             row = db.get(StudySession, session_id)
             if row is None or row.processing_revision != revision:

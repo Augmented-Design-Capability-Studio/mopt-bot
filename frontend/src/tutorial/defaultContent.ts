@@ -3,21 +3,22 @@ import type { TutorialContent, TutorialStep } from "./types";
 /**
  * Generic, problem-agnostic tutorial bodies used as a fallback when the active
  * problem module does not export `tutorialContent`. The step list mirrors the
- * 11-step participant journey:
+ * 12-step participant journey:
  *
  *   1. chat-info             — start in chat
  *   2. upload-files          — upload data
  *   3. update-definition     — review + save Definition (the read-only inspect
  *                              step was dropped because the Definition tab is
  *                              already visible by default)
- *   4. inspect-config        — open Problem Config (no need to change anything)
+ *   4. inspect-config        — open Problem Config and Save once
  *   5. first-run             — first optimization run
- *   6. inspect-results       — review the convergence + visualization
- *   7. explain-run           — use Explain for a plain-language read
- *   8. update-config         — try one targeted change + Save
- *   9. second-run            — re-run and compare
- *  10. mark-candidate        — tick "Include as candidate"
- *  11. third-run             — third run, seeded by the candidate
+ *   6. read-run-summary      — read the assistant's post-run summary in chat
+ *   7. inspect-results       — review the convergence + visualization
+ *   8. explain-run           — use Explain for a plain-language read
+ *   9. update-config         — try one targeted change + Save
+ *  10. second-run            — re-run and compare
+ *  11. mark-candidate        — tick "Include as candidate"
+ *  12. third-run             — third run, seeded by the candidate
  */
 function defaultStepsForMode(mode: string | undefined): TutorialStep[] {
   const normalized = (mode ?? "demo").toLowerCase();
@@ -50,7 +51,7 @@ function defaultStepsForMode(mode: string | undefined): TutorialStep[] {
     {
       id: "inspect-config",
       title: "Step 4 - Inspect Problem Config",
-      body: "Click the **Problem Config** tab and review the numeric setup the solver will use. You don't need to change anything yet.",
+      body: "Click the **Problem Config** tab and review the numeric setup the solver will use. Save once when you're ready to move on (you can leave values as-is).",
     },
     {
       id: "first-run",
@@ -60,33 +61,41 @@ function defaultStepsForMode(mode: string | undefined): TutorialStep[] {
         : "Start the first optimization run with the Run button (or by asking in chat).",
     },
     {
+      id: "read-run-summary",
+      title: "Step 6 - Read the run summary",
+      body: "When the run finishes, the assistant posts a short summary in chat. Skim it before you dig into the visualizations.",
+      actions: [
+        { kind: "acknowledge-step", label: "Done reading", flag: "tutorial_run_summary_read" },
+      ],
+    },
+    {
       id: "inspect-results",
-      title: "Step 6 - Look at the results",
+      title: "Step 7 - Look at the results",
       body: "Review the convergence plot and the problem-specific visualization in the Results panel to see what the solver produced.",
     },
     {
       id: "explain-run",
-      title: "Step 7 - Ask for an explanation",
+      title: "Step 8 - Ask for an explanation",
       body: "Click the Explain button to ask the assistant for a plain-language read of the run in chat.",
     },
     {
       id: "update-config",
-      title: "Step 8 - Try a targeted change",
+      title: "Step 9 - Try a targeted change",
       body: "Open Problem Config, edit one value (a weight, a term type, or a parameter), and Save.",
     },
     {
       id: "second-run",
-      title: "Step 9 - Run again",
+      title: "Step 10 - Run again",
       body: "Run optimization again and compare the new run against the previous one.",
     },
     {
       id: "mark-candidate",
-      title: "Step 10 - Mark a candidate",
+      title: "Step 11 - Mark a candidate",
       body: "Tick Include as candidate on a run you'd like to seed the next optimization from.",
     },
     {
       id: "third-run",
-      title: "Step 11 - Third run from a candidate",
+      title: "Step 12 - Third run from a candidate",
       body: "Run one more time. The new run will start from your selected candidate's solution.",
     },
     {

@@ -160,12 +160,16 @@ def _ensure_sessions_tutorial_tracking_columns() -> None:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_definition_saved BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_definition_saved"))
     if "tutorial_config_tab_visited" not in columns:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_config_tab_visited BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_config_tab_visited"))
+    if "tutorial_config_first_saved" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_config_first_saved BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_config_first_saved"))
     if "tutorial_config_saved" not in columns:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_config_saved BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_config_saved"))
     if "tutorial_first_run_done" not in columns:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_first_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_first_run_done"))
     if "tutorial_second_run_done" not in columns:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_second_run_done BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_second_run_done"))
+    if "tutorial_run_summary_read" not in columns:
+        statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_run_summary_read BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_run_summary_read"))
     if "tutorial_results_inspected" not in columns:
         statements.append(("ALTER TABLE sessions ADD COLUMN tutorial_results_inspected BOOLEAN NOT NULL DEFAULT 0", "sessions.tutorial_results_inspected"))
     if "tutorial_explain_used" not in columns:

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { apiFetch, type RunResult, type Session } from "@shared/api";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { resolveProblemPanelFromServer } from "../problemConfig/problemPanelHydration";
-import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
+import { type EditMode, type RecentSessionRow } from "../lib/clientTypes";
 import { CONTENT_RESET_REV_PREFIX, SESSION_KEY } from "../lib/sessionKeys";
 import {
   coerceParticipantMessages,
@@ -62,7 +62,7 @@ type UseParticipantSessionSyncArgs = {
   defaultModel: string;
 };
 
-export function useParticipantSessionSync({
+export function useClientSessionSync({
   token,
   sessionId,
   authed,

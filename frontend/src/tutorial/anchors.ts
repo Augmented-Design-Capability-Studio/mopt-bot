@@ -9,6 +9,7 @@ type TutorialAnchor =
   | "config-save"
   | "run-optimize"
   | "results-viz"
+  | "results-viz-tabs"
   | "explain-button"
   | "candidate-checkbox";
 
@@ -30,8 +31,11 @@ export function anchorForTutorialStep(stepId: TutorialStepId, editMode: Tutorial
       return "config-tab";
     case "first-run":
       return "run-optimize";
+    case "read-run-summary":
+      // Direct attention back to chat where the assistant's run summary lives.
+      return "chat-composer";
     case "inspect-results":
-      return "results-viz";
+      return "results-viz-tabs";
     case "explain-run":
       return "explain-button";
     case "update-config":

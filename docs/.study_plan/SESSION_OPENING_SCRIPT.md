@@ -16,7 +16,7 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ---
 
-## 1. Purpose and consent (~5 min)
+## 1. Purpose and consent (~3 min)
 
 **[SAY]**
 
@@ -24,7 +24,7 @@ A condensed script for the opening of each session — purpose statement, consen
 >
 > Today we'll have you try out a research prototype — an interface that helps a person solve a scheduling problem by directing an AI assistant. We're not testing you; we're testing the interface. Honest reactions — including frustrations or "I'd never use this for X" — are exactly what we want.
 >
-> The session is about 60–75 minutes: a short video with a hands-on tutorial, then another video and some reading for our formal task, a quick interview to check your experience and understanding, followed by the formal task for about 30 minutes, and at the end, a conversation. You can stop or take a break anytime.
+> The session is about 65–75 minutes: a short video with a hands-on tutorial, then another video and some reading for our formal task, a quick interview to check your experience and understanding, followed by the formal task for about 30 minutes, and at the end, a conversation. You can stop or take a break anytime.
 
 **[ACTION]** Share the consent form. Wait for signature.
 
@@ -56,7 +56,7 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ---
 
-## 3. Orientation video and hands-on tutorial (~10-15 min)
+## 3. Orientation video and hands-on tutorial (~7–10 min)
 
 **[SAY]**
 
@@ -70,7 +70,7 @@ A condensed script for the opening of each session — purpose statement, consen
 
 **[NOTE]** Brief discussion only. If they ask how it relates to the actual task, deflect: *"See if the connections feel natural once you see it."*
 
-**[ACTION]** Guide the participant through the **knapsack tutorial** on the interface (~5-8 min).
+**[ACTION]** Guide the participant through the **knapsack tutorial** on the interface (~4–6 min).
 
 ---
 
@@ -92,9 +92,9 @@ A condensed script for the opening of each session — purpose statement, consen
 
 | Step | Duration | Cumulative |
 |------|----------|------------|
-| Purpose + consent + recording start | ~5 min | 5 |
-| Stance framing | ~3 min | 8 |
-| Orientation video + discussion | ~10–15 min | 18–23 |
-| Task-briefing handoff (incl. video) | ~10 min | 28–33 |
+| Purpose + consent + recording start | ~3 min | 3 |
+| Stance framing | ~3 min | 6 |
+| Orientation video + hands-on tutorial | ~7–10 min | 13–16 |
+| Task-briefing handoff (incl. video + reading) | ~10 min | 23–26 |
 
-The pre-interaction check, interaction phase (~30–40 min), and post-task discussion follow.
+The pre-interaction check (~5–7 min), interaction phase (~30 min), and post-task questionnaire + interview (~10–12 min) follow.

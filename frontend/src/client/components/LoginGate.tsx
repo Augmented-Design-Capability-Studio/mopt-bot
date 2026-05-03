@@ -1,4 +1,4 @@
-import type { RecentSessionRow } from "../lib/participantTypes";
+import type { RecentSessionRow } from "../lib/clientTypes";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 import { parseServerDate } from "@shared/dateTime";
 
@@ -51,7 +51,7 @@ export function LoginGate({
   return (
     <div className="app-shell">
       <header className="app-header">
-        <span className="app-title">Participant</span>
+        <span className="app-title">User</span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
           <BackendConnectionControl />
         </div>
@@ -73,7 +73,7 @@ export function LoginGate({
             </p>
           ) : (
             <label>
-              Participant number
+              User number
               <input
                 type="text"
                 value={participantNumber}
@@ -109,7 +109,7 @@ export function LoginGate({
         <details style={{ marginTop: "1.25rem" }} className="login-recent-sessions">
           <summary style={{ cursor: "pointer", fontWeight: 600 }}>Past sessions on this browser</summary>
           <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Session ids are stored only on this device (not by IP on the server). Enter your participant number and
+            Session ids are stored only on this device (not by IP on the server). Enter your user number and
             save token to also see sessions from other devices. You still need the same access token to open them.
             Anyone with this browser profile can see these entries.
           </p>
@@ -159,7 +159,7 @@ export function LoginGate({
                     {row.id.slice(0, 8)}...{row.id.slice(-4)}
                   </div>
                   <div className="muted">
-                    Participant #{row.session?.participant_number ?? row.history?.participant_number ?? "n/a"}
+                    User #{row.session?.participant_number ?? row.history?.participant_number ?? "n/a"}
                   </div>
                   <div className="muted">
                     {formatStartTime(row.session?.created_at ?? row.history?.created_at)}

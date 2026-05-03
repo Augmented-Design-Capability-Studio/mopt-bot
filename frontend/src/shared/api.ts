@@ -140,6 +140,7 @@ export const TUTORIAL_STEP_IDS = [
   "update-definition",
   "inspect-config",
   "first-run",
+  "read-run-summary",
   "inspect-results",
   "explain-run",
   "update-config",
@@ -175,9 +176,11 @@ export type Session = {
   tutorial_definition_tab_visited?: boolean;
   tutorial_definition_saved?: boolean;
   tutorial_config_tab_visited?: boolean;
+  tutorial_config_first_saved?: boolean;
   tutorial_config_saved?: boolean;
   tutorial_first_run_done?: boolean;
   tutorial_second_run_done?: boolean;
+  tutorial_run_summary_read?: boolean;
   tutorial_results_inspected?: boolean;
   tutorial_explain_used?: boolean;
   tutorial_candidate_marked?: boolean;

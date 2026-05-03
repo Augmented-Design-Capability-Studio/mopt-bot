@@ -118,9 +118,29 @@ _ALGORITHM_PARAM_RE = re.compile(
     r"\balgorithm parameter\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+is set to\s+([^\s]+)",
     re.IGNORECASE,
 )
+# Real solver-config tokens that should never appear in a qualitative goal summary.
+# Bare English words like "weight"/"penalty"/"algorithm" are NOT included here — they are
+# normal vocabulary in optimization problems (e.g. knapsack uses "weight" as a domain term).
+# Numeric annotations attached to those words are stripped separately by the regex below.
 _GOAL_SUMMARY_FORBIDDEN_RE = re.compile(
-    r"\b(?:weight|penalty|population|swarm|iterations?|epochs?|algorithm|pc|pm|c1|c2|temp_init|cooling_rate)\b",
+    r"\b(?:pop_size|temp_init|cooling_rate|c1|c2|pc|pm)\b",
     re.IGNORECASE,
+)
+# Strip inline numeric annotations like "(weight 1)", "weight=5", "penalty 50",
+# "120 epochs", "30 iterations", "pop_size 100" — the goal summary should stay qualitative.
+_GOAL_SUMMARY_NUMERIC_ANNOTATION_RE = re.compile(
+    r"""
+    (?:
+      \(\s*(?:weights?|penalt(?:y|ies)|epochs?|iterations?|generations?|
+              pop_size|population|c1|c2|pc|pm|temp_init|cooling_rate)
+        [^)]*\d[^)]*\)                       # parenthetical with one of those tokens + digit
+    | \b(?:weights?|penalt(?:y|ies)|pop_size|population|epochs?|
+              iterations?|generations?|c1|c2|pc|pm|temp_init|cooling_rate)
+        \s*[=:]?\s*\d+(?:\.\d+)?             # "weight 5", "penalty=10", "pop_size 100"
+    | \b\d+(?:\.\d+)?\s*(?:epochs?|iterations?|generations?)\b   # "120 epochs"
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 # "Constraint handling: …" lists goal/penalty terms like objectives; split even when hints
 # (travel time, capacity penalty, …) do not appear as substrings.
@@ -351,12 +371,16 @@ def _sanitize_goal_summary(text: Any) -> str:
     raw = str(text or "").strip()
     if not raw:
         return ""
-    clauses = [chunk.strip() for chunk in re.split(r"[.;]", raw) if chunk.strip()]
-    clean_clauses = [
-        clause
-        for clause in clauses
-        if not any(char.isdigit() for char in clause) and not _GOAL_SUMMARY_FORBIDDEN_RE.search(clause)
-    ]
+    # First pass: strip numeric annotations inline rather than dropping whole clauses.
+    stripped = _GOAL_SUMMARY_NUMERIC_ANNOTATION_RE.sub(" ", raw)
+    stripped = re.sub(r"\(\s*\)", "", stripped)
+    stripped = re.sub(r"\s+([,.;:!?])", r"\1", stripped)
+    stripped = re.sub(r"\s{2,}", " ", stripped).strip()
+    if not stripped:
+        return ""
+    # Second pass: drop clauses that still mention real config tokens (pop_size, c1, …).
+    clauses = [chunk.strip() for chunk in re.split(r"[.;]", stripped) if chunk.strip()]
+    clean_clauses = [clause for clause in clauses if not _GOAL_SUMMARY_FORBIDDEN_RE.search(clause)]
     if not clean_clauses:
         return ""
     return _ensure_terminator(" ".join(clean_clauses))
@@ -831,7 +855,14 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     replace_open_questions = bool(patch.get("replace_open_questions"))
 
     if "goal_summary" in patch:
-        merged["goal_summary"] = _sanitize_goal_summary(patch.get("goal_summary") or "")
+        raw_goal = patch.get("goal_summary") or ""
+        sanitized_goal = _sanitize_goal_summary(raw_goal)
+        # Only overwrite when we have a usable sanitized value, OR the model
+        # explicitly cleared it (raw was empty/whitespace). If the model wrote a
+        # non-empty summary that the sanitizer couldn't keep anything from, retain
+        # the prior summary instead of silently wiping it.
+        if sanitized_goal or not str(raw_goal).strip():
+            merged["goal_summary"] = sanitized_goal
     if "run_summary" in patch:
         merged["run_summary"] = _sanitize_run_summary(patch.get("run_summary") or "")
     # If the model sets replace_open_questions but omits open_questions (common on cleanup

@@ -524,9 +524,11 @@ def reset_session(
     row.tutorial_definition_tab_visited = False
     row.tutorial_definition_saved = False
     row.tutorial_config_tab_visited = False
+    row.tutorial_config_first_saved = False
     row.tutorial_config_saved = False
     row.tutorial_first_run_done = False
     row.tutorial_second_run_done = False
+    row.tutorial_run_summary_read = False
     row.tutorial_results_inspected = False
     row.tutorial_explain_used = False
     row.tutorial_candidate_marked = False
@@ -658,6 +660,10 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             updated_panel = current
             is_answer_save = intent.is_answered_open_question_message(body.content)
             is_config_save = intent.is_config_save_context_message(body.content)
+            is_tutorial_active = bool(
+                getattr(row, "participant_tutorial_enabled", False)
+                and not getattr(row, "tutorial_completed", False)
+            )
             turn = None
             try:
                 from app.services.llm import classify_definition_intents, generate_chat_turn
@@ -676,6 +682,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     researcher_steers=researcher_steers or None,
                     cleanup_mode=cleanup_requested,
                     is_run_acknowledgement=is_run_ack,
+                    is_tutorial_active=is_tutorial_active,
                     test_problem_id=row.test_problem_id,
                 )
                 text = turn.assistant_message
@@ -839,6 +846,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     is_run_acknowledgement=is_run_ack,
                     is_answered_open_question=is_answer_save,
                     is_config_save=is_config_save,
+                    is_tutorial_active=is_tutorial_active,
                     test_problem_id=row.test_problem_id,
                 )
 
@@ -1616,12 +1624,16 @@ def patch_participant_tutorial(
         row.tutorial_definition_saved = bool(body.tutorial_definition_saved)
     if "tutorial_config_tab_visited" in body.model_fields_set and body.tutorial_config_tab_visited is not None:
         row.tutorial_config_tab_visited = bool(body.tutorial_config_tab_visited)
+    if "tutorial_config_first_saved" in body.model_fields_set and body.tutorial_config_first_saved is not None:
+        row.tutorial_config_first_saved = bool(body.tutorial_config_first_saved)
     if "tutorial_config_saved" in body.model_fields_set and body.tutorial_config_saved is not None:
         row.tutorial_config_saved = bool(body.tutorial_config_saved)
     if "tutorial_first_run_done" in body.model_fields_set and body.tutorial_first_run_done is not None:
         row.tutorial_first_run_done = bool(body.tutorial_first_run_done)
     if "tutorial_second_run_done" in body.model_fields_set and body.tutorial_second_run_done is not None:
         row.tutorial_second_run_done = bool(body.tutorial_second_run_done)
+    if "tutorial_run_summary_read" in body.model_fields_set and body.tutorial_run_summary_read is not None:
+        row.tutorial_run_summary_read = bool(body.tutorial_run_summary_read)
     if "tutorial_results_inspected" in body.model_fields_set and body.tutorial_results_inspected is not None:
         row.tutorial_results_inspected = bool(body.tutorial_results_inspected)
     if "tutorial_explain_used" in body.model_fields_set and body.tutorial_explain_used is not None:
@@ -1841,9 +1853,11 @@ def export_session(
             "tutorial_definition_tab_visited": bool(getattr(row, "tutorial_definition_tab_visited", False)),
             "tutorial_definition_saved": bool(getattr(row, "tutorial_definition_saved", False)),
             "tutorial_config_tab_visited": bool(getattr(row, "tutorial_config_tab_visited", False)),
+            "tutorial_config_first_saved": bool(getattr(row, "tutorial_config_first_saved", False)),
             "tutorial_config_saved": bool(getattr(row, "tutorial_config_saved", False)),
             "tutorial_first_run_done": bool(getattr(row, "tutorial_first_run_done", False)),
             "tutorial_second_run_done": bool(getattr(row, "tutorial_second_run_done", False)),
+            "tutorial_run_summary_read": bool(getattr(row, "tutorial_run_summary_read", False)),
             "tutorial_results_inspected": bool(getattr(row, "tutorial_results_inspected", False)),
             "tutorial_explain_used": bool(getattr(row, "tutorial_explain_used", False)),
             "tutorial_candidate_marked": bool(getattr(row, "tutorial_candidate_marked", False)),

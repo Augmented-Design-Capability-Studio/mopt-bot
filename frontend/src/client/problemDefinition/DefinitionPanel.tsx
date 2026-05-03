@@ -180,7 +180,7 @@ function DefinitionSection({
                               onPromoteItem(item.id);
                             }}
                           >
-                            ⬆
+                            ✓
                           </button>
                         ) : null}
                       </>
@@ -488,7 +488,6 @@ export function DefinitionPanel({
   }
 
   useLayoutEffect(() => {
-    if (!editable) return;
     const root = rootRef.current;
     if (!root) return;
     const textareas = root.querySelectorAll<HTMLTextAreaElement>(".definition-inline-textarea");
@@ -518,34 +517,20 @@ export function DefinitionPanel({
         {!collapsedSections.goalSummary && (
           <div className="definition-item">
             <div className="definition-item-content definition-item-content-goal">
-              {editable ? (
-                <textarea
-                  id="definition-goal-summary"
-                  className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
-                  value={problemBrief.goal_summary}
-                  disabled={sessionTerminated}
-                  rows={1}
-                  onFocus={() => onEnsureDefinitionEditing()}
-                  onChange={(e) => updateGoalSummary(e.target.value)}
-                  onInput={autoGrowTextarea}
-                  placeholder="Summarize what a good plan should prioritize."
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
-                  title="Edit..."
-                  disabled={sessionTerminated}
-                  onClick={(e) =>
-                    ensureDefinitionEditingFromLocked(
-                      "#definition-goal-summary",
-                      estimatedCaretIndexFromClick(problemBrief.goal_summary || "", e),
-                    )
-                  }
-                >
-                  {problemBrief.goal_summary || "Summarize what a good plan should prioritize."}
-                </button>
-              )}
+              <textarea
+                id="definition-goal-summary"
+                className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
+                value={problemBrief.goal_summary}
+                disabled={sessionTerminated}
+                rows={2}
+                onFocus={() => ensureDefinitionEditingFromLocked("#definition-goal-summary")}
+                onChange={(e) => {
+                  ensureDefinitionEditingFromLocked("#definition-goal-summary");
+                  updateGoalSummary(e.target.value);
+                }}
+                onInput={autoGrowTextarea}
+                placeholder="Summarize what a good plan should prioritize."
+              />
             </div>
           </div>
         )}
@@ -758,30 +743,6 @@ export function DefinitionPanel({
         )}
       </section>
 
-      <DefinitionSection
-        title="Gathered Info"
-        description="Confirmed facts from chat messages or uploaded materials."
-        items={gatheredItems}
-        editable={editable}
-        sessionTerminated={sessionTerminated}
-        onEnsureDefinitionEditing={ensureDefinitionEditingFromLocked}
-        onAddItem={() => addItem("gathered")}
-        onUpdateItemText={updateItemText}
-        onRemoveItem={removeItem}
-        deletedMarkerIndex={deletedMarker?.section === "gathered" ? deletedMarker.index : null}
-        onTextareaInput={autoGrowTextarea}
-        rowExtraClassName={(item) => flashClassForItem(item.id)}
-        suppressTransientMarkers={suppressTransientMarkers}
-        removedItems={removedItems.gathered.map((entry) => ({
-          id: entry.id,
-          text: entry.item.text,
-          index: entry.index,
-        }))}
-        onRestoreItem={(id) => restoreRemovedItem("gathered", id)}
-        collapsed={collapsedSections.gatheredInfo}
-        onToggle={() => toggleSection("gatheredInfo")}
-      />
-
       {showAssumptions ? (
         <DefinitionSection
           title="Assumptions"
@@ -808,6 +769,30 @@ export function DefinitionPanel({
           onToggle={() => toggleSection("assumptions")}
         />
       ) : null}
+
+      <DefinitionSection
+        title="Gathered Info"
+        description="Confirmed facts from chat messages or uploaded materials."
+        items={gatheredItems}
+        editable={editable}
+        sessionTerminated={sessionTerminated}
+        onEnsureDefinitionEditing={ensureDefinitionEditingFromLocked}
+        onAddItem={() => addItem("gathered")}
+        onUpdateItemText={updateItemText}
+        onRemoveItem={removeItem}
+        deletedMarkerIndex={deletedMarker?.section === "gathered" ? deletedMarker.index : null}
+        onTextareaInput={autoGrowTextarea}
+        rowExtraClassName={(item) => flashClassForItem(item.id)}
+        suppressTransientMarkers={suppressTransientMarkers}
+        removedItems={removedItems.gathered.map((entry) => ({
+          id: entry.id,
+          text: entry.item.text,
+          index: entry.index,
+        }))}
+        onRestoreItem={(id) => restoreRemovedItem("gathered", id)}
+        collapsed={collapsedSections.gatheredInfo}
+        onToggle={() => toggleSection("gatheredInfo")}
+      />
 
     </div>
   );

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { displayRunNumber, type ProblemBrief, type RunResult, type Session, type TestProblemMeta } from "@shared/api";
 
-import type { EditMode } from "../lib/participantTypes";
+import type { EditMode } from "../lib/clientTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { parseBaseProblemConfig } from "../problemConfig/baseSerialization";
 import { ConvergencePlot } from "./ConvergencePlot";
@@ -343,7 +343,7 @@ export function ResultsPanel({
             ) : null}
 
             {allVizTabs.length > 1 && (
-              <div className="tabs" style={{ marginTop: "0.6rem" }}>
+              <div className="tabs" data-tutorial-anchor="results-viz-tabs" style={{ marginTop: "0.6rem" }}>
                 {allVizTabs.map((tab) => (
                   <button
                     key={tab.id}

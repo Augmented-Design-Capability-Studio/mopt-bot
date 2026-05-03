@@ -11,7 +11,7 @@ import {
 } from "@shared/api";
 
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
-import type { RecentSessionRow } from "../lib/participantTypes";
+import type { RecentSessionRow } from "../lib/clientTypes";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
 import { coerceParticipantMessages } from "../lib/sessionGuards";
 import type { ClientSessionHistoryEntry } from "../lib/sessionHistory";
@@ -35,7 +35,7 @@ type UseParticipantSessionLifecycleArgs = {
   setProblemBrief: (value: ProblemBrief | null) => void;
   setScheduleText: (value: string) => void;
   setActiveRun: (value: number) => void;
-  setEditMode: (value: import("../lib/participantTypes").EditMode) => void;
+  setEditMode: (value: import("../lib/clientTypes").EditMode) => void;
   setConfigEditSnapshot: (value: string) => void;
   setBusy: (value: boolean) => void;
   setError: (value: string | null) => void;
@@ -44,7 +44,7 @@ type UseParticipantSessionLifecycleArgs = {
   setParticipantNumber: (value: string) => void;
 };
 
-export function useParticipantSessionLifecycle({
+export function useClientSessionLifecycle({
   token,
   tokenInput,
   participantNumber,

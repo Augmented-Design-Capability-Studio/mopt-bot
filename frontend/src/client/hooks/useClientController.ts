@@ -38,17 +38,17 @@ import {
   intrinsicOptimizationReadyAgile,
 } from "../lib/optimizationGate";
 
-import { type EditMode, type RecentSessionRow } from "../lib/participantTypes";
+import { type EditMode, type RecentSessionRow } from "../lib/clientTypes";
 import { cloneProblemBrief, isProblemBriefDirtyAfterClean } from "../problemDefinition/summary";
 import { PARTICIPANT_NUMBER_KEY, SESSION_KEY, TOKEN_KEY } from "../lib/sessionKeys";
-import { DEFAULT_PARTICIPANT_OPS_STATE } from "../lib/participantOps";
+import { DEFAULT_CLIENT_OPS_STATE } from "../lib/clientOps";
 import { hasSimulatedUploadMessage, parseFilenamesFromSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
-import { useParticipantSessionActions } from "./useParticipantSessionActions";
-import { useParticipantSessionLifecycle } from "./useParticipantSessionLifecycle";
-import { useParticipantSessionSync } from "./useParticipantSessionSync";
+import { useClientSessionActions } from "./useClientSessionActions";
+import { useClientSessionLifecycle } from "./useClientSessionLifecycle";
+import { useClientSessionSync } from "./useClientSessionSync";
 import { useGeminiConfig } from "@shared/geminiModelSuggestions";
 
-export function useParticipantController() {
+export function useClientController() {
   const { defaultModel } = useGeminiConfig();
   const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [pendingUrlSessionId, setPendingUrlSessionId] = useState(() => {
@@ -77,7 +77,7 @@ export function useParticipantController() {
   const [configEditSnapshot, setConfigEditSnapshot] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncingProblemConfig, setSyncingProblemConfig] = useState(false);
-  const [participantOps, setParticipantOps] = useState(DEFAULT_PARTICIPANT_OPS_STATE);
+  const [clientOps, setClientOps] = useState(DEFAULT_CLIENT_OPS_STATE);
   const [optimizing, setOptimizing] = useState(false);
   const optimizingRef = useRef(false);
   optimizingRef.current = optimizing;
@@ -142,7 +142,7 @@ export function useParticipantController() {
     return testProblemsMeta.find((m) => m.id === id) ?? null;
   }, [session?.test_problem_id, testProblemsMeta]);
 
-  const sync = useParticipantSessionSync({
+  const sync = useClientSessionSync({
     token: savedToken,
     sessionId,
     authed,
@@ -174,7 +174,7 @@ export function useParticipantController() {
     defaultModel,
   });
 
-  const lifecycle = useParticipantSessionLifecycle({
+  const lifecycle = useClientSessionLifecycle({
     token: savedToken,
     tokenInput: token,
     participantNumber,
@@ -236,7 +236,7 @@ export function useParticipantController() {
 
   useEffect(() => {
     setDefinitionEditBaseline(null);
-    setParticipantOps(DEFAULT_PARTICIPANT_OPS_STATE);
+    setClientOps(DEFAULT_CLIENT_OPS_STATE);
     setSimulatedUploadChips([]);
     setCandidateRunIds([]);
     processedUploadMessageIdsRef.current = new Set();
@@ -309,7 +309,7 @@ export function useParticipantController() {
 
   const agileAutorunStorageKey = sessionId ? `mopt-agile-autorun-dispatched:${sessionId}` : "";
 
-  const actions = useParticipantSessionActions({
+  const actions = useClientSessionActions({
     token: savedToken,
     hasUploadedData,
     sessionId,
@@ -340,7 +340,7 @@ export function useParticipantController() {
     setShowModelDialog,
     setModelKey,
     setAiPending,
-    setParticipantOps,
+    setClientOps,
     runs,
     activeRun,
     candidateRunIds,
@@ -484,7 +484,7 @@ export function useParticipantController() {
 
   const canLoadFromLastRun = runs.length > 0 && runs[runs.length - 1]?.request?.problem != null;
   const canLoadFromSnapshot = snapshots.length > 0;
-  const chatBusy = participantOps.sendingChat;
+  const chatBusy = clientOps.sendingChat;
 
   return {
     token,
@@ -505,7 +505,7 @@ export function useParticipantController() {
     busy,
     chatBusy,
     syncingProblemConfig,
-    participantOps,
+    clientOps,
     optimizing,
     error,
     showModelDialog,
@@ -544,6 +544,7 @@ export function useParticipantController() {
     requestOpenQuestionCleanup: actions.requestOpenQuestionCleanup,
     simulateUpload: actions.simulateUpload,
     saveConfig: actions.saveConfig,
+    applyTutorialConfigPatch: actions.applyTutorialConfigPatch,
     saveProblemBrief: actions.saveProblemBrief,
     syncProblemConfig: actions.syncProblemConfig,
     recoverGoalTerms: actions.recoverGoalTerms,

@@ -18,8 +18,8 @@ import { resolveActiveTutorialStep } from "../../tutorial/transitions";
 import type { TutorialAction } from "../../tutorial/types";
 
 import { ChatSection } from "../chat/ChatSection";
-import { type EditMode } from "../lib/participantTypes";
-import type { ParticipantOpsState } from "../lib/participantOps";
+import { type EditMode } from "../lib/clientTypes";
+import type { ClientOpsState } from "../lib/clientOps";
 import { formatProcessingError } from "../lib/processingErrors";
 import { ConfigPanel } from "../problemConfig/ConfigPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
@@ -38,7 +38,7 @@ type BubbleStyle = {
   bottom?: number;
 };
 
-type ParticipantShellProps = {
+type ClientShellProps = {
   sessionId: string;
   participantLabel: string;
   /** Resolved from GET /meta/test-problems for the active session id; null if unavailable. */
@@ -58,7 +58,7 @@ type ParticipantShellProps = {
   busy: boolean;
   chatBusy: boolean;
   syncingProblemConfig: boolean;
-  participantOps: ParticipantOpsState;
+  clientOps: ClientOpsState;
   optimizing: boolean;
   error: string | null;
   showModelDialog: boolean;
@@ -85,6 +85,7 @@ type ParticipantShellProps = {
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
   onRemoveSimulatedUploadChip: (fileName: string) => void;
   onSaveConfig: () => void | Promise<void>;
+  onApplyTutorialConfigPatch?: (patch: Record<string, unknown>) => void | Promise<void>;
   onSaveDefinitionEdit: () => void | Promise<void>;
   onCancelDefinitionEdit: () => void;
   onEnsureDefinitionEditing: () => void;
@@ -115,7 +116,7 @@ type ParticipantShellProps = {
   onSetParticipantTutorialState?: (patch: ParticipantTutorialPatch) => void | Promise<void>;
 };
 
-export function ParticipantShell({
+export function ClientShell({
   sessionId,
   participantLabel,
   testProblemMeta,
@@ -134,7 +135,7 @@ export function ParticipantShell({
   busy,
   chatBusy,
   syncingProblemConfig,
-  participantOps,
+  clientOps,
   optimizing,
   error,
   showModelDialog,
@@ -161,6 +162,7 @@ export function ParticipantShell({
   onSimulateUpload,
   onRemoveSimulatedUploadChip,
   onSaveConfig,
+  onApplyTutorialConfigPatch,
   onSaveDefinitionEdit,
   onCancelDefinitionEdit,
   onEnsureDefinitionEditing,
@@ -189,7 +191,7 @@ export function ParticipantShell({
   onCloseModelDialog,
   onSaveModelSettings,
   onSetParticipantTutorialState,
-}: ParticipantShellProps) {
+}: ClientShellProps) {
   const panelClass = (name: EditMode) => (editMode !== "none" && editMode !== name ? "panel panel-locked" : "panel");
 
   const sessionTerminated = session?.status === "terminated";
@@ -394,6 +396,20 @@ export function ParticipantShell({
         case "switch-tab":
           setTabSwitchRequest((prev) => ({ nonce: (prev?.nonce ?? 0) + 1, target: action.target }));
           break;
+        case "apply-config-patch":
+          if (onApplyTutorialConfigPatch) {
+            void onApplyTutorialConfigPatch(action.patch);
+          }
+          break;
+        case "acknowledge-step": {
+          // Dynamic-keyed patch: the flag name is decided by the per-problem
+          // tutorial step. The discriminated union keeps `flag` as a plain
+          // string here, but the backend ignores unknown fields, so a typo
+          // becomes a silent no-op rather than a crash.
+          const patch = { [action.flag]: true } as ParticipantTutorialPatch;
+          void onSetParticipantTutorialState?.(patch);
+          break;
+        }
         case "complete-tutorial":
           // Mark wrap-up acknowledged AND turn the bubble off in one patch so the
           // bubble doesn't briefly re-appear at the wrap-up step before the
@@ -405,7 +421,7 @@ export function ParticipantShell({
           break;
       }
     },
-    [onChatInputChange, onSetParticipantTutorialState],
+    [onApplyTutorialConfigPatch, onChatInputChange, onSetParticipantTutorialState],
   );
 
   return (
@@ -413,9 +429,9 @@ export function ParticipantShell({
       <header className={accentClass ? `app-header ${accentClass}` : "app-header"}>
         <div className="app-header-title-cluster">
           <span className="app-title">
-            Participant
+            User
             {displayParticipant ? (
-              <span className="participant-header-number" title="Participant number for this session">
+              <span className="participant-header-number" title="User number for this session">
                 {" "}
                 #{displayParticipant}
               </span>
@@ -494,7 +510,7 @@ export function ParticipantShell({
             invokeModel={invokeModel}
             busy={busy}
             syncingProblemConfig={syncingProblemConfig}
-            participantOps={participantOps}
+            clientOps={clientOps}
             backgroundBriefPending={backgroundBriefPending}
             backgroundConfigPending={backgroundConfigPending}
             backgroundProcessingError={backgroundProcessingError}

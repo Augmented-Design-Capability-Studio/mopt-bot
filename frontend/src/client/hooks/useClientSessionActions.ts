@@ -27,8 +27,48 @@ import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants"
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { getProblemModule } from "../problemRegistry";
-import type { ParticipantOpsState } from "../lib/participantOps";
+import type { ClientOpsState } from "../lib/clientOps";
 import { buildSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
+
+/**
+ * Deep-merge a tutorial preset patch into the panel's `problem` block.
+ *
+ * Top-level keys in `patch` shallow-replace the corresponding key in `target`,
+ * except for `weights`, `constraint_types`, `algorithm_params`, `goal_terms`
+ * which are object-merged so unrelated keys are preserved. Arrays and
+ * scalars are replaced wholesale.
+ */
+function deepMergeProblemPatch(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const NESTED_OBJECT_KEYS = new Set([
+    "weights",
+    "constraint_types",
+    "algorithm_params",
+    "goal_terms",
+    "locked_assignments",
+  ]);
+  const out: Record<string, unknown> = { ...target };
+  for (const [key, value] of Object.entries(patch)) {
+    if (
+      NESTED_OBJECT_KEYS.has(key) &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      const before = target[key];
+      const beforeRecord =
+        before && typeof before === "object" && !Array.isArray(before)
+          ? (before as Record<string, unknown>)
+          : {};
+      out[key] = { ...beforeRecord, ...(value as Record<string, unknown>) };
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
 
 function maxCommittedRunNumber(existing: RunResult[]): number {
   let max = 0;
@@ -109,7 +149,7 @@ type UseParticipantSessionActionsArgs = {
   setConfigText: (value: string) => void;
   setProblemBrief: (value: ProblemBrief | null | ((prev: ProblemBrief | null) => ProblemBrief | null)) => void;
   setActiveRun: (value: number | ((prev: number) => number)) => void;
-  setEditMode: (value: import("../lib/participantTypes").EditMode) => void;
+  setEditMode: (value: import("../lib/clientTypes").EditMode) => void;
   setBusy: (value: boolean) => void;
   setSyncingProblemConfig: (value: boolean) => void;
   setOptimizing: (value: boolean) => void;
@@ -118,7 +158,7 @@ type UseParticipantSessionActionsArgs = {
   setShowModelDialog: (value: boolean) => void;
   setModelKey: (value: string) => void;
   setAiPending: (value: boolean) => void;
-  setParticipantOps: (value: ParticipantOpsState | ((prev: ParticipantOpsState) => ParticipantOpsState)) => void;
+  setClientOps: (value: ClientOpsState | ((prev: ClientOpsState) => ClientOpsState)) => void;
   runs: RunResult[];
   activeRun: number;
   candidateRunIds: number[];
@@ -137,7 +177,7 @@ type PostContextMessageOptions = {
   suppressOptimisticUserMessage?: boolean;
 };
 
-export function useParticipantSessionActions({
+export function useClientSessionActions({
   token,
   hasUploadedData,
   participantNumber: _participantNumber,
@@ -169,7 +209,7 @@ export function useParticipantSessionActions({
   setShowModelDialog,
   setModelKey,
   setAiPending,
-  setParticipantOps,
+  setClientOps,
   runs,
   activeRun,
   candidateRunIds,
@@ -275,7 +315,7 @@ export function useParticipantSessionActions({
 
   const requestOpenQuestionCleanup = useCallback(async () => {
     if (!token || !sessionId || session?.status === "terminated") return;
-    setParticipantOps((prev) => ({ ...prev, cleaningOpenQuestions: true }));
+    setClientOps((prev) => ({ ...prev, cleaningOpenQuestions: true }));
     try {
       const nextSession = await runOpenQuestionCleanupRequest();
       setSession(nextSession);
@@ -283,9 +323,9 @@ export function useParticipantSessionActions({
     } catch (error) {
       setError(error instanceof Error ? error.message : "Open-question cleanup failed");
     } finally {
-      setParticipantOps((prev) => ({ ...prev, cleaningOpenQuestions: false }));
+      setClientOps((prev) => ({ ...prev, cleaningOpenQuestions: false }));
     }
-  }, [runOpenQuestionCleanupRequest, session?.status, sessionId, setError, setParticipantOps, setProblemBrief, setSession, token]);
+  }, [runOpenQuestionCleanupRequest, session?.status, sessionId, setError, setClientOps, setProblemBrief, setSession, token]);
 
   const setParticipantTutorialState = useCallback(
     async (patch: ParticipantTutorialPatch): Promise<void> => {
@@ -319,7 +359,7 @@ export function useParticipantSessionActions({
     setChatInput("");
     setError(null);
     setBusy(true);
-    setParticipantOps((prev) => ({ ...prev, sendingChat: true }));
+    setClientOps((prev) => ({ ...prev, sendingChat: true }));
     setAiPending(invokeModel);
     try {
       const raw = await apiFetch<unknown>(`/sessions/${sessionId}/messages`, token, {
@@ -345,7 +385,7 @@ export function useParticipantSessionActions({
       setChatInput(text);
       setError(error instanceof Error ? error.message : "Send failed");
     } finally {
-      setParticipantOps((prev) => ({ ...prev, sendingChat: false }));
+      setClientOps((prev) => ({ ...prev, sendingChat: false }));
       setBusy(false);
       setAiPending(false);
     }
@@ -365,7 +405,7 @@ export function useParticipantSessionActions({
     setError,
     setLastMsgId,
     setMessages,
-    setParticipantOps,
+    setClientOps,
     setParticipantTutorialState,
     startEagerMessagePoll,
     token,
@@ -403,7 +443,7 @@ export function useParticipantSessionActions({
     const detailedChanges = configChangeDetailedSummary(previousPanel, parsed);
     const acknowledgement = "";
     setBusy(true);
-    setParticipantOps((prev) => ({ ...prev, savingConfig: true }));
+    setClientOps((prev) => ({ ...prev, savingConfig: true }));
     try {
       const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/panel`, token, {
         method: "PATCH",
@@ -425,7 +465,7 @@ export function useParticipantSessionActions({
         void postContextMessage(
           `I manually updated the problem configuration. Changed settings: ${changedKeys}. ` +
             `Detailed changes: ${detailedChanges}. ` +
-            `Please acknowledge in 1-2 short sentences using participant-friendly names, then update the brief rows for the affected settings while preserving any prior rationale.`,
+            `Please acknowledge in 1-2 short sentences using user-friendly names, then update the brief rows for the affected settings while preserving any prior rationale.`,
           true,
           { skipHiddenBriefUpdate: false },
         );
@@ -443,7 +483,7 @@ export function useParticipantSessionActions({
       setError(friendly);
       void syncSession();
     } finally {
-      setParticipantOps((prev) => ({ ...prev, savingConfig: false }));
+      setClientOps((prev) => ({ ...prev, savingConfig: false }));
       setBusy(false);
     }
   }, [
@@ -458,13 +498,42 @@ export function useParticipantSessionActions({
     setConfigText,
     setEditMode,
     setError,
-    setParticipantOps,
+    setClientOps,
     setProblemBrief,
     setSession,
     setParticipantTutorialState,
     syncSession,
     token,
   ]);
+
+  const applyTutorialConfigPatch = useCallback(
+    async (patch: Record<string, unknown>) => {
+      if (!token || !sessionId) return;
+      let parsed: Record<string, unknown>;
+      try {
+        const raw = configText.trim();
+        parsed = raw === "" ? {} : (JSON.parse(raw) as Record<string, unknown>);
+      } catch {
+        setError("Configuration JSON is invalid; can't apply tutorial preset.");
+        return;
+      }
+      // Tutorial patches target `problem.*`. Deep-merge into the existing
+      // `problem` block so unrelated fields (algorithm, epochs, etc.) survive.
+      const beforeProblem =
+        parsed.problem && typeof parsed.problem === "object" && !Array.isArray(parsed.problem)
+          ? (parsed.problem as Record<string, unknown>)
+          : {};
+      const nextProblem = deepMergeProblemPatch(beforeProblem, patch);
+      const nextPanel = { ...parsed, problem: nextProblem };
+      const nextText = JSON.stringify(nextPanel, null, 2);
+      // Update the local edit buffer so the participant sees the new values
+      // instantly, then save (the saveConfig hook posts the chat-context
+      // message and runs the rationale-aware hidden brief update).
+      setConfigText(nextText);
+      await saveConfig(nextText);
+    },
+    [configText, saveConfig, sessionId, setConfigText, setError, token],
+  );
 
   const saveProblemBrief = useCallback(async (overrideBrief?: ProblemBrief, options?: SaveProblemBriefOptions) => {
     const baseBrief = overrideBrief ?? problemBrief;
@@ -492,7 +561,7 @@ export function useParticipantSessionActions({
 
     savingProblemBriefRef.current = true;
     setBusy(true);
-    setParticipantOps((prev) => {
+    setClientOps((prev) => {
       const nextProcessing = new Set(prev.processingOqIds);
       for (const id of flippedOqIds) nextProcessing.add(id);
       return { ...prev, savingDefinition: true, processingOqIds: nextProcessing };
@@ -528,7 +597,7 @@ export function useParticipantSessionActions({
       return false;
     } finally {
       savingProblemBriefRef.current = false;
-      setParticipantOps((prev) => {
+      setClientOps((prev) => {
         const nextProcessing = new Set(prev.processingOqIds);
         for (const id of flippedOqIds) nextProcessing.delete(id);
         return { ...prev, savingDefinition: false, processingOqIds: nextProcessing };
@@ -547,7 +616,7 @@ export function useParticipantSessionActions({
     setConfigText,
     setEditMode,
     setError,
-    setParticipantOps,
+    setClientOps,
     setProblemBrief,
     setSession,
     setParticipantTutorialState,
@@ -574,7 +643,7 @@ export function useParticipantSessionActions({
       if (!token || !sessionId || session?.status === "terminated") return;
       const timeStr = formatSnapshotTime(snapshot.created_at);
       setBusy(true);
-      setParticipantOps((prev) => ({ ...prev, restoringSnapshot: true }));
+      setClientOps((prev) => ({ ...prev, restoringSnapshot: true }));
       try {
         if (source === "definition") {
           const brief = snapshot.problem_brief;
@@ -626,7 +695,7 @@ export function useParticipantSessionActions({
       } catch (error) {
         setError(error instanceof Error ? error.message : "Restore failed");
       } finally {
-        setParticipantOps((prev) => ({ ...prev, restoringSnapshot: false }));
+        setClientOps((prev) => ({ ...prev, restoringSnapshot: false }));
         setBusy(false);
       }
     },
@@ -640,7 +709,7 @@ export function useParticipantSessionActions({
       setConfigText,
       setEditMode,
       setError,
-      setParticipantOps,
+      setClientOps,
       setProblemBrief,
       setSession,
       token,
@@ -657,7 +726,7 @@ export function useParticipantSessionActions({
     const cleanedBrief = cleanProblemBriefForCompare(problemBrief);
     syncingProblemConfigRef.current = true;
     setSyncingProblemConfig(true);
-    setParticipantOps((prev) => ({ ...prev, syncingConfig: true }));
+    setClientOps((prev) => ({ ...prev, syncingConfig: true }));
     setError(null);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 30000);
@@ -683,7 +752,7 @@ export function useParticipantSessionActions({
     } finally {
       window.clearTimeout(timeoutId);
       syncingProblemConfigRef.current = false;
-      setParticipantOps((prev) => ({ ...prev, syncingConfig: false }));
+      setClientOps((prev) => ({ ...prev, syncingConfig: false }));
       setSyncingProblemConfig(false);
     }
   }, [
@@ -694,7 +763,7 @@ export function useParticipantSessionActions({
     sessionId,
     setConfigText,
     setError,
-    setParticipantOps,
+    setClientOps,
     setSyncingProblemConfig,
     setProblemBrief,
     setSession,
@@ -994,6 +1063,7 @@ export function useParticipantSessionActions({
     requestOpenQuestionCleanup,
     simulateUpload,
     saveConfig,
+    applyTutorialConfigPatch,
     saveProblemBrief,
     syncProblemConfig,
     recoverGoalTerms,

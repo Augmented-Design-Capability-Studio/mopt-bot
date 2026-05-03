@@ -1,9 +1,16 @@
+import { useEffect } from "react";
+
 import { LoginGate } from "./components/LoginGate";
-import { ParticipantShell } from "./components/ParticipantShell";
-import { useParticipantController } from "./hooks/useParticipantController";
+import { ClientShell } from "./components/ClientShell";
+import { useClientController } from "./hooks/useClientController";
 
 export function ClientApp() {
-  const controller = useParticipantController();
+  const controller = useClientController();
+
+  useEffect(() => {
+    const label = (controller.session?.participant_number ?? controller.participantNumber ?? "").trim();
+    document.title = label ? `User #${label}` : "User";
+  }, [controller.participantNumber, controller.session?.participant_number]);
 
   if (!controller.authed) {
     return (
@@ -27,7 +34,7 @@ export function ClientApp() {
   }
 
   return (
-    <ParticipantShell
+    <ClientShell
       sessionId={controller.sessionId}
       participantLabel={controller.participantNumber}
       testProblemMeta={controller.testProblemMeta}
@@ -46,7 +53,7 @@ export function ClientApp() {
       busy={controller.busy}
       chatBusy={controller.chatBusy}
       syncingProblemConfig={controller.syncingProblemConfig}
-      participantOps={controller.participantOps}
+      clientOps={controller.clientOps}
       optimizing={controller.optimizing}
       error={controller.error}
       showModelDialog={controller.showModelDialog}
@@ -73,6 +80,7 @@ export function ClientApp() {
       onSimulateUpload={controller.simulateUpload}
       onRemoveSimulatedUploadChip={controller.onRemoveSimulatedUploadChip}
       onSaveConfig={controller.saveConfig}
+      onApplyTutorialConfigPatch={controller.applyTutorialConfigPatch}
       onSaveDefinitionEdit={controller.saveDefinitionEdit}
       onCancelDefinitionEdit={controller.cancelDefinitionEdit}
       onEnsureDefinitionEditing={controller.ensureDefinitionEditing}

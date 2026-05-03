@@ -96,10 +96,12 @@ export function configChangeDetailedSummary(
     }
   }
 
-  // Boolean flags worth surfacing to the LLM.
+  // Boolean flags worth surfacing to the LLM. Normalize through the same default-handling
+  // layer as `configChangeSummary` so omitted-but-default-true values don't read as phantom
+  // changes (these flags are dropped from serialized JSON when they hold their default `true`).
   for (const key of ["early_stop", "use_greedy_init", "only_active_terms"] as const) {
-    const prev = beforeProblem[key];
-    const next = afterProblem[key];
+    const prev = normalizeProblemFieldForSummary(key, beforeProblem[key]);
+    const next = normalizeProblemFieldForSummary(key, afterProblem[key]);
     if (prev !== next && (prev != null || next != null)) {
       lines.push(`${toParticipantLabel(key)}: ${formatScalar(prev)} → ${formatScalar(next)}`);
     }
@@ -133,8 +135,11 @@ function formatScalar(value: unknown): string {
 }
 
 function normalizeProblemFieldForSummary(key: string, value: unknown): unknown {
-  if (key === "only_active_terms") {
-    // `true` is an implicit default and should not be called out as a discovered change.
+  if (key === "only_active_terms" || key === "early_stop" || key === "use_greedy_init") {
+    // These boolean fields default to `true` in `parseBaseProblemConfig` and the serializer
+    // deletes them when they are `true` (only persisting an explicit `false`). Treat
+    // missing/undefined and `true` as equivalent so we don't report phantom "on → —"
+    // changes when the user saved a panel that simply omits the default.
     return value === true ? null : value ?? null;
   }
   if (key === "driver_preferences") {

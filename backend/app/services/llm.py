@@ -435,6 +435,7 @@ def _build_visible_chat_system_instruction(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
     api_key: str | None = None,
     model_name: str | None = None,
@@ -509,6 +510,10 @@ def _build_visible_chat_system_instruction(
         parts.append(lock_blob)
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
+    if is_tutorial_active:
+        from app.prompts.study_chat import STUDY_CHAT_TUTORIAL_GUARDRAILS
+
+        parts.append(STUDY_CHAT_TUTORIAL_GUARDRAILS)
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn. Acknowledge cleanup naturally if relevant, but keep the visible "
@@ -540,6 +545,7 @@ def _build_brief_update_system_instruction(
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
     is_config_save: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
@@ -598,6 +604,10 @@ def _build_brief_update_system_instruction(
         from app.prompts.study_chat import STUDY_CHAT_CONFIG_SAVE_RATIONALE
 
         parts.append(STUDY_CHAT_CONFIG_SAVE_RATIONALE)
+    if is_tutorial_active:
+        from app.prompts.study_chat import STUDY_CHAT_TUTORIAL_GUARDRAILS
+
+        parts.append(STUDY_CHAT_TUTORIAL_GUARDRAILS)
     if cleanup_mode:
         parts.append(
             "Cleanup mode is active for this turn (user asked to clean up / consolidate / deduplicate the definition). "
@@ -641,6 +651,7 @@ def _plain_fallback_reply(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> str:
     system = _build_visible_chat_system_instruction(
@@ -652,6 +663,7 @@ def _plain_fallback_reply(
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
+        is_tutorial_active=is_tutorial_active,
         test_problem_id=test_problem_id,
         api_key=api_key,
         model_name=model_name,
@@ -680,6 +692,7 @@ def generate_visible_chat_reply(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> str:
     client = genai.Client(api_key=api_key)
@@ -692,6 +705,7 @@ def generate_visible_chat_reply(
         researcher_steers=researcher_steers,
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
+        is_tutorial_active=is_tutorial_active,
         test_problem_id=test_problem_id,
         api_key=api_key,
         model_name=model_name,
@@ -721,6 +735,7 @@ def generate_problem_brief_update(
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
     is_config_save: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> ProblemBriefUpdateTurn:
     client = genai.Client(api_key=api_key)
@@ -734,6 +749,7 @@ def generate_problem_brief_update(
         is_run_acknowledgement=is_run_acknowledgement,
         is_answered_open_question=is_answered_open_question,
         is_config_save=is_config_save,
+        is_tutorial_active=is_tutorial_active,
         test_problem_id=test_problem_id,
     )
     history = _history_to_contents(history_lines)
@@ -847,6 +863,7 @@ def generate_chat_turn(
     researcher_steers: list[str] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> ChatModelTurn:
     """Compatibility wrapper that now prioritizes the visible assistant reply."""
@@ -863,6 +880,7 @@ def generate_chat_turn(
             researcher_steers=researcher_steers,
             cleanup_mode=cleanup_mode,
             is_run_acknowledgement=is_run_acknowledgement,
+            is_tutorial_active=is_tutorial_active,
             test_problem_id=test_problem_id,
         )
     except Exception as e:
@@ -879,6 +897,7 @@ def generate_chat_turn(
             researcher_steers,
             cleanup_mode,
             is_run_acknowledgement,
+            is_tutorial_active=is_tutorial_active,
             test_problem_id=test_problem_id,
         )
     return ChatModelTurn(assistant_message=text, panel_patch=None)

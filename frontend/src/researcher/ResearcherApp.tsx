@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { ResearcherDetail } from "./components/ResearcherDetail";
 import { ResearcherHeader } from "./components/ResearcherHeader";
 import { ResearcherSessionList } from "./components/ResearcherSessionList";
@@ -5,6 +7,11 @@ import { useResearcherController } from "./hooks/useResearcherController";
 
 export function ResearcherApp() {
   const researcher = useResearcherController();
+
+  useEffect(() => {
+    const label = (researcher.detail?.participant_number ?? "").trim();
+    document.title = label ? `Researcher #${label}` : "Researcher";
+  }, [researcher.detail?.participant_number]);
 
   return (
     <div className="app-shell">

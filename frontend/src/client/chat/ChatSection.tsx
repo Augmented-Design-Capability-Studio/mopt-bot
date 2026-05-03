@@ -7,7 +7,7 @@ import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
 import { UploadFileChips } from "@shared/chat/UploadFileChips";
 import { parseFilenamesFromSimulatedUploadMessage } from "../lib/simulatedUploadMessage";
 
-import type { EditMode } from "../lib/participantTypes";
+import type { EditMode } from "../lib/clientTypes";
 
 type ChatSectionProps = {
   messages: Message[];

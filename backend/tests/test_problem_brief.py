@@ -103,6 +103,28 @@ def test_merge_replace_open_questions_true_prunes_stale_questions():
     assert [q["id"] for q in merged["open_questions"]] == ["q-b"]
 
 
+def test_merge_keeps_prior_goal_summary_when_patch_sanitizes_to_empty():
+    """A model patch that fails the sanitizer must not silently wipe a good prior summary."""
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            goal_summary="Maximize value picked from the bag without overflowing capacity."
+        )
+    )
+    assert base["goal_summary"]
+    # Patch contains only sanitizer-stripped tokens, so sanitized result is empty.
+    merged = merge_problem_brief_patch(
+        base, {"goal_summary": "tune pop_size and c1 for stability."}
+    )
+    # Prior summary is preserved instead of being clobbered.
+    assert merged["goal_summary"] == base["goal_summary"]
+
+
+def test_merge_clears_goal_summary_when_patch_explicitly_empty():
+    base = normalize_problem_brief(_minimal_brief_payload(goal_summary="Old goal."))
+    merged = merge_problem_brief_patch(base, {"goal_summary": ""})
+    assert merged["goal_summary"] == ""
+
+
 def test_merge_moves_answered_suffix_open_question_to_gathered():
     base = normalize_problem_brief(
         _minimal_brief_payload(
@@ -284,7 +306,35 @@ def test_normalize_goal_summary_strips_numeric_weight_details():
         goal_summary="Optimize travel time (weight 1) and keep deadline penalty 50 while using GA for 120 epochs."
     )
     out = normalize_problem_brief(raw)
-    assert out["goal_summary"] == ""
+    summary = out["goal_summary"]
+    # Numeric annotations are stripped, but qualitative wording survives.
+    assert summary  # non-empty
+    assert "weight 1" not in summary
+    assert "penalty 50" not in summary
+    assert "120 epochs" not in summary
+    # Bare English words remain (knapsack-style "weight"/"penalty" vocabulary is fine).
+    assert "travel time" in summary.lower()
+
+
+def test_normalize_goal_summary_preserves_knapsack_vocabulary():
+    """Knapsack uses 'weight' as a domain term, not a solver config key."""
+    raw = _minimal_brief_payload(
+        goal_summary="Maximize total value packed into the bag without exceeding the weight capacity."
+    )
+    out = normalize_problem_brief(raw)
+    assert out["goal_summary"]
+    assert "weight" in out["goal_summary"].lower()
+
+
+def test_normalize_goal_summary_drops_real_config_tokens():
+    """Genuine solver-config tokens (pop_size, c1, c2, …) still get clauses dropped."""
+    raw = _minimal_brief_payload(
+        goal_summary="Pack high-value items into the bag; tune pop_size and c1 for stability."
+    )
+    out = normalize_problem_brief(raw)
+    assert "pop_size" not in out["goal_summary"]
+    assert "c1" not in out["goal_summary"]
+    assert "Pack high-value items" in out["goal_summary"]
 
 
 def test_normalize_atomizes_compound_gathered_item():

@@ -60,7 +60,14 @@
       "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -c \"from app import schemas; print\\(schemas.ParticipantTutorialUpdate.model_fields.keys\\(\\)\\)\")",
       "Bash(../.venv/Scripts/python -c \"import app.schemas, app.problem_brief, app.services.llm, app.routers.sessions.router; print\\('imports OK'\\)\")",
       "Bash(../venv/Scripts/python.exe -c \"import app.schemas, app.problem_brief, app.services.llm, app.routers.sessions.router; print\\('imports OK'\\)\")",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/.venv/Scripts/python -c ' *)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe *)",
+      "Bash(echo \"exit: $?\")",
+      "PowerShell(Set-Location frontend; npx tsc --noEmit; Write-Output \"exit: $LASTEXITCODE\")",
+      "Bash(grep -E \"\\\\.html$\")",
+      "Bash(grep -E \"main\\\\.tsx$|main\\\\.ts$\")",
+      "PowerShell(git mv *)"
     ]
   }
 }

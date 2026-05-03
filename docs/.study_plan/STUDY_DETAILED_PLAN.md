@@ -73,31 +73,30 @@ The primary contrast is **workflow mode (Agile vs Waterfall)** as a between-subj
 
 ### 5. User Study Procedure
 
-Participants complete the study remotely or in a controlled lab setting using a computer-based interface. Total session length is approximately **60–75 minutes**, in addition to the screening survey, which is taken asynchronously beforehand. A condensed researcher's opening script for steps 1–4 is in [`SESSION_OPENING_SCRIPT.md`](SESSION_OPENING_SCRIPT.md).
+Participants complete the study remotely or in a controlled lab setting using a computer-based interface. Total session length is approximately **65–75 minutes**, in addition to the screening survey, which is taken asynchronously beforehand. A condensed researcher's opening script for steps 1–4 is in [`SESSION_OPENING_SCRIPT.md`](SESSION_OPENING_SCRIPT.md).
 
-1. **Introduction and consent** (~5 min)
+1. **Introduction and consent** (~3 min)
    - Researcher reads the purpose statement and walks the participant through the consent form. Recording starts after consent.
 2. **Stance framing** (~3 min)
    - Participants are told they are the person responsible for these scheduling decisions: they direct the AI assistant, but are not expected to write code or implement solutions themselves. They engage as themselves and are encouraged to notice where the interface does or does not support the kind of work they would want to do from that position.
-3. **Optimization orientation** (~5–8 min, including a ~3–4 min video)
+3. **Optimization orientation** (~7–10 min, including a ~3–4 min video and a hands-on tutorial on the interface)
    - A short, uniform **video** (script: [`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md)) built around the knapsack problem that installs the conceptual baseline needed to engage with the interface: hard vs. soft constraints, multi-objective trade-offs, stochasticity in solver results, and the gap between a scoring model and reality.
+   - Followed by a researcher-guided hands-on tutorial in the interface, still on the knapsack problem, so participants see the workflow before encountering the VRPTW task.
    - The orientation deliberately uses knapsack rather than the VRPTW task or the bookstore scenario from the scheduling-literacy screener, so concepts are introduced on neutral ground.
    - Identical across workflow conditions, so it does not confound the Agile/Waterfall comparison.
    - Optionally followed by re-administering the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md) to capture post-orientation literacy, which is closer to the real-user condition than the screening-time score.
-4. **Task briefing** (~5 min)
-   - Participants watch a short video introducing the QuickBite scheduling scenario and receive a one-page reference document for use during the session. The system interface is also introduced.
-5. **Pre-interaction check** (~3–5 min)
+4. **Task briefing** (~10 min)
+   - Participants watch a short video introducing the QuickBite scheduling scenario and receive a one-page reference document for use during the session. The system interface is also introduced. Time includes both video playback and reading.
+5. **Pre-interaction check** (~5–7 min)
    - A short check that the participant has understood the task and the orientation. Brief because background information was already collected at screening.
-6. **Interaction phase** (~30–40 min)
+6. **Interaction phase** (~30 min)
    - Participants interact with an AI agent through a chat-based interface to formulate and solve the problem.
    - The AI agent may gather information, make assumptions, and generate executable optimization procedures.
    - Participants review results, modify specifications, and iteratively refine solutions.
    - The phase ends when the participant reaches a satisfactory solution or the time cap is reached.
-7. **Post-task questionnaire and interview** (~10–15 min)
+7. **Post-task questionnaire and interview** (~10–12 min)
    - Participants complete a survey covering perceptions of the system, confidence in their solution, and overall usability.
    - A semi-structured interview elicits critique of the interface as an artifact: what it enabled, what it didn’t, and whether it changed the nature of their involvement compared to handing the task to a programmer.
-8. **Post-session discussion** (~5 min)
-   - Participants receive a full explanation of the study purpose, the system’s actual capabilities and limitations, how their data will be used, and the broader research questions. (The prototype's bounded scope is already disclosed at consent; this step revisits it and answers any remaining questions.)
 
 ### 6. Risk and Disclosure
 
@@ -110,8 +109,6 @@ Participants complete the study remotely or in a controlled lab setting using a 
   - Mitigations:
     - Availability of experimenters for clarification during the session.
     - Opportunity to withdraw data if desired (subject to IRB/protocol).
-- **Post-session discussion**
-  - At the end of the session, participants receive a full explanation of the study purpose, the broader research questions, and how their data will be used. This is a continuation of the disclosure that began at consent.
 
 ### 7. Intended Uses of This Document
 

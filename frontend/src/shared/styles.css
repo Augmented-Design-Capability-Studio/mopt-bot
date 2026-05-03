@@ -903,23 +903,10 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   box-shadow: inset 0 0 0 1px #e2d8c5;
 }
 
-/* Agent-introduced assumptions: subtle warm-tinted left border + small label so the
-   participant can tell which assumptions came from the assistant vs which they
-   added or already promoted themselves. */
-.definition-item.kind-assumption.source-agent {
-  border-left: 3px solid rgba(200, 140, 60, 0.7);
-  padding-left: 0.55rem;
-}
-
-.definition-item.kind-assumption.source-agent::before {
-  content: "Agent";
-  display: inline-block;
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(140, 105, 55, 0.85);
-  margin-bottom: 1px;
+/* Assumptions share the gathered-info card style but use a dashed outline to
+   signal they are tentative until confirmed. */
+.definition-item.kind-assumption {
+  border-style: dashed;
 }
 
 .definition-header-actions {
@@ -1095,6 +1082,7 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
 
 .definition-inline-textarea-goal {
   padding-right: 0.45rem;
+  min-height: 2.6rem;
 }
 
 .definition-inline-display-goal {
@@ -1662,9 +1650,11 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
 }
 
 .definition-promote-btn {
-  font-size: 0.86rem;
-  font-weight: 100;
+  font-size: 0.78rem;
+  font-weight: 600;
   line-height: 1;
+  border-color: #2f8f4a;
+  color: #2f8f4a;
 }
 
 .results-visualization-scroll {
