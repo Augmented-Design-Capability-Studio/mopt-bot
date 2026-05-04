@@ -369,7 +369,7 @@ export function ResultsPanel({
             ) : null}
           </div>
         ) : (
-          <div className="muted">Run optimization to generate a timeline view and plan details.</div>
+          <div className="muted">Run the optimization to populate the views the assistant has prepared for this task.</div>
         )}
 
         <div

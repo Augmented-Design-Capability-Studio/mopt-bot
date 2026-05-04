@@ -6,7 +6,7 @@ def test_capabilities_block_uses_neutral_language_and_sections():
     assert "Capabilities" in block
     assert "Solver families available" in block
     assert "Goal terms you can adjust" in block
-    assert "Participant-visible post-run views" in block
+    assert "Visualizations I've set up for this task" in block
 
 
 def test_capabilities_block_mentions_mealpy_when_requested():
@@ -17,4 +17,4 @@ def test_capabilities_block_mentions_mealpy_when_requested():
 def test_capabilities_block_cold_is_domain_agnostic():
     block = build_capabilities_block(test_problem_id="vrptw", mention_mealpy=False, temperature="cold")
     assert "Goal terms you can adjust" not in block
-    assert "Participant-visible post-run views" not in block
+    assert "Visualizations I've set up for this task" not in block

@@ -2,6 +2,7 @@ import type { TutorialStepId } from "@shared/api";
 
 type TutorialAnchor =
   | "chat-composer"
+  | "chat-log"
   | "upload-button"
   | "definition-tab"
   | "definition-save"
@@ -32,8 +33,10 @@ export function anchorForTutorialStep(stepId: TutorialStepId, editMode: Tutorial
     case "first-run":
       return "run-optimize";
     case "read-run-summary":
-      // Direct attention back to chat where the assistant's run summary lives.
-      return "chat-composer";
+      // Anchor on the chat-log container (where the assistant's run summary
+      // appears) rather than the composer, so the bubble visually points at
+      // the message the participant should read.
+      return "chat-log";
     case "inspect-results":
       return "results-viz-tabs";
     case "explain-run":

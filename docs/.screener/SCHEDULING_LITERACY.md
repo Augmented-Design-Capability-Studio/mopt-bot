@@ -4,7 +4,7 @@ A short pre-study screener that establishes whether a candidate participant can 
 
 The questions deliberately use a **non-VRPTW** scenario (small-business shift scheduling) so candidates are not pre-exposed to the actual study task. They test conceptual reasoning — not optimization vocabulary, not programming. Anyone who can articulate "this trades off X against Y" can pass; nobody needs to know what a metaheuristic is.
 
-This screener is bundled with the [**optimization literacy instrument**](OPTIMIZATION_LITERACY.md) (5 conceptual questions about hard/soft constraints, multi-objective trade-offs, local/global, stochasticity, and model-vs-reality) into a single screening survey. The optimization literacy score is recorded as a continuous covariate for everyone who completes both sections; it is *not* used as a gate. Only the scheduling-literacy score gates participation (≥4/5).
+This is the **only** instrument administered in the asynchronous screener. The [optimization literacy instrument](OPTIMIZATION_LITERACY.md), which measures conceptual optimization understanding for use as a covariate, is administered separately at the start of the main session (post-consent, pre-materials) — not here.
 
 ---
 
@@ -92,7 +92,7 @@ Candidates who select A on Q5 or A on Q4 are particularly poor fits — those an
 
 ## Notes for administration
 
-- Administered as a single screening survey alongside the [optimization literacy instrument](OPTIMIZATION_LITERACY.md). Both sections are completed in one sitting, asynchronously, before the main session is scheduled. No time pressure.
-- The scheduling-literacy section is the **gate**: candidates scoring ≥4/5 are eligible for the study. The optimization-literacy section is scored separately and used as a covariate; a low score there does not exclude a candidate.
-- Score the gate after the candidate has completed both sections (so they have a uniform experience regardless of outcome). Do **not** explain the correct answers if a candidate fails; thank them and end the screening.
-- If the candidate pool turns out to be uniformly high-scoring on the gate, consider adding one open-ended item ("Describe a trade-off you'd expect in scheduling problems") to differentiate further.
+- Administered as a short asynchronous screener completed before the main session is scheduled. No time pressure.
+- This is the **gate**: candidates scoring ≥4/5 are eligible for the study. Do **not** explain correct answers if a candidate fails; thank them and end the screening.
+- Optimization literacy is **not** part of this screener. It is administered at the start of the main session, post-consent and before any study materials, as a covariate (see [OPTIMIZATION_LITERACY.md](OPTIMIZATION_LITERACY.md)).
+- If the candidate pool turns out to be uniformly high-scoring, consider adding one open-ended item ("Describe a trade-off you'd expect in scheduling problems") to differentiate further.

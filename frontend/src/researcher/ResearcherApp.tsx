@@ -1,9 +1,13 @@
 import { useEffect } from "react";
 
+import { DismissibleBanner } from "@shared/DismissibleBanner";
+
 import { ResearcherDetail } from "./components/ResearcherDetail";
 import { ResearcherHeader } from "./components/ResearcherHeader";
 import { ResearcherSessionList } from "./components/ResearcherSessionList";
 import { useResearcherController } from "./hooks/useResearcherController";
+
+const NOTICE_AUTO_DISMISS_MS = 5000;
 
 export function ResearcherApp() {
   const researcher = useResearcherController();
@@ -23,8 +27,21 @@ export function ResearcherApp() {
         onSaveToken={researcher.saveToken}
         onRefreshList={researcher.refreshList}
       />
-      {researcher.error && <div className="banner-warn">{researcher.error}</div>}
-      {researcher.notice && <div className="muted">{researcher.notice}</div>}
+      {researcher.error && (
+        <DismissibleBanner
+          kind="warn"
+          message={researcher.error}
+          onDismiss={() => researcher.setError(null)}
+        />
+      )}
+      {researcher.notice && (
+        <DismissibleBanner
+          kind="info"
+          message={researcher.notice}
+          onDismiss={() => researcher.setNotice(null)}
+          autoDismissMs={NOTICE_AUTO_DISMISS_MS}
+        />
+      )}
       <div className="researcher-layout">
         <ResearcherSessionList
           sessions={researcher.sessions}

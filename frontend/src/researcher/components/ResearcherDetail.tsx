@@ -115,6 +115,13 @@ export function ResearcherDetail({
         : detail?.workflow_mode === "demo"
           ? "detail--wf-demo"
           : "";
+  const inDemoMode = detail?.workflow_mode === "demo";
+  // Demo mode applies the tutorial guardrails server-side without showing
+  // bubbles; the per-step flow doesn't apply, so we grey out the checkbox
+  // and step picker. Keep the same tooltip on both so hovering either tells
+  // the researcher why.
+  const demoTutorialDisabledTooltip =
+    "Demo mode uses tutorial guardrails without showing bubbles. Agent output is constrained, but the per-step tutorial flow doesn't apply here.";
   const participantNumberChanged = participantNumberDraft !== (detail?.participant_number ?? "");
 
   /** Stored researcher permit — participant mutations re-sync `optimization_allowed` from intrinsic readiness. */
@@ -273,11 +280,17 @@ export function ResearcherDetail({
                     />{" "}
                     Only score explicitly listed objectives
                   </label>
-                  <label title="When enabled, the participant can see and replay tutorial bubbles for this session. If the participant dismisses, tutorial is turned off for this session. Progression is event-driven from participant actions.">
+                  <label
+                    title={
+                      inDemoMode
+                        ? demoTutorialDisabledTooltip
+                        : "When enabled, the participant can see and replay tutorial bubbles for this session. If the participant dismisses, tutorial is turned off for this session. Progression is event-driven from participant actions."
+                    }
+                  >
                     <input
                       type="checkbox"
                       checked={detail.participant_tutorial_enabled}
-                      disabled={busy}
+                      disabled={busy || inDemoMode}
                       onChange={(e) =>
                         void onPatchSession(
                           e.target.checked
@@ -292,7 +305,7 @@ export function ResearcherDetail({
                     Show participant tutorial
                     <select
                       value={detail.tutorial_step_override ?? "chat-info"}
-                      disabled={busy || !detail.participant_tutorial_enabled}
+                      disabled={busy || !detail.participant_tutorial_enabled || inDemoMode}
                       onChange={(e) =>
                         void onPatchSession({
                           tutorial_step_override: e.target.value,
@@ -300,7 +313,11 @@ export function ResearcherDetail({
                       }
                       className="researcher-workflow-select"
                       style={{ width: "8.5rem", minWidth: "8.5rem", marginLeft: "0.45rem" }}
-                      title="Set current tutorial step. Selecting an earlier step rewinds tutorial tracking state only (chat/runs/config data are unchanged). Step 3 advances only after the participant explicitly clicks the Definition tab."
+                      title={
+                        inDemoMode
+                          ? demoTutorialDisabledTooltip
+                          : "Set current tutorial step. Selecting an earlier step rewinds tutorial tracking state only (chat/runs/config data are unchanged). Step 3 advances only after the participant explicitly clicks the Definition tab."
+                      }
                     >
                       {TUTORIAL_STEP_IDS.map((stepId) => (
                         <option key={stepId} value={stepId}>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   apiFetch,
+  describeApiError,
   displayRunNumber,
   fetchProblemFiles,
   fetchTestProblemsMeta,
@@ -53,7 +54,7 @@ export function useResearcherController() {
       setSelectedIds((current) => current.filter((id) => list.some((session) => session.id === id)));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "List failed");
+      setError(describeApiError(e, "List failed"));
       setNotice(null);
     }
   }, [savedToken]);
@@ -79,7 +80,7 @@ export function useResearcherController() {
         setError(null);
         setNotice(`Created session ${session.id.slice(0, 8)}…`);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Create session failed");
+        setError(describeApiError(e, "Create session failed"));
       } finally {
         setBusy(false);
       }
@@ -108,7 +109,7 @@ export function useResearcherController() {
       setRuns(nextRuns);
     } catch (e) {
       if (gen !== detailPollGen.current || sessionId !== selectedRef.current) return;
-      setError(e instanceof Error ? e.message : "Load failed");
+      setError(describeApiError(e, "Load failed"));
       setNotice(null);
     }
   }, [savedToken, selected]);
@@ -199,7 +200,7 @@ export function useResearcherController() {
         setError(null);
         return true;
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Update failed");
+        setError(describeApiError(e, "Update failed"));
         return false;
       } finally {
         setBusy(false);
@@ -232,7 +233,7 @@ export function useResearcherController() {
     } catch (e) {
       setMessages((current) => current.filter((message) => message.id !== tempId));
       setSteerText(text);
-      setError(e instanceof Error ? e.message : "Steer failed");
+      setError(describeApiError(e, "Steer failed"));
     } finally {
       setBusy(false);
     }
@@ -247,7 +248,7 @@ export function useResearcherController() {
       await refreshList();
       await loadDetail();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Terminate failed");
+      setError(describeApiError(e, "Terminate failed"));
     } finally {
       setBusy(false);
     }
@@ -270,7 +271,7 @@ export function useResearcherController() {
       setNotice("Session reset.");
     } catch (e) {
       setNotice(null);
-      setError(e instanceof Error ? e.message : "Reset failed");
+      setError(describeApiError(e, "Reset failed"));
     } finally {
       setBusy(false);
     }
@@ -288,7 +289,7 @@ export function useResearcherController() {
       setRuns([]);
       await refreshList();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete failed");
+      setError(describeApiError(e, "Delete failed"));
     } finally {
       setBusy(false);
     }
@@ -313,7 +314,7 @@ export function useResearcherController() {
       await refreshList();
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Batch delete failed");
+      setError(describeApiError(e, "Batch delete failed"));
     } finally {
       setBusy(false);
     }
@@ -343,7 +344,7 @@ export function useResearcherController() {
       await refreshList();
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete run failed");
+      setError(describeApiError(e, "Delete run failed"));
     } finally {
       setBusy(false);
     }
@@ -363,7 +364,7 @@ export function useResearcherController() {
       await refreshList();
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Push starter config failed");
+      setError(describeApiError(e, "Push starter config failed"));
     } finally {
       setBusy(false);
     }
@@ -385,7 +386,7 @@ export function useResearcherController() {
       await refreshList();
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Push dummy files failed");
+      setError(describeApiError(e, "Push dummy files failed"));
     } finally {
       setBusy(false);
     }
@@ -418,7 +419,7 @@ export function useResearcherController() {
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Export failed");
+      setError(describeApiError(e, "Export failed"));
     }
   }
 
@@ -455,7 +456,7 @@ export function useResearcherController() {
       setNotice("Session link copied.");
     } catch (e) {
       setNotice(null);
-      setError(e instanceof Error ? e.message : "Could not copy session link");
+      setError(describeApiError(e, "Could not copy session link"));
     }
   }
 
@@ -498,6 +499,7 @@ export function useResearcherController() {
     setGeminiModel,
     setPushKeySuccess,
     setNotice,
+    setError,
     toggleSessionSelected,
     toggleAllSessionsSelected,
     refreshList,

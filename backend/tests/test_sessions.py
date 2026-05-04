@@ -2506,12 +2506,13 @@ def test_upload_message_auto_clears_upload_open_question(monkeypatch):
         remaining = body["problem_brief"]["open_questions"]
         assert len(remaining) == 1
         assert remaining[0]["id"] == "oq-policy"
-        gathered = [
-            item["text"]
-            for item in body["problem_brief"]["items"]
-            if item.get("kind") == "gathered"
-        ]
-        assert any("Uploaded file(s) received: ORDERS.csv, DRIVER_INFO.csv." in text for text in gathered)
+        gathered_items = [item for item in body["problem_brief"]["items"] if item.get("kind") == "gathered"]
+        upload_markers = [item for item in gathered_items if item.get("source") == "upload"]
+        # Upload contributes one canonical marker row; no verbose "<question> — Uploaded file(s)
+        # received: …" promotion (which used to overlap with anything else describing the upload).
+        assert len(upload_markers) == 1
+        assert upload_markers[0]["id"] == "item-gathered-upload"
+        assert upload_markers[0]["text"] == "Source data file(s) uploaded: ORDERS.csv, DRIVER_INFO.csv."
 
 
 def test_researcher_reset_session_clears_activity_but_keeps_identity_and_model(monkeypatch):

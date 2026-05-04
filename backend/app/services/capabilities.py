@@ -36,8 +36,8 @@ def _goal_terms_section(test_problem_id: str | None) -> str:
 def _visualizations_section(test_problem_id: str | None) -> str:
     visuals = get_study_port(test_problem_id).visualization_capabilities()
     if not visuals:
-        return "Post-run visual summaries are available."
-    return "Participant-visible post-run views:\n" + "\n".join(f"- {v}" for v in visuals)
+        return "I'll set up post-run visual summaries for this task."
+    return "Visualizations I've set up for this task:\n" + "\n".join(f"- {v}" for v in visuals)
 
 
 def build_capabilities_block(

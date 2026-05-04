@@ -130,7 +130,7 @@ class VrptwStudyPort:
     ) -> str:
         if not run_ok:
             return f"Run #{session_run_number} failed: {error_message or 'error'}."
-        return f"Run #{session_run_number} finished. You may check the Results & Visualization panel for more detail."
+        return f"Run #{session_run_number} finished. I've updated the fleet schedule timeline and route details for this run — open them in the Results & Visualization panel."
 
 
 STUDY_PORT = VrptwStudyPort()

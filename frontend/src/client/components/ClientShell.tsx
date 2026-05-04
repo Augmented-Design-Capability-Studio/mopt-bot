@@ -28,6 +28,7 @@ import { ModelSettingsDialog } from "./ModelSettingsDialog";
 function workflowAccentClass(mode: string | undefined): string {
   if (mode === "agile") return "app-header--wf-agile";
   if (mode === "waterfall") return "app-header--wf-waterfall";
+  if (mode === "demo") return "app-header--wf-demo";
   return "";
 }
 
@@ -215,10 +216,14 @@ export function ClientShell({
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
   const backgroundProcessingErrorMessage = formatProcessingError(backgroundProcessingError);
   const accentClass = workflowAccentClass(session?.workflow_mode);
+  const inDemoMode = (session?.workflow_mode ?? "").toLowerCase() === "demo";
   const serverPn = (session?.participant_number ?? "").trim();
   const localPn = participantLabel.trim();
   const displayParticipant = serverPn || localPn;
-  const tutorialEnabled = Boolean(session?.participant_tutorial_enabled) && !sessionTerminated;
+  // Demo mode reuses the tutorial guardrails server-side (see backend
+  // `is_tutorial_active`) but never shows bubbles to the participant.
+  const tutorialEnabled =
+    Boolean(session?.participant_tutorial_enabled) && !sessionTerminated && !inDemoMode;
   const [showTutorial, setShowTutorial] = useState(false);
   const [bubbleStyle, setBubbleStyle] = useState<BubbleStyle>({ right: 16, bottom: 16 });
   const [bubblePinned, setBubblePinned] = useState(false);
@@ -437,6 +442,14 @@ export function ClientShell({
               </span>
             ) : null}
           </span>
+          {inDemoMode ? (
+            <span
+              className="participant-demo-chip"
+              title="Demo mode: agent output is constrained for predictable demonstrations. Tutorial bubbles are hidden in this mode."
+            >
+              Demo mode
+            </span>
+          ) : null}
         </div>
         <span className="muted">
           Session {sessionId.slice(0, 8)}…{sessionTerminated ? " · ended" : ""}

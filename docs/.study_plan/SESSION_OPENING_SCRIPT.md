@@ -1,12 +1,13 @@
 # Session Opening — Researcher Script (Quick Version)
 
-A condensed script for the opening of each session — purpose statement, consent, stance framing, and the cues to play the orientation and task-briefing videos. Read it through once before piloting; mild paraphrasing during sessions is fine, but the **stance framing** (§2) should land the same way every time, since drift there is a confound for the workflow comparison.
+A condensed script for the opening of each session — purpose statement, consent, the optimization literacy quiz, stance framing, and the cues to play the orientation and task-briefing videos. Read it through once before piloting; mild paraphrasing during sessions is fine, but the **stance framing** (§3) should land the same way every time, since drift there is a confound for the workflow comparison.
 
 **Conventions:** **[SAY]** = read aloud; **[ACTION]** = do; **[NOTE]** = researcher-only.
 
 ## Pre-session checklist
 
 - [ ] Consent form ready (link or PDF)
+- [ ] Optimization literacy quiz ready (survey link, on-screen poll, or printed sheet — see [`OPTIMIZATION_LITERACY.md`](../.screener/OPTIMIZATION_LITERACY.md))
 - [ ] Knapsack orientation video queued ([`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md))
 - [ ] VRPTW task-briefing video queued
 - [ ] One-page VRPTW reference document on hand
@@ -22,9 +23,9 @@ A condensed script for the opening of each session — purpose statement, consen
 
 > Hi [name], thanks for joining. I'm [researcher].
 >
-> Today we'll have you try out a research prototype — an interface that helps a person solve a scheduling problem by directing an AI assistant. We're not testing you; we're testing the interface. Honest reactions — including frustrations or "I'd never use this for X" — are exactly what we want.
+> Today we'll have you try out a research prototype — an AI-assisted interface for **metaheuristic optimization**, designed as a general-purpose tool that could be applied to a wide range of optimization problems. For this session it's set up around a specific delivery-scheduling scenario as a test case, but the interface itself is meant to be domain-agnostic. We're not testing you; we're testing the interface — your honest reactions, including frustrations or "I'd never use this for X", are exactly what we want.
 >
-> The session is about 65–75 minutes: a short video with a hands-on tutorial, then another video and some reading for our formal task, a quick interview to check your experience and understanding, followed by the formal task for about 30 minutes, and at the end, a conversation. You can stop or take a break anytime.
+> The session is about 70–75 minutes: a quick warmup quiz, then a short video with a hands-on tutorial, then another video and some reading for our formal task, a quick interview to check your experience and understanding, followed by the formal task for about 30 minutes, and at the end, a conversation. You can stop or take a break anytime.
 
 **[ACTION]** Share the consent form. Wait for signature.
 
@@ -40,7 +41,25 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ---
 
-## 2. Stance framing (~3 min)
+## 2. Optimization literacy quiz (~2 min)
+
+**[NOTE]** This is the **only** time the literacy score is collected. Administer **before** stance framing or any orientation material so the participant has not been exposed to study language. Don't show the scoring key, don't review correct answers afterward, and don't volunteer optimization-concept hints in this section.
+
+**[SAY]**
+
+> Before we get into the study, I have a quick five-question warmup — multiple choice, no time pressure. We're just collecting some background context for the analysis. Please go with your honest take on each one; your score doesn't change anything about the rest of the session.
+
+**[ACTION]** Share the quiz (link, on-screen poll, or printed sheet — see [`OPTIMIZATION_LITERACY.md`](../.screener/OPTIMIZATION_LITERACY.md)). Stay quiet while they fill it in.
+
+**[ACTION]** Once they're done, record the score (0–5) in the session log. Do **not** review answers with the participant.
+
+**[SAY]** *(after they're done)*
+
+> Great, thanks. Let's keep going.
+
+---
+
+## 3. Stance framing (~3 min)
 
 **[SAY]**
 
@@ -56,11 +75,11 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ---
 
-## 3. Orientation video and hands-on tutorial (~7–10 min)
+## 4. Orientation video and hands-on tutorial (~7–10 min)
 
 **[SAY]**
 
-> Before the actual task, here's a short video that walks through the interface using a simpler problem — the knapsack problem — so you see the workflow before doing it for real.
+> Before the actual task, here's a short video that walks through the interface using a simpler problem — the knapsack problem — so you see how the agent works the problem with you, including the views it sets up to show its results.
 
 **[ACTION]** Play the **knapsack orientation video** (~3–4 min). Stay quiet during playback.
 
@@ -74,7 +93,7 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ---
 
-## 4. Task briefing handoff (~10 min script ends)
+## 5. Task briefing handoff (~10 min, script ends)
 
 **[SAY]**
 
@@ -84,7 +103,7 @@ A condensed script for the opening of each session — purpose statement, consen
 
 **[ACTION]** Play the **VRPTW task-briefing video** and hand over the reference document. Give maximum 3 minutes for the participant to read through the session.
 
-**[NOTE]** End of opening. Continue with the **pre-interaction check** ([`STUDY_DETAILED_PLAN.md`](STUDY_DETAILED_PLAN.md) §5, step 5), then the interaction phase.
+**[NOTE]** End of opening. Continue with the **pre-interaction check** ([`STUDY_DETAILED_PLAN.md`](STUDY_DETAILED_PLAN.md) §5, step 6), then the interaction phase.
 
 ---
 
@@ -93,8 +112,9 @@ A condensed script for the opening of each session — purpose statement, consen
 | Step | Duration | Cumulative |
 |------|----------|------------|
 | Purpose + consent + recording start | ~3 min | 3 |
-| Stance framing | ~3 min | 6 |
-| Orientation video + hands-on tutorial | ~7–10 min | 13–16 |
-| Task-briefing handoff (incl. video + reading) | ~10 min | 23–26 |
+| Optimization literacy quiz | ~2 min | 5 |
+| Stance framing | ~3 min | 8 |
+| Orientation video + hands-on tutorial | ~7–10 min | 15–18 |
+| Task-briefing handoff (incl. video + reading) | ~10 min | 25–28 |
 
-The pre-interaction check (~5–7 min), interaction phase (~30 min), and post-task questionnaire + interview (~10–12 min) follow.
+The pre-interaction check (~5 min), interaction phase (~30 min), and post-task questionnaire + interview (~10–12 min) follow.

@@ -39,7 +39,7 @@ type DefinitionSectionProps = {
   removedItems?: Array<{ id: string; text: string; index: number }>;
   onRestoreItem?: (id: string) => void;
   suppressTransientMarkers?: boolean;
-  /** When set (Assumptions section), show ↑ under remove to promote a row to gathered info. */
+  /** When set (Assumptions section), show the green ✓ next to remove to promote a row to gathered info. */
   onPromoteItem?: (id: string) => void;
   collapsed?: boolean;
   onToggle?: () => void;

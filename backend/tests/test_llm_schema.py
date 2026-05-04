@@ -99,7 +99,7 @@ def test_visible_chat_instruction_cold_generic_query_avoids_module_capability_ro
     )
     assert "Capabilities" in system
     assert "Goal terms you can adjust:" not in system
-    assert "Participant-visible post-run views:" not in system
+    assert "Visualizations I've set up for this task:" not in system
 
 
 def _warm_brief() -> dict:

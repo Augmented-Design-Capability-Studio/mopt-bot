@@ -12,20 +12,22 @@ Participants are positioned as the person responsible for the scheduling decisio
 
 ## System
 
+The interface is presented to participants as a **general-purpose AI-assisted metaheuristic optimization assistant** — a domain-agnostic tool designed to help non-implementer stakeholders configure and run metaheuristic optimizers across a wide range of optimization problems. For this study, it is set up around a single fixed scenario (fleet scheduling with time windows) as a test case; participants are positioned as scheduler-stakeholders trying out the interface and giving feedback on it.
+
 Three panels:
 
 1. **Chat** — Describe the problem, state priorities, request solutions.
 2. **Problem Definition Panel** — Structured view of objectives, constraints, and assumptions.
 3. **Optimization & Visualization Panel** — Solutions, cost breakdowns, and route visualizations.
 
-The underlying task is a fixed logistics scenario (fleet scheduling with time windows), presented as a general optimization assistant. Participants configure weights, constraints, algorithm choice, and driver preferences; they do not modify the underlying problem instance.
+Participants configure weights, constraints, algorithm choice, and driver preferences; they do not modify the underlying problem instance.
 
 ## Experimental Conditions
 
 | Variable | Role | Levels / Range |
 |----------|------|----------------|
 | Workflow mode | Primary between-subjects factor | Agile (iterative; runs enabled early; assumptions used as provisional stand-ins) / Waterfall (specification-first; runs gated on resolved questions; missing info tracked as open questions, not assumptions) |
-| Optimization expertise | Continuous covariate | 0–5 score on the optimization literacy instrument, administered at screening |
+| Optimization expertise | Continuous covariate | 0–5 score on the optimization literacy instrument, administered at the start of the session (post-consent, pre-materials) |
 
 ## Data Collected
 

@@ -126,6 +126,21 @@ def sanitize_visible_assistant_reply(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     ).strip()
+    # Strip a plain-text schema-key heading (and everything after it, up to end of message)
+    # that the model occasionally tacks on after a friendly "Changes I made:" summary, e.g.:
+    #     problem_brief_patch:
+    #
+    #     Updated: "Travel time" to primary objective status with weight 6.6.
+    # The prompt already forbids this, but treat it as defense-in-depth — once we see the
+    # heading line, everything from there is a schema dump and should not reach the user.
+    # Tolerates optional bullet/markdown decoration (e.g. `- **problem_brief_patch:**`) and
+    # both forms of inline content ("schema_key:\n<content>" and "schema_key: <inline>\n…").
+    cleaned = re.sub(
+        rf"(?:\n|^)[ \t]*(?:[-*][ \t]+)?[`*_]*{key_pattern}[`*_]*[ \t]*:.*(?:\n.*)*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
     if not cleaned:
         return "Acknowledged. I updated the definition context in the background."
     return cleaned

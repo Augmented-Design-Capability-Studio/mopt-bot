@@ -366,7 +366,7 @@ export function ProblemConfigBlocks({
     >
       <BlockSection title="Goal terms">
         <p className="muted goal-terms-helper-text">
-          Drag to reorder priorities. The agent updates importance levels automatically.
+          Drag to set a priority order. The ranking is a hint — actual influence on cost also depends on each term's scale.
         </p>
         <GoalTermsSection
           problem={problem}

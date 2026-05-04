@@ -7,15 +7,32 @@ import type { TutorialCompletionByStepId, TutorialStep } from "./types";
 export type { TutorialAction, TutorialContent, TutorialCompletionByStepId, TutorialStep } from "./types";
 
 /**
- * Resolve tutorial step content for the active session. Steps come from the
- * problem module's `tutorialContent` when present, otherwise from the generic
- * fallback. The list of step IDs is stable across problems — only titles,
- * bodies, and per-step actions vary.
+ * Resolve tutorial step content for the active session. Default steps come
+ * from `DEFAULT_TUTORIAL_CONTENT.stepsForMode`; the problem module may either
+ * (a) provide a `stepOverrides(mode)` map that's shallow-merged onto each
+ * default step, or (b) bypass defaults entirely with its own `stepsForMode`.
+ *
+ * The list of step IDs is stable across problems — only titles, bodies, and
+ * per-step actions vary.
  */
 export function getTutorialSteps(problemId: string | null | undefined, mode: string | undefined): TutorialStep[] {
   const module = problemId ? getProblemModule(problemId) : null;
-  const content = module?.tutorialContent ?? DEFAULT_TUTORIAL_CONTENT;
-  return content.stepsForMode(mode);
+  const content = module?.tutorialContent;
+
+  if (content?.stepsForMode) {
+    return content.stepsForMode(mode);
+  }
+
+  // DEFAULT_TUTORIAL_CONTENT always defines stepsForMode; non-null assertion
+  // is safe here because we own that file.
+  const defaults = DEFAULT_TUTORIAL_CONTENT.stepsForMode!(mode);
+  if (!content?.stepOverrides) return defaults;
+
+  const overrides = content.stepOverrides(mode);
+  return defaults.map((step) => {
+    const ov = overrides[step.id];
+    return ov ? { ...step, ...ov } : step;
+  });
 }
 
 export function getTutorialStepOverride(session: Session | null): TutorialStepId | null {

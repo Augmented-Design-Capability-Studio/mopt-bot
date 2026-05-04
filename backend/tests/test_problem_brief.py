@@ -216,8 +216,47 @@ def test_resolve_upload_open_questions_after_upload_promotes_to_gathered():
     updated = resolve_upload_open_questions_after_upload(brief, ["ORDERS.csv", "DRIVER_INFO.csv"])
     remaining_ids = [q["id"] for q in updated["open_questions"]]
     assert remaining_ids == ["q-policy"]
-    gathered_texts = [item["text"] for item in updated["items"] if item.get("kind") == "gathered"]
-    assert any("Uploaded file(s) received: ORDERS.csv, DRIVER_INFO.csv." in text for text in gathered_texts)
+    gathered = [item for item in updated["items"] if item.get("kind") == "gathered"]
+    upload_markers = [item for item in gathered if item.get("source") == "upload"]
+    # One canonical upload-marker row, with the file names embedded as a clean statement
+    # (the legacy "<question> — Uploaded file(s) received: …" promotion produced a verbose
+    # row that overlapped with anything the LLM wrote about the upload).
+    assert len(upload_markers) == 1
+    assert upload_markers[0]["id"] == "item-gathered-upload"
+    assert upload_markers[0]["text"] == "Source data file(s) uploaded: ORDERS.csv, DRIVER_INFO.csv."
+
+
+def test_resolve_upload_open_questions_replaces_legacy_q_a_promotion():
+    """Retro-fix: a brief that already has a legacy 'Question — Uploaded file(s) received: …'
+    gathered row from the prior behavior should be reconciled to the canonical marker on
+    the next upload turn."""
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            items=[
+                {
+                    "id": "item-gathered-from-question-q-upload",
+                    "text": (
+                        "Please upload order and driver files before we proceed. — "
+                        "Uploaded file(s) received: ORDERS.csv."
+                    ),
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "confirmed",
+                    "editable": True,
+                }
+            ],
+            open_questions=[],
+        )
+    )
+    updated = resolve_upload_open_questions_after_upload(brief, ["ORDERS.csv", "DRIVER_INFO.csv"])
+    gathered = [item for item in updated["items"] if item.get("kind") == "gathered"]
+    upload_markers = [item for item in gathered if item.get("source") == "upload"]
+    assert len(upload_markers) == 1
+    assert upload_markers[0]["text"] == "Source data file(s) uploaded: ORDERS.csv, DRIVER_INFO.csv."
+    # Legacy Q — A row removed; only the canonical marker remains.
+    assert not any(
+        item["id"].startswith("item-gathered-from-question-") for item in gathered
+    )
 
 
 def test_coerce_waterfall_converts_assumptions_into_open_questions():

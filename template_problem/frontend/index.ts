@@ -46,8 +46,10 @@ export const MODULE: ProblemModule = {
   // TODO: add formatRunViolationSummary for the AI chat message after a run.
   // formatRunViolationSummary,
 
-  // TODO: add tutorialContent if this problem ships an in-app tutorial. Without
-  // it, the generic fallback bodies in frontend/src/tutorial/defaultContent.ts
-  // are used when a researcher enables the tutorial for a session.
+  // TODO: add tutorialContent if this problem ships an in-app tutorial. Prefer
+  // the `stepOverrides` form (partial map keyed by TutorialStepId) so you only
+  // touch the steps you want to customize and inherit the rest from
+  // frontend/src/tutorial/defaultContent.ts. See knapsack_problem/frontend/tutorial.ts
+  // for an example. `stepsForMode` is also accepted as an escape hatch.
   // tutorialContent: TEMPLATE_TUTORIAL_CONTENT,
 };

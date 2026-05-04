@@ -749,15 +749,64 @@ def upload_satisfies_open_question(
     return True
 
 
+UPLOAD_MARKER_ITEM_ID = "item-gathered-upload"
+
+
+def _format_upload_marker_text(file_names: list[str]) -> str:
+    if not file_names:
+        return ""
+    return f"Source data file(s) uploaded: {', '.join(file_names)}."
+
+
+def _is_upload_marker_item(item: Any) -> bool:
+    """True for gathered rows that exist solely to record an upload event.
+
+    Matches three flavours:
+    - canonical id `item-gathered-upload` (current behavior),
+    - any row with `source == "upload"` (programmatic provenance),
+    - legacy `item-gathered-from-question-…` rows whose text contains the
+      literal "Uploaded file(s) received: …" answer string that the prior
+      version of this function emitted (so that retroactive fixes clean up
+      stale duplicates on the next upload turn).
+    """
+    if not isinstance(item, dict):
+        return False
+    if str(item.get("kind") or "").strip().lower() != "gathered":
+        return False
+    if str(item.get("id") or "") == UPLOAD_MARKER_ITEM_ID:
+        return True
+    if str(item.get("source") or "").strip().lower() == "upload":
+        return True
+    item_id = str(item.get("id") or "")
+    text = str(item.get("text") or "").strip().lower()
+    if item_id.startswith("item-gathered-from-question-") and "uploaded file(s) received" in text:
+        return True
+    return False
+
+
 def resolve_upload_open_questions_after_upload(brief: Any, uploaded_file_names: list[str]) -> dict[str, Any]:
-    """Auto-resolve upload-related open questions when upload validation passes."""
+    """Drop upload-related open questions and record a single canonical upload marker.
+
+    Earlier behavior marked the matching open question as `answered` with an
+    "Uploaded file(s) received: …" answer string and let
+    `_promote_answered_open_questions_to_gathered` fold that into a
+    "<question> — <answer>" gathered row. That worked for the immediate-feedback
+    UX (the OQ vanished right away) but produced a verbose string that
+    overlapped with anything the LLM later wrote about the upload, leaving the
+    Definition with two near-duplicate rows.
+
+    This now removes the OQ directly and emits one canonical gathered row with
+    `id=item-gathered-upload`, `source="upload"`. Legacy upload markers (older
+    canonical rows or "Q — A" promotions from the previous behavior) are
+    swept on the same turn so prior duplicates get reconciled too.
+    """
     normalized = normalize_problem_brief(brief)
     clean_files = [str(name).strip() for name in uploaded_file_names if str(name).strip()]
     if not clean_files:
         return normalized
 
-    changed = False
-    updated_questions: list[dict[str, Any]] = []
+    next_questions: list[dict[str, Any]] = []
+    matched_any_question = False
     for question in normalized.get("open_questions") or []:
         if not isinstance(question, dict):
             continue
@@ -765,20 +814,38 @@ def resolve_upload_open_questions_after_upload(brief: Any, uploaded_file_names: 
             _normalize_question_status(question.get("status")) == "open"
             and upload_satisfies_open_question(question, clean_files)
         ):
-            changed = True
-            updated_questions.append(
-                {
-                    **question,
-                    "status": "answered",
-                    "answer_text": f"Uploaded file(s) received: {', '.join(clean_files)}.",
-                }
-            )
+            matched_any_question = True
             continue
-        updated_questions.append(question)
+        next_questions.append(question)
 
-    if not changed:
+    items_without_upload_marker = [
+        deepcopy(item)
+        for item in (normalized.get("items") or [])
+        if not _is_upload_marker_item(item)
+    ]
+    had_legacy_marker = len(items_without_upload_marker) != len(normalized.get("items") or [])
+
+    upload_text = _format_upload_marker_text(clean_files)
+    items_without_upload_marker.append(
+        {
+            "id": UPLOAD_MARKER_ITEM_ID,
+            "text": upload_text,
+            "kind": "gathered",
+            "source": "upload",
+        }
+    )
+
+    if not matched_any_question and not had_legacy_marker and upload_text in {
+        str(item.get("text") or "").strip()
+        for item in (normalized.get("items") or [])
+        if isinstance(item, dict)
+    }:
+        # Identical marker already present, no upload OQ pending — nothing to do.
         return normalized
-    return normalize_problem_brief({**normalized, "open_questions": updated_questions})
+
+    return normalize_problem_brief(
+        {**normalized, "items": items_without_upload_marker, "open_questions": next_questions}
+    )
 
 
 def _normalize_item(raw: Any) -> dict[str, Any] | None:

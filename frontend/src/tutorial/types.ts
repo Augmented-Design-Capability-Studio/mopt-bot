@@ -48,10 +48,30 @@ export type TutorialStep = {
 export type TutorialCompletionByStepId = Record<TutorialStepId, boolean>;
 
 /**
+ * Per-step partial used by problem modules that only want to tweak a few
+ * default steps. `id` is implicit (the map key); only `title`, `body`, and
+ * `actions` can be overridden — anchors and completion gating stay default.
+ */
+export type TutorialStepOverride = Partial<Pick<TutorialStep, "title" | "body" | "actions">>;
+
+/**
  * Per-problem tutorial content surface. Problem modules export this on their
- * `ProblemModule.tutorialContent`. The generic frontend tutorial machinery
- * calls `stepsForMode(workflowMode)` and renders the returned steps.
+ * `ProblemModule.tutorialContent`. Two strategies, in priority order:
+ *
+ *   1. `stepOverrides(mode)` — recommended. Returns a partial map keyed by
+ *      `TutorialStepId`. The generic machinery starts from
+ *      `DEFAULT_TUTORIAL_CONTENT.stepsForMode(mode)` and shallow-merges each
+ *      override onto the matching default step. Steps you don't override stay
+ *      as the default.
+ *   2. `stepsForMode(mode)` — escape hatch. Returns the full step array; used
+ *      as-is. Use this only when you need structurally different content
+ *      (extra steps, reordering, etc.) that overrides cannot express.
+ *
+ * If both are present, `stepsForMode` wins.
  */
 export type TutorialContent = {
-  stepsForMode: (mode: string | undefined) => TutorialStep[];
+  stepsForMode?: (mode: string | undefined) => TutorialStep[];
+  stepOverrides?: (
+    mode: string | undefined,
+  ) => Partial<Record<TutorialStepId, TutorialStepOverride>>;
 };

@@ -10,6 +10,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Build a human-readable message from a thrown error. For `ApiError` it surfaces
+ * both the HTTP status and the server-provided detail body (when present and
+ * different from the bare status line) so the banner can show *why* the call
+ * failed, not just the status code.
+ */
+export function describeApiError(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    const detail = (error.body ?? "").trim();
+    if (detail && detail !== `HTTP ${error.status}`) {
+      return `HTTP ${error.status} — ${detail}`;
+    }
+    return `HTTP ${error.status}`;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 async function parseJson(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return null;

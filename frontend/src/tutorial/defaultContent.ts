@@ -46,12 +46,12 @@ function defaultStepsForMode(mode: string | undefined): TutorialStep[] {
         ? "Click the **Definition** tab. Adjust assumptions or gathered facts inline, then click **Save**."
         : isWaterfall
           ? "Click the **Definition** tab and answer the open questions inline — those answers gate the first run. You can also edit any Gathered row, then click **Save**."
-          : "Click the **Definition** tab, update content as needed, and click **Save**.",
+          : "Click the **Definition** tab. Answer any open questions inline and refine the gathered rows, then click **Save**. (Open questions here are advisory — they don't block your run.)",
     },
     {
       id: "inspect-config",
       title: "Step 4 - Inspect Problem Config",
-      body: "Click the **Problem Config** tab and review the numeric setup the solver will use. Save once when you're ready to move on (you can leave values as-is).",
+      body: "Click the **Problem Config** tab and review the numeric setup the solver will use. Each goal term has a constraint type (Obj/Soft/Hard/Custom) and a weight. (Optional: drag-rank the rows to set their relative priority — top of the list carries more weight — but you don't have to.) Save once when you're ready to move on.",
     },
     {
       id: "first-run",
@@ -71,7 +71,7 @@ function defaultStepsForMode(mode: string | undefined): TutorialStep[] {
     {
       id: "inspect-results",
       title: "Step 7 - Look at the results",
-      body: "Review the convergence plot and the problem-specific visualization in the Results panel to see what the solver produced.",
+      body: "Review the convergence plot and the problem-specific visualization in the Results panel. If a **See how each goal term contributed to the total cost** panel appears below the chart, expand it for a per-term cost breakdown — useful for spotting which goal is dominating.",
     },
     {
       id: "explain-run",

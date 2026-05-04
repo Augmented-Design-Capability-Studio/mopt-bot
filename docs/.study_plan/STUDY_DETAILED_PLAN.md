@@ -13,6 +13,7 @@ This study evaluates an AI-assisted optimization interface as a **design artifac
 - **Understand human–AI problem formulation**: How users express objectives, constraints, and trade-offs when working with an AI that configures and runs metaheuristic optimizers.
 - **Compare workflows and interfaces**: How different levels of structure, automation, and visualization affect outcomes and user experience.
 - **Characterize expertise effects**: How novice vs expert participants differ in how they structure the problem and interact with the AI.
+- **Observe operational-to-formal translation**: How participants extract operational priorities from a stakeholder-style briefing (video + printed reference) and rephrase them to the AI in their own words. Whether participants with different optimization-literacy scores translate differently — paste-and-recite vs. summarize-by-priority vs. interrogative back-and-forth — is itself a finding the study can report on.
 
 ### 2. System Overview (As Experienced by Participants)
 
@@ -43,9 +44,9 @@ Possible between-/within-subject factors:
   - **Static**: pre-rendered tables and plots.
   - **Interactive**: hover, zoom, or filter to explore routes, violations, and workloads.
 - **Optimization expertise (continuous covariate, not a between-subjects factor)**
-  - Measured via the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md): a 5-item conceptual test of hard/soft constraints, multi-objective trade-offs, local-vs-global, stochasticity, and model-vs-reality. Score range 0–5.
-  - Administered at screening (in the same survey as the scheduling-literacy gate); optionally re-administered after the orientation step to capture post-onboarding literacy.
-  - Recorded for every participant and used as a moderator in analysis, **not** as a basis for assigning condition.
+  - Measured via the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md): a 5-item conceptual test of hard/soft requirements, multi-objective trade-offs, local-vs-global, stochasticity, and model-vs-reality. Score range 0–5.
+  - Administered **once**, at the **start of the main session** (post-consent, before any study materials, framing, or orientation), so prior exposure to study language doesn't prime answers. Not part of the screener; not used as a gate.
+  - Recorded for every participant and used as a moderator in analysis.
   - Programming ability is not part of this construct: what is measured is conceptual understanding of optimization, not implementation skill.
 
 The primary contrast is **workflow mode (Agile vs Waterfall)** as a between-subjects factor. Optimization expertise is reported as a continuous moderator. Other factors above (user agency, visualization design) are held constant in the main study and may be explored in follow-up variants.
@@ -58,6 +59,7 @@ The primary contrast is **workflow mode (Agile vs Waterfall)** as a between-subj
 - **Problem formulations**
   - The evolving set of objectives, constraints, assumptions, and locked assignments.
   - Final user-specific configuration objects used to run the optimizer.
+  - **Translation language used in chat** — the participant's own wording when describing the dispatcher's operational concerns to the agent (vs. paste-and-recite of phrases from the briefing). Captured implicitly through the chat log; coded post-hoc as part of the operational-to-formal translation analysis (§1).
 - **Optimization performance**
   - Cost values under both user-defined and canonical objectives.
   - Counts of violations and workload statistics.
@@ -73,28 +75,32 @@ The primary contrast is **workflow mode (Agile vs Waterfall)** as a between-subj
 
 ### 5. User Study Procedure
 
-Participants complete the study remotely or in a controlled lab setting using a computer-based interface. Total session length is approximately **65–75 minutes**, in addition to the screening survey, which is taken asynchronously beforehand. A condensed researcher's opening script for steps 1–4 is in [`SESSION_OPENING_SCRIPT.md`](SESSION_OPENING_SCRIPT.md).
+Participants complete the study remotely or in a controlled lab setting using a computer-based interface. Total session length is approximately **70–75 minutes**, in addition to the screening survey, which is taken asynchronously beforehand. A condensed researcher's opening script for steps 1–5 is in [`SESSION_OPENING_SCRIPT.md`](SESSION_OPENING_SCRIPT.md).
 
 1. **Introduction and consent** (~3 min)
    - Researcher reads the purpose statement and walks the participant through the consent form. Recording starts after consent.
-2. **Stance framing** (~3 min)
+2. **Optimization literacy quiz** (~2 min)
+   - Participant completes the 5-item [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md) (multiple choice). Administered **before any study materials, framing, or orientation** so the participant has not been exposed to language that could prime concept recognition.
+   - Score (0–5) is recorded as a continuous covariate; not used as a gate. Researcher does not show the scoring key or discuss correct answers.
+3. **Stance framing** (~3 min)
    - Participants are told they are the person responsible for these scheduling decisions: they direct the AI assistant, but are not expected to write code or implement solutions themselves. They engage as themselves and are encouraged to notice where the interface does or does not support the kind of work they would want to do from that position.
-3. **Optimization orientation** (~7–10 min, including a ~3–4 min video and a hands-on tutorial on the interface)
-   - A short, uniform **video** (script: [`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md)) built around the knapsack problem that installs the conceptual baseline needed to engage with the interface: hard vs. soft constraints, multi-objective trade-offs, stochasticity in solver results, and the gap between a scoring model and reality.
+4. **Optimization orientation** (~7–10 min, including a ~3–4 min video and a hands-on tutorial on the interface)
+   - A short, uniform **video** (script: [`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md)) built around the knapsack problem. It walks through the AI-agent **workflow** — chat → definition → configuration → run → iterate — so participants recognize the interface before tackling the VRPTW task.
+   - The video deliberately avoids lecturing on optimization concepts so it does not bias the literacy score collected at step 2. General optimization-concept questions are routed to the agent during the session — see the *General optimization-concept questions* section in [`backend/app/prompts/study_chat.py`](../../backend/app/prompts/study_chat.py).
    - Followed by a researcher-guided hands-on tutorial in the interface, still on the knapsack problem, so participants see the workflow before encountering the VRPTW task.
-   - The orientation deliberately uses knapsack rather than the VRPTW task or the bookstore scenario from the scheduling-literacy screener, so concepts are introduced on neutral ground.
+   - The orientation deliberately uses knapsack rather than the VRPTW task or the bookstore scenario from the scheduling-literacy screener, so participants are introduced to the workflow on neutral ground.
    - Identical across workflow conditions, so it does not confound the Agile/Waterfall comparison.
-   - Optionally followed by re-administering the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md) to capture post-orientation literacy, which is closer to the real-user condition than the screening-time score.
-4. **Task briefing** (~10 min)
-   - Participants watch a short video introducing the QuickBite scheduling scenario and receive a one-page reference document for use during the session. The system interface is also introduced. Time includes both video playback and reading.
-5. **Pre-interaction check** (~5–7 min)
+5. **Task briefing** (~10 min)
+   - Participants watch a short video introducing the QuickBite scheduling scenario and receive a printed reference document (data tables only) for use during the session. The system interface is also introduced. Time includes both video playback and reading.
+   - **Briefing format is intentional.** Operational priorities are conveyed through the dispatcher-voiced video + physical document; participants are **not** given a written prompt they can copy-paste into chat. This forces them to extract operational concerns and rephrase them to the agent in their own words. How they perform that translation — verbatim relay, prioritized summary, interrogative discovery, etc. — is part of the data collected (see §1, *Observe operational-to-formal translation*; §4, *Translation language used in chat*).
+6. **Pre-interaction check** (~5 min)
    - A short check that the participant has understood the task and the orientation. Brief because background information was already collected at screening.
-6. **Interaction phase** (~30 min)
+7. **Interaction phase** (~30 min)
    - Participants interact with an AI agent through a chat-based interface to formulate and solve the problem.
    - The AI agent may gather information, make assumptions, and generate executable optimization procedures.
    - Participants review results, modify specifications, and iteratively refine solutions.
    - The phase ends when the participant reaches a satisfactory solution or the time cap is reached.
-7. **Post-task questionnaire and interview** (~10–12 min)
+8. **Post-task questionnaire and interview** (~10–12 min)
    - Participants complete a survey covering perceptions of the system, confidence in their solution, and overall usability.
    - A semi-structured interview elicits critique of the interface as an artifact: what it enabled, what it didn’t, and whether it changed the nature of their involvement compared to handing the task to a programmer.
 

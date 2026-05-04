@@ -83,8 +83,42 @@ To ship an in-app tutorial for this problem, add a sibling `frontend/tutorial.ts
 that exports a `TutorialContent` (see `@tutorial/types`) and attach it to
 `MODULE.tutorialContent`. Without it, the generic fallback bodies in
 `frontend/src/tutorial/defaultContent.ts` are used when the researcher enables
-the tutorial. The eight tutorial step IDs (`chat-info` through `second-run`) are
-stable across problems; only titles, bodies, and per-step actions vary.
+the tutorial.
+
+The canonical step list has **12 steps** plus a `tutorial-complete` wrap-up;
+the IDs (`chat-info`, `upload-files`, `update-definition`, `inspect-config`,
+`first-run`, `read-run-summary`, `inspect-results`, `explain-run`,
+`update-config`, `second-run`, `mark-candidate`, `third-run`,
+`tutorial-complete`) are stable across problems — see
+`frontend/src/tutorial/defaultContent.ts` for the source of truth.
+
+`TutorialContent` exposes two strategies; **prefer `stepOverrides`**:
+
+```ts
+// myproblem_problem/frontend/tutorial.ts
+import type { TutorialContent, TutorialStepOverride } from "@tutorial/types";
+import type { TutorialStepId } from "@shared/api";
+
+function myproblemStepOverrides(
+  mode: string | undefined,
+): Partial<Record<TutorialStepId, TutorialStepOverride>> {
+  return {
+    "upload-files": { body: "Upload your problem-specific input file(s) here." },
+    "inspect-config": { body: "Set the X term to ..." },
+    // ...only the steps you want to customize.
+  };
+}
+
+export const MYPROBLEM_TUTORIAL_CONTENT: TutorialContent = {
+  stepOverrides: myproblemStepOverrides,
+};
+```
+
+Each override may set `title`, `body`, and/or `actions`; unspecified fields
+inherit from the default. Use `stepsForMode(mode)` (returns the full step
+array) only as an escape hatch when you need structurally different content
+that overrides cannot express — extra steps, reordering, etc. If both fields
+are present, `stepsForMode` wins.
 
 ### 10. Test
 Add tests under `myproblem_problem/tests/` following the patterns in

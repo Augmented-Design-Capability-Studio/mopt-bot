@@ -660,9 +660,23 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             updated_panel = current
             is_answer_save = intent.is_answered_open_question_message(body.content)
             is_config_save = intent.is_config_save_context_message(body.content)
+            # Set when the participant message is the synthetic "I'm uploading the
+            # following file(s): …" line. The brief already grew a canonical
+            # `item-gathered-upload` row in the upload-OQ block above; signaling
+            # this to the LLM keeps it from emitting a parallel upload-tracking
+            # gathered row that would visually duplicate the marker.
+            is_upload_context = bool(uploaded_file_names)
+            # Demo mode reuses tutorial guardrails to keep agent output narrow
+            # for screen recordings, even though no bubbles are shown to the
+            # participant. See plans note: "demo mode = guardrails on, bubbles
+            # off".
+            is_demo_mode = str(row.workflow_mode or "").strip().lower() == "demo"
             is_tutorial_active = bool(
-                getattr(row, "participant_tutorial_enabled", False)
-                and not getattr(row, "tutorial_completed", False)
+                is_demo_mode
+                or (
+                    getattr(row, "participant_tutorial_enabled", False)
+                    and not getattr(row, "tutorial_completed", False)
+                )
             )
             turn = None
             try:
@@ -846,6 +860,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     is_run_acknowledgement=is_run_ack,
                     is_answered_open_question=is_answer_save,
                     is_config_save=is_config_save,
+                    is_upload_context=is_upload_context,
                     is_tutorial_active=is_tutorial_active,
                     test_problem_id=row.test_problem_id,
                 )

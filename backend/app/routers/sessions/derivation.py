@@ -368,6 +368,7 @@ def _run_background_derivation(
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
     is_config_save: bool = False,
+    is_upload_context: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> None:
@@ -390,6 +391,7 @@ def _run_background_derivation(
                     is_run_acknowledgement=is_run_acknowledgement,
                     is_answered_open_question=is_answered_open_question,
                     is_config_save=is_config_save,
+                    is_upload_context=is_upload_context,
                     is_tutorial_active=is_tutorial_active,
                     test_problem_id=test_problem_id,
                 ),

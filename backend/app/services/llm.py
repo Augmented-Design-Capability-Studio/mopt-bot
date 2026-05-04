@@ -545,6 +545,7 @@ def _build_brief_update_system_instruction(
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
     is_config_save: bool = False,
+    is_upload_context: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> str:
@@ -604,6 +605,10 @@ def _build_brief_update_system_instruction(
         from app.prompts.study_chat import STUDY_CHAT_CONFIG_SAVE_RATIONALE
 
         parts.append(STUDY_CHAT_CONFIG_SAVE_RATIONALE)
+    if is_upload_context:
+        from app.prompts.study_chat import STUDY_CHAT_UPLOAD_CONTEXT_GUIDANCE
+
+        parts.append(STUDY_CHAT_UPLOAD_CONTEXT_GUIDANCE)
     if is_tutorial_active:
         from app.prompts.study_chat import STUDY_CHAT_TUTORIAL_GUARDRAILS
 
@@ -735,6 +740,7 @@ def generate_problem_brief_update(
     is_run_acknowledgement: bool = False,
     is_answered_open_question: bool = False,
     is_config_save: bool = False,
+    is_upload_context: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
 ) -> ProblemBriefUpdateTurn:
@@ -749,6 +755,7 @@ def generate_problem_brief_update(
         is_run_acknowledgement=is_run_acknowledgement,
         is_answered_open_question=is_answered_open_question,
         is_config_save=is_config_save,
+        is_upload_context=is_upload_context,
         is_tutorial_active=is_tutorial_active,
         test_problem_id=test_problem_id,
     )

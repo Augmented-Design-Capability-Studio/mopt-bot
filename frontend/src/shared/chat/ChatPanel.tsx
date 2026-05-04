@@ -118,6 +118,12 @@ export type ChatPanelProps = {
   scrollTriggerKey?: React.Key;
   logAriaLive?: "polite" | "assertive" | "off";
   logStyle?: CSSProperties;
+  /**
+   * Optional `data-tutorial-anchor` value applied to the chat-log container
+   * so a tutorial bubble can point participants at the assistant's reply
+   * area. Omitted by default to keep non-participant chat surfaces clean.
+   */
+  logDataAnchor?: string;
   betweenLogAndComposer?: ReactNode;
   footer?: ReactNode;
   composer: ChatComposerProps;
@@ -133,6 +139,7 @@ export function ChatPanel({
   scrollTriggerKey,
   logAriaLive = "polite",
   logStyle,
+  logDataAnchor,
   betweenLogAndComposer,
   footer,
   composer,
@@ -148,7 +155,12 @@ export function ChatPanel({
     <>
       <div className="panel-header">{title}</div>
       <div className="panel-body">
-        <div className="chat-log" aria-live={logAriaLive} style={logStyle}>
+        <div
+          className="chat-log"
+          aria-live={logAriaLive}
+          style={logStyle}
+          data-tutorial-anchor={logDataAnchor}
+        >
           {messages}
           <div ref={logEndRef} />
         </div>

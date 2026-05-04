@@ -93,6 +93,26 @@ select:focus-visible {
   border-top: 3px solid #a89e94;
 }
 
+.app-header--wf-demo {
+  border-top: 3px solid #c4a47f;
+}
+
+/* Pill shown next to "User #N" when the session is in demo mode. Mirrors the
+   muted-amber demo accent so the cue is consistent. */
+.participant-demo-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid #c4a47f;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6e573a;
+  background: rgba(196, 164, 127, 0.12);
+}
+
 .app-header-title-cluster {
   display: flex;
   align-items: baseline;
@@ -1783,6 +1803,13 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   border-left: 8px solid #9f9184;
 }
 
+.detail--wf-demo {
+  background:
+    linear-gradient(90deg, rgba(196, 164, 127, 0.34), rgba(196, 164, 127, 0.1) 16%, transparent 45%),
+    var(--panel);
+  border-left: 8px solid #b39773;
+}
+
 .researcher-control-input {
   min-height: 2.1rem;
 }
@@ -1936,6 +1963,54 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   border: 1px solid var(--border);
   padding: 0.5rem;
   font-size: 0.85rem;
+}
+
+.dismissible-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.35rem 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-size: 0.85rem;
+}
+
+.dismissible-banner-info {
+  background: #d8e4dc;
+  border-color: #9bb1a4;
+  color: #2f4938;
+}
+
+.dismissible-banner-warn {
+  background: var(--warn-bg);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.dismissible-banner-message {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dismissible-banner-close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 0 0.3rem;
+  margin: -0.1rem -0.2rem -0.1rem 0;
+  line-height: 1;
+  font-size: 1.1rem;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.dismissible-banner-close:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .results-panel-actions {

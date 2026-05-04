@@ -59,6 +59,7 @@ export function ChatSection({
   return (
     <ChatPanel
       title="Chat & upload"
+      logDataAnchor="chat-log"
       messages={
         <MessageBubbleList
           messages={messages}
