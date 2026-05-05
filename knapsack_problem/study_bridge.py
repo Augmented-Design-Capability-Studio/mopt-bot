@@ -38,15 +38,19 @@ def parse_problem_config(
 ) -> dict[str, Any]:
     from knapsack_problem.evaluator import build_knapsack_weights
 
+    from knapsack_problem.evaluator import WEIGHT_KEYS as _KS_WEIGHT_KEYS
+
     raw = _apply_goal_terms_overlay(raw if isinstance(raw, dict) else {})
     weight_warnings: list[str] = []
     only_active = bool(raw.get("only_active_terms", True))
     wraw = raw.get("weights") or {}
     if not isinstance(wraw, dict):
         raise ValueError("weights must be an object")
-    weights = build_knapsack_weights(
-        {k: float(v) for k, v in wraw.items() if isinstance(v, (int, float))}, only_active
-    )
+    user_weights = {k: float(v) for k, v in wraw.items() if isinstance(v, (int, float))}
+    weights = build_knapsack_weights(user_weights, only_active)
+    # Aliases the participant actually submitted; used to filter the cost-breakdown
+    # rows so participants never see terms they didn't configure.
+    submitted_weight_aliases = sorted(k for k in user_weights if k in _KS_WEIGHT_KEYS)
 
     algorithm = str(raw.get("algorithm", "GA")).strip().upper()
     algo_norm = "SwarmSA" if algorithm == "SWARMSA" else algorithm
@@ -85,6 +89,7 @@ def parse_problem_config(
 
     return {
         "weights": weights,
+        "submitted_weight_aliases": submitted_weight_aliases,
         "only_active_terms": only_active,
         "algorithm": algo_norm,
         "algorithm_params": algorithm_params_filtered,
@@ -105,6 +110,8 @@ def solve_request_to_result(
     *,
     filter_algorithm_params: Callable[[str, Any], tuple[dict[str, Any] | None, list[str]]],
 ) -> dict[str, Any]:
+    from app.problems.cost_breakdown import build_goal_term_contributions
+    from knapsack_problem.cost_breakdown import SPECS as COST_TERM_SPECS
     from knapsack_problem.evaluator import evaluate_selection
     from knapsack_problem.instance import get_items
     from knapsack_problem.mealpy_solve import OptimizationCancelled, solve
@@ -159,7 +166,6 @@ def solve_request_to_result(
             "time_window_minutes_over": 0,
             "time_window_stop_count": 0,
             "capacity_units_over": int(metrics["overflow"] > 0),
-            "shift_limit_penalty": 0,
             "priority_deadline_misses": 0,
         },
         "metrics": {
@@ -171,6 +177,12 @@ def solve_request_to_result(
             "knapsack_overflow": float(metrics["overflow"]),
             "knapsack_feasible": bool(metrics["feasible"]),
         },
+        "goal_term_contributions": build_goal_term_contributions(
+            COST_TERM_SPECS,
+            cfg.get("submitted_weight_aliases") or [],
+            cfg["weights"],
+            metrics,
+        ),
         "runtime_seconds": float(runtime),
         "algorithm": algo,
         "convergence": convergence[:200] if convergence else [],

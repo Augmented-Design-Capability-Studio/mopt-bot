@@ -51,29 +51,53 @@ def _grounded_goal_term_keys(
     grounded: set[str] = set()
     if not isinstance(problem_brief, dict):
         return grounded
-    items = problem_brief.get("items")
-    if not isinstance(items, list):
-        return grounded
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "").strip().lower()
-        if kind not in {"gathered", "assumption"}:
-            continue
-        item_id = str(item.get("id") or "").strip().lower()
-        if item_id.startswith("config-weight-"):
-            candidate = item_id.removeprefix("config-weight-").strip()
-            if candidate:
-                grounded.add(candidate)
-        text = str(item.get("text") or "").strip().lower()
+
+    def _ground_from_text(text_value: Any) -> None:
+        text = str(text_value or "").strip().lower()
         if not text:
-            continue
+            return
         for key, markers in weight_slot_markers.items():
+            if key in grounded:
+                continue
             for marker in markers:
                 token = str(marker or "").strip().lower()
                 if token and token in text:
                     grounded.add(key)
                     break
+
+    items = problem_brief.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or "").strip().lower()
+            if kind not in {"gathered", "assumption"}:
+                continue
+            item_id = str(item.get("id") or "").strip().lower()
+            if item_id.startswith("config-weight-"):
+                candidate = item_id.removeprefix("config-weight-").strip()
+                if candidate:
+                    grounded.add(candidate)
+            _ground_from_text(item.get("text"))
+
+    # Open questions also count as evidence the concept is in scope. This
+    # matters in demo mode (and waterfall) where the agent often raises the
+    # capacity / sparsity question as an OQ before any gathered row exists —
+    # without this, validate_problem_goal_terms would reject the panel even
+    # though the agent and participant both clearly know the concept applies.
+    open_questions = problem_brief.get("open_questions")
+    if isinstance(open_questions, list):
+        for question in open_questions:
+            if isinstance(question, str):
+                _ground_from_text(question)
+            elif isinstance(question, dict):
+                _ground_from_text(question.get("text"))
+                _ground_from_text(question.get("answer_text"))
+                choices = question.get("choices")
+                if isinstance(choices, list):
+                    for choice in choices:
+                        _ground_from_text(choice)
+
     return grounded
 
 
@@ -410,7 +434,7 @@ def sync_panel_from_problem_brief(
     derived_panel = None
     seed_panel: dict | None = None
     validation_feedback: list[dict[str, str]] | None = None
-    max_validation_retries = 2
+    max_validation_retries = 1
     if api_key and model_name:
         timeout_sec = get_settings().derivation_timeout_sec
         for attempt in range(max_validation_retries + 1):

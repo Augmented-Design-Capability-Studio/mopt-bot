@@ -679,58 +679,86 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 )
             )
             turn = None
-            try:
-                from app.services.llm import classify_definition_intents, generate_chat_turn
-
-                cleanup_requested, clear_requested = classify_definition_intents(body.content, key, model)
-
-                turn = generate_chat_turn(
-                    body.content,
-                    hist,
-                    key,
-                    model,
-                    current_problem_brief,
-                    workflow_mode=row.workflow_mode,
-                    recent_runs_summary=recent_runs_summary or None,
-                    current_panel=current,
-                    researcher_steers=researcher_steers or None,
-                    cleanup_mode=cleanup_requested,
-                    is_run_acknowledgement=is_run_ack,
-                    is_tutorial_active=is_tutorial_active,
-                    test_problem_id=row.test_problem_id,
-                )
-                text = turn.assistant_message
-            except Exception:
-                log.exception("Participant model turn failed for session %s", session_id)
-            text = intent.sanitize_visible_assistant_reply(text)
-            am = derivation.append_message(db, session_id, "assistant", text, True)
-            out.append(MessageOut.model_validate(am))
+            cleanup_requested = False
+            clear_requested = False
             run_intent = None
             assistant_invites_run_now = False
-            # Auto-posted run-complete messages must never be classified as "run now" intent.
-            if not is_run_ack:
-                try:
-                    from app.services.llm import (
-                        classify_assistant_run_invitation,
-                        classify_run_trigger_intent,
-                    )
+            try:
+                from app.services.llm import (
+                    classify_assistant_run_invitation,
+                    classify_definition_intents,
+                    classify_run_trigger_intent,
+                    generate_chat_turn,
+                )
 
-                    run_intent = classify_run_trigger_intent(
-                        user_text=body.content,
-                        history_lines=hist,
-                        api_key=key,
-                        model_name=model,
-                        workflow_mode=row.workflow_mode,
-                    )
-                    if run_intent.intent_type == "affirm_invite":
-                        assistant_invites_run_now = classify_assistant_run_invitation(
-                            assistant_text=text,
+                # Definition-intent must finish before Call 2 (its result parameterizes the
+                # visible-reply prompt). Run-trigger has no input dependency on Call 2 — fire
+                # it concurrently so the flash round-trip overlaps with the heavier reply
+                # generation. Auto-posted run-complete messages skip run-trigger entirely.
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    defn_future = executor.submit(classify_definition_intents, body.content, key, model)
+                    run_intent_future = (
+                        None
+                        if is_run_ack
+                        else executor.submit(
+                            classify_run_trigger_intent,
+                            user_text=body.content,
+                            history_lines=hist,
                             api_key=key,
                             model_name=model,
                             workflow_mode=row.workflow_mode,
                         )
+                    )
+
+                    try:
+                        cleanup_requested, clear_requested = defn_future.result()
+                    except Exception:
+                        log.exception("Definition-intent classification failed for session %s", session_id)
+
+                    try:
+                        turn = generate_chat_turn(
+                            body.content,
+                            hist,
+                            key,
+                            model,
+                            current_problem_brief,
+                            workflow_mode=row.workflow_mode,
+                            recent_runs_summary=recent_runs_summary or None,
+                            current_panel=current,
+                            researcher_steers=researcher_steers or None,
+                            cleanup_mode=cleanup_requested,
+                            is_run_acknowledgement=is_run_ack,
+                            is_tutorial_active=is_tutorial_active,
+                            test_problem_id=row.test_problem_id,
+                        )
+                        text = turn.assistant_message
+                    except Exception:
+                        log.exception("Participant model turn failed for session %s", session_id)
+
+                    if run_intent_future is not None:
+                        try:
+                            run_intent = run_intent_future.result()
+                        except Exception:
+                            log.exception("Run-trigger intent classification failed for session %s", session_id)
+            except Exception:
+                log.exception("Participant turn pipeline failed for session %s", session_id)
+            text = intent.sanitize_visible_assistant_reply(text)
+            am = derivation.append_message(db, session_id, "assistant", text, True)
+            out.append(MessageOut.model_validate(am))
+            # Run-invitation classification depends on both Call 2's text and Call 4's
+            # intent_type, so it stays sequential after the parallel block.
+            if not is_run_ack and run_intent is not None and run_intent.intent_type == "affirm_invite":
+                try:
+                    assistant_invites_run_now = classify_assistant_run_invitation(
+                        assistant_text=text,
+                        api_key=key,
+                        model_name=model,
+                        workflow_mode=row.workflow_mode,
+                    )
                 except Exception:
-                    log.exception("Run-trigger intent classification failed for session %s", session_id)
+                    log.exception("Run-invitation classification failed for session %s", session_id)
             if turn and (
                 turn.problem_brief_patch is not None
                 or turn.replace_editable_items
@@ -788,12 +816,22 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             db.commit()
                             db.refresh(row)
                     effective_problem_brief = updated_problem_brief or current_problem_brief
+                    # Mirror the background-derivation short-circuit in derivation.py: if the
+                    # brief did not actually change after normalization, skip the gemini-pro
+                    # config-derivation call and let sync fall through to its deterministic
+                    # heuristic (passing api_key=None skips the LLM at sync.py:438).
+                    brief_unchanged = json.dumps(
+                        normalize_problem_brief(effective_problem_brief), sort_keys=True, default=str
+                    ) == json.dumps(
+                        normalize_problem_brief(current_problem_brief), sort_keys=True, default=str
+                    )
+                    config_api_key = None if brief_unchanged else key
                     row = db.get(StudySession, session_id) or row
                     updated_panel, _ = sync.sync_panel_from_problem_brief(
                         row,
                         db,
                         effective_problem_brief,
-                        api_key=key,
+                        api_key=config_api_key,
                         model_name=model,
                         workflow_mode=row.workflow_mode,
                         recent_runs_summary=recent_runs_summary,
@@ -887,8 +925,15 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
                 problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
             )
+            # Demo mode keeps run launches manual: the participant must click
+            # **Run optimization** themselves. Auto-run from chat intent is
+            # disabled here regardless of intent strength so the recording
+            # always shows the button being clicked.
+            workflow_mode_lc = str(row.workflow_mode or "").strip().lower()
+            auto_run_allowed = workflow_mode_lc != "demo"
             if (
-                run_intent is not None
+                auto_run_allowed
+                and run_intent is not None
                 and run_intent.should_trigger_run
                 and run_intent.intent_type in {"affirm_invite", "direct_request"}
                 and not assistant_invites_run_now

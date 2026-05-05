@@ -79,7 +79,16 @@
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; .\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests/test_intent.py -v 2>&1 | Select-Object -Last 30)",
       "Bash(../venv/Scripts/python.exe -m pytest -x -q --ignore=tests/test_live_gemini.py)",
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; .\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests/ -q --ignore=backend/tests/test_live_gemini.py 2>&1 | Select-Object -Last 15)",
-      "Bash(../venv/Scripts/python.exe *)"
+      "Bash(../venv/Scripts/python.exe *)",
+      "Bash(echo \"tsc-exit: $?\")",
+      "Bash(\"./venv/Scripts/python.exe\" -c \"import google.genai as genai; print\\(genai.__version__\\); from google.genai import types; print\\('caches' in dir\\(genai.Client\\(api_key='dummy'\\)\\)\\); print\\(dir\\(types\\)\\)\")",
+      "Bash(./venv/Scripts/python.exe *)",
+      "Bash(\"../venv/Scripts/python.exe\" -c \"from app.services import llm; print\\('import OK'\\); print\\('helper:', hasattr\\(llm, '_get_or_create_system_cache'\\)\\)\")",
+      "Bash(\"../venv/Scripts/python.exe\" -m pytest tests/test_sessions.py -x --tb=short -q)",
+      "PowerShell(& \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" -m pytest vrptw_problem/tests/test_cost_breakdown.py knapsack_problem/tests/test_cost_breakdown.py 2>&1 | Select-Object -Last 30)",
+      "PowerShell(& \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" -m pytest vrptw_problem/tests/test_cost_breakdown.py knapsack_problem/tests/test_knapsack_cost_breakdown.py 2>&1 | Select-Object -Last 30)",
+      "PowerShell(& \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" -m pytest vrptw_problem/tests/ knapsack_problem/tests/ 2>&1 | Select-Object -Last 30)",
+      "PowerShell(& \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" -m pytest backend/tests/ -k \"vrptw or knapsack or sync or bridge or solve or run_optim\" --no-header -q 2>&1 | Select-Object -Last 25)"
     ]
   }
 }

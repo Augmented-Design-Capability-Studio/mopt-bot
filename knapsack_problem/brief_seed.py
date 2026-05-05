@@ -118,14 +118,31 @@ _SIGNALS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bpacking value\b", re.IGNORECASE),
     ),
     "capacity_overflow": (
+        # Keep this tuple in sync with `KnapsackStudyPort.weight_slot_markers`
+        # (study_port.py) so the deterministic seed and the validator agree on
+        # what counts as capacity-related text in a brief item.
         re.compile(r"\bcapacity\b", re.IGNORECASE),
-        re.compile(r"\bknapsack overflow\b", re.IGNORECASE),
+        re.compile(r"\boverflow\b", re.IGNORECASE),
         re.compile(r"\bweight limit\b", re.IGNORECASE),
+        re.compile(r"\bweight cap\b", re.IGNORECASE),
+        re.compile(r"\bweight constraint\b", re.IGNORECASE),
+        re.compile(r"\bbag weight\b", re.IGNORECASE),
+        re.compile(r"\bload limit\b", re.IGNORECASE),
     ),
     "selection_sparsity": (
+        # Keep this tuple in sync with `KnapsackStudyPort.weight_slot_markers`
+        # (study_port.py); the validator uses the markers tuple, this one
+        # drives the deterministic seed fallback when the LLM derivation is
+        # unavailable.
         re.compile(r"\bsparsity\b", re.IGNORECASE),
         re.compile(r"\bfewer items\b", re.IGNORECASE),
         re.compile(r"\bcompact\b", re.IGNORECASE),
+        re.compile(r"\bselection size\b", re.IGNORECASE),
+        re.compile(r"\bselected items\b", re.IGNORECASE),
+        re.compile(r"\bnumber of items\b", re.IGNORECASE),
+        re.compile(r"\bitem count\b", re.IGNORECASE),
+        re.compile(r"\bsmaller bag\b", re.IGNORECASE),
+        re.compile(r"\blighter knapsack\b", re.IGNORECASE),
     ),
 }
 

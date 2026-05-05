@@ -55,6 +55,68 @@ from app.services.docs_index import search_reference_excerpts
 
 log = logging.getLogger(__name__)
 
+
+# --- Gemini explicit context caching ------------------------------------------------
+# Keyed registry of cached system instructions. The Gemini explicit-cache API has model-
+# and size-dependent minimums (e.g. some flash variants reject content under ~1k tokens),
+# so creation may fail on previews — we treat caching as best-effort and fall back to
+# inline ``system_instruction`` whenever the cache cannot be created or has expired.
+_CACHE_TTL_SECONDS = 300
+
+# (cache_key) -> (cache_resource_name, expiry_unix_seconds)
+_PROMPT_CACHE_REGISTRY: dict[tuple[Any, ...], tuple[str, float]] = {}
+# Cache keys we've already failed to create — don't keep retrying on every turn.
+_PROMPT_CACHE_BLOCKLIST: set[tuple[Any, ...]] = set()
+
+
+def _get_or_create_system_cache(
+    client: "genai.Client",
+    *,
+    model_name: str,
+    system_text: str,
+    cache_key: tuple[Any, ...],
+) -> str | None:
+    """Return a cached-content resource name for ``system_text``, or ``None`` to fall back.
+
+    Best-effort: any SDK error (size below minimum, unsupported model, transient
+    failure) results in ``None`` and the caller should pass ``system_instruction``
+    inline. Successful creates are remembered for ``_CACHE_TTL_SECONDS``.
+    """
+    import time
+
+    if cache_key in _PROMPT_CACHE_BLOCKLIST:
+        return None
+    now = time.time()
+    entry = _PROMPT_CACHE_REGISTRY.get(cache_key)
+    if entry is not None:
+        name, expires_at = entry
+        if now < expires_at - 10:  # refresh slightly before TTL to avoid edge misses
+            return name
+        _PROMPT_CACHE_REGISTRY.pop(cache_key, None)
+    try:
+        cache = client.caches.create(
+            model=model_name,
+            config=types.CreateCachedContentConfig(
+                system_instruction=system_text,
+                ttl=f"{_CACHE_TTL_SECONDS}s",
+            ),
+        )
+    except Exception as exc:
+        log.info(
+            "Gemini explicit-cache create failed for key=%s (%s); falling back to inline system_instruction",
+            cache_key,
+            exc,
+        )
+        _PROMPT_CACHE_BLOCKLIST.add(cache_key)
+        return None
+    name = getattr(cache, "name", None)
+    if not name:
+        _PROMPT_CACHE_BLOCKLIST.add(cache_key)
+        return None
+    _PROMPT_CACHE_REGISTRY[cache_key] = (name, now + _CACHE_TTL_SECONDS)
+    return name
+
+
 # Default panel schema follows the default study benchmark (``test_problem_id`` default ``vrptw``).
 CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA: dict[str, Any] = get_study_port(None).panel_patch_response_json_schema()
 
@@ -462,7 +524,12 @@ def _build_visible_chat_system_instruction(
         recent_runs_summary=recent_runs_summary,
     )
     profile = fallback_profile
-    if api_key and model_name:
+    # The heuristic and the LLM classifier consume the same structural signals
+    # (has_goal_summary / item_count / open_question_count / has_panel_problem /
+    # has_runs), so at the unambiguous extremes they must agree. Only spend an
+    # LLM round-trip when the heuristic lands in the genuinely ambiguous "warm"
+    # bucket where user_text content can tip the call.
+    if api_key and model_name and fallback_profile.temperature == "warm":
         try:
             model_temperature = classify_chat_temperature(
                 user_text=user_text,
@@ -1093,11 +1160,34 @@ def generate_config_from_brief(
             port.config_derive_system_prompt(),
         ]
     )
-    config = types.GenerateContentConfig(
-        system_instruction=system_instruction,
-        response_mime_type="application/json",
-        response_json_schema=port.panel_patch_response_json_schema(),
+    # Static per (model, workflow, phase, problem). Try explicit caching to cut input
+    # tokens on the heavy gemini-pro derivation; if the SDK rejects (e.g. content below
+    # the model's minimum), seamlessly fall back to inline system_instruction.
+    cache_key = (
+        "config_derive",
+        model_name,
+        workflow_mode,
+        phase,
+        test_problem_id or "",
     )
+    cached_name = _get_or_create_system_cache(
+        client,
+        model_name=model_name,
+        system_text=system_instruction,
+        cache_key=cache_key,
+    )
+    if cached_name is not None:
+        config = types.GenerateContentConfig(
+            cached_content=cached_name,
+            response_mime_type="application/json",
+            response_json_schema=port.panel_patch_response_json_schema(),
+        )
+    else:
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_json_schema=port.panel_patch_response_json_schema(),
+        )
     try:
         resp = client.models.generate_content(
             model=model_name,

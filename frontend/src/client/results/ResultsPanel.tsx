@@ -6,6 +6,7 @@ import type { EditMode } from "../lib/clientTypes";
 import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { parseBaseProblemConfig } from "../problemConfig/baseSerialization";
 import { ConvergencePlot } from "./ConvergencePlot";
+import { GoalTermCostBreakdown } from "./GoalTermCostBreakdown";
 import { getProblemModule } from "../problemRegistry";
 import { RawJsonDialog } from "../components/RawJsonDialog";
 import type { TutorialEvent } from "../../tutorial/events";
@@ -338,9 +339,7 @@ export function ResultsPanel({
             data-tutorial-anchor="results-viz"
             onClick={() => onTutorialEvent?.("results-inspected")}
           >
-            {mod.ViolationSummary && currentRun ? (
-              <mod.ViolationSummary currentRun={currentRun} />
-            ) : null}
+            {currentRun ? <GoalTermCostBreakdown currentRun={currentRun} /> : null}
 
             {allVizTabs.length > 1 && (
               <div className="tabs" data-tutorial-anchor="results-viz-tabs" style={{ marginTop: "0.6rem" }}>

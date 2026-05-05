@@ -27,7 +27,7 @@ QuickBite operates from a **central depot** with five delivery zones around the 
 
 ## 2. Travel times
 
-Base travel time between zone centers, in minutes, under normal traffic. Symmetric; in-zone travel is treated as negligible.
+Below is the estimated base travel time between zone centers, in minutes, under normal traffic conditions. The travel time can be generally treated as symmetric; in-zone travel is treated as negligible.
 
 |       | Depot | A | B | C | D | E |
 |-------|:-----:|:-:|:-:|:-:|:-:|:-:|

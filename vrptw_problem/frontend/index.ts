@@ -2,7 +2,6 @@ import type { ProblemModule } from "@problemConfig/problemModule";
 import "./styles.css";
 import { buildVrptwGoalTermsExtension } from "./VrptwExtras";
 import { FleetScheduleViz } from "./FleetScheduleViz";
-import { ViolationSummary } from "./ViolationSummary";
 import { parseRoutesForSolver } from "./schedule";
 import { parseProblemConfig } from "./serialization";
 
@@ -25,7 +24,6 @@ export const MODULE: ProblemModule = {
   },
   buildGoalTermsExtension: buildVrptwGoalTermsExtension,
   vizTabs: [{ id: "fleet_gantt", label: "Schedule", component: FleetScheduleViz }],
-  ViolationSummary,
   parseEvalRoutes: parseRoutesForSolver,
   formatRunViolationSummary,
 };

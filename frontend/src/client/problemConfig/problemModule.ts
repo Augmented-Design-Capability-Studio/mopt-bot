@@ -20,11 +20,6 @@ export type ProblemVizTab = {
   component: React.ComponentType<ProblemVizProps>;
 };
 
-/** Props passed to the problem module's ViolationSummary component, if provided. */
-export type ViolationSummaryProps = {
-  currentRun: RunResult;
-};
-
 /** Generic props passed from ProblemConfigBlocks into buildGoalTermsExtension. */
 export type GoalTermsExtensionBuilderProps = {
   configJson: string;
@@ -57,8 +52,6 @@ export type ProblemModule = {
   buildGoalTermsExtension?: (props: GoalTermsExtensionBuilderProps) => GoalTermsExtension;
   /** Visualization tabs to offer in the results panel (in order). */
   vizTabs: ProblemVizTab[];
-  /** Optional: problem-specific violation/metric summary rendered above the viz tabs. */
-  ViolationSummary?: React.ComponentType<ViolationSummaryProps>;
   /**
    * Optional: parse an edited schedule/solution JSON into solver input routes.
    * Returns null when the JSON is invalid or the problem does not support manual evaluation.

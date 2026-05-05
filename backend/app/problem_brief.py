@@ -1016,16 +1016,31 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
     """
     Enforce workflow-specific invariants at persistence boundaries.
 
-    Waterfall invariant: do not store `kind: "assumption"` rows. Convert them into
-    `open_questions` so uncertainty is explicitly tracked and gated.
+    Waterfall invariant: do not store `kind: "assumption"` rows. Convert them
+    into `open_questions` (with the "Confirm or correct: …" prefix) so
+    uncertainty is explicitly tracked and gated.
+
+    Demo invariant: also strips `kind: "assumption"` rows, but **drops them
+    silently** rather than converting to an OQ. Two reasons:
+      - The "Confirm or correct: …" framing reads like a foregone conclusion,
+        which is exactly the assumption-flavored UI the user is trying to
+        avoid in demo recordings.
+      - The chat prompt requires a proper OQ-with-choices for tunable defaults
+        (algorithm choice, etc.) to already exist when the agent commits to
+        one. If the agent slips and emits an assumption alongside or instead,
+        the working value is still on the panel and any proper OQ remains —
+        the silent drop just removes the stray row.
+
+    Agile is unaffected — assumptions are first-class there.
     """
     normalized = normalize_problem_brief(brief)
     mode = str(workflow_mode or "").strip().lower()
-    if mode != "waterfall":
+    if mode not in {"waterfall", "demo"}:
         return normalized
 
     items = list(normalized.get("items") or [])
     open_questions = list(normalized.get("open_questions") or [])
+    convert_to_oq = mode == "waterfall"
 
     next_items: list[dict[str, Any]] = []
     for item in items:
@@ -1039,14 +1054,18 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
         text = str(item.get("text") or "").strip()
         if not text:
             continue
-        open_questions.append(
-            {
-                "id": f"question-open-from-assumption-{str(item.get('id') or '').strip() or _compact_uid()}",
-                "text": f"{_WATERFALL_ASSUMPTION_QUESTION_PREFIX}{text}",
-                "status": "open",
-                "answer_text": None,
-            }
-        )
+        if convert_to_oq:
+            open_questions.append(
+                {
+                    "id": f"question-open-from-assumption-{str(item.get('id') or '').strip() or _compact_uid()}",
+                    "text": f"{_WATERFALL_ASSUMPTION_QUESTION_PREFIX}{text}",
+                    "status": "open",
+                    "answer_text": None,
+                }
+            )
+        # Demo: silently drop. Agent's prompt rule already requires a proper
+        # OQ-with-choices to be emitted for tunable defaults; the panel keeps
+        # the working value, so the run still works.
 
     return {**normalized, "items": next_items, "open_questions": open_questions}
 

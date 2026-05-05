@@ -172,8 +172,38 @@ class KnapsackStudyPort:
     def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
         return {
             "value_emphasis": ("value", "profit", "packed value"),
-            "capacity_overflow": ("capacity", "overflow", "weight limit"),
-            "selection_sparsity": ("sparsity", "fewer items", "compact"),
+            # Capacity is phrased many ways in chat ("capacity limit", "weight
+            # limit", "weight cap", "bag weight at most…", etc.). Keep the
+            # marker list permissive enough that the agent's own paraphrases
+            # ground the goal term during validation. Pair every addition
+            # here with a regex in `brief_seed._SIGNALS["capacity_overflow"]`.
+            "capacity_overflow": (
+                "capacity",
+                "overflow",
+                "weight limit",
+                "weight cap",
+                "weight constraint",
+                "bag weight",
+                "load limit",
+            ),
+            # Sparsity is phrased a dozen different ways in chat — keep the
+            # marker list permissive enough that the agent's own paraphrases
+            # ("number of selected items", "smaller bag", "selection size",
+            # etc.) still ground the goal_term during validation. If you
+            # widen this further, also widen the regex tuple in
+            # `brief_seed._SIGNALS["selection_sparsity"]` so the deterministic
+            # fallback derivation stays in sync.
+            "selection_sparsity": (
+                "sparsity",
+                "fewer items",
+                "compact",
+                "selection size",
+                "selected items",
+                "number of items",
+                "item count",
+                "smaller bag",
+                "lighter knapsack",
+            ),
         }
 
     def study_prompt_appendix(self) -> str | None:

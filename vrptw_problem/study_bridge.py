@@ -750,6 +750,12 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
     # Default to explicit-only objective scoring when the field is omitted.
     only_active = bool(raw.get("only_active_terms", True))
     weights = build_weights(weights_raw, only_active_terms=only_active)
+    # Aliases the participant actually submitted (post-translation, pre-padding).
+    # Used by the result builders to filter the cost-breakdown rows so participants
+    # never see terms they didn't configure.
+    submitted_weight_aliases = sorted(
+        WEIGHT_ALIAS_REVERSE[wn] for wn in weights_raw if wn in WEIGHT_ALIAS_REVERSE
+    )
 
     driver_preferences_raw = raw.get("driver_preferences")
     if driver_preferences_raw is None:
@@ -820,6 +826,7 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "weights": weights,
+        "submitted_weight_aliases": submitted_weight_aliases,
         "driver_preferences": driver_preferences,
         "max_shift_hours": shift_hard,
         "locked_assignments": locked,
@@ -871,6 +878,8 @@ def _normalize_candidate_seed_routes(candidate_seeds_raw: Any) -> tuple[list[lis
 
 def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | None = None) -> dict[str, Any]:
     ensure_vrptw_on_path()
+    from app.problems.cost_breakdown import build_goal_term_contributions
+    from vrptw_problem.cost_breakdown import SPECS as COST_TERM_SPECS
     from vrptw_problem.encoder import encode_routes_as_vector
     from vrptw_problem.evaluator import simulate_routes
     from vrptw_problem.orders import get_orders
@@ -950,6 +959,12 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
         },
         "violations": neutral_violations(metrics),
         "metrics": neutral_metrics,
+        "goal_term_contributions": build_goal_term_contributions(
+            COST_TERM_SPECS,
+            cfg.get("submitted_weight_aliases") or [],
+            cfg["weights"],
+            metrics,
+        ),
         "runtime_seconds": float(result.runtime),
         "algorithm": result.algorithm,
         "convergence": result.convergence[:200] if result.convergence else [],
@@ -961,6 +976,8 @@ def run_evaluate_routes(
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
     ensure_vrptw_on_path()
+    from app.problems.cost_breakdown import build_goal_term_contributions
+    from vrptw_problem.cost_breakdown import SPECS as COST_TERM_SPECS
     from vrptw_problem.evaluator import simulate_routes
     from vrptw_problem.orders import get_orders
 
@@ -1021,6 +1038,12 @@ def run_evaluate_routes(
         },
         "violations": neutral_violations(metrics),
         "metrics": neutral_metrics,
+        "goal_term_contributions": build_goal_term_contributions(
+            COST_TERM_SPECS,
+            cfg.get("submitted_weight_aliases") or [],
+            cfg["weights"],
+            metrics,
+        ),
         "runtime_seconds": 0.0,
         "algorithm": "evaluate",
         "convergence": [],

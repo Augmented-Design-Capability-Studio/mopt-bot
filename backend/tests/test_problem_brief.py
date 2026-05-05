@@ -283,6 +283,81 @@ def test_coerce_waterfall_converts_assumptions_into_open_questions():
     )
 
 
+def test_coerce_demo_drops_assumptions_silently():
+    """Demo mode drops assumption rows without converting them to OQs.
+
+    Reasoning: the prompt requires a proper OQ-with-choices for tunable defaults
+    (search algorithm etc.) to already exist when the agent commits to one. If
+    the agent slips and emits an assumption alongside, we don't want a
+    'Confirm or correct: …' OQ that reads as a foregone conclusion — we want
+    no row at all. The working value still lives on the panel, so the run
+    continues to work."""
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            items=[
+                {
+                    "id": "a-algo",
+                    "text": "Using Genetic Algorithm for initial exploration.",
+                    "kind": "assumption",
+                    "source": "agent",
+                    "status": "active",
+                    "editable": True,
+                },
+                {
+                    "id": "g-1",
+                    "text": "Knapsack capacity is 50 units.",
+                    "kind": "gathered",
+                    "source": "user",
+                    "status": "active",
+                    "editable": True,
+                },
+            ],
+            open_questions=[
+                {"id": "q-algo", "text": "Which search method should I use?", "status": "open"}
+            ],
+        )
+    )
+    coerced = coerce_problem_brief_for_workflow(brief, "demo")
+    # Assumption row is gone.
+    assert not any(i.get("kind") == "assumption" for i in coerced["items"])
+    # Gathered rows are preserved as-is.
+    assert any(
+        i.get("kind") == "gathered" and "capacity is 50" in str(i.get("text") or "").lower()
+        for i in coerced["items"]
+    )
+    # No "Confirm or correct" OQ was synthesized from the assumption.
+    assert not any(
+        "confirm or correct" in str(q.get("text") or "").lower()
+        for q in coerced.get("open_questions") or []
+    )
+    # Pre-existing OQs are preserved.
+    assert any(
+        "search method" in str(q.get("text") or "").lower()
+        for q in coerced.get("open_questions") or []
+    )
+
+
+def test_coerce_agile_keeps_assumptions():
+    """Agile is the only mode that legitimately wants assumption rows visible in the brief."""
+    brief = normalize_problem_brief(
+        _minimal_brief_payload(
+            items=[
+                {
+                    "id": "a1",
+                    "text": "Using Genetic Algorithm for initial exploration.",
+                    "kind": "assumption",
+                    "source": "agent",
+                    "status": "active",
+                    "editable": True,
+                }
+            ],
+            open_questions=[],
+        )
+    )
+    coerced = coerce_problem_brief_for_workflow(brief, "agile")
+    assert any(i.get("kind") == "assumption" for i in coerced["items"])
+
+
 def test_brief_items_from_panel_always_shows_strategy_if_algorithm_present():
     """Now search strategy details (iterations/population) are explicitly shown even if other params are default."""
     panel = {"problem": {"algorithm": "GA", "algorithm_params": {"pc": 0.9, "pm": 0.05}}}

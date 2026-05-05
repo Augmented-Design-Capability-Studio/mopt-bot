@@ -16,6 +16,7 @@ from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
 from app.problem_brief import (
     cleanup_open_questions,
+    coerce_problem_brief_for_workflow,
     merge_problem_brief_patch,
     normalize_problem_brief,
     problem_brief_item_slot,
@@ -438,6 +439,14 @@ def _run_background_derivation(
                 effective_problem_brief = sync_problem_brief_from_panel(
                     effective_problem_brief, base_panel, test_problem_id=test_problem_id
                 )
+
+            # Apply workflow-specific invariants (waterfall: assumptions → OQs;
+            # demo: drop assumptions). Without this the background path bypasses
+            # the coercion that the synchronous chat-turn path already applies,
+            # leaving a window where the brief in DB still has assumption rows.
+            effective_problem_brief = coerce_problem_brief_for_workflow(
+                effective_problem_brief, workflow_mode
+            )
 
         with SessionLocal() as db:
             row = db.get(StudySession, session_id)

@@ -401,8 +401,25 @@ export type RunViolations = {
   time_window_minutes_over: number;
   time_window_stop_count: number;
   capacity_units_over: number;
-  shift_limit_penalty: number;
   priority_deadline_misses: number;
+};
+
+/** Per-goal-term cost-contribution row emitted by each problem's result builder.
+ *  Only includes terms the participant's config actually submitted (filtered backend-side
+ *  to avoid leaking the full menu of available terms). */
+export type GoalTermContribution = {
+  /** Stable key matching the weight alias (e.g. "travel_time", "value_emphasis"). */
+  key: string;
+  /** Display label for the participant. */
+  label: string;
+  /** Weight applied in the cost formula. */
+  weight: number;
+  /** Raw metric value the weight multiplies. */
+  metric_value: number;
+  /** Short unit string for display (e.g. "min", "units"). May be empty. */
+  metric_unit: string;
+  /** weight × metric_value — the term's contribution to total cost. */
+  weighted_cost: number;
 };
 
 export type RunMetrics = {
@@ -427,6 +444,7 @@ export type RunPayload = {
   schedule: RunSchedule;
   violations: RunViolations;
   metrics: RunMetrics;
+  goal_term_contributions?: GoalTermContribution[] | null;
   runtime_seconds: number;
   algorithm: string;
   convergence: number[];

@@ -206,13 +206,29 @@ export function ClientShell({
   const backgroundConfigPending = session?.processing?.config_status === "pending";
   const backgroundProcessingPending = backgroundBriefPending || backgroundConfigPending;
   const chatPending = aiPending || backgroundProcessingPending || optimizing;
+  // Detect the post-run analysis window so we can swap the generic
+  // "Thinking..." label for one that names what's actually happening (the
+  // visualization is being prepared and the agent is composing its run-ack
+  // turn). The signal is: the most recent assistant message is the
+  // server-emitted run-finished line (kind === "run") and we're currently
+  // waiting on the model.
+  const lastAssistantMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m && m.role === "assistant") return m;
+    }
+    return null;
+  }, [messages]);
+  const isPostRunAnalysisPending = aiPending && lastAssistantMessage?.kind === "run";
   const chatPendingLabel = optimizing
     ? "Running optimization..."
-    : aiPending
-      ? "Thinking..."
-      : backgroundProcessingPending
-        ? "Updating definition and configuration..."
-        : "Working...";
+    : isPostRunAnalysisPending
+      ? "Configuring visualization and analyzing run..."
+      : aiPending
+        ? "Thinking..."
+        : backgroundProcessingPending
+          ? "Updating definition and configuration..."
+          : "Working...";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
   const backgroundProcessingErrorMessage = formatProcessingError(backgroundProcessingError);
   const accentClass = workflowAccentClass(session?.workflow_mode);
