@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import re
 from copy import deepcopy
 from typing import Any
@@ -62,23 +61,6 @@ _UPLOAD_OPEN_QUESTION_KEYWORDS = (
     "driver info",
     "order data",
 )
-
-@functools.lru_cache(maxsize=None)
-def _all_weight_slot_markers() -> dict[str, tuple[str, ...]]:
-    from app.problems.registry import register_study_ports
-
-    merged: dict[str, tuple[str, ...]] = {}
-    for p in register_study_ports().values():
-        merged.update(p.weight_slot_markers())
-    return merged
-
-
-def _all_atomize_hints() -> tuple[str, ...]:
-    hints: set[str] = set()
-    for tup in _all_weight_slot_markers().values():
-        hints.update(tup)
-    return tuple(sorted(hints))
-
 
 def locked_goal_terms_prompt_section(panel_config: Any, test_problem_id: str | None = None) -> str | None:
     """Human-readable block for chat / brief system prompts when goal terms are locked in the panel."""
@@ -142,13 +124,6 @@ _GOAL_SUMMARY_NUMERIC_ANNOTATION_RE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
-# "Constraint handling: …" lists goal/penalty terms like objectives; split even when hints
-# (travel time, capacity penalty, …) do not appear as substrings.
-_CONSTRAINT_HANDLING_PREFIX_RE = re.compile(
-    r"^\s*constraint\s+handling\s*:\s*",
-    re.IGNORECASE,
-)
-
 # Model sometimes emits fake "open questions" like "Cap shifts? (Answered: 8h)." — fold into gathered instead.
 # Pattern covers common model formatting variants: (Answered: X), [Answered: X], — Answer: X, - Answered: X.
 _ANSWERED_SUFFIX_IN_OPQ_RE = re.compile(
@@ -417,156 +392,6 @@ def _sanitize_run_summary(text: Any) -> str:
         return ""
     one_line = " ".join(raw.split())
     return _ensure_terminator(one_line)
-
-
-def _split_into_goal_term_clauses(text: str) -> list[str]:
-    """Split a compound line listing multiple objective/constraint terms.
-
-    Important: ignore separators inside parentheses/brackets so
-    '(Objective, Weight 1.0)' stays a single clause.
-    """
-    normalized = " ".join(str(text or "").split()).strip()
-    if not normalized:
-        return []
-    out: list[str] = []
-    buf: list[str] = []
-    paren_depth = 0
-    bracket_depth = 0
-    i = 0
-    n = len(normalized)
-    while i < n:
-        ch = normalized[i]
-        if ch == "(":
-            paren_depth += 1
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == ")":
-            paren_depth = max(0, paren_depth - 1)
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == "[":
-            bracket_depth += 1
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == "]":
-            bracket_depth = max(0, bracket_depth - 1)
-            buf.append(ch)
-            i += 1
-            continue
-        at_top_level = paren_depth == 0 and bracket_depth == 0
-        if at_top_level and ch == ";":
-            part = "".join(buf).strip(" ,")
-            if part:
-                out.append(part)
-            buf = []
-            i += 1
-            continue
-        if at_top_level and ch == ",":
-            j = i + 1
-            while j < n and normalized[j].isspace():
-                j += 1
-            if j + 3 <= n and normalized[j:j + 3].lower() == "and":
-                k = j + 3
-                if k >= n or normalized[k].isspace():
-                    part = "".join(buf).strip(" ,")
-                    if part:
-                        out.append(part)
-                    buf = []
-                    i = k
-                    continue
-            part = "".join(buf).strip(" ,")
-            if part:
-                out.append(part)
-            buf = []
-            i += 1
-            continue
-        if at_top_level and normalized[i:i + 5].lower() == " and ":
-            part = "".join(buf).strip(" ,")
-            if part:
-                out.append(part)
-            buf = []
-            i += 5
-            continue
-        buf.append(ch)
-        i += 1
-    tail = "".join(buf).strip(" ,")
-    if tail:
-        out.append(tail)
-    return out
-
-
-def _split_compound_item_text(text: str) -> list[str]:
-    normalized = " ".join(str(text or "").split()).strip()
-    if not normalized:
-        return []
-    lowered = normalized.lower()
-
-    # Keep a single item when "A and B … strict constraint(s)" shares one modality across conjuncts
-    # (splitting would strand "strict" away from "capacity" and breaks deterministic config seeding).
-    if re.search(r"\s+and\s+", normalized, re.IGNORECASE) and (
-        "strict constraints" in lowered
-        or "strict constraint" in lowered
-        or re.search(r"\btreated as\s+.+\bstrict\b", lowered)
-    ):
-        return [normalized]
-
-    ch = _CONSTRAINT_HANDLING_PREFIX_RE.match(normalized)
-    if ch:
-        body = normalized[ch.end() :].strip()
-        if not body:
-            return [normalized]
-        parts = _split_into_goal_term_clauses(body)
-        if len(parts) <= 1:
-            return [normalized]
-        out: list[str] = []
-        for idx, part in enumerate(parts):
-            t = _ensure_terminator(part)
-            if idx == 0:
-                out.append(f"Constraint handling: {t}")
-            else:
-                out.append(t)
-        return out
-
-    if not any(hint in lowered for hint in _all_atomize_hints()):
-        return [normalized]
-    parts = _split_into_goal_term_clauses(normalized)
-    if len(parts) <= 1:
-        return [normalized]
-    return [_ensure_terminator(part) for part in parts]
-
-
-def _atomize_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "").strip().lower()
-        if kind not in {"gathered", "assumption"}:
-            out.append(item)
-            continue
-        text = str(item.get("text") or "").strip()
-        item_id = str(item.get("id") or "")
-        source = str(item.get("source") or "").strip().lower()
-        # Promoted answered open questions: single logical row (Question — Answer); do not split on commas/and.
-        # Upload notifications: single programmatic entry; do not shred into smaller pieces.
-        if (
-            item_id.startswith("gathered-oq-")
-            or item_id.startswith("item-gathered-from-question-")
-            or "\u2014" in text
-            or source == "upload"
-        ):
-            out.append(item)
-            continue
-        chunks = _split_compound_item_text(text)
-        if len(chunks) <= 1:
-            out.append(item)
-            continue
-        for idx, chunk in enumerate(chunks, start=1):
-            out.append({**item, "id": f"{item['id']}-{idx}", "text": chunk})
-    return out
 
 
 def _format_answered_open_question_gathered(question: str, answer: str) -> str:
@@ -922,7 +747,7 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
         if item is None:
             continue
         normalized_items.append(item)
-    normalized_items = _atomize_problem_brief_items(_reconcile_problem_brief_items(normalized_items))
+    normalized_items = _reconcile_problem_brief_items(normalized_items)
     questions = _coerce_question_list(raw.get("open_questions"))
     promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
     promoted_items = _reconcile_problem_brief_items(promoted_items)
@@ -1239,9 +1064,6 @@ def _slot_from_text(text: str) -> str | None:
         return "epochs"
     if "only active objective terms should be applied" in lowered or "inactive objective terms may also remain available" in lowered:
         return "only_active_terms"
-    for weight_key, markers in _all_weight_slot_markers().items():
-        if any(marker in lowered for marker in markers) and _EXPLICIT_VALUE_RE.search(text):
-            return f"weight:{weight_key}"
     return None
 
 

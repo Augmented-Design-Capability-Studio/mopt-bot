@@ -45,9 +45,6 @@ class StudyProblemPort(Protocol):
     def weight_item_labels(self) -> dict[str, str]:
         """Human labels for problem_brief / panel sync (goal term keys)."""
 
-    def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
-        """Substrings for atomizing brief lines into weight slots."""
-
     def weight_display_keys(self) -> list[str]:
         """Ordered weight keys used for the agile-mode gate check and config-panel display order.
 

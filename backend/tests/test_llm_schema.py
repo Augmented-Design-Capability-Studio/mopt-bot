@@ -77,6 +77,44 @@ def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_m
     assert "Mandatory:" in system and "Constraint handling" in system
 
 
+def test_brief_update_system_instruction_carries_visible_assistant_message():
+    """When the visible chat just told the participant 'Changes I made: …', the
+    hidden brief turn must see that text as authoritative context — otherwise
+    the chat and the brief diverge (chat claims a change, brief never commits).
+    """
+    visible_reply = (
+        "Changes I made: I've increased the lateness penalty weight to push the "
+        "solver toward on-time deliveries. Want me to also rebalance workload?"
+    )
+    system = _build_brief_update_system_instruction(
+        current_problem_brief={"goal_summary": "", "items": []},
+        visible_assistant_message=visible_reply,
+    )
+    # The visible reply context section is present and contains the reply text.
+    assert "Visible assistant reply that JUST got sent" in system
+    assert visible_reply in system
+    # And the rule that ties the brief turn to the visible commitment.
+    # (The prompt wraps the phrase across a line break — match the
+    # whitespace-collapsed form so the test isn't brittle to wrapping.)
+    assert "emit the\ncorresponding `problem_brief_patch`" in system or \
+        "emit the corresponding `problem_brief_patch`" in system
+
+
+def test_brief_update_system_instruction_omits_visible_section_when_absent():
+    """When no visible reply is supplied, the section is omitted — keeps the
+    legacy / non-chat call sites (e.g. the OQ-cleanup pass) unaffected."""
+    system_blank = _build_brief_update_system_instruction(
+        current_problem_brief={"goal_summary": "", "items": []},
+        visible_assistant_message=None,
+    )
+    system_empty = _build_brief_update_system_instruction(
+        current_problem_brief={"goal_summary": "", "items": []},
+        visible_assistant_message="   ",
+    )
+    assert "Visible assistant reply that JUST got sent" not in system_blank
+    assert "Visible assistant reply that JUST got sent" not in system_empty
+
+
 def test_visible_chat_instruction_enforces_plain_language_over_internal_keys():
     system = _build_visible_chat_system_instruction(
         user_text="Help me prioritize outcomes.",

@@ -43,116 +43,34 @@ class GoalTermValidationError(ValueError):
         return f"{_GOAL_TERM_VALIDATION_PREFIX}{json.dumps(self.reasons, ensure_ascii=True)}"
 
 
-def _grounded_goal_term_keys(
-    problem_brief: dict[str, Any] | None,
-    *,
-    weight_slot_markers: dict[str, tuple[str, ...]],
-) -> set[str]:
-    grounded: set[str] = set()
-    if not isinstance(problem_brief, dict):
-        return grounded
-
-    def _ground_from_text(text_value: Any) -> None:
-        text = str(text_value or "").strip().lower()
-        if not text:
-            return
-        for key, markers in weight_slot_markers.items():
-            if key in grounded:
-                continue
-            for marker in markers:
-                token = str(marker or "").strip().lower()
-                if token and token in text:
-                    grounded.add(key)
-                    break
-
-    items = problem_brief.get("items")
-    if isinstance(items, list):
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            kind = str(item.get("kind") or "").strip().lower()
-            if kind not in {"gathered", "assumption"}:
-                continue
-            item_id = str(item.get("id") or "").strip().lower()
-            if item_id.startswith("config-weight-"):
-                candidate = item_id.removeprefix("config-weight-").strip()
-                if candidate:
-                    grounded.add(candidate)
-            _ground_from_text(item.get("text"))
-
-    # Open questions also count as evidence the concept is in scope. This
-    # matters in demo mode (and waterfall) where the agent often raises the
-    # capacity / sparsity question as an OQ before any gathered row exists —
-    # without this, validate_problem_goal_terms would reject the panel even
-    # though the agent and participant both clearly know the concept applies.
-    open_questions = problem_brief.get("open_questions")
-    if isinstance(open_questions, list):
-        for question in open_questions:
-            if isinstance(question, str):
-                _ground_from_text(question)
-            elif isinstance(question, dict):
-                _ground_from_text(question.get("text"))
-                _ground_from_text(question.get("answer_text"))
-
-    # Goal/run summaries are top-level prose surfaces and frequently carry the
-    # canonical phrasing ("maximize value", "respect capacity") even when no
-    # individual gathered row spells it out yet. Scanning them here closes the
-    # cold-start grounding gap where a starter prompt's intent lives in the
-    # summary but hasn't been split into items.
-    _ground_from_text(problem_brief.get("goal_summary"))
-    _ground_from_text(problem_brief.get("run_summary"))
-
-    return grounded
-
-
 def validate_problem_goal_terms(
     *,
     problem: dict[str, Any] | None,
-    problem_brief: dict[str, Any] | None,
-    weight_slot_markers: dict[str, tuple[str, ...]],
-    check_grounding: bool = True,
-) -> list[dict[str, str]]:
-    """Validate goal-term structure and (optionally) check brief grounding.
+    **_unused: Any,
+) -> None:
+    """Structural validation only: shape, ``type`` enum, ``goal_term_order`` refs.
 
-    Splits results by severity:
+    Brief-grounding (the old marker-based hallucination check) was removed:
+    each problem's structured-output schema already restricts the LLM to a
+    closed key set, so a "key the brief doesn't mention" is at worst an extra
+    row the participant can delete — not a save-blocker.  Keeping a substring
+    grounding pass meant maintaining per-problem marker tables that constantly
+    drifted from real chat phrasings; ripping them out is the simplification.
 
-    * **Structural errors** — shape, ``type`` enum, ``goal_term_order`` referencing
-      missing keys.  These are panel data-integrity bugs and **block the save**:
-      raised as ``GoalTermValidationError``.
-    * **Grounding warnings** — panel ``goal_terms`` keys that brief markers don't
-      recognise.  The structured-output schema (``panel_patch_response_json_schema``)
-      already restricts the LLM to a closed key set per problem, so an "ungrounded"
-      key is a soft signal, not a deadlock.  Returned to the caller (which surfaces
-      them as participant-facing advice) and **do not block** the save.
-
-    Returning warnings instead of raising on grounding decouples marker maintenance
-    from panel save-ability: novel chat phrasings ("cap weight at 50") can no longer
-    deadlock the participant, and the per-problem marker tables stay small without
-    needing to grow whenever a user invents a new way to phrase a constraint.
-
-    Args:
-        problem: Panel ``problem`` dict to validate.
-        problem_brief: Brief used to compute marker grounding for warnings.
-        weight_slot_markers: Per-problem markers (from the study port).
-        check_grounding: If False, skip grounding warnings entirely (used for
-            user-driven panel saves where the participant is authoritative).
-
-    Returns:
-        List of grounding-warning reason dicts (each ``{"code": ..., "message": ...}``).
-        May be empty.
+    ``**_unused`` accepts ``problem_brief`` / ``weight_slot_markers`` /
+    ``check_grounding`` from older callers without breaking imports during the
+    transition.
 
     Raises:
-        GoalTermValidationError: When the panel has structural errors that must
-        block the save.
+        GoalTermValidationError: when the panel has a structural bug.
     """
     if not isinstance(problem, dict):
-        return []
+        return
     goal_terms = problem.get("goal_terms")
     if not isinstance(goal_terms, dict):
-        return []
+        return
 
     structural: list[dict[str, str]] = []
-    grounding: list[dict[str, str]] = []
     present_keys: set[str] = set()
     for key, entry in goal_terms.items():
         if not isinstance(key, str):
@@ -194,32 +112,8 @@ def validate_problem_goal_terms(
                     }
                 )
 
-    if check_grounding:
-        grounded_keys = _grounded_goal_term_keys(problem_brief, weight_slot_markers=weight_slot_markers)
-        if grounded_keys:
-            # Brief has at least one marker hit; anything in the panel that
-            # isn't grounded becomes a soft warning (not a save-blocker).
-            ungrounded = sorted(present_keys - grounded_keys)
-            for key in ungrounded:
-                grounding.append(
-                    {
-                        "code": "goal_term_hallucinated",
-                        "key": key,
-                        "message": f"goal term '{key}' is not grounded in definition items.",
-                    }
-                )
-        elif present_keys:
-            # Cold-start: brief has no marker hits anywhere. The schema already
-            # restricts the key vocabulary, so just log and pass through.
-            log.info(
-                "Goal-term grounding skipped: brief has no marker signal yet; "
-                "trusting schema-restricted panel keys %s",
-                sorted(present_keys),
-            )
-
     if structural:
         raise GoalTermValidationError(structural)
-    return grounding
 
 
 def _weights_from_problem(problem: dict[str, Any]) -> dict[str, float]:
@@ -353,17 +247,81 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
     merged = deepcopy(derived_problem)
     current_goal_terms = _goal_terms_from_problem(current_problem)
     derived_goal_terms = _goal_terms_from_problem(merged)
+    derived_constraint_types_raw = merged.get("constraint_types")
+    derived_constraint_types: dict[str, str] = (
+        {
+            k: str(v).strip().lower()
+            for k, v in derived_constraint_types_raw.items()
+            if isinstance(k, str)
+            and isinstance(v, str)
+            and str(v).strip().lower() in _GOAL_TERM_TYPE_VALUES
+        }
+        if isinstance(derived_constraint_types_raw, dict)
+        else {}
+    )
     if current_goal_terms:
         merged_goal_terms = deepcopy(current_goal_terms)
+        # Stale nested properties would otherwise be re-projected onto top-level fields
+        # by `_apply_goal_terms_overlay`, clobbering the LLM's fresh values. Drop nested
+        # copies only for the keys the LLM derived authoritative top-level values for —
+        # if the LLM omitted them, keep the current properties so the round-trip via
+        # goal_terms.properties still recovers driver_preferences / max_shift_hours.
+        _properties_overrides = (
+            ("worker_preference", "driver_preferences"),
+            ("shift_limit", "max_shift_hours"),
+        )
+        for goal_key, top_field in _properties_overrides:
+            if top_field not in derived_problem:
+                continue
+            entry = merged_goal_terms.get(goal_key)
+            if not isinstance(entry, dict):
+                continue
+            props = entry.get("properties")
+            if isinstance(props, dict):
+                props.pop(top_field, None)
+                if not props:
+                    entry.pop("properties", None)
         for key, entry in derived_goal_terms.items():
             current_entry = merged_goal_terms.get(key)
             if isinstance(current_entry, dict):
-                # Preserve canonical semantics from the current panel, but keep new weight/rank values.
+                # Take fields from the LLM derivation; fall back to current only when omitted.
+                # `type` must be honoured here — otherwise constraint-type changes ("make this
+                # hard") never reach the panel, since the derived entry's type would be dropped.
                 current_entry["weight"] = float(entry.get("weight", current_entry.get("weight", 0.0)))
                 if "rank" in entry:
                     current_entry["rank"] = entry["rank"]
+                if "type" in entry:
+                    current_entry["type"] = entry["type"]
+                if "locked" in entry:
+                    current_entry["locked"] = entry["locked"]
+                if "properties" in entry:
+                    current_entry["properties"] = deepcopy(entry["properties"])
             else:
                 merged_goal_terms[key] = deepcopy(entry)
+        # The LLM derivation typically emits `weights` + `constraint_types` (not a full
+        # `goal_terms` map). Seed merged_goal_terms with new entries for any derived weights
+        # that weren't already in the prior panel — otherwise `_apply_goal_terms_overlay`
+        # (called next, in `sanitize_panel_weights`) would rebuild `weights` from this map
+        # and drop those new keys, silently erasing newly-introduced terms like `shift_limit`
+        # or `worker_preference`. Also overlay derived constraint_types onto existing entries
+        # so type changes ("make capacity hard") aren't reverted by the preserved old `type`.
+        derived_inner_weights = merged.get("weights")
+        if isinstance(derived_inner_weights, dict):
+            for key, value in derived_inner_weights.items():
+                if not isinstance(key, str):
+                    continue
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if key in merged_goal_terms:
+                    continue
+                merged_goal_terms[key] = {
+                    "weight": float(value),
+                    "type": derived_constraint_types.get(key, "objective"),
+                }
+        for key, ctype in derived_constraint_types.items():
+            entry = merged_goal_terms.get(key)
+            if isinstance(entry, dict):
+                entry["type"] = ctype
         merged["goal_terms"] = merged_goal_terms
     current_weights = _weights_from_problem(current_problem)
     derived_weights = _weights_from_problem(merged)
@@ -450,22 +408,16 @@ def sync_panel_from_problem_brief(
     workflow_mode: str | None = None,
     recent_runs_summary: list | None = None,
     preserve_missing_managed_fields: bool = False,
-) -> tuple[dict | None, list[str], list[dict[str, str]]]:
+) -> tuple[dict | None, list[str]]:
     """Sync the panel from the brief.
 
-    Returns ``(panel, weight_warnings, grounding_warnings)``.
+    Returns ``(panel, weight_warnings)`` where ``panel`` is ``None`` when the
+    brief is too sparse and the LLM is unavailable to derive one.
 
-    * ``panel`` is the persisted panel (or ``None`` if the brief was too sparse to
-      derive anything).
-    * ``weight_warnings`` come from the per-problem ``sanitize_panel_config``.
-    * ``grounding_warnings`` are non-blocking notices about goal-term keys the
-      validator's brief markers didn't recognise.  Callers should surface them as
-      participant-facing advice (the panel is still committed).
-
-    Raises:
-        GoalTermValidationError: only for **structural** validator errors
-        (shape, type, order).  Hallucination-style grounding mismatches no longer
-        block the save — they're returned as warnings.
+    Raises ``GoalTermValidationError`` only for **structural** validator errors
+    (shape / type / order).  Brief-grounding mismatches were ripped out — the
+    LLM's structured-output schema already restricts the key vocabulary, so the
+    old marker-based hallucination check produced more friction than value.
     """
     from app.problems.registry import get_study_port
     from app.services.llm import generate_config_from_brief
@@ -497,7 +449,7 @@ def sync_panel_from_problem_brief(
         seed_panel = port.derive_problem_panel_from_brief(problem_brief)
         derived_panel = seed_panel
     if derived_panel is None:
-        return None, [], []
+        return None, []
 
     next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
     current_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
@@ -515,50 +467,20 @@ def sync_panel_from_problem_brief(
         seed_panel = port.derive_problem_panel_from_brief(problem_brief)
     next_problem = _backfill_solver_fields_from_seed(seed_panel, next_problem)
 
-    # Structural errors raise; grounding mismatches return as advisory warnings.
-    grounding_warnings = validate_problem_goal_terms(
-        problem=next_problem,
-        problem_brief=problem_brief,
-        weight_slot_markers=port.weight_slot_markers(),
-    )
-    if grounding_warnings:
-        log.info(
-            "Goal-term grounding warnings (non-blocking) for session %s: %s",
-            row.id,
-            grounding_warnings,
-        )
+    # Structural errors only — raises GoalTermValidationError on shape / type / order bugs.
+    validate_problem_goal_terms(problem=next_problem)
 
     next_panel["problem"] = next_problem
     merged, weight_warnings = port.sanitize_panel_config(next_panel)
     if merged == current_panel:
-        return merged, weight_warnings, grounding_warnings
+        return merged, weight_warnings
 
     log.info("Participant synced panel_config from brief: %s", merged)
     row.panel_config_json = json.dumps(merged)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return merged, weight_warnings, grounding_warnings
-
-
-def grounding_advice_message(grounding_warnings: list[dict[str, str]]) -> str | None:
-    """Format participant-facing advice from grounding warnings.
-
-    Surfaced as a non-blocking assistant chat note; the panel still commits.
-    Returns ``None`` when there's nothing to say.
-    """
-    keys = sorted({w.get("key") for w in grounding_warnings if isinstance(w, dict) and w.get("key")})
-    keys = [k for k in keys if isinstance(k, str)]
-    if not keys:
-        return None
-    quoted = ", ".join(f"`{k}`" for k in keys)
-    plural = "terms" if len(keys) > 1 else "term"
-    return (
-        f"Heads up: I added the goal {plural} {quoted} to Problem Config based on the brief, "
-        f"but couldn't tie {('them' if len(keys) > 1 else 'it')} to a specific Definition item. "
-        f"If {('they' if len(keys) > 1 else 'it')} doesn't match your goals, remove "
-        f"{('them' if len(keys) > 1 else 'it')} from the Problem Config tab."
-    )
+    return merged, weight_warnings
 
 
 def sync_problem_brief_from_panel(

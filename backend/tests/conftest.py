@@ -63,6 +63,7 @@ def _stub_gemini_helpers(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtur
         lambda content, *_a, **_k: (
             _intent.is_definition_cleanup_request(content),
             _intent.is_definition_clear_request(content),
+            _intent.is_change_intent_fallback(content),
         ),
     )
     monkeypatch.setattr(_llm, "classify_chat_temperature", lambda *a, **k: "warm")

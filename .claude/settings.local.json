@@ -92,7 +92,8 @@
       "Bash(grep -rn '\"choices\"\\\\|\\\\.choices\\\\b\\\\|: choices\\\\|`choices`\\\\|choices:' C:/Users/whyhowie/git-repo/mopt-bot/ --include=\"*.py\" --include=\"*.ts\" --include=\"*.tsx\")",
       "Bash(grep -rEn \"\\\\\\\\.choices|\\\\\"choices\\\\\"|'choices'\" C:/Users/whyhowie/git-repo/mopt-bot/backend/ C:/Users/whyhowie/git-repo/mopt-bot/frontend/src/ --include='*.py' --include='*.ts' --include='*.tsx')",
       "Bash(grep -rn \"split\\\\|sentence\\\\|\\\\\\\\\\\\\\\\.\\\\\\\\!\\\\\\\\?\\\\;\" C:/Users/whyhowie/git-repo/mopt-bot/backend/app/problem_brief.py)",
-      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -c ' *)"
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -c ' *)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

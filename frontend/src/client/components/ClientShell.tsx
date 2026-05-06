@@ -50,7 +50,6 @@ type ClientShellProps = {
   currentRun?: RunResult;
   activeRun: number;
   chatInput: string;
-  invokeModel: boolean;
   configText: string;
   problemBrief: ProblemBrief | null;
   hasUploadedData: boolean;
@@ -69,7 +68,6 @@ type ClientShellProps = {
   fileRef: RefObject<HTMLInputElement>;
   simulatedUploadChips: string[];
   onChatInputChange: (value: string) => void;
-  onInvokeModelChange: (value: boolean) => void;
   onConfigTextChange: (value: string) => void;
   onProblemBriefChange: (value: ProblemBrief | null) => void;
   onScheduleTextChange: (value: string) => void;
@@ -127,7 +125,6 @@ export function ClientShell({
   currentRun,
   activeRun,
   chatInput,
-  invokeModel,
   configText,
   problemBrief,
   hasUploadedData,
@@ -146,7 +143,6 @@ export function ClientShell({
   fileRef,
   simulatedUploadChips,
   onChatInputChange,
-  onInvokeModelChange,
   onConfigTextChange,
   onProblemBriefChange,
   onScheduleTextChange,
@@ -508,7 +504,6 @@ export function ClientShell({
             messages={messages}
             aiPending={chatPending}
             aiPendingLabel={chatPendingLabel}
-            invokeModel={invokeModel}
             editMode={editMode}
             chatBusy={chatBusy}
             chatLocked={chatLocked}
@@ -517,7 +512,6 @@ export function ClientShell({
             fileRef={fileRef}
             simulatedUploadChips={simulatedUploadChips}
             problemId={session?.test_problem_id ?? undefined}
-            onInvokeModelChange={onInvokeModelChange}
             onChatInputChange={onChatInputChange}
             onSendChat={onSendChat}
             onSimulateUpload={onSimulateUpload}
@@ -536,7 +530,6 @@ export function ClientShell({
             configText={configText}
             problemBrief={problemBrief}
             editMode={editMode}
-            invokeModel={invokeModel}
             busy={busy}
             syncingProblemConfig={syncingProblemConfig}
             clientOps={clientOps}

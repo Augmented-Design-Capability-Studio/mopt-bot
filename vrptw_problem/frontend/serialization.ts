@@ -75,10 +75,45 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
   const hasProblemKey = typeof outerRaw.problem === "object" && outerRaw.problem !== null;
   const inner = (hasProblemKey ? outerRaw.problem : outerRaw) as Record<string, unknown>;
 
-  const weights =
+  // Goal-terms is the canonical persisted form (sanitize_panel_weights strips `weights` and
+  // `constraint_types`). Fall back to legacy `weights` only when goal_terms is absent —
+  // otherwise VRPTW-specific blocks (worker_preference extras, max-shift threshold, locked
+  // assignments) would never see the keys the user just configured.
+  const goalTermsRaw =
+    inner.goal_terms !== null && typeof inner.goal_terms === "object" && !Array.isArray(inner.goal_terms)
+      ? (inner.goal_terms as Record<string, unknown>)
+      : null;
+  const weightsFromGoalTerms: Record<string, number> = {};
+  const constraintTypesFromGoalTerms: Record<string, import("@problemConfig/types").ConstraintType> = {};
+  let driverPrefsFromGoalTerms: unknown = undefined;
+  let maxShiftHoursFromGoalTerms: number | null = null;
+  if (goalTermsRaw) {
+    for (const [key, raw] of Object.entries(goalTermsRaw)) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const entry = raw as Record<string, unknown>;
+      const w = entry.weight;
+      if (typeof w === "number" && Number.isFinite(w)) weightsFromGoalTerms[key] = w;
+      const t = entry.type;
+      if (t === "soft" || t === "hard" || t === "custom") constraintTypesFromGoalTerms[key] = t;
+      const props = entry.properties;
+      if (props && typeof props === "object" && !Array.isArray(props)) {
+        const propObj = props as Record<string, unknown>;
+        if (key === "worker_preference" && Array.isArray(propObj.driver_preferences)) {
+          driverPrefsFromGoalTerms = propObj.driver_preferences;
+        }
+        if (key === "shift_limit" && typeof propObj.max_shift_hours === "number") {
+          maxShiftHoursFromGoalTerms = propObj.max_shift_hours;
+        }
+      }
+    }
+  }
+
+  const weightsFromLegacy =
     inner.weights !== null && typeof inner.weights === "object" && !Array.isArray(inner.weights)
       ? (inner.weights as Record<string, number>)
       : {};
+  const weights =
+    Object.keys(weightsFromGoalTerms).length > 0 ? weightsFromGoalTerms : weightsFromLegacy;
 
   const earlyStop =
     typeof inner.early_stop === "boolean" ? inner.early_stop : true;
@@ -102,24 +137,32 @@ export function parseProblemConfig(json: string): ParsedProblemConfig {
       early_stop_epsilon: typeof inner.early_stop_epsilon === "number" ? inner.early_stop_epsilon : null,
       pop_size: typeof inner.pop_size === "number" ? inner.pop_size : null,
       random_seed: typeof inner.random_seed === "number" ? inner.random_seed : null,
-      max_shift_hours: typeof inner.max_shift_hours === "number" ? inner.max_shift_hours : null,
+      max_shift_hours:
+        typeof inner.max_shift_hours === "number"
+          ? inner.max_shift_hours
+          : maxShiftHoursFromGoalTerms,
       locked_assignments:
         inner.locked_assignments !== null &&
         typeof inner.locked_assignments === "object" &&
         !Array.isArray(inner.locked_assignments)
           ? (inner.locked_assignments as Record<string, number>)
           : {},
-      driver_preferences: parseDriverPreferences(inner.driver_preferences),
+      driver_preferences: parseDriverPreferences(
+        Array.isArray(inner.driver_preferences) ? inner.driver_preferences : driverPrefsFromGoalTerms,
+      ),
       use_greedy_init: typeof inner.use_greedy_init === "boolean" ? inner.use_greedy_init : true,
       goal_term_order: Array.isArray(inner.goal_term_order)
         ? (inner.goal_term_order as string[]).filter((e): e is string => typeof e === "string")
         : null,
-      constraint_types:
-        inner.constraint_types !== null &&
-        typeof inner.constraint_types === "object" &&
-        !Array.isArray(inner.constraint_types)
-          ? (inner.constraint_types as Record<string, import("@problemConfig/types").ConstraintType>)
-          : {},
+      constraint_types: (() => {
+        const fromInner =
+          inner.constraint_types !== null &&
+          typeof inner.constraint_types === "object" &&
+          !Array.isArray(inner.constraint_types)
+            ? (inner.constraint_types as Record<string, import("@problemConfig/types").ConstraintType>)
+            : {};
+        return { ...fromInner, ...constraintTypesFromGoalTerms };
+      })(),
     },
   };
 }

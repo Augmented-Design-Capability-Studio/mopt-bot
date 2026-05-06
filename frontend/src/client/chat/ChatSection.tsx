@@ -13,7 +13,6 @@ type ChatSectionProps = {
   messages: Message[];
   aiPending: boolean;
   aiPendingLabel?: string;
-  invokeModel: boolean;
   editMode: EditMode;
   chatBusy: boolean;
   chatLocked: boolean;
@@ -22,7 +21,6 @@ type ChatSectionProps = {
   fileRef: RefObject<HTMLInputElement>;
   simulatedUploadChips: string[];
   problemId?: string;
-  onInvokeModelChange: (value: boolean) => void;
   onChatInputChange: (value: string) => void;
   onSendChat: () => void | Promise<void>;
   onSimulateUpload: (fileNames: string[]) => void | Promise<void>;
@@ -36,7 +34,6 @@ export function ChatSection({
   messages,
   aiPending,
   aiPendingLabel,
-  invokeModel,
   editMode,
   chatBusy,
   chatLocked,
@@ -45,7 +42,6 @@ export function ChatSection({
   fileRef,
   simulatedUploadChips,
   problemId,
-  onInvokeModelChange,
   onChatInputChange,
   onSendChat,
   onSimulateUpload,
@@ -89,22 +85,6 @@ export function ChatSection({
         />
       }
       scrollTriggerKey={scrollTriggerKey}
-      betweenLogAndComposer={
-        <details className="muted chat-model-details" {...(chatLocked ? { open: false } : {})}>
-          <summary style={chatLocked ? { pointerEvents: "none", opacity: 0.55 } : undefined}>
-            Ask model (requires API key). <span className="chat-model-state">{invokeModel ? "On" : "Off"}</span>
-          </summary>
-          <div className="chat-model-check-wrap">
-            <input
-              type="checkbox"
-              checked={invokeModel}
-              onChange={(e) => onInvokeModelChange(e.target.checked)}
-              aria-label="Ask model (requires API key)."
-              disabled={chatLocked}
-            />
-          </div>
-        </details>
-      }
       footer={
         <div className="chat-upload-footer">
           <input

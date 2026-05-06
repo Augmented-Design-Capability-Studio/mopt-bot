@@ -70,6 +70,39 @@ def is_definition_clear_request(content: str) -> bool:
     return any(pattern.search(text) for pattern in _CLEAR_INTENT_PATTERNS)
 
 
+# Conservative regex fallback for the LLM-based change-intent classifier in
+# `classify_definition_intents`.  Only returns False for messages that are
+# unambiguously concept-questions / casual chat (no edit verb, no constraint
+# language, no obvious goal-term mention); everything else stays True so the
+# brief+panel pipelines run.  When the LLM is available it overrides this.
+_OBVIOUS_CONCEPT_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*(?:what|why|how|when|who|where|which)\s+(?:is|are|does|do|did)\b.{0,200}\?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:can\s+you\s+)?(?:explain|describe|define|clarify)\b.{0,200}\?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:thanks|thank you|thx|got it|cool|ok|okay|noted)\b.{0,40}$", re.IGNORECASE),
+)
+_CHANGE_INTENT_KEYWORDS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:add|remove|delete|drop|change|set|update|increase|decrease|raise|lower|switch|use)\b", re.IGNORECASE),
+    re.compile(r"\b(?:weight|penalty|priority|constraint|hard|soft|limit|cap|maximum|minimum|target)\b", re.IGNORECASE),
+    re.compile(r"\b(?:algorithm|epochs?|iterations?|population|swarm)\b", re.IGNORECASE),
+)
+
+
+def is_change_intent_fallback(content: str) -> bool:
+    """Conservative regex fallback used when the LLM intent classifier is unavailable.
+
+    Returns True by default — better to redundantly run the brief/panel pipelines
+    than to silently drop a real edit.  Only returns False when the message
+    matches a clear concept-question/casual-chat shape AND contains no edit-verb
+    or constraint-language keywords.
+    """
+    text = content.strip()
+    if not text:
+        return False
+    if any(p.search(text) for p in _CHANGE_INTENT_KEYWORDS):
+        return True
+    return not any(p.search(text) for p in _OBVIOUS_CONCEPT_QUESTION_PATTERNS)
+
+
 def is_interpret_only_context_message(content: str) -> bool:
     """True for synthetic context notes that should not trigger hidden brief/config derivation."""
     text = content.strip()

@@ -451,24 +451,6 @@ def test_normalize_goal_summary_drops_real_config_tokens():
     assert "Pack high-value items" in out["goal_summary"]
 
 
-def test_normalize_atomizes_compound_gathered_item():
-    raw = _minimal_brief_payload(
-        items=[
-            {
-                "id": "fact-1",
-                "text": "Active objectives: Total travel time (weight 1) and workload balance (weight 5).",
-                "kind": "gathered",
-                "source": "user",
-                "status": "confirmed",
-                "editable": True,
-            }
-        ]
-    )
-    out = normalize_problem_brief(raw)
-    gathered = [item for item in out["items"] if item["kind"] == "gathered" and item["id"].startswith("fact-1")]
-    assert len(gathered) >= 2
-
-
 def test_normalize_does_not_split_commas_inside_parentheses():
     raw = _minimal_brief_payload(
         items=[
@@ -625,35 +607,6 @@ def test_sync_problem_brief_from_panel_new_slot_defaults_to_gathered():
     assert len(rows) == 1
     assert rows[0]["kind"] == "gathered"
     assert rows[0]["source"] == "agent"
-
-
-def test_normalize_atomizes_constraint_handling_gathered_item():
-    raw = _minimal_brief_payload(
-        items=[
-            {
-                "id": "ch-1",
-                "text": (
-                    "Constraint handling: Capacity violations (weight 100), "
-                    "deadline/priority misses (weight 50), and 8h shift limits (hard penalty 1000)."
-                ),
-                "kind": "gathered",
-                "source": "user",
-                "status": "confirmed",
-                "editable": True,
-            }
-        ]
-    )
-    out = normalize_problem_brief(raw)
-    gathered = [
-        item
-        for item in out["items"]
-        if item["kind"] == "gathered" and str(item.get("id", "")).startswith("ch-1")
-    ]
-    assert len(gathered) >= 3
-    texts = [g["text"] for g in gathered]
-    assert any(t.startswith("Constraint handling:") and "Capacity" in t for t in texts)
-    assert any("deadline" in t.lower() and "miss" in t.lower() for t in texts)
-    assert any("8h" in t and "shift" in t.lower() for t in texts)
 
 
 def test_is_chat_cold_start_default_brief_knapsack():

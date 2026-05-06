@@ -676,9 +676,38 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     and not getattr(row, "tutorial_completed", False)
                 )
             )
+            # Run-button awareness: tell the chat turn whether the participant
+            # can actually click **Run optimization** right now, so the agent
+            # doesn't promise to start a run that isn't yet permitted. Pairs
+            # with the "## Run-button awareness" section in the system prompt.
+            try:
+                _has_upload = _session_has_uploaded_data(db, session_id)
+                run_button_enabled_for_chat = can_run_optimization(
+                    row.workflow_mode,
+                    row.optimization_allowed,
+                    row.optimization_runs_blocked_by_researcher,
+                    current,
+                    current_problem_brief,
+                    has_uploaded_data=_has_upload,
+                    optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+                    problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
+                )
+                run_disabled_reason_for_chat = (
+                    None
+                    if run_button_enabled_for_chat
+                    else _run_gate_blocked_message(row, current_problem_brief, _has_upload)
+                )
+            except Exception:
+                log.exception("Run-readiness probe failed for session %s; omitting from chat prompt", session_id)
+                run_button_enabled_for_chat = None
+                run_disabled_reason_for_chat = None
             turn = None
             cleanup_requested = False
             clear_requested = False
+            # Default to True (conservative): if intent classification fails or is
+            # bypassed, run the brief/panel pipelines as before so we never silently
+            # drop a real edit.
+            change_intent = True
             run_intent = None
             assistant_invites_run_now = False
             try:
@@ -711,7 +740,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     )
 
                     try:
-                        cleanup_requested, clear_requested = defn_future.result()
+                        cleanup_requested, clear_requested, change_intent = defn_future.result()
                     except Exception:
                         log.exception("Definition-intent classification failed for session %s", session_id)
 
@@ -730,6 +759,8 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             is_run_acknowledgement=is_run_ack,
                             is_tutorial_active=is_tutorial_active,
                             test_problem_id=row.test_problem_id,
+                            run_button_enabled=run_button_enabled_for_chat,
+                            run_disabled_reason=run_disabled_reason_for_chat,
                         )
                         text = turn.assistant_message
                     except Exception:
@@ -757,7 +788,25 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     )
                 except Exception:
                     log.exception("Run-invitation classification failed for session %s", session_id)
-            if turn and (
+            # Trigger gating: the brief-update + panel-derivation pipelines are the
+            # most expensive part of the per-turn cost.  If the user message was a
+            # concept question / clarification (change_intent=False) AND no
+            # cleanup / clear flag fired, skip both LLM calls.  Synthetic context
+            # messages (run-complete, etc.) and explicit `skip_*` flags also bypass.
+            change_signal = (
+                change_intent
+                or cleanup_requested
+                or clear_requested
+                or is_run_ack
+            )
+            pipeline_blocked_by_caller = (
+                body.skip_hidden_brief_update or body.skip_panel_derivation
+            )
+            should_run_brief_pipeline = (
+                change_signal
+                and not pipeline_blocked_by_caller
+            )
+            if turn and should_run_brief_pipeline and (
                 turn.problem_brief_patch is not None
                 or turn.replace_editable_items
                 or turn.replace_open_questions
@@ -825,7 +874,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     )
                     config_api_key = None if brief_unchanged else key
                     row = db.get(StudySession, session_id) or row
-                    updated_panel, _, grounding_warnings = sync.sync_panel_from_problem_brief(
+                    updated_panel, _ = sync.sync_panel_from_problem_brief(
                         row,
                         db,
                         effective_problem_brief,
@@ -841,10 +890,6 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     db.commit()
                     db.refresh(row)
                     proc_state = helpers.processing_state(row)
-                    advice = sync.grounding_advice_message(grounding_warnings)
-                    if advice:
-                        msg = derivation.append_message(db, session_id, "assistant", advice, True, kind="panel")
-                        out.append(MessageOut.model_validate(msg))
                 except sync.GoalTermValidationError as exc:
                     log.exception("Inline brief/config sync goal-term validation failed for session %s", session_id)
                     row = db.get(StudySession, session_id) or row
@@ -869,7 +914,12 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     db.commit()
                     db.refresh(row)
                     proc_state = helpers.processing_state(row)
-            elif body.skip_hidden_brief_update or intent.is_interpret_only_context_message(body.content):
+            elif (
+                body.skip_hidden_brief_update
+                or body.skip_panel_derivation
+                or intent.is_interpret_only_context_message(body.content)
+                or not change_signal
+            ):
                 row = db.get(StudySession, session_id) or row
                 helpers.settle_processing_state(row, cancel_revision=True)
                 helpers.touch_session(row)
@@ -903,6 +953,13 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     is_upload_context=is_upload_context,
                     is_tutorial_active=is_tutorial_active,
                     test_problem_id=row.test_problem_id,
+                    # Pass the visible reply that just got sent so the hidden
+                    # brief turn can stay consistent with what the participant
+                    # already read (e.g. "Changes I made: increased the
+                    # lateness penalty"). Without this the visible chat and
+                    # the brief commit diverge — agent says it changed
+                    # something, but the panel/brief don't reflect it.
+                    visible_assistant_message=text,
                 )
 
             row = db.get(StudySession, session_id) or row
@@ -1449,15 +1506,19 @@ def patch_participant_panel(
 
     if goal_terms_changed:
         try:
-            # Reverse validation: on a participant-driven panel save the user
-            # is authoritative. Skip the brief-grounding check; only enforce
-            # shape / type / order. The hidden brief update on this same turn
-            # refreshes brief rows to reflect the participant's edit.
+            # Reverse validation on a participant-driven panel save: the user
+            # is authoritative, so the validator only enforces structural
+            # invariants (shape / type enum / goal_term_order). The legacy
+            # `weight_slot_markers` and `check_grounding` kwargs are now
+            # `**_unused` on validate_problem_goal_terms — they were the
+            # marker-based hallucination check, removed when the
+            # structured-output schema became the primary defense. Don't call
+            # `port.weight_slot_markers()` here either; the per-problem ports
+            # no longer expose it (knapsack and vrptw dropped the method when
+            # the markers tables were retired).
             sync.validate_problem_goal_terms(
                 problem=submitted_problem,
                 problem_brief=helpers.problem_brief_dict(row),
-                weight_slot_markers=port.weight_slot_markers(),
-                check_grounding=False,
             )
         except sync.GoalTermValidationError as exc:
             # Set processing_error so the Recover banner appears on the next
@@ -1544,9 +1605,8 @@ def patch_participant_problem_brief(
     db.refresh(row)
 
     panel_sync_failed = False
-    grounding_warnings: list[dict[str, str]] = []
     try:
-        _, _, grounding_warnings = sync.sync_panel_from_problem_brief(
+        sync.sync_panel_from_problem_brief(
             row,
             db,
             next_problem_brief,
@@ -1580,9 +1640,6 @@ def patch_participant_problem_brief(
         row.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(row)
-        advice = sync.grounding_advice_message(grounding_warnings)
-        if advice:
-            derivation.append_message(db, session_id, "assistant", advice, True, kind="panel")
 
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()
@@ -1736,9 +1793,8 @@ def sync_panel_from_problem_brief_route(
     db.commit()
     db.refresh(row)
     sync_failed = False
-    grounding_warnings: list[dict[str, str]] = []
     try:
-        updated_panel, _, grounding_warnings = sync.sync_panel_from_problem_brief(
+        updated_panel, _ = sync.sync_panel_from_problem_brief(
             row,
             db,
             problem_brief,
@@ -1748,8 +1804,7 @@ def sync_panel_from_problem_brief_route(
             preserve_missing_managed_fields=True,
         )
     except sync.GoalTermValidationError as exc:
-        # Structural validator errors only (shape/type/order). Hallucination-style
-        # grounding mismatches now flow through as advice and don't reach here.
+        # Structural validator errors only (shape/type/order).
         sync_failed = True
         updated_panel = None
         helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
@@ -1774,9 +1829,6 @@ def sync_panel_from_problem_brief_route(
         row.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(row)
-        advice = sync.grounding_advice_message(grounding_warnings)
-        if advice:
-            derivation.append_message(db, session_id, "assistant", advice, True, kind="panel")
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()
         db.refresh(row)

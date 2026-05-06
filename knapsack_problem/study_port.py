@@ -169,45 +169,6 @@ class KnapsackStudyPort:
             "Selected-items view for the latest run",
         ]
 
-    def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
-        return {
-            "value_emphasis": ("value", "profit", "packed value"),
-            # Capacity is phrased many ways in chat ("capacity limit", "weight
-            # limit", "weight cap", "bag weight at most…", etc.). Keep the
-            # marker list permissive enough that the agent's own paraphrases
-            # ground the goal term during validation. Pair every addition
-            # here with a regex in `brief_seed._SIGNALS["capacity_overflow"]`.
-            "capacity_overflow": (
-                "capacity",
-                "overflow",
-                "weight limit",
-                "weight cap",
-                "weight constraint",
-                "bag weight",
-                "load limit",
-            ),
-            # Sparsity is phrased a dozen different ways in chat. Markers must
-            # be specific enough that they do NOT appear in the canonical
-            # value-goal phrasing ("Maximize total value of selected items.")
-            # or the canonical capacity phrasing. The bare phrase "selected
-            # items" was too broad and falsely grounded sparsity on every
-            # starter brief — what makes a phrase sparsity-specific is the
-            # qualifier ("number of selected items", "fewer selected items",
-            # "selection size", "smaller bag"). Pair every change here with
-            # the regex tuple in `brief_seed._SIGNALS["selection_sparsity"]`.
-            "selection_sparsity": (
-                "sparsity",
-                "fewer items",
-                "fewer selected items",
-                "compact selection",
-                "selection size",
-                "selection count",
-                "number of selected items",
-                "item count",
-                "smaller bag",
-                "lighter knapsack",
-            ),
-        }
 
     def study_prompt_appendix(self) -> str | None:
         from knapsack_problem.study_prompts import KNAPSACK_STUDY_PROMPT_APPENDIX

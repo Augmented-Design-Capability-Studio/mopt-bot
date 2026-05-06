@@ -14,7 +14,6 @@ type ConfigPanelProps = {
   configText: string;
   problemBrief: ProblemBrief | null;
   editMode: EditMode;
-  invokeModel: boolean;
   busy: boolean;
   syncingProblemConfig: boolean;
   clientOps: ClientOpsState;
@@ -89,7 +88,6 @@ export function ConfigPanel({
   configText,
   problemBrief,
   editMode,
-  invokeModel,
   busy,
   syncingProblemConfig,
   clientOps,
@@ -216,14 +214,12 @@ export function ConfigPanel({
     prevConfigPending.current = backgroundConfigPending;
   }, [backgroundConfigPending, activeTab]);
 
-  const definitionCleanupEnabled = !sessionTerminated && !busy && invokeModel;
+  const definitionCleanupEnabled = !sessionTerminated && !busy;
   const definitionCleanupDisabledTitle = sessionTerminated
     ? "Session has ended."
     : busy
       ? "Wait for the current action to finish."
-      : !invokeModel
-        ? "Turn on Ask model (requires API key) to clean up with the assistant."
-        : undefined;
+      : undefined;
 
   const definitionEditing = editMode === "definition";
   const configEditing = editMode === "config";

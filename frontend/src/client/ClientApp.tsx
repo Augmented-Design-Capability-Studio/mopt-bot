@@ -44,7 +44,6 @@ export function ClientApp() {
       currentRun={controller.currentRun}
       activeRun={controller.activeRun}
       chatInput={controller.chatInput}
-      invokeModel={controller.invokeModel}
       configText={controller.configText}
       problemBrief={controller.problemBrief}
       hasUploadedData={controller.hasUploadedData}
@@ -63,7 +62,6 @@ export function ClientApp() {
       fileRef={controller.fileRef}
       simulatedUploadChips={controller.simulatedUploadChips}
       onChatInputChange={controller.setChatInput}
-      onInvokeModelChange={controller.setInvokeModel}
       onConfigTextChange={controller.setConfigText}
       onProblemBriefChange={controller.setProblemBrief}
       onScheduleTextChange={controller.setScheduleText}

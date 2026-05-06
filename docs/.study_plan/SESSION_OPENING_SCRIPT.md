@@ -79,7 +79,7 @@ A condensed script for the opening of each session — purpose statement, consen
 
 **[SAY]**
 
-> Before the actual task, here's a short video that walks through the interface using a simpler problem — the knapsack problem — so you see how the agent works the problem with you, including the views it sets up to show its results.
+> Before the actual task, here's a short video that walks through the interface using a simpler example — a packing problem where you choose items to put in a bag with limited space. **You don't need to be familiar with this kind of problem**; the goal is just to see how the agent works through it with you, including the views it sets up to show its results. If anything in the video feels unclear, you can ask the agent to explain it in plain language during the hands-on part — that's part of what it does.
 
 **[ACTION]** Play the **knapsack orientation video** (~3–4 min). Stay quiet during playback.
 
@@ -87,7 +87,9 @@ A condensed script for the opening of each session — purpose statement, consen
 
 > Any questions about anything in the video?
 
-**[NOTE]** Brief discussion only. If they ask how it relates to the actual task, deflect: *"See if the connections feel natural once you see it."*
+**[NOTE]** Brief discussion only.
+- If they ask how it relates to the actual task, deflect: *"See if the connections feel natural once you see it."*
+- If they seem unsure about the packing/knapsack idea itself, **route them to the agent** rather than explaining it yourself: *"Try asking it in chat once we start the hands-on part — explaining things like that is exactly what it's there for."* Don't define the problem for them; the goal is for them to practice using the agent the same way they will during the formal task.
 
 **[ACTION]** Guide the participant through the **knapsack tutorial** on the interface (~4–6 min).
 

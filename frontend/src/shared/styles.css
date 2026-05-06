@@ -2182,8 +2182,8 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
 
 /* Problem Config: driver preference rules accordion (child of worker_preference row) */
 .driver-pref-details {
-  margin: 0.15rem 0 0 0.75rem;
-  padding: 0.25rem 0 0.25rem 0.5rem;
+  margin: 0.15rem 0 0 0;
+  padding: 0.25rem 0 0.25rem 0.35rem;
   border-left: 1px solid var(--border);
 }
 

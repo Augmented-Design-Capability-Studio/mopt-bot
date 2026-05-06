@@ -6,7 +6,6 @@ Loaded with this package root on sys.path. Uses ``app.*`` when run inside the MO
 
 from __future__ import annotations
 
-import difflib
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from copy import deepcopy
@@ -48,107 +47,12 @@ _WEIGHT_VALID_WN: frozenset[str] = frozenset(WEIGHT_ALIASES.values())
 
 _TERM_TYPE_VALUES = frozenset({"objective", "soft", "hard", "custom"})
 
-# Keyword map: common alternative phrasings → canonical alias.
-# Enables fuzzy recovery when a user (or the agent) types a close but non-exact key.
-_WEIGHT_KEYWORD_MAP: dict[str, str] = {
-    # travel_time (avoid bare "route"/"routing" — too easy to false-positive; use difflib on full keys)
-    "travel":          "travel_time",
-    "distance":        "travel_time",
-    "transit":         "travel_time",
-    "route_length":    "travel_time",
-    # Fuel / mileage phrasing is modelled as route-minute pressure → travel_time (same as w1 story).
-    "fuel":            "travel_time",
-    "mileage":         "travel_time",
-    "operating_cost":  "travel_time",
-    # shift_limit (w2) — avoid bare "overtime" (ambiguous)
-    "shift_limit":     "shift_limit",
-    "shift_overtime":  "shift_limit",
-    "shift_over":      "shift_limit",
-    "hours_over_8":    "shift_limit",
-    # lateness_penalty
-    "deadline":        "lateness_penalty",
-    "late":            "lateness_penalty",
-    "time_window":     "lateness_penalty",
-    "on_time":         "lateness_penalty",
-    "punctuality":     "lateness_penalty",
-    "lateness":        "lateness_penalty",
-    "tardiness":       "lateness_penalty",
-    "window":          "lateness_penalty",
-    "timeliness":      "lateness_penalty",
-    # capacity_penalty
-    "capacity":        "capacity_penalty",
-    "load":            "capacity_penalty",
-    "overload":        "capacity_penalty",
-    "overflow":        "capacity_penalty",
-    "packing":         "capacity_penalty",
-    "weight_limit":    "capacity_penalty",
-    # workload_balance (omit bare "balance"/"shift" — map to wrong objective too often)
-    "fairness":        "workload_balance",
-    "equity":          "workload_balance",
-    "workload":        "workload_balance",
-    "shift_fairness":  "workload_balance",
-    "shift_balance":   "workload_balance",
-    "equitable":       "workload_balance",
-    # worker_preference
-    "preference":      "worker_preference",
-    "worker":          "worker_preference",
-    "driver":          "worker_preference",
-    "comfort":         "worker_preference",
-    "satisfaction":    "worker_preference",
-    "welfare":         "worker_preference",
-    # express_miss_penalty (omit bare "priority" — matches unrelated keys)
-    "urgent":          "express_miss_penalty",
-    "express":         "express_miss_penalty",
-    "sla":             "express_miss_penalty",
-    "vip":             "express_miss_penalty",
-    "rush":            "express_miss_penalty",
-    "critical":        "express_miss_penalty",
-    # early arrival penalty (w8)
-    "early_arrival":         "waiting_time",
-    "early_arrival_penalty": "waiting_time",
-    "arrive_early":          "waiting_time",
-    "pre_window":            "waiting_time",
-    "early_dwell":           "waiting_time",
-}
-
-
-def _fuzzy_match_weight_key(key: str) -> str | None:
-    """
-    Try to map an unrecognized weight key to a known alias using:
-    1. Direct keyword lookup (exact).
-    2. Substring containment: keyword inside key (longest keyword first to avoid
-       short keywords like "load" winning over "workload").
-    3. Difflib close-match against canonical alias names.
-
-    (No "key inside keyword" pass: short keys like ``cost`` would wrongly match
-    ``operating_cost`` and map to ``travel_time``.)
-    Returns the matched canonical alias name, or None if no confident match.
-    """
-    k = key.lower().strip()
-    # 1. Direct keyword match
-    if k in _WEIGHT_KEYWORD_MAP:
-        return _WEIGHT_KEYWORD_MAP[k]
-    # 2 & 3. Substring containment — sort by keyword length descending so longer,
-    # more-specific keywords match before shorter ones (e.g. "workload" before "load").
-    sorted_keywords = sorted(_WEIGHT_KEYWORD_MAP.items(), key=lambda x: len(x[0]), reverse=True)
-    for kw, alias in sorted_keywords:
-        if kw in k:
-            return alias
-    # 3. Difflib fuzzy match against canonical alias names (skip very short keys — e.g. "cost"
-    # otherwise matches unrelated aliases.)
-    if len(k) >= 5:
-        close = difflib.get_close_matches(k, list(WEIGHT_ALIASES.keys()), n=1, cutoff=0.6)
-        if close:
-            return close[0]
-    return None
-
 
 def translate_weights(raw: dict[str, Any]) -> dict[str, Any]:
-    """
-    Translate human-readable alias keys (travel_time, lateness_penalty, …) to the
-    internal w1–w7 keys expected by build_weights. Also tries fuzzy/keyword matching
-    for close-but-not-exact keys. Unknown keys that cannot be matched are dropped.
-    Configs already using w1–w7 keys pass through unchanged.
+    """Translate canonical aliases / legacy renames / wN keys to the internal wN form.
+
+    Unknown keys are dropped silently here; use ``translate_weights_strict`` to
+    surface a warning per dropped key.
     """
     translated, _ = translate_weights_strict(raw)
     return translated
@@ -157,9 +61,17 @@ def translate_weights(raw: dict[str, Any]) -> dict[str, Any]:
 def translate_weights_strict(
     raw: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
-    """
-    Like translate_weights but also returns a human-readable list of messages for
-    each key that was auto-corrected (fuzzy-matched) or dropped (unrecognised).
+    """Strict alias→wN translation with warnings for unrecognized keys.
+
+    Accepts:
+      * canonical aliases in ``WEIGHT_ALIASES`` (``travel_time``, …)
+      * legacy renames in ``LEGACY_WEIGHT_ALIASES`` (e.g. ``deadline_penalty``)
+      * raw internal ``wN`` keys (pass-through for legacy configs)
+
+    Anything else is dropped with a warning.  The previous keyword/substring/
+    difflib fuzzy-matcher was removed: the LLM emits canonical keys via the
+    panel JSON schema, so silent coercion of unknown keys was masking bugs more
+    often than it was helping.
 
     Returns:
         (translated_weights_dict, warning_messages)
@@ -177,18 +89,10 @@ def translate_weights_strict(
         elif k in _WEIGHT_VALID_WN:
             out[k] = v
         else:
-            matched = _fuzzy_match_weight_key(k)
-            if matched:
-                out[WEIGHT_ALIASES[matched]] = v
-                warnings.append(
-                    f"Weight key '{k}' was interpreted as '{matched}' "
-                    f"(closest supported objective)."
-                )
-            else:
-                warnings.append(
-                    f"Weight key '{k}' is not a recognised objective and was ignored. "
-                    f"Supported objectives: {', '.join(WEIGHT_ALIASES)}."
-                )
+            warnings.append(
+                f"Weight key '{k}' is not a recognised objective and was ignored. "
+                f"Supported objectives: {', '.join(WEIGHT_ALIASES)}."
+            )
     return out, warnings
 
 

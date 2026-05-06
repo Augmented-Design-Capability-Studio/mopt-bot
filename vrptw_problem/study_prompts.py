@@ -177,5 +177,19 @@ Rules:
   For avoid_zone, use delivery-zone ids only: A=1, B=2, C=3, D=4, E=5. Never use zero-based zone indexing.
   Include "worker_preference" in weights when driver_preferences is nonempty.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
+- **Algorithm extraction is mandatory when the brief names one.** Any brief item
+  (gathered or assumption) that names a search method commits the panel to that
+  algorithm — emit `"algorithm"` in the panel even when the mention is embedded
+  in a sentence about another setting. Map common phrasings to their canonical
+  key:
+    - "GA" / "genetic algorithm" / "genetic search" / "evolutionary search" → `"GA"`
+    - "PSO" / "particle swarm" / "swarm search" → `"PSO"`
+    - "SA" / "simulated annealing" / "annealing search" → `"SA"`
+    - "SwarmSA" / "swarm-based simulated annealing" → `"SwarmSA"`
+    - "ACOR" / "ant colony" → `"ACOR"`
+  Worked example: brief item *"Using genetic search (GA) with greedy
+  initialization enabled for a balanced starting population."* must produce
+  `algorithm: "GA"` AND `use_greedy_init: true` together — emitting only one
+  half is a bug.
 - Keep output compact and valid JSON.
 """.strip()

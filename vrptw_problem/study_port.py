@@ -13,7 +13,6 @@ from vrptw_problem.panel_schema import panel_patch_response_json_schema
 from vrptw_problem.study_meta import (
     VRPTW_WEIGHT_DEFINITIONS,
     weight_item_labels as meta_weight_item_labels,
-    weight_slot_markers as meta_weight_slot_markers,
     weight_display_keys as meta_weight_display_keys,
     worker_preference_key as meta_worker_preference_key,
 )
@@ -62,9 +61,6 @@ class VrptwStudyPort:
 
     def weight_item_labels(self) -> dict[str, str]:
         return meta_weight_item_labels()
-
-    def weight_slot_markers(self) -> dict[str, tuple[str, ...]]:
-        return meta_weight_slot_markers()
 
     def weight_display_keys(self) -> list[str]:
         return meta_weight_display_keys()

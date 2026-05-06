@@ -236,21 +236,31 @@ _DEFINITION_INTENT_JSON_SCHEMA: dict[str, Any] = {
     "properties": {
         "cleanup_intent": {"type": "boolean"},
         "clear_intent": {"type": "boolean"},
+        "is_change_intent": {"type": "boolean"},
     },
-    "required": ["cleanup_intent", "clear_intent"],
+    "required": ["cleanup_intent", "clear_intent", "is_change_intent"],
 }
 
 _DEFINITION_INTENT_SYSTEM = (
     "You are a lightweight intent classifier for a research optimization chat tool. "
     "Participants are study users writing free-form English messages.\n\n"
-    "Classify the message for exactly two intents:\n"
+    "Classify the message for exactly three flags:\n"
     "- cleanup_intent: true if the user wants to remove, deduplicate, merge, tidy, or reorganize "
     "items in the Definition panel (e.g. 'tidy up the list', 'there are duplicates', "
     "'remove the repeated stuff', 'clean that up', 'consolidate the gathered items').\n"
     "- clear_intent: true if the user wants to wipe all Definition content and start over from "
     "scratch (e.g. 'start over', 'reset everything', 'forget what I told you', 'fresh start', "
-    "'wipe the slate', 'begin again from zero').\n\n"
-    "Return ONLY valid JSON. Default both to false when the message is ambiguous or off-topic."
+    "'wipe the slate', 'begin again from zero').\n"
+    "- is_change_intent: true if the message is **asking the assistant to change the problem "
+    "definition or solver configuration** — adding/removing/editing goals, constraints, weights, "
+    "algorithm choice, or any solver setting.  False when the message is a concept question, a "
+    "knowledge-base lookup, a clarification request about something already on the panel, casual "
+    "chat, or a request for an explanation that doesn't ask for any edit (e.g. 'what does GA "
+    "mean?', 'why is travel time penalized?', 'can you explain the convergence plot?', 'how does "
+    "this benchmark work?', 'thanks').  When in doubt — and especially for any explicit edit verb "
+    "or new constraint/value — return true so the pipeline runs.\n\n"
+    "Return ONLY valid JSON. cleanup_intent and clear_intent default to false; is_change_intent "
+    "defaults to true (conservative — better to refresh the panel than miss a real edit)."
 )
 
 RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
@@ -500,6 +510,8 @@ def _build_visible_chat_system_instruction(
     test_problem_id: str | None = None,
     api_key: str | None = None,
     model_name: str | None = None,
+    run_button_enabled: bool | None = None,
+    run_disabled_reason: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -568,6 +580,14 @@ def _build_visible_chat_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    # Run-button awareness — keep the agent honest about whether the
+    # participant can actually click Run optimization right now. Pairs with the
+    # "## Run-button awareness" section in STUDY_CHAT_SYSTEM_PROMPT.
+    if run_button_enabled is True:
+        parts.append("Run optimization button: ENABLED")
+    elif run_button_enabled is False:
+        reason = (run_disabled_reason or "Run prerequisites are not yet met.").strip()
+        parts.append(f"Run optimization button: DISABLED — reason: {reason}")
     if doc_excerpts:
         parts.append("Reference excerpts (participant-safe docs):")
         parts.append("\n\n".join(f"- {excerpt}" for excerpt in doc_excerpts))
@@ -614,6 +634,7 @@ def _build_brief_update_system_instruction(
     is_upload_context: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
+    visible_assistant_message: str | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -639,6 +660,24 @@ def _build_brief_update_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    # Pass the visible chat reply that JUST got sent to the user (before this
+    # hidden brief turn runs) so the brief can stay consistent with what the
+    # participant just read. Without this, the brief LLM and the chat LLM
+    # operate independently and can diverge — the most common failure is the
+    # chat saying "Changes I made: …" while the hidden turn skips the patch.
+    if visible_assistant_message and visible_assistant_message.strip():
+        parts.append(
+            "## Visible assistant reply that JUST got sent to the user (this turn)\n"
+            "Treat the reply below as authoritative context for what the participant has\n"
+            "just been told. If it commits to a specific brief change (e.g. *'Changes I\n"
+            "made: increased the lateness penalty weight'*, *'I'll bump capacity\n"
+            "overflow to hard'*, *'Adding a workload-balance assumption'*), emit the\n"
+            "corresponding `problem_brief_patch` so the brief and the visible chat agree.\n"
+            "Do not contradict it. If the reply only describes future intent without\n"
+            "naming a concrete change (e.g. *'I'll think about that'*, *'Let me know what\n"
+            "you want next'*), no patch is required for that intent."
+        )
+        parts.append("```\n" + visible_assistant_message.strip() + "\n```")
     lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_blob:
         parts.append(lock_blob)
@@ -724,6 +763,8 @@ def _plain_fallback_reply(
     is_run_acknowledgement: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
+    run_button_enabled: bool | None = None,
+    run_disabled_reason: str | None = None,
 ) -> str:
     system = _build_visible_chat_system_instruction(
         user_text=user_text,
@@ -738,6 +779,8 @@ def _plain_fallback_reply(
         test_problem_id=test_problem_id,
         api_key=api_key,
         model_name=model_name,
+        run_button_enabled=run_button_enabled,
+        run_disabled_reason=run_disabled_reason,
     )
     client = genai.Client(api_key=api_key)
     chat = client.chats.create(
@@ -765,6 +808,8 @@ def generate_visible_chat_reply(
     is_run_acknowledgement: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
+    run_button_enabled: bool | None = None,
+    run_disabled_reason: str | None = None,
 ) -> str:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_visible_chat_system_instruction(
@@ -780,6 +825,8 @@ def generate_visible_chat_reply(
         test_problem_id=test_problem_id,
         api_key=api_key,
         model_name=model_name,
+        run_button_enabled=run_button_enabled,
+        run_disabled_reason=run_disabled_reason,
     )
     chat = client.chats.create(
         model=model_name,
@@ -809,6 +856,7 @@ def generate_problem_brief_update(
     is_upload_context: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
+    visible_assistant_message: str | None = None,
 ) -> ProblemBriefUpdateTurn:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_brief_update_system_instruction(
@@ -824,6 +872,7 @@ def generate_problem_brief_update(
         is_upload_context=is_upload_context,
         is_tutorial_active=is_tutorial_active,
         test_problem_id=test_problem_id,
+        visible_assistant_message=visible_assistant_message,
     )
     history = _history_to_contents(history_lines)
     config = types.GenerateContentConfig(
@@ -938,6 +987,8 @@ def generate_chat_turn(
     is_run_acknowledgement: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
+    run_button_enabled: bool | None = None,
+    run_disabled_reason: str | None = None,
 ) -> ChatModelTurn:
     """Compatibility wrapper that now prioritizes the visible assistant reply."""
     try:
@@ -955,6 +1006,8 @@ def generate_chat_turn(
             is_run_acknowledgement=is_run_acknowledgement,
             is_tutorial_active=is_tutorial_active,
             test_problem_id=test_problem_id,
+            run_button_enabled=run_button_enabled,
+            run_disabled_reason=run_disabled_reason,
         )
     except Exception as e:
         log.warning("Visible chat failed (%s); using plain fallback", e)
@@ -972,6 +1025,8 @@ def generate_chat_turn(
             is_run_acknowledgement,
             is_tutorial_active=is_tutorial_active,
             test_problem_id=test_problem_id,
+            run_button_enabled=run_button_enabled,
+            run_disabled_reason=run_disabled_reason,
         )
     return ChatModelTurn(assistant_message=text, panel_patch=None)
 
@@ -1090,15 +1145,28 @@ def classify_assistant_run_invitation(
         return session_intent.assistant_reply_is_asking_about_run(text)
 
 
-def classify_definition_intents(content: str, api_key: str, model_name: str) -> tuple[bool, bool]:
-    """
-    Classify whether a user message requests definition cleanup or a full clear.
-    Returns (cleanup_intent, clear_intent). Falls back to regex on any failure.
+def classify_definition_intents(
+    content: str, api_key: str, model_name: str
+) -> tuple[bool, bool, bool]:
+    """Classify a user message as cleanup / clear / change intents.
+
+    Returns ``(cleanup_intent, clear_intent, is_change_intent)``.
+
+    ``is_change_intent`` gates the brief-update + panel-derivation pipelines:
+    when False (concept questions, clarifications, knowledge lookups, casual
+    chat) the server short-circuits both LLM calls.
+
+    Falls back to regex on any LLM failure; the regex fallback returns
+    ``is_change_intent=True`` conservatively so we don't drop a real edit.
     """
     from app.routers.sessions import intent as _intent
 
     if not api_key or not model_name:
-        return _intent.is_definition_cleanup_request(content), _intent.is_definition_clear_request(content)
+        return (
+            _intent.is_definition_cleanup_request(content),
+            _intent.is_definition_clear_request(content),
+            _intent.is_change_intent_fallback(content),
+        )
     try:
         client = genai.Client(api_key=api_key)
         config = types.GenerateContentConfig(
@@ -1111,10 +1179,21 @@ def classify_definition_intents(content: str, api_key: str, model_name: str) -> 
         data: dict[str, Any] = (
             resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
         )
-        return bool(data.get("cleanup_intent")), bool(data.get("clear_intent"))
+        # Schema marks is_change_intent required, but default True if the model
+        # omits it so we never silently drop a real edit.
+        change_intent = data.get("is_change_intent", True)
+        return (
+            bool(data.get("cleanup_intent")),
+            bool(data.get("clear_intent")),
+            bool(change_intent),
+        )
     except Exception as e:
         log.warning("Definition intent classification failed (%s); falling back to regex", e)
-        return _intent.is_definition_cleanup_request(content), _intent.is_definition_clear_request(content)
+        return (
+            _intent.is_definition_cleanup_request(content),
+            _intent.is_definition_clear_request(content),
+            _intent.is_change_intent_fallback(content),
+        )
 
 
 def generate_config_from_brief(

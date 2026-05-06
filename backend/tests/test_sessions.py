@@ -1663,7 +1663,11 @@ def test_chat_brief_patch_replaces_conflicting_population_size_fact(monkeypatch)
         brief_texts = [item["text"] for item in body["problem_brief"]["items"] if item["kind"] != "system"]
         assert "Population size is set to 150." in brief_texts
         assert "Population size is set to 100." not in brief_texts
-        assert body["panel_config"]["problem"]["pop_size"] == 150
+        # The downstream `panel_config.problem.pop_size == 150` assertion was
+        # dropped: with the regex/marker NLP brief-seed removed, free-text rows
+        # (no `config-pop-size` ID) no longer flow into the panel via the
+        # structural-only fallback.  The LLM path is the canonical route for
+        # that; tested separately under sync coverage.
 
 
 def test_cleanup_request_replaces_editable_brief_items(monkeypatch):
@@ -3028,3 +3032,53 @@ def test_auto_cleanup_open_questions_after_brief_patch_all_modes(monkeypatch):
             brief = sent.json()["problem_brief"]
             assert brief is not None
             assert [q["id"] for q in brief["open_questions"]] == ["oq-2"]
+
+
+def test_panel_save_with_goal_terms_change_does_not_crash_on_missing_markers(monkeypatch):
+    """Regression: when the participant edits goal-term type/weight and saves,
+    the validator path used to call ``port.weight_slot_markers()`` even on
+    user-driven saves. The per-problem ports (knapsack, vrptw) dropped that
+    method when the marker tables were retired, so the call raised
+    AttributeError mid-request and the panel save 500'd. The validator already
+    ignores the kwarg (``**_unused``); the call site shouldn't fetch a value
+    just to throw it away.
+    """
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-panel-save-markers-secret")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={"workflow_mode": "agile"},
+            headers={"Authorization": "Bearer test-panel-save-markers-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        # Save a panel that exercises the goal_terms-changed branch (this is
+        # the path that called port.weight_slot_markers()).
+        patch = client.patch(
+            f"/sessions/{sid}/panel",
+            json={
+                "panel_config": {
+                    "problem": {
+                        "goal_terms": {
+                            "travel_time": {"weight": 2.0, "type": "objective", "rank": 1},
+                            "lateness_penalty": {"weight": 50.0, "type": "soft", "rank": 2},
+                        },
+                        "goal_term_order": ["travel_time", "lateness_penalty"],
+                        "algorithm": "GA",
+                    }
+                }
+            },
+            headers={"Authorization": "Bearer test-panel-save-markers-secret"},
+        )
+        assert patch.status_code == 200, (
+            f"Expected 200, got {patch.status_code}: {patch.text}"
+        )
+        # The saved panel round-trips with the new goal_terms intact.
+        body = patch.json()
+        saved = body.get("panel_config", {}).get("problem", {})
+        assert "goal_terms" in saved
+        assert "lateness_penalty" in saved["goal_terms"]
+        assert saved["goal_terms"]["lateness_penalty"]["weight"] == 50.0
+        assert saved["goal_terms"]["lateness_penalty"]["type"] == "soft"

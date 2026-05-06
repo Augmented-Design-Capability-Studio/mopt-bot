@@ -135,6 +135,10 @@ class MessageCreate(BaseModel):
     invoke_model: bool = False
     # When true with invoke_model: visible reply only; skip hidden brief derivation / panel resync.
     skip_hidden_brief_update: bool = False
+    # When true: also skip the panel-derivation LLM call (used by the server-side
+    # intent classifier when the message is a concept question / clarification
+    # that doesn't intend any panel change).
+    skip_panel_derivation: bool = False
 
 
 class ResearcherSimulateParticipantUploadBody(BaseModel):

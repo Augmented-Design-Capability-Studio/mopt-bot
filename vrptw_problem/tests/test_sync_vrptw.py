@@ -60,7 +60,7 @@ def test_sync_preserves_driver_preferences_when_worker_preference_locked(monkeyp
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
+    panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -102,7 +102,7 @@ def test_sync_replaces_driver_preferences_when_not_derived(monkeypatch):
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
+    panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -177,3 +177,60 @@ def test_vrptw_parse_problem_config_accepts_goal_terms_overlay():
     assert parsed["max_shift_hours"] == 7.5
     assert len(parsed["driver_preferences"]) == 1
     assert parsed["driver_preferences"][0]["condition"] == "avoid_zone"
+
+
+def test_brief_seed_extracts_algorithm_from_freeform_assumption_text():
+    """Regression: when the chat agent commits an algorithm choice via an
+    assumption row (e.g. *"Using genetic search (GA) with greedy initialization
+    enabled."*) without a structurally-tagged ``config-search-strategy`` ID,
+    the deterministic seed must still surface ``algorithm`` so
+    ``_backfill_solver_fields_from_seed`` can fill it into the panel when the
+    LLM panel-derive turn forgets it.
+
+    Without this safety net, the user observed an inconsistency: the brief
+    said GA but the panel had no algorithm field, so the run button stayed
+    disabled until they manually edited the config.
+    """
+    from vrptw_problem.brief_seed import derive_problem_panel_from_brief
+
+    brief = {
+        "items": [
+            {
+                "id": "item-001",
+                "kind": "gathered",
+                "text": "Fleet consists of 5 drivers.",
+                "source": "user",
+            },
+            {
+                "id": "item-assum-alg",
+                "kind": "assumption",
+                "text": "Using genetic search (GA) with greedy initialization enabled for a balanced starting population.",
+                "source": "agent",
+            },
+        ],
+        "open_questions": [],
+        "goal_summary": "",
+    }
+    derived = derive_problem_panel_from_brief(brief)
+    assert derived is not None, "brief with an algorithm mention should produce a seed panel"
+    assert derived["problem"].get("algorithm") == "GA", (
+        f"GA mention in assumption text should seed algorithm=GA; got {derived['problem'].get('algorithm')!r}"
+    )
+
+
+def test_brief_seed_skips_algorithm_when_no_mention():
+    """The free-form scan must not invent an algorithm when none is mentioned —
+    otherwise it would mask cold-start briefs and bypass the LLM."""
+    from vrptw_problem.brief_seed import derive_problem_panel_from_brief
+
+    brief = {
+        "items": [
+            {"id": "g1", "kind": "gathered", "text": "Fleet has 5 drivers.", "source": "user"},
+            {"id": "g2", "kind": "gathered", "text": "30 orders to deliver today.", "source": "user"},
+        ],
+        "open_questions": [],
+        "goal_summary": "Minimize total driving time.",
+    }
+    derived = derive_problem_panel_from_brief(brief)
+    # No algorithm mention → no seed signal → returns None per docstring.
+    assert derived is None
