@@ -133,13 +133,19 @@ _SIGNALS: dict[str, tuple[re.Pattern[str], ...]] = {
         # Keep this tuple in sync with `KnapsackStudyPort.weight_slot_markers`
         # (study_port.py); the validator uses the markers tuple, this one
         # drives the deterministic seed fallback when the LLM derivation is
-        # unavailable.
+        # unavailable. Every pattern here MUST be sparsity-specific — bare
+        # "selected items" / "number of items" / "compact" appeared in
+        # canonical value- and capacity-goal phrasings and falsely grounded
+        # sparsity on every starter brief; the qualifier (selected, compact
+        # **selection**, **fewer** items) is what distinguishes a sparsity
+        # ask from a generic restatement of the problem.
         re.compile(r"\bsparsity\b", re.IGNORECASE),
         re.compile(r"\bfewer items\b", re.IGNORECASE),
-        re.compile(r"\bcompact\b", re.IGNORECASE),
+        re.compile(r"\bfewer selected items\b", re.IGNORECASE),
+        re.compile(r"\bcompact selection\b", re.IGNORECASE),
         re.compile(r"\bselection size\b", re.IGNORECASE),
-        re.compile(r"\bselected items\b", re.IGNORECASE),
-        re.compile(r"\bnumber of items\b", re.IGNORECASE),
+        re.compile(r"\bselection count\b", re.IGNORECASE),
+        re.compile(r"\bnumber of selected items\b", re.IGNORECASE),
         re.compile(r"\bitem count\b", re.IGNORECASE),
         re.compile(r"\bsmaller bag\b", re.IGNORECASE),
         re.compile(r"\blighter knapsack\b", re.IGNORECASE),

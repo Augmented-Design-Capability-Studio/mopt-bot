@@ -87,9 +87,10 @@ def test_waterfall_hedge_replaces_with_simpler_followup(monkeypatch: pytest.Monk
         OpenQuestionClassification(
             question_id="oq-1",
             bucket="new_open_question",
-            new_question_text="Roughly how strict is the capacity limit?",
-            choices=["Hard cap, never exceed", "Soft, small overflow ok",
-                     "Doesn't matter much"],
+            new_question_text=(
+                "Roughly how strict is the capacity limit — hard cap, "
+                "soft with small overflow ok, or doesn't matter much?"
+            ),
         ),
     ])
 
@@ -107,8 +108,8 @@ def test_waterfall_hedge_replaces_with_simpler_followup(monkeypatch: pytest.Monk
     new_q = result["open_questions"][0]
     assert new_q["status"] == "open"
     assert new_q["answer_text"] is None
-    assert new_q["text"] == "Roughly how strict is the capacity limit?"
-    assert len(new_q["choices"]) == 3
+    assert "Roughly how strict is the capacity limit" in new_q["text"]
+    assert "choices" not in new_q
 
 
 def test_agile_hedge_routes_to_assumption(monkeypatch: pytest.MonkeyPatch) -> None:

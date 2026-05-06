@@ -186,20 +186,23 @@ class KnapsackStudyPort:
                 "bag weight",
                 "load limit",
             ),
-            # Sparsity is phrased a dozen different ways in chat — keep the
-            # marker list permissive enough that the agent's own paraphrases
-            # ("number of selected items", "smaller bag", "selection size",
-            # etc.) still ground the goal_term during validation. If you
-            # widen this further, also widen the regex tuple in
-            # `brief_seed._SIGNALS["selection_sparsity"]` so the deterministic
-            # fallback derivation stays in sync.
+            # Sparsity is phrased a dozen different ways in chat. Markers must
+            # be specific enough that they do NOT appear in the canonical
+            # value-goal phrasing ("Maximize total value of selected items.")
+            # or the canonical capacity phrasing. The bare phrase "selected
+            # items" was too broad and falsely grounded sparsity on every
+            # starter brief — what makes a phrase sparsity-specific is the
+            # qualifier ("number of selected items", "fewer selected items",
+            # "selection size", "smaller bag"). Pair every change here with
+            # the regex tuple in `brief_seed._SIGNALS["selection_sparsity"]`.
             "selection_sparsity": (
                 "sparsity",
                 "fewer items",
-                "compact",
+                "fewer selected items",
+                "compact selection",
                 "selection size",
-                "selected items",
-                "number of items",
+                "selection count",
+                "number of selected items",
                 "item count",
                 "smaller bag",
                 "lighter knapsack",

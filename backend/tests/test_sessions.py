@@ -789,6 +789,57 @@ def test_problem_brief_open_questions_are_split(monkeypatch):
         ]
 
 
+def test_problem_brief_open_questions_keep_inline_options_attached(monkeypatch):
+    """Declarative tails after a question are inline annotations, not separate OQs.
+
+    Without this guard, a single OQ like
+    ``"Which method? Options include GA, PSO, SA."`` was sliced into a question
+    fragment + a free-floating statement (issue surfaced after we removed the
+    `choices` field — the LLM started encoding options inline in the question
+    text, which the splitter then chopped into two OQs with `-1`/`-2` suffixes).
+    """
+    monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-brief-inline-options-secret")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as client:
+        create = client.post(
+            "/sessions",
+            json={},
+            headers={"Authorization": "Bearer test-client-brief-inline-options-secret"},
+        )
+        assert create.status_code == 200
+        sid = create.json()["id"]
+
+        patch = client.patch(
+            f"/sessions/{sid}/problem-brief",
+            json={
+                "problem_brief": {
+                    "goal_summary": "Pick a search method.",
+                    "items": [],
+                    "open_questions": [
+                        "Which search method should I use? "
+                        "Options include genetic search (GA), swarm search (PSO), "
+                        "or annealing search (SA).",
+                        # Mixed case: real second question still splits.
+                        "How strict is the limit? Options A, B, C. Should I go with the default?",
+                    ],
+                    "solver_scope": "general_metaheuristic_translation",
+                    "backend_template": "routing_time_windows",
+                }
+            },
+            headers={"Authorization": "Bearer test-client-brief-inline-options-secret"},
+        )
+        assert patch.status_code == 200
+        questions = [q["text"] for q in patch.json()["problem_brief"]["open_questions"]]
+        assert questions == [
+            "Which search method should I use? "
+            "Options include genetic search (GA), swarm search (PSO), "
+            "or annealing search (SA).",
+            "How strict is the limit? Options A, B, C.",
+            "Should I go with the default?",
+        ]
+
+
 def test_problem_brief_answered_open_question_promoted_to_gathered(monkeypatch):
     monkeypatch.setenv("MOPT_CLIENT_SECRET", "test-client-open-question-answer-roundtrip-secret")
     get_settings.cache_clear()

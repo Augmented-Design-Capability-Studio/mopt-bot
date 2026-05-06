@@ -93,10 +93,14 @@ def _grounded_goal_term_keys(
             elif isinstance(question, dict):
                 _ground_from_text(question.get("text"))
                 _ground_from_text(question.get("answer_text"))
-                choices = question.get("choices")
-                if isinstance(choices, list):
-                    for choice in choices:
-                        _ground_from_text(choice)
+
+    # Goal/run summaries are top-level prose surfaces and frequently carry the
+    # canonical phrasing ("maximize value", "respect capacity") even when no
+    # individual gathered row spells it out yet. Scanning them here closes the
+    # cold-start grounding gap where a starter prompt's intent lives in the
+    # summary but hasn't been split into items.
+    _ground_from_text(problem_brief.get("goal_summary"))
+    _ground_from_text(problem_brief.get("run_summary"))
 
     return grounded
 
@@ -107,36 +111,55 @@ def validate_problem_goal_terms(
     problem_brief: dict[str, Any] | None,
     weight_slot_markers: dict[str, tuple[str, ...]],
     check_grounding: bool = True,
-) -> None:
-    """Validate goal-term shape, type, order, and (optionally) brief grounding.
+) -> list[dict[str, str]]:
+    """Validate goal-term structure and (optionally) check brief grounding.
 
-    `check_grounding=True` is the default for LLM-derived panels — the brief is
-    treated as the source of truth, so any panel goal_term key not grounded by
-    a brief item is flagged as `goal_term_hallucinated`. Note that the
-    `goal_term_missing` direction (brief grounds X, panel doesn't have X) is
-    intentionally **not** reported any more: the text-marker grounding in
-    `_grounded_goal_term_keys` is lossy (e.g. "no sparsity preference" still
-    matches the marker "sparsity"), and the missing-side check perversely
-    forced LLMs to keep hallucinated rejected terms during retry-with-feedback.
+    Splits results by severity:
 
-    `check_grounding=False` is for user-driven panel saves, where the participant
-    is authoritative — they may add or remove goal_terms freely. The brief
-    catches up on the same turn via the chat-driven hidden brief update.
+    * **Structural errors** — shape, ``type`` enum, ``goal_term_order`` referencing
+      missing keys.  These are panel data-integrity bugs and **block the save**:
+      raised as ``GoalTermValidationError``.
+    * **Grounding warnings** — panel ``goal_terms`` keys that brief markers don't
+      recognise.  The structured-output schema (``panel_patch_response_json_schema``)
+      already restricts the LLM to a closed key set per problem, so an "ungrounded"
+      key is a soft signal, not a deadlock.  Returned to the caller (which surfaces
+      them as participant-facing advice) and **do not block** the save.
+
+    Returning warnings instead of raising on grounding decouples marker maintenance
+    from panel save-ability: novel chat phrasings ("cap weight at 50") can no longer
+    deadlock the participant, and the per-problem marker tables stay small without
+    needing to grow whenever a user invents a new way to phrase a constraint.
+
+    Args:
+        problem: Panel ``problem`` dict to validate.
+        problem_brief: Brief used to compute marker grounding for warnings.
+        weight_slot_markers: Per-problem markers (from the study port).
+        check_grounding: If False, skip grounding warnings entirely (used for
+            user-driven panel saves where the participant is authoritative).
+
+    Returns:
+        List of grounding-warning reason dicts (each ``{"code": ..., "message": ...}``).
+        May be empty.
+
+    Raises:
+        GoalTermValidationError: When the panel has structural errors that must
+        block the save.
     """
     if not isinstance(problem, dict):
-        return
+        return []
     goal_terms = problem.get("goal_terms")
     if not isinstance(goal_terms, dict):
-        return
+        return []
 
-    reasons: list[dict[str, str]] = []
+    structural: list[dict[str, str]] = []
+    grounding: list[dict[str, str]] = []
     present_keys: set[str] = set()
     for key, entry in goal_terms.items():
         if not isinstance(key, str):
             continue
         present_keys.add(key)
         if not isinstance(entry, dict):
-            reasons.append(
+            structural.append(
                 {
                     "code": "goal_term_shape_invalid",
                     "message": f"goal_terms['{key}'] must be an object.",
@@ -145,7 +168,7 @@ def validate_problem_goal_terms(
             continue
         term_type = str(entry.get("type") or "").strip().lower()
         if term_type not in _GOAL_TERM_TYPE_VALUES:
-            reasons.append(
+            structural.append(
                 {
                     "code": "goal_term_type_invalid",
                     "message": f"goal_terms['{key}'].type must be one of objective|soft|hard|custom.",
@@ -156,7 +179,7 @@ def validate_problem_goal_terms(
     if isinstance(order_raw, list):
         for raw_key in order_raw:
             if not isinstance(raw_key, str):
-                reasons.append(
+                structural.append(
                     {
                         "code": "goal_term_order_invalid",
                         "message": "goal_term_order must contain only string keys.",
@@ -164,7 +187,7 @@ def validate_problem_goal_terms(
                 )
                 continue
             if raw_key not in present_keys:
-                reasons.append(
+                structural.append(
                     {
                         "code": "goal_term_order_invalid",
                         "message": f"goal_term_order references missing key '{raw_key}'.",
@@ -174,25 +197,29 @@ def validate_problem_goal_terms(
     if check_grounding:
         grounded_keys = _grounded_goal_term_keys(problem_brief, weight_slot_markers=weight_slot_markers)
         if grounded_keys:
-            hallucinated = sorted(present_keys - grounded_keys)
-            for key in hallucinated:
-                reasons.append(
+            # Brief has at least one marker hit; anything in the panel that
+            # isn't grounded becomes a soft warning (not a save-blocker).
+            ungrounded = sorted(present_keys - grounded_keys)
+            for key in ungrounded:
+                grounding.append(
                     {
                         "code": "goal_term_hallucinated",
+                        "key": key,
                         "message": f"goal term '{key}' is not grounded in definition items.",
                     }
                 )
         elif present_keys:
-            for key in sorted(present_keys):
-                reasons.append(
-                    {
-                        "code": "goal_term_hallucinated",
-                        "message": f"goal term '{key}' is not grounded in definition items.",
-                    }
-                )
+            # Cold-start: brief has no marker hits anywhere. The schema already
+            # restricts the key vocabulary, so just log and pass through.
+            log.info(
+                "Goal-term grounding skipped: brief has no marker signal yet; "
+                "trusting schema-restricted panel keys %s",
+                sorted(present_keys),
+            )
 
-    if reasons:
-        raise GoalTermValidationError(reasons)
+    if structural:
+        raise GoalTermValidationError(structural)
+    return grounding
 
 
 def _weights_from_problem(problem: dict[str, Any]) -> dict[str, float]:
@@ -423,7 +450,23 @@ def sync_panel_from_problem_brief(
     workflow_mode: str | None = None,
     recent_runs_summary: list | None = None,
     preserve_missing_managed_fields: bool = False,
-) -> tuple[dict | None, list[str]]:
+) -> tuple[dict | None, list[str], list[dict[str, str]]]:
+    """Sync the panel from the brief.
+
+    Returns ``(panel, weight_warnings, grounding_warnings)``.
+
+    * ``panel`` is the persisted panel (or ``None`` if the brief was too sparse to
+      derive anything).
+    * ``weight_warnings`` come from the per-problem ``sanitize_panel_config``.
+    * ``grounding_warnings`` are non-blocking notices about goal-term keys the
+      validator's brief markers didn't recognise.  Callers should surface them as
+      participant-facing advice (the panel is still committed).
+
+    Raises:
+        GoalTermValidationError: only for **structural** validator errors
+        (shape, type, order).  Hallucination-style grounding mismatches no longer
+        block the save — they're returned as warnings.
+    """
     from app.problems.registry import get_study_port
     from app.services.llm import generate_config_from_brief
 
@@ -431,37 +474,30 @@ def sync_panel_from_problem_brief(
     port = get_study_port(test_problem_id)
 
     current_panel = helpers.panel_dict(row)
-    derived_panel = None
+    derived_panel: dict | None = None
     seed_panel: dict | None = None
-    validation_feedback: list[dict[str, str]] | None = None
-    max_validation_retries = 1
     if api_key and model_name:
         timeout_sec = get_settings().derivation_timeout_sec
-        for attempt in range(max_validation_retries + 1):
-            try:
-                derived_panel = _run_with_timeout(
-                    lambda: generate_config_from_brief(
-                        brief=problem_brief,
-                        current_panel=None,
-                        api_key=api_key,
-                        model_name=model_name,
-                        workflow_mode=workflow_mode or row.workflow_mode,
-                        recent_runs_summary=recent_runs_summary,
-                        test_problem_id=test_problem_id,
-                        validation_feedback=validation_feedback,
-                    ),
-                    timeout_sec,
-                )
-            except FuturesTimeoutError:
-                log.warning("Config derivation timed out for session %s; falling back to deterministic seed", row.id)
-                break
-            if derived_panel is not None:
-                break
+        try:
+            derived_panel = _run_with_timeout(
+                lambda: generate_config_from_brief(
+                    brief=problem_brief,
+                    current_panel=None,
+                    api_key=api_key,
+                    model_name=model_name,
+                    workflow_mode=workflow_mode or row.workflow_mode,
+                    recent_runs_summary=recent_runs_summary,
+                    test_problem_id=test_problem_id,
+                ),
+                timeout_sec,
+            )
+        except FuturesTimeoutError:
+            log.warning("Config derivation timed out for session %s; falling back to deterministic seed", row.id)
     if derived_panel is None:
         seed_panel = port.derive_problem_panel_from_brief(problem_brief)
         derived_panel = seed_panel
     if derived_panel is None:
-        return None, []
+        return None, [], []
 
     next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
     current_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
@@ -469,71 +505,60 @@ def sync_panel_from_problem_brief(
     for key in _managed_problem_fields():
         next_problem.pop(key, None)
     companion_fields = port.locked_companion_fields()
-    goal_term_error: GoalTermValidationError | None = None
-    llm_attempts = max_validation_retries + 1 if api_key and model_name else 1
-    for attempt in range(llm_attempts):
-        derived_problem = deepcopy(derived_panel["problem"])
-        derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem, companion_fields)
-        if preserve_missing_managed_fields:
-            derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
-        next_problem_candidate = deepcopy(next_problem)
-        next_problem_candidate.update(derived_problem)
-        if seed_panel is None:
-            seed_panel = port.derive_problem_panel_from_brief(problem_brief)
-        next_problem_candidate = _backfill_solver_fields_from_seed(seed_panel, next_problem_candidate)
-        try:
-            validate_problem_goal_terms(
-                problem=next_problem_candidate,
-                problem_brief=problem_brief,
-                weight_slot_markers=port.weight_slot_markers(),
-            )
-            next_problem = next_problem_candidate
-            goal_term_error = None
-            break
-        except GoalTermValidationError as exc:
-            goal_term_error = exc
-            if not (api_key and model_name) or attempt >= max_validation_retries:
-                break
-            validation_feedback = exc.reasons
-            log.warning(
-                "Config derivation goal-term validation failed (session=%s attempt=%s): %s",
-                row.id,
-                attempt + 1,
-                exc.detail_text(),
-            )
-            timeout_sec = get_settings().derivation_timeout_sec
-            try:
-                derived_panel = _run_with_timeout(
-                    lambda: generate_config_from_brief(
-                        brief=problem_brief,
-                        current_panel=None,
-                        api_key=api_key,
-                        model_name=model_name,
-                        workflow_mode=workflow_mode or row.workflow_mode,
-                        recent_runs_summary=recent_runs_summary,
-                        test_problem_id=test_problem_id,
-                        validation_feedback=validation_feedback,
-                    ),
-                    timeout_sec,
-                )
-            except FuturesTimeoutError:
-                break
-            if derived_panel is None:
-                break
-    if goal_term_error is not None:
-        raise goal_term_error
+
+    derived_problem = deepcopy(derived_panel["problem"])
+    derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem, companion_fields)
+    if preserve_missing_managed_fields:
+        derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
+    next_problem.update(derived_problem)
+    if seed_panel is None:
+        seed_panel = port.derive_problem_panel_from_brief(problem_brief)
+    next_problem = _backfill_solver_fields_from_seed(seed_panel, next_problem)
+
+    # Structural errors raise; grounding mismatches return as advisory warnings.
+    grounding_warnings = validate_problem_goal_terms(
+        problem=next_problem,
+        problem_brief=problem_brief,
+        weight_slot_markers=port.weight_slot_markers(),
+    )
+    if grounding_warnings:
+        log.info(
+            "Goal-term grounding warnings (non-blocking) for session %s: %s",
+            row.id,
+            grounding_warnings,
+        )
 
     next_panel["problem"] = next_problem
     merged, weight_warnings = port.sanitize_panel_config(next_panel)
     if merged == current_panel:
-        return merged, weight_warnings
+        return merged, weight_warnings, grounding_warnings
 
     log.info("Participant synced panel_config from brief: %s", merged)
     row.panel_config_json = json.dumps(merged)
     row.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
-    return merged, weight_warnings
+    return merged, weight_warnings, grounding_warnings
+
+
+def grounding_advice_message(grounding_warnings: list[dict[str, str]]) -> str | None:
+    """Format participant-facing advice from grounding warnings.
+
+    Surfaced as a non-blocking assistant chat note; the panel still commits.
+    Returns ``None`` when there's nothing to say.
+    """
+    keys = sorted({w.get("key") for w in grounding_warnings if isinstance(w, dict) and w.get("key")})
+    keys = [k for k in keys if isinstance(k, str)]
+    if not keys:
+        return None
+    quoted = ", ".join(f"`{k}`" for k in keys)
+    plural = "terms" if len(keys) > 1 else "term"
+    return (
+        f"Heads up: I added the goal {plural} {quoted} to Problem Config based on the brief, "
+        f"but couldn't tie {('them' if len(keys) > 1 else 'it')} to a specific Definition item. "
+        f"If {('they' if len(keys) > 1 else 'it')} doesn't match your goals, remove "
+        f"{('them' if len(keys) > 1 else 'it')} from the Problem Config tab."
+    )
 
 
 def sync_problem_brief_from_panel(

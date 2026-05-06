@@ -72,8 +72,8 @@ def _route_oq_answers_through_classifier(
     For each OQ that flipped to status="answered" with non-empty answer_text:
     - bucket="gathered": drop the OQ, append a `gathered` item with the rephrased text.
     - bucket="assumption" (agile/demo only): drop the OQ, append an `assumption` item.
-    - bucket="new_open_question" (waterfall only): replace the OQ with a simpler follow-up
-      carrying `choices`.
+    - bucket="new_open_question" (waterfall only): replace the OQ with a simpler plain-text
+      re-ask of the same decision.
     Inputs the classifier doesn't return (or that fail mode-gating) stay as answered OQs
     so the legacy `_promote_answered_open_questions_to_gathered` step in normalization
     handles them as fallback.
@@ -154,8 +154,7 @@ def _route_oq_answers_through_classifier(
 
         if c.bucket == "new_open_question" and mode == "waterfall":
             new_text = (c.new_question_text or "").strip()
-            new_choices = [s.strip() for s in (c.choices or []) if isinstance(s, str) and s.strip()]
-            if not new_text or len(new_choices) < 2:
+            if not new_text:
                 next_questions.append(q)
                 continue
             next_questions.append(
@@ -164,7 +163,6 @@ def _route_oq_answers_through_classifier(
                     "text": new_text,
                     "status": "open",
                     "answer_text": None,
-                    "choices": new_choices,
                 }
             )
             continue
@@ -827,7 +825,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     )
                     config_api_key = None if brief_unchanged else key
                     row = db.get(StudySession, session_id) or row
-                    updated_panel, _ = sync.sync_panel_from_problem_brief(
+                    updated_panel, _, grounding_warnings = sync.sync_panel_from_problem_brief(
                         row,
                         db,
                         effective_problem_brief,
@@ -843,6 +841,10 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     db.commit()
                     db.refresh(row)
                     proc_state = helpers.processing_state(row)
+                    advice = sync.grounding_advice_message(grounding_warnings)
+                    if advice:
+                        msg = derivation.append_message(db, session_id, "assistant", advice, True, kind="panel")
+                        out.append(MessageOut.model_validate(msg))
                 except sync.GoalTermValidationError as exc:
                     log.exception("Inline brief/config sync goal-term validation failed for session %s", session_id)
                     row = db.get(StudySession, session_id) or row
@@ -1542,8 +1544,9 @@ def patch_participant_problem_brief(
     db.refresh(row)
 
     panel_sync_failed = False
+    grounding_warnings: list[dict[str, str]] = []
     try:
-        sync.sync_panel_from_problem_brief(
+        _, _, grounding_warnings = sync.sync_panel_from_problem_brief(
             row,
             db,
             next_problem_brief,
@@ -1577,6 +1580,9 @@ def patch_participant_problem_brief(
         row.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(row)
+        advice = sync.grounding_advice_message(grounding_warnings)
+        if advice:
+            derivation.append_message(db, session_id, "assistant", advice, True, kind="panel")
 
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()
@@ -1730,8 +1736,9 @@ def sync_panel_from_problem_brief_route(
     db.commit()
     db.refresh(row)
     sync_failed = False
+    grounding_warnings: list[dict[str, str]] = []
     try:
-        updated_panel, _ = sync.sync_panel_from_problem_brief(
+        updated_panel, _, grounding_warnings = sync.sync_panel_from_problem_brief(
             row,
             db,
             problem_brief,
@@ -1741,10 +1748,8 @@ def sync_panel_from_problem_brief_route(
             preserve_missing_managed_fields=True,
         )
     except sync.GoalTermValidationError as exc:
-        # Surface via processing_error → Recover banner instead of failing the
-        # request. The participant explicitly clicked Sync; a hard 422 just
-        # leaves them stuck without a clear next step. The banner + Recover
-        # button is the next step.
+        # Structural validator errors only (shape/type/order). Hallucination-style
+        # grounding mismatches now flow through as advice and don't reach here.
         sync_failed = True
         updated_panel = None
         helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
@@ -1754,8 +1759,8 @@ def sync_panel_from_problem_brief_route(
             db,
             session_id,
             "assistant",
-            "I couldn't sync Problem Config from the Definition — the goal-term keys don't match. "
-            "Use the **Recover** button in the banner above the tabs to clear the conflict.",
+            "I couldn't sync Problem Config from the Definition — the structured panel data is "
+            "invalid. Use the **Recover** button in the banner above the tabs to reset.",
             True,
             kind="panel",
         )
@@ -1769,6 +1774,9 @@ def sync_panel_from_problem_brief_route(
         row.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(row)
+        advice = sync.grounding_advice_message(grounding_warnings)
+        if advice:
+            derivation.append_message(db, session_id, "assistant", advice, True, kind="panel")
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()
         db.refresh(row)
@@ -1781,11 +1789,12 @@ def post_recover_goal_terms(
     db: Session = Depends(get_db),
     _: Principal = Depends(require_client),
 ):
-    """Break a goal-term validation deadlock.
+    """Reset goal terms after a structural validator failure.
 
-    When `validate_problem_goal_terms` rejects an LLM-derived panel because
-    its `goal_terms` keys don't match what the brief grounds, subsequent saves
-    keep failing for the same reason and the participant is stuck. This route:
+    Hallucination-style mismatches no longer block saves (they surface as
+    advisory warnings — see ``validate_problem_goal_terms``).  This endpoint
+    remains for the rare structural-error case (shape / type / order) where
+    the panel is genuinely malformed.  It:
 
       1. Clears `panel.problem.{goal_terms, weights, constraint_types, locked_goal_terms}`
          so the next sync starts from an empty term set.
@@ -1825,8 +1834,8 @@ def post_recover_goal_terms(
             preserve_missing_managed_fields=False,
         )
     except sync.GoalTermValidationError:
-        # Even the deterministic seed couldn't produce a clean panel for this
-        # brief. Leave the panel cleared and the error reset; the participant
+        # Structural error from the deterministic seed itself — should be vanishingly
+        # rare. Leave the panel cleared and the error reset; the participant
         # can edit Definition or chat to articulate goals again.
         row = db.get(StudySession, session_id) or row
         helpers.settle_processing_state(row, cancel_revision=True)

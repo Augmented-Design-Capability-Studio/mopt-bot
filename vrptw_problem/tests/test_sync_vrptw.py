@@ -60,7 +60,7 @@ def test_sync_preserves_driver_preferences_when_worker_preference_locked(monkeyp
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -102,7 +102,7 @@ def test_sync_replaces_driver_preferences_when_not_derived(monkeypatch):
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},

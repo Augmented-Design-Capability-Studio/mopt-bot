@@ -66,10 +66,6 @@ class ProblemBriefQuestion(BaseModel):
     text: str
     status: Literal["open", "answered"] = "open"
     answer_text: str | None = None
-    # Concrete-choice list rendered as radio buttons on the OQ card. Set by the
-    # waterfall hedge classifier when re-asking a simpler follow-up; None for
-    # free-text questions.
-    choices: list[str] | None = None
 
 
 class ProblemBrief(BaseModel):
@@ -219,7 +215,6 @@ class OpenQuestionClassification(BaseModel):
     rephrased_text: str | None = None
     assumption_text: str | None = None
     new_question_text: str | None = None
-    choices: list[str] | None = None
 
 
 class OpenQuestionClassifierTurn(BaseModel):

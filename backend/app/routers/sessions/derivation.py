@@ -475,7 +475,7 @@ def _run_background_derivation(
                 ) == json.dumps(normalize_problem_brief(base_problem_brief), sort_keys=True, default=str)
                 config_api_key = None if brief_unchanged else api_key
 
-                sync.sync_panel_from_problem_brief(
+                _, _, grounding_warnings = sync.sync_panel_from_problem_brief(
                     row,
                     db,
                     effective_problem_brief,
@@ -485,6 +485,8 @@ def _run_background_derivation(
                     recent_runs_summary=recent_runs_summary,
                     preserve_missing_managed_fields=True,
                 )
+            else:
+                grounding_warnings = []
 
             row = db.get(StudySession, session_id)
             if row is None or row.processing_revision != revision:
@@ -495,6 +497,9 @@ def _run_background_derivation(
             helpers.touch_session(row)
             helpers.sync_optimization_allowed_after_participant_mutation(row)
             db.commit()
+            advice = sync.grounding_advice_message(grounding_warnings)
+            if advice:
+                append_message(db, session_id, "assistant", advice, True, kind="panel")
     except sync.GoalTermValidationError as exc:
         log.exception("Background derivation goal-term validation failed for session %s", session_id)
         with SessionLocal() as db:

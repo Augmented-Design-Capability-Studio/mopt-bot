@@ -248,19 +248,6 @@ def _normalize_question_answer_text(raw: Any) -> str | None:
     return text or None
 
 
-def _normalize_question_choices(raw: Any) -> list[str] | None:
-    if not isinstance(raw, list):
-        return None
-    cleaned: list[str] = []
-    for entry in raw:
-        if entry is None:
-            continue
-        text = str(entry).strip()
-        if text and text not in cleaned:
-            cleaned.append(text)
-    return cleaned if cleaned else None
-
-
 def _normalize_question(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         text = str(raw.get("text") or "").strip()
@@ -271,11 +258,7 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
             answer_text = None
-        out = {"id": question_id, "text": text, "status": status, "answer_text": answer_text}
-        choices = _normalize_question_choices(raw.get("choices"))
-        if choices is not None:
-            out["choices"] = choices
-        return out
+        return {"id": question_id, "text": text, "status": status, "answer_text": answer_text}
     if raw is None:
         return None
     text = str(raw).strip()
@@ -304,6 +287,58 @@ def _preserve_answered_state(
             }
 
 
+def _split_question_text(text: str) -> list[str]:
+    """Split one stored OQ string into its constituent open questions.
+
+    Sentence-aware so that inline-option phrasings stay a single OQ:
+
+    * ``"How strict is the limit? Options A, B, C. Should I go with the default?"``
+      → two OQs (``"How strict is the limit? Options A, B, C."`` and
+      ``"Should I go with the default?"``).  The declarative ``"Options A, B, C."``
+      is attached to the preceding question rather than emitted as its own row.
+    * ``"Which method? Options include GA, PSO, SA."`` → one OQ; the trailing
+      declarative is attached to the lone question.
+    * ``"How strict should lateness be? Should overtime be capped?"`` → two OQs
+      (existing concatenated-questions behaviour, preserved).
+    * Pure declarative text becomes a single OQ.
+
+    Concretely: split on terminal-punctuation sentence boundaries (``?``, ``!``,
+    ``.``), then for each sentence — if it ends with ``?``/``!`` it starts a new
+    OQ; otherwise it's a declarative annotation that re-attaches to the most
+    recent OQ (or, if none exists yet, buffers as a leading prefix that prepends
+    onto the first question we see, or emits as a standalone declarative OQ if
+    no question ever arrives).
+    """
+    fragments: list[str] = []
+    pending_lead: list[str] = []
+    for raw_line in text.splitlines():
+        line = _clean_question_fragment(raw_line)
+        if not line:
+            continue
+        # Negative lookahead `(?!\()` keeps "Shift cap? (Answered: 8h)." glued
+        # — used by merge-time sanitization of fake answered questions.
+        for part in re.split(r"(?<=[?!.])\s+(?!\()", line):
+            cleaned = _clean_question_fragment(part)
+            if not cleaned:
+                continue
+            is_question = cleaned.endswith("?") or cleaned.endswith("!")
+            if is_question:
+                if pending_lead:
+                    cleaned = " ".join(pending_lead + [cleaned])
+                    pending_lead = []
+                fragments.append(cleaned)
+            elif fragments:
+                # Declarative tail — annotation for the most recent question.
+                fragments[-1] = f"{fragments[-1]} {cleaned}"
+            else:
+                # No question yet — buffer as a leading prefix.
+                pending_lead.append(cleaned)
+    if pending_lead:
+        # Pure declarative input (no `?`/`!` ever seen) — emit as a single OQ.
+        fragments.append(" ".join(pending_lead))
+    return fragments
+
+
 def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -312,17 +347,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
         normalized = _normalize_question(entry)
         if normalized is None:
             continue
-        fragments: list[str] = []
-        for raw_line in normalized["text"].splitlines():
-            line = _clean_question_fragment(raw_line)
-            if not line:
-                continue
-            # Do not split before a parenthesis (e.g. "Shift cap? (Answered: 8h).") — keeps
-            # merge-time sanitization of fake answered questions reliable.
-            for part in re.split(r"(?<=[?!])\s+(?!\()", line):
-                cleaned = _clean_question_fragment(part)
-                if cleaned:
-                    fragments.append(cleaned)
+        fragments = _split_question_text(normalized["text"])
         if not fragments:
             continue
         if len(fragments) == 1:
@@ -1025,7 +1050,7 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
       - The "Confirm or correct: …" framing reads like a foregone conclusion,
         which is exactly the assumption-flavored UI the user is trying to
         avoid in demo recordings.
-      - The chat prompt requires a proper OQ-with-choices for tunable defaults
+      - The chat prompt requires a proper open question for tunable defaults
         (algorithm choice, etc.) to already exist when the agent commits to
         one. If the agent slips and emits an assumption alongside or instead,
         the working value is still on the panel and any proper OQ remains —

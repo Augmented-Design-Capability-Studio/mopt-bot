@@ -623,8 +623,6 @@ export function DefinitionPanel({
           {openQuestions.map((question, index) => {
             const isProcessing = processingOqIds.has(question.id);
             const cardLocked = openLocked || isProcessing;
-            const choices = (question.choices ?? []).filter((c) => c && c.trim().length > 0);
-            const hasChoices = choices.length > 0;
             return (
               <Fragment key={question.id}>
                 {deletedMarker?.section === "open" && deletedMarker.index === index ? (
@@ -654,53 +652,7 @@ export function DefinitionPanel({
                         ) : null}
                       </div>
                       <div className="definition-question-text">{question.text}</div>
-                      {hasChoices ? (
-                        <div
-                          className="definition-answer-choices"
-                          role="radiogroup"
-                          aria-label="Pick one"
-                        >
-                          {choices.map((choice) => {
-                            const checked = (question.answer_text ?? "").trim() === choice.trim();
-                            return (
-                              <label
-                                key={choice}
-                                className={`definition-answer-choice ${checked ? "is-selected" : ""}`.trim()}
-                              >
-                                <input
-                                  type="radio"
-                                  name={`definition-oq-choice-${question.id}`}
-                                  value={choice}
-                                  checked={checked}
-                                  disabled={cardLocked}
-                                  onChange={() => {
-                                    onEnsureDefinitionEditing();
-                                    updateOpenQuestionAnswer(question.id, choice);
-                                  }}
-                                />
-                                <span>{choice}</span>
-                              </label>
-                            );
-                          })}
-                          {editable ? (
-                            <textarea
-                              id={`definition-open-question-answer-${question.id}`}
-                              className="definition-inline-textarea definition-answer-textarea definition-answer-textarea-fallback"
-                              value={
-                                choices.includes((question.answer_text ?? "").trim())
-                                  ? ""
-                                  : question.answer_text ?? ""
-                              }
-                              placeholder="Or type your own..."
-                              disabled={cardLocked}
-                              rows={1}
-                              onFocus={() => onEnsureDefinitionEditing()}
-                              onChange={(e) => updateOpenQuestionAnswer(question.id, e.target.value)}
-                              onInput={autoGrowTextarea}
-                            />
-                          ) : null}
-                        </div>
-                      ) : editable ? (
+                      {editable ? (
                         <textarea
                           id={`definition-open-question-answer-${question.id}`}
                           className="definition-inline-textarea definition-answer-textarea"

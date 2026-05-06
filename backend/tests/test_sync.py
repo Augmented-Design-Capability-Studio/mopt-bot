@@ -42,7 +42,7 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -77,7 +77,7 @@ def test_sync_panel_from_brief_normalizes_stale_locked_goal_terms(monkeypatch):
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -111,7 +111,7 @@ def test_sync_panel_from_brief_non_destructive_when_llm_omits_weight(monkeypatch
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -158,7 +158,7 @@ def test_sync_preserves_manual_termination_and_init_controls(monkeypatch):
 
     monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={"items": []},
@@ -218,7 +218,7 @@ def test_sync_backfills_search_strategy_when_llm_returns_weights_only(monkeypatc
 
     monkeypatch.setattr("app.services.llm.generate_config_from_brief", _fake_llm)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _warnings, _grounding = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief=brief,
@@ -248,26 +248,123 @@ def test_validate_problem_goal_terms_rejects_missing_type():
     assert any(r["code"] == "goal_term_type_invalid" for r in excinfo.value.reasons)
 
 
-def test_validate_problem_goal_terms_rejects_hallucinated_terms():
-    with pytest.raises(sync.GoalTermValidationError) as excinfo:
-        sync.validate_problem_goal_terms(
-            problem={
-                "goal_terms": {
-                    "travel_time": {"weight": 1.0, "type": "objective"},
-                    "capacity_penalty": {"weight": 1000.0, "type": "hard"},
-                }
-            },
-            problem_brief={
-                "items": [
-                    {"id": "config-weight-travel_time", "kind": "gathered", "text": "minimize travel time"}
-                ]
-            },
-            weight_slot_markers={"travel_time": ("travel",), "capacity_penalty": ("capacity",)},
-        )
-    assert any(r["code"] == "goal_term_hallucinated" for r in excinfo.value.reasons)
+def test_validate_problem_goal_terms_returns_grounding_warnings_without_raising():
+    """Hallucination-style mismatches are returned as warnings, not raised. The
+    panel save proceeds; downstream surfaces the warning as participant advice."""
+    warnings = sync.validate_problem_goal_terms(
+        problem={
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective"},
+                "capacity_penalty": {"weight": 1000.0, "type": "hard"},
+            }
+        },
+        problem_brief={
+            "items": [
+                {"id": "config-weight-travel_time", "kind": "gathered", "text": "minimize travel time"}
+            ]
+        },
+        weight_slot_markers={"travel_time": ("travel",), "capacity_penalty": ("capacity",)},
+    )
+    keys = {w["key"] for w in warnings if w["code"] == "goal_term_hallucinated"}
+    assert keys == {"capacity_penalty"}
 
 
-def test_sync_panel_from_brief_retries_after_validation_failure(monkeypatch):
+def test_validate_problem_goal_terms_check_grounding_false_returns_no_warnings():
+    """User-driven panel saves skip grounding entirely — the participant is authoritative."""
+    warnings = sync.validate_problem_goal_terms(
+        problem={
+            "goal_terms": {
+                "capacity_penalty": {"weight": 1000.0, "type": "hard"},
+            }
+        },
+        problem_brief={"items": [], "open_questions": [], "goal_summary": ""},
+        weight_slot_markers={"capacity_penalty": ("capacity",)},
+        check_grounding=False,
+    )
+    assert warnings == []
+
+
+def test_validate_problem_goal_terms_cold_start_no_grounding_signal_passes():
+    """Cold-start tolerance: when the brief has no grounded keys at all (sparse
+    cold-start brief), the validator does NOT flag every panel key as
+    hallucinated. The structured-output schema's allowed-key set is the
+    primary defense in this window — the marker check has nothing to anchor on
+    yet, so insisting on grounding here would flunk the very first turn."""
+    # No items match any marker; brief is essentially empty.
+    sync.validate_problem_goal_terms(
+        problem={
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective"},
+                "capacity_penalty": {"weight": 1000.0, "type": "hard"},
+            }
+        },
+        problem_brief={"items": [], "open_questions": [], "goal_summary": ""},
+        weight_slot_markers={"travel_time": ("travel",), "capacity_penalty": ("capacity",)},
+    )
+
+
+def test_validate_problem_goal_terms_grounds_via_goal_summary():
+    """`_grounded_goal_term_keys` scans `goal_summary` text — useful when the
+    starter prompt's intent has been folded into the summary but not yet split
+    into items. A panel key whose marker appears in the summary should ground."""
+    warnings = sync.validate_problem_goal_terms(
+        problem={
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective"},
+                "capacity_penalty": {"weight": 1000.0, "type": "hard"},
+            }
+        },
+        problem_brief={
+            "items": [],
+            "open_questions": [],
+            "goal_summary": "Minimize travel time across the fleet.",
+        },
+        weight_slot_markers={"travel_time": ("travel",), "capacity_penalty": ("capacity",)},
+    )
+    flagged = {w["key"] for w in warnings if w["code"] == "goal_term_hallucinated"}
+    assert flagged == {"capacity_penalty"}
+
+
+def test_validate_problem_goal_terms_grounds_via_open_question_text():
+    """OQ text grounds goal terms — covers demo mode where the agent surfaces
+    capacity / sparsity context as an OQ before any gathered row exists."""
+    warnings = sync.validate_problem_goal_terms(
+        problem={
+            "goal_terms": {
+                "capacity_penalty": {"weight": 100.0, "type": "hard"},
+            }
+        },
+        problem_brief={
+            "items": [],
+            "open_questions": [
+                {"id": "q1", "text": "How strict is the capacity limit?", "status": "open"}
+            ],
+            "goal_summary": "",
+        },
+        weight_slot_markers={"capacity_penalty": ("capacity",)},
+    )
+    assert warnings == []
+
+
+def test_grounding_advice_message_returns_none_when_empty():
+    assert sync.grounding_advice_message([]) is None
+    assert sync.grounding_advice_message([{"code": "other", "message": "x"}]) is None
+
+
+def test_grounding_advice_message_includes_keys():
+    msg = sync.grounding_advice_message([
+        {"code": "goal_term_hallucinated", "key": "capacity_overflow", "message": "..."},
+        {"code": "goal_term_hallucinated", "key": "selection_sparsity", "message": "..."},
+    ])
+    assert msg is not None
+    assert "`capacity_overflow`" in msg
+    assert "`selection_sparsity`" in msg
+    assert "Problem Config" in msg
+
+
+def test_sync_panel_from_brief_commits_with_grounding_warnings(monkeypatch):
+    """Hallucination-style grounding mismatches no longer block the save. The panel
+    commits in a single LLM call and the ungrounded keys flow out as warnings."""
     row = SimpleNamespace(
         panel_config_json=json.dumps({"problem": {"algorithm": "GA"}}),
         workflow_mode="agile",
@@ -279,26 +376,18 @@ def test_sync_panel_from_brief_retries_after_validation_failure(monkeypatch):
 
     def _fake_llm(**_kwargs):
         calls["count"] += 1
-        if calls["count"] == 1:
-            return {
-                "problem": {
-                    "goal_terms": {
-                        "travel_time": {"weight": 1.0, "type": "objective"},
-                        "capacity_penalty": {"weight": 1000.0, "type": "hard"},
-                    }
-                }
-            }
         return {
             "problem": {
                 "goal_terms": {
                     "travel_time": {"weight": 1.0, "type": "objective"},
+                    "capacity_penalty": {"weight": 1000.0, "type": "hard"},
                 }
             }
         }
 
     monkeypatch.setattr("app.services.llm.generate_config_from_brief", _fake_llm)
 
-    panel, _warnings = sync.sync_panel_from_problem_brief(
+    panel, _weight_warnings, grounding_warnings = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
         problem_brief={
@@ -308,5 +397,7 @@ def test_sync_panel_from_brief_retries_after_validation_failure(monkeypatch):
         model_name="fake-model",
     )
     assert panel is not None
-    assert calls["count"] == 2
+    assert calls["count"] == 1, "no retry-with-feedback loop"
+    flagged = {w["key"] for w in grounding_warnings if w["code"] == "goal_term_hallucinated"}
+    assert flagged == {"capacity_penalty"}
 

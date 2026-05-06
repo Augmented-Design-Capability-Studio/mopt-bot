@@ -59,6 +59,15 @@ Rules:
       placeholder — leave it out of `weights` entirely.
     - When in doubt about whether a concept was requested, **omit it** rather
       than include it. The participant can always ask to add it later.
+    - **Worked example (opt-out for sparsity).** If the brief says only
+      *"Maximize total value of selected items"* and *"Bag capacity limit set
+      to 50"*, emit weights for `value_emphasis` and `capacity_overflow` ONLY.
+      Do NOT include `selection_sparsity` — phrases like "of selected items"
+      or "items in the bag" are part of the canonical value/capacity
+      restatement and are NOT a sparsity ask. `selection_sparsity` belongs
+      in the panel only when the participant explicitly says they want
+      **fewer** items, a **smaller** selection, **sparsity**, a **lighter**
+      bag, or similar.
 - When emitting multiple weight keys, also emit `"constraint_types"` for non-objective terms:
   keep one primary objective implicit, classify most others as `"soft"`/`"hard"` constraints
   based on user intent, and use `"custom"` only for explicit user-requested manual weighting.

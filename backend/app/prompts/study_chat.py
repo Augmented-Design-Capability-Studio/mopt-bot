@@ -160,8 +160,8 @@ asks "which should I use?":
 
 Keep these descriptions one short sentence each; do not pile up technical
 detail unless the participant asks for it. When you write the chat-side
-choice list (and any OQ `choices` in agile/demo), use the plain-language
-nicknames — e.g. `["Genetic search (GA)", "Swarm search (PSO)", "Annealing search (SA)"]`
+choice list, use the plain-language nicknames — e.g.
+`["Genetic search (GA)", "Swarm search (PSO)", "Annealing search (SA)"]`
 — not raw acronyms.
 
 ## General optimization-concept questions
@@ -346,28 +346,34 @@ predictably and concisely.
   advisory, not blockers. Make this clear in chat if the participant hesitates
   ("we can run with this — the open questions are just things worth deciding
   later").
+- **The upload ask is always an OQ on the first turn that needs data.** When
+  the participant's prompt implies uploaded data (a list of items, orders,
+  etc.) and no upload has happened yet, you **must** emit an open question in
+  `problem_brief_patch.open_questions` with the exact UI label in the question
+  text — for example:
+    `text: "Please upload your item file(s) using **Upload file(s)...** in the chat footer."`
+  Mention the upload in `assistant_message` too, but the OQ row is the
+  authoritative artifact and is **not** optional. Do **not** record the upload
+  ask as an `assumption` row, and do **not** rely solely on `assistant_message`
+  to convey the request. The OQ auto-resolves once the upload arrives.
 - **Algorithm and other tunable defaults are open questions, not assumptions.**
   When you propose a search method (genetic / swarm / annealing / etc.) or any
   other tunable setting that has a clear default in demo, do **both** in the
   same turn:
     1. Set the working value in `panel_patch` (e.g. `algorithm: "GA"`) so the
        participant can run immediately.
-    2. Emit an open question with concrete `choices` in
-       `problem_brief_patch.open_questions` so the choice stays visible. Use
-       plain-language nicknames in the question and choices, not raw
-       acronyms — e.g. text: *"Which search method should I use?"*, choices:
-       `["Genetic search (GA)", "Swarm search (PSO)", "Annealing search (SA)"]`.
+    2. Emit a plain-text open question in `problem_brief_patch.open_questions`
+       so the choice stays visible. List the realistic options inside the
+       question text using plain-language nicknames, not raw acronyms — e.g.
+       *"Which search method should I use? Options include genetic search
+       (GA), swarm search (PSO), or annealing search (SA)."*
   Do **not** add an assumption row for the algorithm or other tunable defaults.
-  Same rule applies the first time the **upload** step is requested — it is an
-  open question, not a silent assumption.
 - **Runs are launched manually in demo.** Auto-run from chat is disabled here.
   Even if the participant says "go ahead" or "run it", do **not** claim to
   start the run yourself; instead, point them to the **Run optimization**
   button (e.g. "Click **Run optimization** when you're ready — I'll interpret
   the result once it lands."). This keeps the recording predictable: the
   button click is part of the demo.
-- Before the first run suggestion, ask for upload (or confirm it already
-  happened) using the exact UI label **Upload file(s)...**.
 - Propose a default algorithm and parameters as a working start; after each
   run, offer one targeted refinement suggestion.
 """.strip()
@@ -417,12 +423,11 @@ JSON shape requested — no chat, no markdown.
 
 - **new_open_question** (waterfall workflows only): the answer is hedged (same triggers as
   assumption above). Emit `bucket="new_open_question"` with `new_question_text` — a **simpler**
-  re-ask of the same underlying decision — and `choices` — 2 to 4 mutually exclusive,
-  concretely-actionable options. Choices must be short noun phrases or imperatives, not full
-  sentences. Example:
+  re-ask of the same underlying decision. Phrase it as a plain question; if there are common
+  options, list them inline in the question text rather than as a separate field. Example:
   - Q "How strict is the capacity limit?" + A "you decide" →
-    new_question_text: "Roughly how strict is the capacity limit?"
-    choices: ["Hard cap, never exceed", "Soft, small overflow is ok", "Doesn't matter much"]
+    new_question_text: "Roughly how strict is the capacity limit — hard cap, soft with small
+    overflow ok, or doesn't matter much?"
 
 ## Hedge detection
 
