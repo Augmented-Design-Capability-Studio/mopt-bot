@@ -4,6 +4,31 @@ from __future__ import annotations
 
 import re
 
+
+# Fixed strings the frontend posts on behalf of dedicated buttons. Matching the
+# exact text lets us skip the intent-classifier LLM entirely. Update both ends
+# in lockstep — see frontend/src/client/problemDefinition/constants.ts.
+_FIXED_CLEANUP_PHRASE = (
+    "Please clean up and consolidate my problem definition: "
+    "deduplicate redundant gathered facts and assumptions, "
+    "and keep unresolved items in open questions."
+)
+
+
+def classify_fixed_phrase_intents(content: str) -> tuple[bool, bool, bool] | None:
+    """Return (cleanup, clear, change) for messages whose text is a known
+    button-posted phrase. Returns ``None`` for free-form user input so callers
+    fall through to the LLM classifier.
+    """
+    text = (content or "").strip()
+    if not text:
+        return None
+    if text == _FIXED_CLEANUP_PHRASE:
+        # Cleanup button: cleanup_intent=True, no clear, treat as a change so
+        # the brief/panel pipelines run on the rewrite.
+        return (True, False, True)
+    return None
+
 _CLEANUP_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bclean\s*up\b", re.IGNORECASE),
     re.compile(r"\bconsolidat(?:e|ion)\b", re.IGNORECASE),

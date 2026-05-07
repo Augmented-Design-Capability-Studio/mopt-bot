@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { SnapshotSummary } from "@shared/api";
 import { DialogShell } from "@shared/components/DialogShell";
 import { parseServerDate } from "@shared/dateTime";
@@ -51,6 +52,11 @@ function buildRunSnapshotNumberById(snapshots: SnapshotSummary[]): Map<number, n
   return runSnapshotNumberById;
 }
 
+function snapshotHasOtherSide(snap: SnapshotSummary, sourceTab: "definition" | "config"): boolean {
+  if (sourceTab === "definition") return snap.has_config;
+  return snap.problem_brief !== null && typeof snap.problem_brief === "object";
+}
+
 type SnapshotDialogProps = {
   open: boolean;
   onClose: () => void;
@@ -59,7 +65,7 @@ type SnapshotDialogProps = {
   sourceTab: "definition" | "config";
   sessionTerminated: boolean;
   busy: boolean;
-  onRestore: (snapshot: SnapshotSummary, sourceTab: "definition" | "config") => void;
+  onRestore: (snapshot: SnapshotSummary, scope: "definition" | "config" | "both") => void;
 };
 
 export function SnapshotDialog({
@@ -72,13 +78,76 @@ export function SnapshotDialog({
   busy,
   onRestore,
 }: SnapshotDialogProps) {
+  const [pendingSnapshot, setPendingSnapshot] = useState<SnapshotSummary | null>(null);
   const runSnapshotNumberById = buildRunSnapshotNumberById(snapshots);
+
+  const closeAndReset = () => {
+    setPendingSnapshot(null);
+    onClose();
+  };
 
   const handleSelect = (snap: SnapshotSummary) => {
     if (busy || sessionTerminated) return;
+    if (snapshotHasOtherSide(snap, sourceTab)) {
+      setPendingSnapshot(snap);
+      return;
+    }
     onRestore(snap, sourceTab);
-    onClose();
+    closeAndReset();
   };
+
+  const restoreWithScope = (scope: "definition" | "config" | "both") => {
+    if (!pendingSnapshot) return;
+    onRestore(pendingSnapshot, scope);
+    closeAndReset();
+  };
+
+  const otherLabel = sourceTab === "definition" ? "configuration" : "definition";
+  const primaryLabel = sourceTab === "definition" ? "definition" : "configuration";
+
+  if (pendingSnapshot) {
+    const runNumber = runSnapshotNumberById.get(pendingSnapshot.id);
+    const origin = pendingSnapshot.event_type === "before_run" && runNumber
+      ? `Run snapshot #${runNumber}`
+      : formatSnapshotOrigin(pendingSnapshot.event_type);
+    return (
+      <DialogShell
+        open={open}
+        title="Also load matching saved data?"
+        titleId="snapshot-dlg-title"
+        actions={
+          <>
+            <button type="button" onClick={() => setPendingSnapshot(null)} disabled={busy}>
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => restoreWithScope(sourceTab)}
+              disabled={busy || sessionTerminated}
+            >
+              {primaryLabel === "definition" ? "Definition only" : "Configuration only"}
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => restoreWithScope("both")}
+              disabled={busy || sessionTerminated}
+            >
+              Load both (recommended)
+            </button>
+          </>
+        }
+        maxWidth="420px"
+      >
+        <p style={{ fontSize: "0.9rem", margin: "0 0 0.5rem" }}>
+          {origin} · {formatSnapshotTime(pendingSnapshot.created_at)} also includes a saved problem {otherLabel}.
+        </p>
+        <p className="muted" style={{ fontSize: "0.85rem", margin: 0 }}>
+          Loading only the {primaryLabel} may leave it out of sync with the current {otherLabel} and produce inaccurate results. We recommend restoring both together.
+        </p>
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell
@@ -86,7 +155,7 @@ export function SnapshotDialog({
       title="Load from snapshot"
       titleId="snapshot-dlg-title"
       actions={
-        <button type="button" onClick={onClose}>
+        <button type="button" onClick={closeAndReset}>
           Close
         </button>
       }

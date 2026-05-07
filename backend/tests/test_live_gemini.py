@@ -165,6 +165,7 @@ def test_brief_update_emits_structured_driver_preference_for_alice_zone_d(
             )
         raise
 
+    assert turn is not None, "Brief-update structured call returned None (LLM/parse failure)."
     patch = turn.problem_brief_patch
     assert isinstance(patch, dict), f"Expected a non-null patch; got: {turn!r}"
     goal_terms = patch.get("goal_terms")

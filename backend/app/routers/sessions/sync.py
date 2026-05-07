@@ -219,7 +219,14 @@ def _canonicalize_locked_goal_terms(
     return derived_problem
 
 
-def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem: dict) -> dict:
+def _merge_non_destructive_managed_fields(
+    current_problem: dict,
+    derived_problem: dict,
+    *,
+    problem_brief: dict | None = None,
+    workflow_mode: str | None = None,
+    api_key: str | None = None,
+) -> dict:
     managed_keys = (
         "goal_terms",
         "weights",
@@ -322,6 +329,26 @@ def _merge_non_destructive_managed_fields(current_problem: dict, derived_problem
             entry = merged_goal_terms.get(key)
             if isinstance(entry, dict):
                 entry["type"] = ctype
+        # Anchor check: drop newly-derived goal_term keys (those NOT present in
+        # `current_goal_terms`) that have no evidence in the brief items[].
+        # Existing keys are preserved unconditionally so retunes don't regress.
+        if problem_brief is not None:
+            from app.services.goal_term_anchoring import filter_unanchored_new_goal_terms
+
+            base_for_filter = {"goal_terms": current_goal_terms}
+            filtered, dropped = filter_unanchored_new_goal_terms(
+                base_brief=base_for_filter,
+                proposed_goal_terms=merged_goal_terms,
+                items=list((problem_brief or {}).get("items") or []),
+                workflow_mode=workflow_mode,
+                api_key=api_key,
+            )
+            if dropped:
+                log.warning(
+                    "Panel-derive dropped unanchored goal_terms keys: %s",
+                    dropped,
+                )
+                merged_goal_terms = filtered
         merged["goal_terms"] = merged_goal_terms
     current_weights = _weights_from_problem(current_problem)
     derived_weights = _weights_from_problem(merged)
@@ -408,6 +435,7 @@ def sync_panel_from_problem_brief(
     workflow_mode: str | None = None,
     recent_runs_summary: list | None = None,
     preserve_missing_managed_fields: bool = False,
+    commit: bool = True,
 ) -> tuple[dict | None, list[str]]:
     """Sync the panel from the brief.
 
@@ -418,6 +446,10 @@ def sync_panel_from_problem_brief(
     (shape / type / order).  Brief-grounding mismatches were ripped out — the
     LLM's structured-output schema already restricts the key vocabulary, so the
     old marker-based hallucination check produced more friction than value.
+
+    When ``commit=False`` the function stages ``row.panel_config_json`` but
+    leaves the commit to the caller, so brief + panel updates can be made
+    transactional in the participant brief PATCH handler.
     """
     from app.problems.registry import get_study_port
     from app.services.llm import generate_config_from_brief
@@ -461,7 +493,13 @@ def sync_panel_from_problem_brief(
     derived_problem = deepcopy(derived_panel["problem"])
     derived_problem = _canonicalize_locked_goal_terms(current_problem, derived_problem, companion_fields)
     if preserve_missing_managed_fields:
-        derived_problem = _merge_non_destructive_managed_fields(current_problem, derived_problem)
+        derived_problem = _merge_non_destructive_managed_fields(
+            current_problem,
+            derived_problem,
+            problem_brief=problem_brief,
+            workflow_mode=workflow_mode or row.workflow_mode,
+            api_key=api_key,
+        )
     next_problem.update(derived_problem)
     if seed_panel is None:
         seed_panel = port.derive_problem_panel_from_brief(problem_brief)
@@ -478,8 +516,9 @@ def sync_panel_from_problem_brief(
     log.info("Participant synced panel_config from brief: %s", merged)
     row.panel_config_json = json.dumps(merged)
     row.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
     return merged, weight_warnings
 
 

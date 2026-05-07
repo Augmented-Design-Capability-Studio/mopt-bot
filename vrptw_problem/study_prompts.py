@@ -203,6 +203,18 @@ Rules:
   care about waiting", "we don't need a shift cap"), **omit the corresponding
   weight key entirely** — do not include it with a small weight, an inactive
   flag, or any other placeholder. When in doubt, omit.
+- **Anchoring rule (load-bearing):** every weight key you emit must be
+  justified by at least one row in the brief's `items[]` (a `gathered` fact,
+  or in agile/demo also an `assumption`). For each emitted weight you should
+  also emit `goal_terms[<key>].evidence_item_ids` listing the brief items[]
+  ids that justify that term. Newly-introduced keys without a valid cite are
+  dropped server-side, even if they appear plausible from run-violation
+  context — the server treats run violations as observations, not evidence.
+  Never invent ids; only cite ids that appear in the provided brief JSON.
+  Self-anchoring: `worker_preference` is auto-anchored when its
+  `properties.driver_preferences` list is non-empty, and `shift_limit` is
+  auto-anchored when its `properties.max_shift_hours` is set — for those two
+  cases an explicit `evidence_item_ids` cite is optional.
 - When emitting "weights", also emit matching `"constraint_types"` for non-objective terms:
   - keep one main optimization target implicit (objective by omission),
   - use `"soft"` for trade-off penalties/preferences,

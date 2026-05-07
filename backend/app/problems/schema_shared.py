@@ -79,8 +79,10 @@ def goal_term_entry_schema(
         "type": "object",
         "description": (
             "Canonical per-goal-term representation. `weight` is numeric emphasis, "
-            "`type` is objective/soft/hard/custom, `locked` mirrors lock state, and "
-            "`properties` carries optional term-specific metadata."
+            "`type` is objective/soft/hard/custom, `locked` mirrors lock state, "
+            "`properties` carries optional term-specific metadata, and "
+            "`evidence_item_ids` cites the brief items[] ids that justify this term "
+            "(at least one for newly-introduced terms)."
         ),
         "properties": {
             "weight": {"type": "number"},
@@ -88,6 +90,15 @@ def goal_term_entry_schema(
             "locked": {"type": "boolean"},
             "rank": {"type": "integer", "minimum": 1},
             "properties": properties_schema or _DEFAULT_GOAL_TERM_PROPERTIES_SCHEMA,
+            "evidence_item_ids": {
+                "type": "array",
+                "description": (
+                    "Ids of brief items[] (gathered in waterfall; gathered or assumption "
+                    "in agile/demo) whose text justifies this goal term. Required for "
+                    "newly-introduced terms; existing terms are tolerated without it."
+                ),
+                "items": {"type": "string"},
+            },
         },
         "required": ["weight"],
         "additionalProperties": False,

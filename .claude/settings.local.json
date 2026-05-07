@@ -107,7 +107,11 @@
       "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest vrptw_problem/tests/test_sync_vrptw.py --no-header)",
       "Bash(xargs -I {} cat \"{}\")",
       "Bash(python3 /tmp/extract_calls.py)",
-      "Read(//c/tmp/**)"
+      "Read(//c/tmp/**)",
+      "Bash(python3 \"C:/Users/whyhowie/AppData/Local/Temp/extract_calls.py\")",
+      "Bash(python3 \"C:/Users/whyhowie/AppData/Local/Temp/extract_calls2.py\")",
+      "Bash(python3 -c ' *)",
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest -m \"not live_gemini\" --no-header -q)"
     ]
   }
 }

@@ -68,10 +68,23 @@ def _stub_gemini_helpers(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtur
     )
     monkeypatch.setattr(_llm, "classify_chat_temperature", lambda *a, **k: "warm")
     monkeypatch.setattr(_llm, "classify_assistant_run_invitation", lambda *a, **k: False)
-    # The hidden brief/config derivation helpers normally run in background
-    # threads and silently fall back when they fail — null them out so tests
-    # don't dispatch real network calls just to log a 401.
-    monkeypatch.setattr(_llm, "generate_problem_brief_update", lambda *a, **k: None)
+    # The consolidated chat-turn helper returns None on failure, which makes
+    # the router fall back to the multi-call path (already stubbed above).
+    # Forcing None here keeps tests on the same fallback path they used pre-
+    # consolidation, so existing chat-handler tests don't need to learn the
+    # new structured-output mock shape.
+    monkeypatch.setattr(_llm, "generate_consolidated_chat_turn", lambda *a, **k: None)
+    # Hidden brief/config derivation. ``generate_problem_brief_update`` now
+    # distinguishes "successful no-op" (empty turn) from "failure" (None) so
+    # the background derivation can surface processing_error on the failure
+    # path. Tests that don't set up a real Gemini stub want the no-op path —
+    # i.e. the LLM "decided" there was nothing to patch — so they don't see
+    # a spurious processing_error. Return an empty turn here.
+    from app.schemas import ProblemBriefUpdateTurn as _EmptyBriefTurn
+
+    monkeypatch.setattr(
+        _llm, "generate_problem_brief_update", lambda *a, **k: _EmptyBriefTurn()
+    )
     monkeypatch.setattr(_llm, "generate_config_from_brief", lambda *a, **k: None)
     yield
 

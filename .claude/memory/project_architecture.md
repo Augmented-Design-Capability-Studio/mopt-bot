@@ -24,9 +24,10 @@ type: project
 
 ## Problem Brief as Middle Layer
 - Single source of truth between chat and panel config
-- Structure: gathered_info, assumptions, open_questions (with status/answer)
-- Chat → Brief (LLM) → Config (deterministic derivation or LLM structured output)
-- Fallback: regex-based brief-to-config derivation if LLM structured output fails
+- Structure: gathered_info, assumptions, open_questions (with status/answer), and a top-level structured `goal_terms` map mirrored bidirectionally with the panel
+- Chat → Brief (LLM, per-port schema) → Config (deterministic derivation or LLM structured output)
+- Fallback: brief→config derivation reads `goal_terms` verbatim and structurally-tagged `config-*` items only — no regex/keyword text parsing
+- Per-rule prose items (e.g. VRPTW `config-driver-pref-*`) are synthesized deterministically from `goal_terms[key].properties` via `port.synthesize_brief_items_from_goal_terms`; stale rows pruned via `port.prose_id_prefixes_for_goal_term` id-prefix filter
 
 ## Workflow Mode Gating
 - **Agile intrinsic gate**: saved problem has ≥1 goal-term weight + non-empty algorithm

@@ -43,7 +43,7 @@ type ConfigPanelProps = {
   onCancelConfigEdit?: () => void;
   onLoadConfigFromLastRun?: () => void;
   onBookmarkSnapshot?: () => void | Promise<void>;
-  onRestoreFromSnapshot?: (snapshot: SnapshotSummary, source: "definition" | "config") => void;
+  onRestoreFromSnapshot?: (snapshot: SnapshotSummary, scope: "definition" | "config" | "both") => void;
   onLoadSnapshots?: () => void | Promise<void>;
   snapshots?: SnapshotSummary[];
   snapshotsLoading?: boolean;

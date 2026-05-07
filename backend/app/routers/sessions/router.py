@@ -710,84 +710,165 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             change_intent = True
             run_intent = None
             assistant_invites_run_now = False
+            # Default: pass the full user message into the brief-update pass.
+            # Overridden by the consolidated turn's clause-split when mixed-intent.
+            brief_update_user_text = body.content
+
+            # Fast path: button-posted phrases skip the LLM intent classifier entirely.
+            fixed_intents = intent.classify_fixed_phrase_intents(body.content)
+            if fixed_intents is not None:
+                cleanup_requested, clear_requested, change_intent = fixed_intents
+
             try:
                 from app.services.llm import (
                     classify_assistant_run_invitation,
                     classify_definition_intents,
                     classify_run_trigger_intent,
                     generate_chat_turn,
+                    generate_consolidated_chat_turn,
+                )
+                from app.schemas import RunTriggerIntentTurn
+
+                # Single consolidated structured call: visible reply + intent flags +
+                # run-trigger + run-invitation in one Gemini round-trip. Falls back
+                # to the multi-call path on failure (None return) so we never lose
+                # the visible reply because schema parsing tripped.
+                consolidated = generate_consolidated_chat_turn(
+                    body.content,
+                    hist,
+                    key,
+                    model,
+                    current_problem_brief,
+                    workflow_mode=row.workflow_mode,
+                    recent_runs_summary=recent_runs_summary or None,
+                    current_panel=current,
+                    researcher_steers=researcher_steers or None,
+                    cleanup_mode=cleanup_requested,
+                    is_run_acknowledgement=is_run_ack,
+                    is_tutorial_active=is_tutorial_active,
+                    test_problem_id=row.test_problem_id,
+                    run_button_enabled=run_button_enabled_for_chat,
+                    run_disabled_reason=run_disabled_reason_for_chat,
                 )
 
-                # Definition-intent must finish before Call 2 (its result parameterizes the
-                # visible-reply prompt). Run-trigger has no input dependency on Call 2 — fire
-                # it concurrently so the flash round-trip overlaps with the heavier reply
-                # generation. Auto-posted run-complete messages skip run-trigger entirely.
-                from concurrent.futures import ThreadPoolExecutor
-
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    defn_future = executor.submit(classify_definition_intents, body.content, key, model)
-                    run_intent_future = (
-                        None
-                        if is_run_ack
-                        else executor.submit(
-                            classify_run_trigger_intent,
-                            user_text=body.content,
-                            history_lines=hist,
-                            api_key=key,
-                            model_name=model,
-                            workflow_mode=row.workflow_mode,
+                if consolidated is not None:
+                    text = consolidated.assistant_message
+                    # Honour the fixed-phrase short-circuit when set; otherwise take
+                    # the LLM's flags. Run-ack messages are auto-posted and never
+                    # imply run-trigger intent regardless of model output.
+                    if fixed_intents is None:
+                        cleanup_requested = bool(consolidated.cleanup_intent)
+                        clear_requested = bool(consolidated.clear_intent)
+                        change_intent = bool(consolidated.is_change_intent)
+                    if not is_run_ack:
+                        run_intent = RunTriggerIntentTurn(
+                            should_trigger_run=bool(consolidated.should_trigger_run),
+                            intent_type=consolidated.intent_type,
+                            confidence=float(consolidated.confidence),
                         )
-                    )
+                        assistant_invites_run_now = bool(consolidated.is_run_invitation)
+                    # Clause split: if the model identified an edit-half within a
+                    # mixed-intent turn, the brief-update pass uses that narrow
+                    # text instead of the full message. The concept-question half
+                    # was already addressed in the visible reply and must not
+                    # contaminate the brief patch's scope.
+                    raw_change_clause = (consolidated.change_clause or "").strip()
+                    raw_question_clause = (consolidated.question_clause or "").strip()
+                    if raw_change_clause and raw_question_clause:
+                        # Mixed turn: scope brief-update to the change clause only.
+                        brief_update_user_text = raw_change_clause
+                    else:
+                        brief_update_user_text = body.content
+                    # If the model explicitly extracted a question clause but no
+                    # change clause, the message is concept-only — even if
+                    # is_change_intent stayed True, suppress the brief pipeline.
+                    if (
+                        fixed_intents is None
+                        and raw_question_clause
+                        and not raw_change_clause
+                    ):
+                        change_intent = False
+                else:
+                    # Fallback: parallel multi-call path (the pre-consolidation flow).
+                    # Reuse the existing helpers so any monkeypatch / stub still works.
+                    from concurrent.futures import ThreadPoolExecutor
 
-                    try:
-                        cleanup_requested, clear_requested, change_intent = defn_future.result()
-                    except Exception:
-                        log.exception("Definition-intent classification failed for session %s", session_id)
-
-                    try:
-                        turn = generate_chat_turn(
-                            body.content,
-                            hist,
-                            key,
-                            model,
-                            current_problem_brief,
-                            workflow_mode=row.workflow_mode,
-                            recent_runs_summary=recent_runs_summary or None,
-                            current_panel=current,
-                            researcher_steers=researcher_steers or None,
-                            cleanup_mode=cleanup_requested,
-                            is_run_acknowledgement=is_run_ack,
-                            is_tutorial_active=is_tutorial_active,
-                            test_problem_id=row.test_problem_id,
-                            run_button_enabled=run_button_enabled_for_chat,
-                            run_disabled_reason=run_disabled_reason_for_chat,
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        defn_future = (
+                            None
+                            if fixed_intents is not None
+                            else executor.submit(classify_definition_intents, body.content, key, model)
                         )
-                        text = turn.assistant_message
-                    except Exception:
-                        log.exception("Participant model turn failed for session %s", session_id)
+                        run_intent_future = (
+                            None
+                            if is_run_ack
+                            else executor.submit(
+                                classify_run_trigger_intent,
+                                user_text=body.content,
+                                history_lines=hist,
+                                api_key=key,
+                                model_name=model,
+                                workflow_mode=row.workflow_mode,
+                            )
+                        )
 
-                    if run_intent_future is not None:
+                        if defn_future is not None:
+                            try:
+                                cleanup_requested, clear_requested, change_intent = defn_future.result()
+                            except Exception:
+                                log.exception(
+                                    "Definition-intent classification failed for session %s",
+                                    session_id,
+                                )
+
                         try:
-                            run_intent = run_intent_future.result()
+                            turn = generate_chat_turn(
+                                body.content,
+                                hist,
+                                key,
+                                model,
+                                current_problem_brief,
+                                workflow_mode=row.workflow_mode,
+                                recent_runs_summary=recent_runs_summary or None,
+                                current_panel=current,
+                                researcher_steers=researcher_steers or None,
+                                cleanup_mode=cleanup_requested,
+                                is_run_acknowledgement=is_run_ack,
+                                is_tutorial_active=is_tutorial_active,
+                                test_problem_id=row.test_problem_id,
+                                run_button_enabled=run_button_enabled_for_chat,
+                                run_disabled_reason=run_disabled_reason_for_chat,
+                            )
+                            text = turn.assistant_message
                         except Exception:
-                            log.exception("Run-trigger intent classification failed for session %s", session_id)
+                            log.exception("Participant model turn failed for session %s", session_id)
+
+                        if run_intent_future is not None:
+                            try:
+                                run_intent = run_intent_future.result()
+                            except Exception:
+                                log.exception(
+                                    "Run-trigger intent classification failed for session %s",
+                                    session_id,
+                                )
+                    if not is_run_ack and run_intent is not None and run_intent.intent_type == "affirm_invite":
+                        try:
+                            assistant_invites_run_now = classify_assistant_run_invitation(
+                                assistant_text=text,
+                                api_key=key,
+                                model_name=model,
+                                workflow_mode=row.workflow_mode,
+                            )
+                        except Exception:
+                            log.exception(
+                                "Run-invitation classification failed for session %s",
+                                session_id,
+                            )
             except Exception:
                 log.exception("Participant turn pipeline failed for session %s", session_id)
             text = intent.sanitize_visible_assistant_reply(text)
             am = derivation.append_message(db, session_id, "assistant", text, True)
             out.append(MessageOut.model_validate(am))
-            # Run-invitation classification depends on both Call 2's text and Call 4's
-            # intent_type, so it stays sequential after the parallel block.
-            if not is_run_ack and run_intent is not None and run_intent.intent_type == "affirm_invite":
-                try:
-                    assistant_invites_run_now = classify_assistant_run_invitation(
-                        assistant_text=text,
-                        api_key=key,
-                        model_name=model,
-                        workflow_mode=row.workflow_mode,
-                    )
-                except Exception:
-                    log.exception("Run-invitation classification failed for session %s", session_id)
             # Trigger gating: the brief-update + panel-derivation pipelines are the
             # most expensive part of the per-turn cost.  If the user message was a
             # concept question / clarification (change_intent=False) AND no
@@ -936,7 +1017,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 derivation.launch_background_derivation(
                     session_id=session_id,
                     revision=revision,
-                    user_text=body.content,
+                    user_text=brief_update_user_text,
                     workflow_mode=row.workflow_mode,
                     api_key=key,
                     model_name=model,
@@ -1598,11 +1679,17 @@ def patch_participant_problem_brief(
         incoming_brief,
         row.workflow_mode,
     )
+    # Stage the brief on the row but DON'T commit yet — we want brief + panel
+    # to land atomically when the LLM derivation produces a structurally clean
+    # panel. If structural validation on the derived panel fails, we fall back
+    # to the deterministic per-port seed (which is hand-written and always
+    # structurally valid). Only if the seed itself is inconsistent with the
+    # current panel's locked state do we accept the brief alone and surface a
+    # Recover banner — preserving the participant's typed input across the
+    # rare derivation failure rather than rolling it back.
     row.problem_brief_json = json.dumps(next_problem_brief)
     helpers.settle_processing_state(row, cancel_revision=True)
     row.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(row)
 
     panel_sync_failed = False
     try:
@@ -1614,32 +1701,63 @@ def patch_participant_problem_brief(
             model_name=row.gemini_model or get_settings().default_gemini_model,
             workflow_mode=row.workflow_mode,
             preserve_missing_managed_fields=True,
+            commit=False,
         )
-    except sync.GoalTermValidationError as exc:
-        # The brief itself was already committed above. Don't fail the request
-        # just because the panel re-derivation can't validate — that turns a
-        # successful save into a confusing 422. Instead, surface the issue via
-        # `processing_error` so the Recover banner appears and the participant
-        # can clear the conflicting state in one click.
-        panel_sync_failed = True
-        helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
-        db.commit()
-        db.refresh(row)
-        derivation.append_message(
-            db,
-            session_id,
-            "assistant",
-            "Saved your Definition, but I couldn't re-derive Problem Config — the goal-term keys are "
-            "out of sync. Use the **Recover** button in the banner above the tabs to clear the "
-            "conflicting goal terms and re-derive a clean Problem Config.",
-            True,
-            kind="panel",
-        )
-    if not panel_sync_failed:
         helpers.settle_processing_state(row)
         row.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(row)
+    except sync.GoalTermValidationError as exc:
+        # The LLM-derived panel didn't validate structurally. Retry once with
+        # the deterministic seed (no LLM, no managed-field preservation) — the
+        # seed is hand-written per port and should always validate. If even
+        # that fails we accept the brief alone and surface a Recover banner;
+        # the participant's typed brief is preserved either way.
+        db.rollback()
+        db.refresh(row)
+        row.problem_brief_json = json.dumps(next_problem_brief)
+        helpers.settle_processing_state(row, cancel_revision=True)
+        row.updated_at = datetime.now(timezone.utc)
+        try:
+            sync.sync_panel_from_problem_brief(
+                row,
+                db,
+                next_problem_brief,
+                api_key=None,
+                model_name=None,
+                workflow_mode=row.workflow_mode,
+                preserve_missing_managed_fields=False,
+                commit=False,
+            )
+            helpers.settle_processing_state(row)
+            row.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(row)
+            log.warning(
+                "Brief PATCH for session %s recovered from goal-term validation via deterministic seed",
+                session_id,
+            )
+        except sync.GoalTermValidationError as exc2:
+            # Even the seed was rejected — accept the brief alone, leave panel
+            # stale, surface Recover banner.
+            db.rollback()
+            db.refresh(row)
+            row.problem_brief_json = json.dumps(next_problem_brief)
+            helpers.fail_processing_state(row, exc2.processing_error_text(), cancel_revision=True)
+            row.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(row)
+            panel_sync_failed = True
+            derivation.append_message(
+                db,
+                session_id,
+                "assistant",
+                "Saved your Definition, but I couldn't re-derive Problem Config — the goal-term keys are "
+                "out of sync. Use the **Recover** button in the banner above the tabs to clear the "
+                "conflicting goal terms and re-derive a clean Problem Config.",
+                True,
+                kind="panel",
+            )
 
     if helpers.sync_optimization_allowed_after_participant_mutation(row):
         db.commit()

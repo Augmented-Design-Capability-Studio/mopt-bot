@@ -474,9 +474,9 @@ export function useClientController() {
   }, []);
 
   const restoreFromSnapshot = useCallback(
-    (snap: SnapshotSummary, source: "definition" | "config") => {
+    (snap: SnapshotSummary, scope: "definition" | "config" | "both") => {
       setDefinitionEditBaseline(null);
-      void actions.restoreFromSnapshot(snap, source);
+      void actions.restoreFromSnapshot(snap, scope);
       void loadSnapshots();
     },
     [actions.restoreFromSnapshot, loadSnapshots],

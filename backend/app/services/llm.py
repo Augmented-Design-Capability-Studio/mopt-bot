@@ -39,6 +39,7 @@ from app.prompts.study_chat import (
 )
 from app.schemas import (
     ChatModelTurn,
+    ConsolidatedChatTurn,
     OpenQuestionClassification,
     OpenQuestionClassifierInput,
     OpenQuestionClassifierTurn,
@@ -291,6 +292,60 @@ _DEFINITION_INTENT_SYSTEM = (
     "Return ONLY valid JSON. cleanup_intent and clear_intent default to false; is_change_intent "
     "defaults to true (conservative — better to refresh the panel than miss a real edit)."
 )
+
+CONSOLIDATED_CHAT_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "ConsolidatedChatTurn",
+    "type": "object",
+    "properties": {
+        # `assistant_message` first so Gemini emits it before the structured tail —
+        # if a streaming consumer is added later, the visible reply is the first
+        # chunk available, and the model has the full text in context when it
+        # decides the intent flags.
+        "assistant_message": {
+            "type": "string",
+            "description": "Participant-visible reply.",
+        },
+        "cleanup_intent": {"type": "boolean"},
+        "clear_intent": {"type": "boolean"},
+        "is_change_intent": {"type": "boolean"},
+        "should_trigger_run": {"type": "boolean"},
+        "intent_type": {
+            "type": "string",
+            "enum": ["none", "affirm_invite", "direct_request"],
+        },
+        "confidence": {"type": "number"},
+        "is_run_invitation": {"type": "boolean"},
+        # Clause split for mixed-intent turns. Quoting the user's own words
+        # (lightly edited) keeps the brief-update LLM scoped to the edit half
+        # and avoids the concept-question half polluting brief patches.
+        "change_clause": {
+            "type": "string",
+            "description": (
+                "The portion of the user's message that asks for a brief / config "
+                "change. Quote or lightly paraphrase the user's own words. Empty "
+                "string when the message has no edit ask."
+            ),
+        },
+        "question_clause": {
+            "type": "string",
+            "description": (
+                "The portion of the user's message that is a concept question / "
+                "knowledge lookup / clarification. Empty string when the message "
+                "has no question."
+            ),
+        },
+    },
+    "required": [
+        "assistant_message",
+        "cleanup_intent",
+        "clear_intent",
+        "is_change_intent",
+        "should_trigger_run",
+        "intent_type",
+        "is_run_invitation",
+    ],
+}
+
 
 RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "title": "RunTriggerIntentTurn",
@@ -596,6 +651,7 @@ def _build_visible_chat_system_instruction(
         user_text=user_text,
         test_problem_id=test_problem_id,
         temperature=profile.temperature,
+        api_key=api_key,
     )
 
     parts = [
@@ -893,7 +949,14 @@ def generate_problem_brief_update(
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
     visible_assistant_message: str | None = None,
-) -> ProblemBriefUpdateTurn:
+) -> ProblemBriefUpdateTurn | None:
+    """Run the hidden brief-update structured call.
+
+    Returns ``None`` on any failure (network, timeout, parse error). Returns
+    an empty ``ProblemBriefUpdateTurn()`` only when the LLM legitimately
+    decided no patch was needed. Callers use the None-vs-empty distinction
+    to surface ``brief_status="failed"`` instead of silently no-opping.
+    """
     client = genai.Client(api_key=api_key)
     system_instruction = _build_brief_update_system_instruction(
         current_problem_brief=current_problem_brief,
@@ -937,8 +1000,8 @@ def generate_problem_brief_update(
             raise RuntimeError("Empty model response")
         return ProblemBriefUpdateTurn.model_validate_json(raw)
     except Exception as e:
-        log.warning("Brief-update structured call failed (%s); returning empty patch", e)
-        return ProblemBriefUpdateTurn()
+        log.warning("Brief-update structured call failed (%s); returning None to signal failure", e)
+        return None
 
 
 def classify_answered_open_questions(
@@ -1007,6 +1070,135 @@ def classify_answered_open_questions(
     except Exception as e:
         log.warning("OQ-classify structured call failed (%s); returning empty", e)
         return []
+
+
+_CONSOLIDATED_CHAT_OUTPUT_RULES = (
+    "## Output format\n"
+    "Return JSON only — no markdown fences around the JSON, no commentary outside the JSON object.\n"
+    "All fields below are required.\n"
+    "- `assistant_message` (string): the participant-visible reply. Write this first; "
+    "be conversational, concise, and follow every guardrail in the sections above. "
+    "Never include schema keys, JSON, or '```' fences inside `assistant_message` itself. "
+    "If the user asked a concept question, answer it briefly and stop.\n"
+    "- `cleanup_intent` (bool): true ONLY when the user explicitly asks to clean up, "
+    "deduplicate, consolidate, tidy, or reorganize Definition items / open questions.\n"
+    "- `clear_intent` (bool): true ONLY when the user explicitly asks to wipe Definition "
+    "content and start over (e.g. 'reset everything', 'forget what I told you').\n"
+    "- `is_change_intent` (bool): true when the user is asking the assistant to change the "
+    "problem definition or solver configuration (add/remove/edit goals, constraints, weights, "
+    "algorithm, settings). False for pure concept questions, knowledge lookups, clarifications, "
+    "or casual chat that doesn't ask for any edit. When in doubt, return true.\n"
+    "- `should_trigger_run` (bool): true ONLY when the user clearly intends to start a run NOW "
+    "(direct request, OR affirmative reply to a recent assistant invitation to run). Never true "
+    "for the auto-posted run-completion context lines that contain 'Run #N just completed'.\n"
+    "- `intent_type` (enum: none|affirm_invite|direct_request): the kind of run intent above. "
+    "Use 'none' when should_trigger_run is false.\n"
+    "- `confidence` (number 0..1): how confident you are in the run-intent classification.\n"
+    "- `is_run_invitation` (bool): true if `assistant_message` ITSELF asks the participant to "
+    "start/trigger/launch a run now (so the next turn's affirmative reply can auto-fire). "
+    "False for replies that only describe config changes or discuss possible future runs.\n"
+    "- `change_clause` (string): when the user's message mixes an edit ask with a concept "
+    "question (e.g. 'Yes, bump punctuality. Also, where do traffic times come from?'), put "
+    "the edit half here — quote or lightly paraphrase the user's own words, NEVER expand "
+    "their scope. If the user only asked a question or made small talk, leave this an empty "
+    "string. If the entire message is an edit ask, copy the message verbatim. This string "
+    "becomes the input to the hidden brief-update pass.\n"
+    "- `question_clause` (string): the concept-question half of a mixed-intent turn. Empty "
+    "string when the message has no question. The visible reply already addresses both "
+    "halves; this field is for downstream observability only."
+)
+
+
+def generate_consolidated_chat_turn(
+    user_text: str,
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    researcher_steers: list[str] | None = None,
+    cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
+    is_tutorial_active: bool = False,
+    test_problem_id: str | None = None,
+    run_button_enabled: bool | None = None,
+    run_disabled_reason: str | None = None,
+) -> ConsolidatedChatTurn | None:
+    """Single structured Gemini call: visible reply + intent flags.
+
+    Returns ``None`` on any failure (no key, network error, schema parse twice).
+    Callers should fall back to ``generate_visible_chat_reply`` plus
+    regex-based intent classification on ``None``.
+    """
+    if not api_key or not model_name:
+        return None
+
+    base_system = _build_visible_chat_system_instruction(
+        user_text=user_text,
+        current_problem_brief=current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
+        is_tutorial_active=is_tutorial_active,
+        test_problem_id=test_problem_id,
+        api_key=api_key,
+        model_name=model_name,
+        run_button_enabled=run_button_enabled,
+        run_disabled_reason=run_disabled_reason,
+    )
+    system_instruction = f"{base_system}\n\n{_CONSOLIDATED_CHAT_OUTPUT_RULES}"
+
+    client = genai.Client(api_key=api_key)
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=CONSOLIDATED_CHAT_TURN_RESPONSE_JSON_SCHEMA,
+    )
+
+    def _attempt() -> ConsolidatedChatTurn | None:
+        try:
+            chat = client.chats.create(
+                model=model_name,
+                config=config,
+                history=_history_to_contents(history_lines),
+            )
+            resp = chat.send_message(user_text)
+        except Exception as exc:
+            log.warning("Consolidated chat-turn call failed (%s)", exc)
+            return None
+        # `resp.parsed` is the SDK's pre-validated dict; fall back to raw text.
+        parsed: Any = resp.parsed
+        if parsed is None:
+            raw = resp.text or ""
+            if not raw.strip():
+                return None
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+        if isinstance(parsed, ConsolidatedChatTurn):
+            return parsed
+        if isinstance(parsed, dict):
+            try:
+                return ConsolidatedChatTurn.model_validate(parsed)
+            except Exception as exc:
+                log.warning("Consolidated chat-turn validation failed (%s)", exc)
+                return None
+        return None
+
+    turn = _attempt()
+    if turn is not None:
+        return turn
+    # One retry — same SDK call, fresh chat session, no extra prompt mutation.
+    # Schema parse failures are usually transient (truncated response, model
+    # paraphrasing the schema) and clear on a second sample.
+    log.info("Consolidated chat-turn first attempt failed; retrying once")
+    return _attempt()
 
 
 def generate_chat_turn(
@@ -1196,6 +1388,13 @@ def classify_definition_intents(
     ``is_change_intent=True`` conservatively so we don't drop a real edit.
     """
     from app.routers.sessions import intent as _intent
+
+    # Fast path: the Definition-cleanup button posts a fixed string. No LLM call
+    # is needed to classify it — both buttons (cleanup-definition, clear-state)
+    # have stable, exact-match phrasings the frontend controls.
+    fixed = _intent.classify_fixed_phrase_intents(content)
+    if fixed is not None:
+        return fixed
 
     if not api_key or not model_name:
         return (

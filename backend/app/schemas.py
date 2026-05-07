@@ -189,6 +189,39 @@ class RunTriggerIntentTurn(BaseModel):
     rationale: str = ""
 
 
+class ConsolidatedChatTurn(BaseModel):
+    """One structured Gemini call returning visible reply + intent flags.
+
+    Replaces the per-turn fan-out of (visible_reply, definition_intents,
+    run_trigger_intent, run_invitation_classification) with a single
+    structured response. Brief and config derivation still happen separately
+    in the background to preserve the chat-fast-path latency model.
+    """
+
+    assistant_message: str = Field(..., max_length=32000)
+    # Intent flags driving the brief/panel pipelines and the cleanup/clear paths.
+    cleanup_intent: bool = False
+    clear_intent: bool = False
+    # Conservative default True so missing fields don't silently drop a real edit.
+    is_change_intent: bool = True
+    # Run-trigger intent.
+    should_trigger_run: bool = False
+    intent_type: Literal["none", "affirm_invite", "direct_request"] = "none"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Whether the assistant_message itself solicits the participant to run now.
+    # Used downstream to decide whether an `affirm_invite` from the user (the
+    # next turn) should auto-fire a run.
+    is_run_invitation: bool = False
+    # Clause split for mixed-intent turns ("Yes, change X. Also, what is Y?").
+    # `change_clause` is fed into the hidden brief-update LLM as the canonical
+    # user_text for that pass — keeps the brief pipeline narrowly scoped to the
+    # user's actual edit ask. `question_clause` carries the concept-question half
+    # for downstream observability (currently logged; the visible reply already
+    # answered it). Both null means a pure single-intent turn.
+    change_clause: str | None = None
+    question_clause: str | None = None
+
+
 class ProblemBriefUpdateTurn(BaseModel):
     """Structured hidden Gemini reply for brief extraction/update only."""
 

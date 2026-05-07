@@ -849,6 +849,20 @@ def _normalize_goal_term_entry(raw: Any) -> dict[str, Any] | None:
                 out["rank"] = rank
         except (TypeError, ValueError):
             pass
+    evidence_raw = raw.get("evidence_item_ids")
+    if isinstance(evidence_raw, list):
+        evidence_ids: list[str] = []
+        seen: set[str] = set()
+        for eid in evidence_raw:
+            if not isinstance(eid, str):
+                continue
+            cleaned = eid.strip()
+            if not cleaned or cleaned in seen:
+                continue
+            evidence_ids.append(cleaned)
+            seen.add(cleaned)
+        if evidence_ids:
+            out["evidence_item_ids"] = evidence_ids
     props_raw = raw.get("properties")
     if isinstance(props_raw, dict):
         normalized_props: dict[str, Any] = {}

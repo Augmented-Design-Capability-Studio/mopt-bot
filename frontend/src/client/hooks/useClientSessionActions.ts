@@ -639,58 +639,62 @@ export function useClientSessionActions({
   };
 
   const restoreFromSnapshot = useCallback(
-    async (snapshot: SnapshotSummary, source: "definition" | "config") => {
+    async (snapshot: SnapshotSummary, scope: "definition" | "config" | "both") => {
       if (!token || !sessionId || session?.status === "terminated") return;
       const timeStr = formatSnapshotTime(snapshot.created_at);
+      const restoreDefinition = scope === "definition" || scope === "both";
+      const restoreConfig = scope === "config" || scope === "both";
+      const brief = snapshot.problem_brief;
+      const panel = snapshot.panel_config;
+      if (restoreDefinition && (!brief || typeof brief !== "object")) {
+        setError("Snapshot has no definition data.");
+        return;
+      }
+      if (restoreConfig && (!panel || typeof panel !== "object")) {
+        setError("Snapshot has no config data.");
+        return;
+      }
       setBusy(true);
       setClientOps((prev) => ({ ...prev, restoringSnapshot: true }));
       try {
-        if (source === "definition") {
-          const brief = snapshot.problem_brief;
-          if (!brief || typeof brief !== "object") {
-            setError("Snapshot has no definition data.");
-            return;
-          }
+        let nextSession: Session | null = null;
+        if (restoreDefinition) {
           const acknowledgement = `Restored definition from snapshot (${timeStr}).`;
-          const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
+          nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
             method: "PATCH",
             body: JSON.stringify({ problem_brief: brief, acknowledgement }),
           });
-          setSession(nextSession);
-          problemPanelHydrationRef.current = "follow";
-          setConfigText(sessionPanelToConfigText(nextSession.panel_config));
-          setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
-          setEditMode("none");
-          if (invokeModel) {
-            await postContextMessage(
-              `I just restored the problem definition from a snapshot (${timeStr}). Please acknowledge the restored gathered info and assumptions.`,
-              true,
-              { skipHiddenBriefUpdate: true },
-            );
-          }
-        } else {
-          const panel = snapshot.panel_config;
-          if (!panel || typeof panel !== "object") {
-            setError("Snapshot has no config data.");
-            return;
-          }
+        }
+        if (restoreConfig) {
           const acknowledgement = `Restored config from snapshot (${timeStr}).`;
-          const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/panel`, token, {
+          nextSession = await apiFetch<Session>(`/sessions/${sessionId}/panel`, token, {
             method: "PATCH",
             body: JSON.stringify({ panel_config: panel, acknowledgement }),
           });
+        }
+        if (nextSession) {
           setSession(nextSession);
           problemPanelHydrationRef.current = "follow";
           setConfigText(sessionPanelToConfigText(nextSession.panel_config));
           setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
           setEditMode("none");
-          if (invokeModel) {
-            await postContextMessage(
-              `I just restored the problem configuration from a snapshot (${timeStr}). Please acknowledge the change and briefly explain the expected impact on the solver.`,
-              true,
-              { skipHiddenBriefUpdate: true },
-            );
+        }
+        if (invokeModel) {
+          let chatMessage: string;
+          if (scope === "both") {
+            chatMessage = `I just restored both the problem definition and configuration from a snapshot (${timeStr}). Please acknowledge the restored gathered info, assumptions, and solver setup, and briefly explain the expected impact on the solver.`;
+          } else if (scope === "definition") {
+            const mismatchNote = snapshot.has_config
+              ? " The matching solver configuration from that snapshot was NOT restored, so the current config may no longer line up with this definition — flag any likely mismatches."
+              : "";
+            chatMessage = `I just restored the problem definition from a snapshot (${timeStr}). Please acknowledge the restored gathered info and assumptions.${mismatchNote}`;
+          } else {
+            const mismatchNote = brief && typeof brief === "object"
+              ? " The matching problem definition from that snapshot was NOT restored, so the current definition may no longer line up with this config — flag any likely mismatches."
+              : "";
+            chatMessage = `I just restored the problem configuration from a snapshot (${timeStr}). Please acknowledge the change and briefly explain the expected impact on the solver.${mismatchNote}`;
           }
+          await postContextMessage(chatMessage, true, { skipHiddenBriefUpdate: true });
         }
       } catch (error) {
         setError(error instanceof Error ? error.message : "Restore failed");

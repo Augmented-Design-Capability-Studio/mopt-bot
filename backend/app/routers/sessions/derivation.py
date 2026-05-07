@@ -233,16 +233,17 @@ def apply_open_question_cleanup_pass(
                 cleanup_mode=True,
                 test_problem_id=test_problem_id,
             )
-            llm_used = True
-            patch = turn.problem_brief_patch if isinstance(turn.problem_brief_patch, dict) else None
-            if patch is not None and "open_questions" in patch:
-                candidate = merge_problem_brief_patch(
-                    base,
-                    {"open_questions": patch.get("open_questions"), "replace_open_questions": True},
-                )
-                if len(candidate.get("open_questions") or []) <= len(base.get("open_questions") or []):
-                    base = candidate
-                    llm_pruned = True
+            if turn is not None:
+                llm_used = True
+                patch = turn.problem_brief_patch if isinstance(turn.problem_brief_patch, dict) else None
+                if patch is not None and "open_questions" in patch:
+                    candidate = merge_problem_brief_patch(
+                        base,
+                        {"open_questions": patch.get("open_questions"), "replace_open_questions": True},
+                    )
+                    if len(candidate.get("open_questions") or []) <= len(base.get("open_questions") or []):
+                        base = candidate
+                        llm_pruned = True
         except Exception:
             log.exception("Open-question cleanup model pass failed")
     cleaned, cleanup_meta = cleanup_open_questions(
@@ -253,6 +254,47 @@ def apply_open_question_cleanup_pass(
         "llm_pruned": llm_pruned,
         **cleanup_meta,
     }
+
+
+def _patch_likely_resolves_open_questions(
+    base_problem_brief: dict[str, Any],
+    patch_payload: dict[str, Any],
+) -> bool:
+    """Heuristic gate for the second-pass OQ-cleanup LLM call.
+
+    The second LLM pass (`apply_open_question_cleanup_pass` with
+    `infer_resolved=True`) is only useful when the patch plausibly resolves
+    some open question. It's pure waste on patches that only edit weights,
+    swap algorithms, or refine prose. We approximate "could resolve an OQ"
+    as: the patch touches `open_questions`, OR adds at least one new
+    `gathered` row (the typical shape of a fact that retires an OQ).
+
+    Conservative bias: when in doubt, return True so the deterministic
+    backstop's `infer_resolved=True` path runs. The cost we're avoiding is
+    the LLM round-trip, not the deterministic check.
+    """
+    if not isinstance(patch_payload, dict):
+        return False
+    if "open_questions" in patch_payload:
+        return True
+    incoming_items = patch_payload.get("items")
+    if not isinstance(incoming_items, list):
+        return False
+    base_ids = {
+        str(item.get("id") or "")
+        for item in (base_problem_brief.get("items") or [])
+        if isinstance(item, dict)
+    }
+    for item in incoming_items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "").strip().lower() != "gathered":
+            continue
+        item_id = str(item.get("id") or "")
+        if item_id and item_id in base_ids:
+            continue
+        return True
+    return False
 
 
 def apply_brief_patch_with_cleanup(
@@ -273,10 +315,48 @@ def apply_brief_patch_with_cleanup(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
+
+    The second-pass OQ cleanup LLM call is skipped on chat-turn patches that
+    don't plausibly resolve any open question (weights-only edits, algorithm
+    swaps, prose tweaks). It still runs unconditionally for explicit cleanup,
+    run acknowledgements, and patches that touch open_questions or add new
+    gathered rows.
     """
+    from app.services.goal_term_anchoring import filter_unanchored_new_goal_terms
+
     merged = merge_problem_brief_patch(base_problem_brief, patch_payload)
     merged = _synthesize_goal_term_prose_items(merged, test_problem_id)
-    if not enable_auto_open_question_cleanup or merged == base_problem_brief:
+    # Anchor check: drop newly-added goal_terms keys that have no evidence in
+    # `items[]` (explicit `evidence_item_ids` cite, self-anchored properties,
+    # or embedding cosine fallback). Existing keys in the prior brief are
+    # untouched. This is the brief-side gate; sync.py applies the same gate
+    # on the panel-derive side.
+    proposed_goal_terms = merged.get("goal_terms") if isinstance(merged.get("goal_terms"), dict) else {}
+    if proposed_goal_terms:
+        filtered, dropped = filter_unanchored_new_goal_terms(
+            base_brief=base_problem_brief,
+            proposed_goal_terms=proposed_goal_terms,
+            items=list(merged.get("items") or []),
+            workflow_mode=workflow_mode,
+            api_key=api_key,
+        )
+        if dropped:
+            log.warning(
+                "Brief patch dropped unanchored goal_terms keys: %s",
+                dropped,
+            )
+            merged = dict(merged)
+            merged["goal_terms"] = filtered
+    skip_oq_cleanup_pass = (
+        not enable_auto_open_question_cleanup
+        or merged == base_problem_brief
+        or (
+            not cleanup_mode
+            and not is_run_acknowledgement
+            and not _patch_likely_resolves_open_questions(base_problem_brief, patch_payload)
+        )
+    )
+    if skip_oq_cleanup_pass:
         consolidated, run_meta = consolidate_run_summary(
             merged,
             recent_runs_summary=recent_runs_summary,
@@ -475,6 +555,20 @@ def _run_background_derivation(
             )
         except FuturesTimeoutError as exc:
             raise TimeoutError("Brief derivation timed out") from exc
+
+        # `brief_turn is None` means the structured call failed (network /
+        # parse / SDK error) — distinct from `brief_turn` returning empty
+        # which means the LLM legitimately decided no patch was needed.
+        # Surface the failure path so the participant gets a retry chip
+        # instead of silently no-op.
+        if brief_turn is None:
+            persist_processing_failure(
+                session_id,
+                revision,
+                "Brief-update structured call failed",
+            )
+            return
+
         patch_payload: dict[str, Any] | None = None
         if brief_turn.problem_brief_patch:
             patch_payload = dict(brief_turn.problem_brief_patch)

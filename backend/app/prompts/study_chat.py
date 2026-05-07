@@ -814,6 +814,18 @@ Rules:
   `problem_brief_patch.items` as `kind: "gathered"` and drop that question from
   `open_questions` (use `replace_open_questions=true` when you emit a full replacement list).
   Never use `(Answered: …)` suffixes in open-question text.
+- **Anchor every new goal_term to a brief items[] row.** When you introduce a
+  goal_terms entry that wasn't already in the brief (e.g. adding
+  `lateness_penalty` because the user just asked for tighter punctuality),
+  emit a matching `gathered`/`assumption` row in the same patch AND populate
+  `goal_terms[<key>].evidence_item_ids` with the id of that row (or any
+  existing items[] row that already justifies the term). At least one valid
+  cite is required for newly-introduced keys; the server drops unanchored
+  newcomers silently. Existing keys can omit the field — only adds need to
+  cite. In waterfall, only `gathered` rows count as evidence (no assumptions);
+  in agile/demo, both `gathered` and `assumption` count. Never invent ids:
+  if you're adding the row in this same patch, set its `id` and reference
+  the same string under `evidence_item_ids`.
 """.strip()
 
 # Appended to the hidden brief-update system instruction only (not the visible chat turn).
