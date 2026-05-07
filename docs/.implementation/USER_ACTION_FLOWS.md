@@ -532,6 +532,10 @@ The filter only drops **newly-introduced** keys (not in `base_brief.goal_terms`)
 2. **Self-anchored properties** — `worker_preference` with non-empty `properties.driver_preferences`, or `shift_limit` with `properties.max_shift_hours` set. The structured rule list is its own justification; no separate prose row is required.
 3. **Embedding cosine fallback** — best-effort. `text-embedding-004` cosine of `(key + label)` against each item text; threshold 0.55. Silently no-ops without an API key (caller's `change_clause` short-circuit will keep most concept-only turns from reaching this code path anyway).
 
+**Search-strategy grounding (separate gate).** Algorithm/epochs/pop_size/algorithm_params don't live under `goal_terms` so they're not covered by `evidence_item_ids`. A simpler deterministic gate runs in `_merge_non_destructive_managed_fields`: if no brief item names a known algorithm (case-insensitive substring match on canonical names + aliases via `algorithm_mentioned_in_brief`), the LLM-derived search-strategy fields are dropped and the current panel values preserved. Closed 5-algorithm vocabulary; word-boundary checks on the short aliases (`ga`, `sa`, `pso`, `acor`) prevent false positives like "garbage" or "psoriasis".
+
+**Panel-sanitize evidence preservation.** `_rebuild_goal_terms_metadata` (`vrptw_problem/study_bridge.py`) rebuilds `goal_terms` from `weights` + `constraint_types` after every panel save. It reads the prior `goal_terms` map so that `evidence_item_ids` (and any other opaque fields the schema declares) survive the rebuild — manual retunes therefore keep their cite trail intact across saves.
+
 ### LLM contract (single source of truth)
 
 `vrptw_problem/study_prompts.DRIVER_PREFERENCES_BRIEF_CONTRACT` is imported by both `VRPTW_STUDY_PROMPT_APPENDIX` (chat / brief-update side) and `VRPTW_CONFIG_DERIVE_SYSTEM_PROMPT` (panel-derive side). The contract names the exact path, the per-rule fields, and the no-prose-duplication rule — the two prompts can never drift because they share the same string. Future ports add their own contract constant alongside their problem module.

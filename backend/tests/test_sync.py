@@ -161,7 +161,16 @@ def test_sync_preserves_manual_termination_and_init_controls(monkeypatch):
     panel, _warnings = sync.sync_panel_from_problem_brief(
         row=row,
         db=_DummyDb(),
-        problem_brief={"items": []},
+        problem_brief={
+            "items": [
+                {
+                    "id": "i-algo",
+                    "kind": "gathered",
+                    "source": "user",
+                    "text": "Switch to particle swarm (PSO) for the next run.",
+                }
+            ]
+        },
         api_key=None,
         model_name=None,
         preserve_missing_managed_fields=True,

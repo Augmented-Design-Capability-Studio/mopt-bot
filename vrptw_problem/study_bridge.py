@@ -319,6 +319,16 @@ def _rebuild_goal_terms_metadata(problem: dict[str, Any]) -> None:
         else []
     )
     locked_set = set(locked_goal_terms)
+    # Preserve fields the rebuild can't reconstruct from weights+constraint_types
+    # (notably `evidence_item_ids` — the cite-trail set by the brief-update LLM)
+    # by carrying them over from the prior `goal_terms` map keyed on the same
+    # term name. Without this every panel save wipes the trail and forces the
+    # next brief-update LLM to re-cite from scratch.
+    prior_goal_terms = (
+        problem.get("goal_terms")
+        if isinstance(problem.get("goal_terms"), dict)
+        else {}
+    )
     goal_terms: dict[str, Any] = {}
     order = (
         [k for k in problem.get("goal_term_order", []) if isinstance(k, str)]
@@ -351,6 +361,22 @@ def _rebuild_goal_terms_metadata(problem: dict[str, Any]) -> None:
             props["max_shift_hours"] = float(problem.get("max_shift_hours"))
         if props:
             entry["properties"] = props
+        prior_entry = prior_goal_terms.get(key) if isinstance(prior_goal_terms, dict) else None
+        if isinstance(prior_entry, dict):
+            evidence_raw = prior_entry.get("evidence_item_ids")
+            if isinstance(evidence_raw, list):
+                cleaned: list[str] = []
+                seen: set[str] = set()
+                for eid in evidence_raw:
+                    if not isinstance(eid, str):
+                        continue
+                    eid_s = eid.strip()
+                    if not eid_s or eid_s in seen:
+                        continue
+                    cleaned.append(eid_s)
+                    seen.add(eid_s)
+                if cleaned:
+                    entry["evidence_item_ids"] = cleaned
         goal_terms[key] = entry
     if goal_terms:
         problem["goal_terms"] = goal_terms

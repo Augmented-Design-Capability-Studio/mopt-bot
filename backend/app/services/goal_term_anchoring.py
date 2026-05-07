@@ -27,6 +27,28 @@ _AGILE_LIKE_MODES = frozenset({"agile", "demo"})
 # item mentions drivers/preferences), not to gate every borderline match.
 _EMBEDDING_ANCHOR_THRESHOLD = 0.55
 
+# Canonical MEALpy algorithm names + aliases the participant might use.
+# Closed vocabulary by design (5 algorithms only). Matching is case-insensitive
+# substring against item text — robust enough for this small a key set, and
+# avoids reintroducing the brittle regex-against-NL patterns we've been moving
+# away from for everything else.
+_ALGORITHM_BRIEF_ALIASES: tuple[str, ...] = (
+    "ga",
+    "genetic algorithm",
+    "genetic search",
+    "evolutionary search",
+    "pso",
+    "particle swarm",
+    "swarm search",
+    "sa",
+    "simulated annealing",
+    "annealing search",
+    "swarmsa",
+    "swarm-based simulated annealing",
+    "acor",
+    "ant colony",
+)
+
 
 def evidence_kinds_for_workflow(workflow_mode: str | None) -> frozenset[str]:
     mode = str(workflow_mode or "").strip().lower()
@@ -238,3 +260,45 @@ def filter_unanchored_new_goal_terms(
             workflow_mode,
         )
     return filtered, dropped
+
+
+def algorithm_mentioned_in_brief(items: list[dict[str, Any]] | None) -> bool:
+    """Return True iff at least one brief item names a known search algorithm.
+
+    Used by the panel-derive merge to decide whether the LLM is allowed to
+    overwrite the current panel's algorithm / epochs / pop_size /
+    algorithm_params fields. If no item names an algorithm, the LLM's choice
+    is treated as unsolicited and the current panel value is preserved.
+
+    Closed 5-algorithm vocabulary; case-insensitive substring match. Word-
+    boundary checked for the short aliases (`ga`, `sa`, `pso`, `acor`) to
+    avoid false positives like "garbage" or "psoriasis".
+    """
+    if not isinstance(items, list):
+        return False
+    short_aliases = frozenset({"ga", "sa", "pso", "acor"})
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").lower()
+        if not text:
+            continue
+        for alias in _ALGORITHM_BRIEF_ALIASES:
+            if alias not in text:
+                continue
+            if alias in short_aliases:
+                # Require word boundaries for the 2-3 char acronyms.
+                idx = 0
+                while True:
+                    pos = text.find(alias, idx)
+                    if pos < 0:
+                        break
+                    before_ok = pos == 0 or not text[pos - 1].isalnum()
+                    after_pos = pos + len(alias)
+                    after_ok = after_pos >= len(text) or not text[after_pos].isalnum()
+                    if before_ok and after_ok:
+                        return True
+                    idx = pos + 1
+            else:
+                return True
+    return False

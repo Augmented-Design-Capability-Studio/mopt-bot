@@ -366,6 +366,35 @@ def _merge_non_destructive_managed_fields(
             continue
         if key not in merged and key in current_problem:
             merged[key] = deepcopy(current_problem[key])
+    # Search-strategy grounding: the LLM is told to derive algorithm /
+    # epochs / pop_size / params only when the brief names an algorithm, but
+    # it sometimes switches GA→PSO mid-conversation off a casual mention.
+    # Enforce server-side: if no brief item names an algorithm (canonical or
+    # alias), treat the LLM's search-strategy choice as unsolicited and keep
+    # the current panel's values. Existing terms are unaffected.
+    if problem_brief is not None:
+        from app.services.goal_term_anchoring import algorithm_mentioned_in_brief
+
+        items_for_check = list((problem_brief or {}).get("items") or [])
+        if not algorithm_mentioned_in_brief(items_for_check):
+            search_strategy_keys = ("algorithm", "epochs", "pop_size", "algorithm_params")
+            switched: list[str] = []
+            for key in search_strategy_keys:
+                derived_val = merged.get(key)
+                current_val = current_problem.get(key)
+                if derived_val is None:
+                    continue
+                if current_val is not None and derived_val != current_val:
+                    switched.append(key)
+                    merged[key] = deepcopy(current_val)
+                elif current_val is None and key != "algorithm":
+                    # No prior value for budget/params is fine — fresh derive.
+                    pass
+            if switched:
+                log.info(
+                    "Panel-derive preserved current search strategy (no algorithm mention in brief): %s",
+                    switched,
+                )
     return merged
 
 

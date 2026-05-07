@@ -79,7 +79,7 @@ Drivers are salaried. Trucks are loaded once at the depot at the start of the da
 
 30 orders total. Each order has a delivery zone, a size in capacity units, a priority (express or standard), a time window during which the driver should arrive, and a service time.
 
-If a driver arrives before the time window opens, they wait until it opens, then perform the service.
+Drivers time their departures so they arrive no earlier than a stop's window opening — they rest or idle at their current location beforehand rather than driving ahead and waiting on-site.
 
 ### Order list
 
