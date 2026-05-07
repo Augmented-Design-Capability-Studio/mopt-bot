@@ -648,3 +648,234 @@ def test_surface_problem_brief_warm_unmodified_reference():
     b = default_problem_brief("vrptw")
     out = surface_problem_brief_for_chat_prompt(b, cold=False)
     assert out is b
+
+
+# ---------------------------------------------------------------------------
+# goal_terms structured carrier (driver_preferences fix)
+# ---------------------------------------------------------------------------
+
+
+def _well_formed_alice_zone_d_rule():
+    return {
+        "vehicle_idx": 0,
+        "condition": "avoid_zone",
+        "zone": 4,
+        "penalty": 50,
+    }
+
+
+def test_normalize_preserves_goal_terms_with_driver_preferences():
+    raw = _minimal_brief_payload(
+        goal_terms={
+            "worker_preference": {
+                "weight": 1.0,
+                "type": "soft",
+                "properties": {
+                    "driver_preferences": [_well_formed_alice_zone_d_rule()],
+                },
+            }
+        },
+    )
+    out = normalize_problem_brief(raw)
+    rules = out["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
+    assert len(rules) == 1
+    assert rules[0]["vehicle_idx"] == 0
+    assert rules[0]["zone"] == 4
+    assert out["goal_terms"]["worker_preference"]["type"] == "soft"
+
+
+def test_normalize_drops_malformed_driver_preference_keeps_well_formed():
+    raw = _minimal_brief_payload(
+        goal_terms={
+            "worker_preference": {
+                "weight": 1.0,
+                "type": "soft",
+                "properties": {
+                    "driver_preferences": [
+                        _well_formed_alice_zone_d_rule(),
+                        {"vehicle_idx": 99, "condition": "avoid_zone", "zone": 4, "penalty": 1},  # bad vid
+                        {"vehicle_idx": 1, "condition": "bogus", "penalty": 1},  # bad condition
+                        {"vehicle_idx": 1, "condition": "avoid_zone", "zone": 9, "penalty": 1},  # bad zone
+                        {"vehicle_idx": 1, "condition": "avoid_zone", "zone": 2, "penalty": -5},  # negative penalty
+                    ],
+                },
+            }
+        },
+    )
+    out = normalize_problem_brief(raw)
+    rules = out["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
+    assert len(rules) == 1
+    assert rules[0]["zone"] == 4
+
+
+def test_normalize_drops_malformed_goal_term_entry_keeps_others():
+    raw = _minimal_brief_payload(
+        goal_terms={
+            "worker_preference": {"weight": 1.0, "type": "soft"},
+            "broken": {"type": "objective"},  # missing weight → drop entry
+            "travel_time": {"weight": 5.0, "type": "objective"},
+        },
+    )
+    out = normalize_problem_brief(raw)
+    assert "broken" not in out["goal_terms"]
+    assert set(out["goal_terms"].keys()) == {"worker_preference", "travel_time"}
+
+
+def test_merge_goal_terms_deep_merges_per_key():
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            goal_terms={
+                "travel_time": {"weight": 5.0, "type": "objective"},
+                "worker_preference": {
+                    "weight": 1.0,
+                    "type": "soft",
+                    "properties": {
+                        "driver_preferences": [_well_formed_alice_zone_d_rule()],
+                    },
+                },
+            },
+        )
+    )
+    # Patch only worker_preference; travel_time must survive untouched.
+    merged = merge_problem_brief_patch(
+        base,
+        {
+            "goal_terms": {
+                "worker_preference": {
+                    "weight": 2.0,
+                    "type": "soft",
+                    "properties": {
+                        "driver_preferences": [
+                            {
+                                "vehicle_idx": 1,
+                                "condition": "order_priority",
+                                "order_priority": "express",
+                                "penalty": 10,
+                            }
+                        ]
+                    },
+                }
+            }
+        },
+    )
+    # travel_time preserved.
+    assert merged["goal_terms"]["travel_time"]["weight"] == 5.0
+    # worker_preference top-level updated.
+    assert merged["goal_terms"]["worker_preference"]["weight"] == 2.0
+    # driver_preferences replaced wholesale (atomic list semantics).
+    rules = merged["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
+    assert len(rules) == 1
+    assert rules[0]["condition"] == "order_priority"
+
+
+def test_merge_goal_terms_preserves_untouched_property_siblings():
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            goal_terms={
+                "shift_limit": {
+                    "weight": 1.0,
+                    "type": "soft",
+                    "properties": {"max_shift_hours": 8.0},
+                },
+            },
+        )
+    )
+    # Patch only adds a different property — max_shift_hours must survive.
+    # (No other property is currently meaningful for shift_limit, so simulate
+    # with an unknown forward-compat property.)
+    merged = merge_problem_brief_patch(
+        base,
+        {
+            "goal_terms": {
+                "shift_limit": {
+                    "weight": 1.5,
+                    "type": "soft",
+                    "properties": {"future_field": "x"},
+                }
+            }
+        },
+    )
+    props = merged["goal_terms"]["shift_limit"]["properties"]
+    assert props["max_shift_hours"] == 8.0
+    assert props["future_field"] == "x"
+
+
+def test_merge_goal_terms_replace_flag_overwrites_full_map():
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            goal_terms={
+                "travel_time": {"weight": 5.0, "type": "objective"},
+                "worker_preference": {"weight": 1.0, "type": "soft"},
+            },
+        )
+    )
+    merged = merge_problem_brief_patch(
+        base,
+        {
+            "replace_goal_terms": True,
+            "goal_terms": {
+                "lateness_penalty": {"weight": 7.0, "type": "objective"},
+            },
+        },
+    )
+    assert set(merged["goal_terms"].keys()) == {"lateness_penalty"}
+
+
+def test_brief_items_from_panel_reads_goal_terms_when_legacy_weights_absent():
+    """R4: post-sanitize panels have only goal_terms; brief items must still emit."""
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "worker_preference": {"weight": 5.0, "type": "soft"},
+                "travel_time": {"weight": 3.0, "type": "objective"},
+            },
+        }
+    }
+    items = _brief_items_from_panel(panel, test_problem_id="vrptw")
+    item_ids = {it["id"] for it in items}
+    assert "config-weight-worker_preference" in item_ids
+    assert "config-weight-travel_time" in item_ids
+    # Constraint type pulled from goal_terms[key].type
+    wp_item = next(it for it in items if it["id"] == "config-weight-worker_preference")
+    assert "soft" in wp_item["text"].lower()
+
+
+def test_brief_items_from_panel_goal_terms_wins_over_legacy_weights():
+    """R4: if both goal_terms and legacy weights are present, goal_terms wins."""
+    panel = {
+        "problem": {
+            "weights": {"worker_preference": 1.0},
+            "goal_terms": {"worker_preference": {"weight": 5.0, "type": "soft"}},
+        }
+    }
+    items = _brief_items_from_panel(panel, test_problem_id="vrptw")
+    wp_item = next(it for it in items if it["id"] == "config-weight-worker_preference")
+    assert "weight 5.0" in wp_item["text"]
+    assert "weight 1.0" not in wp_item["text"]
+
+
+def test_sync_problem_brief_from_panel_mirrors_goal_terms():
+    """Manual UI-side preference adds become first-class brief data."""
+    base = default_problem_brief("vrptw")
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "worker_preference": {
+                    "weight": 5.0,
+                    "type": "soft",
+                    "properties": {
+                        "driver_preferences": [_well_formed_alice_zone_d_rule()],
+                    },
+                }
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    rules = out["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
+    assert rules == [_well_formed_alice_zone_d_rule()]
+    assert out["goal_terms"]["worker_preference"]["weight"] == 5.0
+
+
+def test_default_problem_brief_includes_empty_goal_terms():
+    b = default_problem_brief("vrptw")
+    assert b["goal_terms"] == {}

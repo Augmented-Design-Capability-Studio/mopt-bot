@@ -75,3 +75,16 @@ like and you want the next run to refine it rather than rediscover it.
 - "Which one change has the highest expected impact next?"
 - "What is the smallest tweak that would reduce lateness without hurting travel time?"
 - "Walk me through how the evaluator scores a schedule."
+
+## Typical starting weights (importance levels) for fleet scheduling
+
+When you haven't expressed a preference yet, here are the weight magnitudes I start with for each priority:
+
+- Travel time / fuel: around **1** — the baseline trade-off objective.
+- Workload balance across drivers: around **10**.
+- Time-window lateness: around **50** (per minute beyond the window).
+- Express / VIP order misses: around **100** (per missed deadline).
+- Shift overtime past the daily cap: around **500** (per minute over).
+- Capacity overflow on a vehicle: around **1000** (per unit over capacity — strongest discouragement).
+
+I scale up or down from these once you tell me what matters most.

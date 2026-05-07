@@ -186,6 +186,14 @@ class KnapsackStudyPort:
     def locked_companion_fields(self) -> dict[str, str]:
         return {}
 
+    def prose_id_prefixes_for_goal_term(self, goal_term_key: str) -> tuple[str, ...]:
+        return ()
+
+    def goal_term_properties_schema(self) -> dict | None:
+        # Knapsack has no typed child fields under goal_terms[key].properties;
+        # default permissive shape from schema_shared is used.
+        return None
+
     def mediocre_participant_starter_config(self) -> dict:
         from copy import deepcopy
         return deepcopy({

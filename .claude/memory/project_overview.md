@@ -28,7 +28,7 @@ type: project
 | Charting | Recharts 3.8 |
 | Markdown | react-markdown + remark-gfm |
 
-**Deployment target:** Low-cost hosting (Raspberry Pi), backend on custom domain, frontend on Vercel.
+**Deployment target:** Backend self-hosted on user's iMac (previously a Raspberry Pi — docs in `docs/.setup/RASPBERRY_PI_SETUP.txt` may be stale), reachable via custom domain (`mopt.howiewang.me`) through a Cloudflare tunnel. Frontend on Vercel.
 
 **Why:** Study is investigating how specifying a problem upfront (waterfall) vs. iteratively (agile) affects optimization quality and user satisfaction.
 **How to apply:** When suggesting changes, always consider the study integrity — don't accidentally collapse workflow mode differences, don't expose domain identity to the participant side.

@@ -12,10 +12,12 @@ from google.genai import types
 
 from app.problem_brief import (
     is_chat_cold_start,
+    current_weights_prompt_section,
     locked_goal_terms_prompt_section,
     surface_problem_brief_for_chat_prompt,
 )
 from app.problems.registry import get_study_port
+from app.problems.schema_shared import GOAL_TERMS_SCHEMA, goal_terms_schema
 
 from app.prompts.study_chat import (
     STUDY_CHAT_BRIEF_UPDATE_TASK,
@@ -147,25 +149,36 @@ _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
     "required": ["id", "text"],
 }
 
-_PROBLEM_BRIEF_PATCH_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "goal_summary": {"type": "string"},
-        "run_summary": {"type": "string"},
-        "items": {"type": "array", "items": _PROBLEM_BRIEF_ITEM_SCHEMA},
-        "open_questions": {
-            "type": "array",
-            "items": {
-                "anyOf": [
-                    {"type": "string"},
-                    _PROBLEM_BRIEF_QUESTION_SCHEMA,
-                ]
+def _build_problem_brief_patch_schema(goal_terms_subschema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "goal_summary": {"type": "string"},
+            "run_summary": {"type": "string"},
+            "items": {"type": "array", "items": _PROBLEM_BRIEF_ITEM_SCHEMA},
+            "open_questions": {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        {"type": "string"},
+                        _PROBLEM_BRIEF_QUESTION_SCHEMA,
+                    ]
+                },
             },
+            "goal_terms": goal_terms_subschema,
+            "replace_goal_terms": {"type": "boolean"},
+            "solver_scope": {"type": "string"},
+            "backend_template": {"type": "string"},
         },
-        "solver_scope": {"type": "string"},
-        "backend_template": {"type": "string"},
-    },
-}
+    }
+
+
+# Default permissive schema for back-compat call sites that don't know which
+# port is active (e.g. legacy structured chat-turn flow). Problem-aware paths
+# build their own via `_build_brief_update_response_schema(test_problem_id)`.
+_PROBLEM_BRIEF_PATCH_SCHEMA: dict[str, Any] = _build_problem_brief_patch_schema(
+    GOAL_TERMS_SCHEMA
+)
 
 CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "title": "ChatModelTurn",
@@ -188,21 +201,37 @@ CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "required": ["assistant_message"],
 }
 
-BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
-    "title": "ProblemBriefUpdateTurn",
-    "type": "object",
-    "properties": {
-        "problem_brief_patch": {
-            "anyOf": [
-                _PROBLEM_BRIEF_PATCH_SCHEMA,
-                {"type": "null"},
-            ],
+def _build_brief_update_response_schema(test_problem_id: str | None) -> dict[str, Any]:
+    """Per-problem brief-update response schema.
+
+    Each port supplies its own `goal_terms[key].properties` shape via
+    `StudyProblemPort.goal_term_properties_schema()`; the schema_shared
+    factory slots it in. Schema construction is cheap (plain dict assembly)
+    so we rebuild per call rather than caching.
+    """
+    port = get_study_port(test_problem_id)
+    properties_subschema = port.goal_term_properties_schema()
+    goal_terms_sub = goal_terms_schema(properties_subschema)
+    return {
+        "title": "ProblemBriefUpdateTurn",
+        "type": "object",
+        "properties": {
+            "problem_brief_patch": {
+                "anyOf": [
+                    _build_problem_brief_patch_schema(goal_terms_sub),
+                    {"type": "null"},
+                ],
+            },
+            "replace_editable_items": {"type": "boolean"},
+            "replace_open_questions": {"type": "boolean"},
+            "cleanup_mode": {"type": "boolean"},
         },
-        "replace_editable_items": {"type": "boolean"},
-        "replace_open_questions": {"type": "boolean"},
-        "cleanup_mode": {"type": "boolean"},
-    },
-}
+    }
+
+
+# Back-compat constant — uses permissive defaults. Problem-aware code paths
+# call `_build_brief_update_response_schema(test_problem_id)` instead.
+BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = _build_brief_update_response_schema(None)
 
 OQ_CLASSIFIER_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "title": "OpenQuestionClassifierTurn",
@@ -594,6 +623,13 @@ def _build_visible_chat_system_instruction(
     lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_blob:
         parts.append(lock_blob)
+    weights_blob = current_weights_prompt_section(
+        current_panel or {},
+        test_problem_id=test_problem_id,
+        temperature=profile.temperature,
+    )
+    if weights_blob:
+        parts.append(weights_blob)
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
     if is_tutorial_active:
@@ -878,7 +914,7 @@ def generate_problem_brief_update(
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         response_mime_type="application/json",
-        response_json_schema=BRIEF_UPDATE_RESPONSE_JSON_SCHEMA,
+        response_json_schema=_build_brief_update_response_schema(test_problem_id),
     )
     try:
         chat = client.chats.create(

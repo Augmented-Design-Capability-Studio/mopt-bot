@@ -82,6 +82,53 @@ class StudyProblemPort(Protocol):
         Example: VRPTW returns ``{"worker_preference": "driver_preferences"}``.
         """
 
+    def prose_id_prefixes_for_goal_term(self, goal_term_key: str) -> tuple[str, ...]:
+        """Brief item-id prefixes that must be deduped when the same goal term
+        is being patched via the structured `goal_terms` carrier.
+
+        Default returns ``()`` — no prose ids are coupled to any goal term.
+        A port can opt in by returning prefixes such as
+        ``("config-driver-pref-",)`` when it expects the same data to live as
+        prose items elsewhere; the brief-patch merge will then drop incoming
+        items whose ``id`` starts with any of those prefixes when a structured
+        ``goal_terms[goal_term_key]`` change arrives in the same patch.
+
+        This is id-only filtering — it never inspects item text. The intent is
+        to keep the mechanism in place without leaning on prose parsing.
+        """
+        return ()
+
+    def goal_term_properties_schema(self) -> dict[str, Any] | None:
+        """Per-problem JSON schema for `goal_terms[key].properties`.
+
+        Returned schema is slotted into the shared `goal_terms_schema(...)`
+        factory at brief-patch / panel-patch construction time so problem-
+        specific child fields (e.g. VRPTW's `driver_preferences`,
+        `max_shift_hours`) are typed for Gemini structured output without
+        polluting `app.problems.schema_shared`.
+
+        Return ``None`` (default) for problems with no typed child fields —
+        callers fall back to a permissive open-object schema.
+        """
+        return None
+
+    def synthesize_brief_items_from_goal_terms(
+        self, goal_terms: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Synthesize participant-visible prose `gathered` items from the
+        structured `goal_terms` map.
+
+        VRPTW uses this to render one ``config-driver-pref-*`` item per
+        driver-preference rule (so the Definition tab shows "Alice avoids
+        Zone D…" alongside the structured rule the solver consumes). Each
+        returned item must use a stable id under the ``config-`` prefix so
+        the brief-merge slot reconciler can dedupe/refresh on every sync.
+
+        Default returns ``[]`` — problems with no structured child fields
+        contribute no extra prose rows.
+        """
+        return []
+
     def mediocre_participant_starter_config(self) -> dict:
         """Return a deliberately sparse panel config for new study sessions.
 

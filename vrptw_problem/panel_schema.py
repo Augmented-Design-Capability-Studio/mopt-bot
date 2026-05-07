@@ -7,7 +7,7 @@ from typing import Any
 from app.problems.schema_shared import (
     ALGORITHM_PARAMS_SCHEMA,
     CONSTRAINT_TYPES_SCHEMA,
-    GOAL_TERMS_SCHEMA,
+    goal_terms_schema,
     wrap_panel_patch_schema,
 )
 
@@ -69,6 +69,32 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+
+# Per-VRPTW shape for `goal_terms[key].properties` — driver-preference rules
+# attach to the worker_preference term; max_shift_hours attaches to the
+# shift_limit term. Each problem owns its own properties schema; the shared
+# `goal_terms_schema` factory just slots ours in.
+VRPTW_GOAL_TERM_PROPERTIES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "VRPTW per-goal-term metadata. `driver_preferences` belongs under "
+        "`worker_preference`; `max_shift_hours` under `shift_limit`."
+    ),
+    "properties": {
+        "driver_preferences": {
+            "type": "array",
+            "items": _DRIVER_PREFERENCE_SCHEMA,
+        },
+        "max_shift_hours": {"type": "number", "minimum": 0},
+    },
+    "additionalProperties": False,
+}
+
+
+VRPTW_GOAL_TERMS_SCHEMA: dict[str, Any] = goal_terms_schema(
+    VRPTW_GOAL_TERM_PROPERTIES_SCHEMA
+)
+
 VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -90,7 +116,7 @@ VRPTW_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         },
         "algorithm_params": ALGORITHM_PARAMS_SCHEMA,
         "constraint_types": CONSTRAINT_TYPES_SCHEMA,
-        "goal_terms": GOAL_TERMS_SCHEMA,
+        "goal_terms": VRPTW_GOAL_TERMS_SCHEMA,
         "epochs": {"type": "integer"},
         "pop_size": {"type": "integer"},
         "random_seed": {"type": "integer"},

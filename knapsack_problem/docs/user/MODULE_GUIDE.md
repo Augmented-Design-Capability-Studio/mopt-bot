@@ -60,3 +60,13 @@ applies, based on the metrics and feasibility status on screen.
 - "Which single change should I try next?"
 - "How do I push for higher value without breaking capacity?"
 - "Walk me through how the evaluator scores a selection."
+
+## Typical starting weights (importance levels) for knapsack
+
+When you haven't expressed a preference yet, here are the weight magnitudes I start with for each priority:
+
+- Value emphasis (rewarding total packed value): around **1** — the primary objective baseline.
+- Capacity overflow penalty: around **50** — strong enough to discourage exceeding the limit.
+- Selection sparsity (preferring fewer items): around **0.5** — light tie-breaker by default.
+
+I scale up or down from these once you tell me what matters most.

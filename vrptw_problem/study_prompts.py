@@ -2,6 +2,61 @@
 
 from __future__ import annotations
 
+# Single source of truth for how driver-preference rules are carried in the
+# brief and the panel. Imported into both the brief-update prompt (so the
+# hidden brief LLM emits structured rules) and the config-derive prompt (so
+# the panel-derive LLM consumes them verbatim) — keeps the two sides in
+# lockstep without copy-paste drift.
+DRIVER_PREFERENCES_BRIEF_CONTRACT = """
+### Driver-preference rules — structured contract
+
+Driver-preference rules (e.g. "Alice avoids Zone D", "Bob prefers express orders",
+"Carol dislikes long shifts past 6.5 hours") live as structured JSON under the
+goal term `worker_preference`, at this exact path on both the brief and the panel:
+
+    goal_terms.worker_preference.properties.driver_preferences
+
+Each rule object uses these fields:
+- `vehicle_idx` (integer 0–4): Alice=0, Bob=1, Carol=2, Dave=3, Eve=4
+- `condition` (string): exactly one of `avoid_zone`, `order_priority`, `shift_over_limit`
+- `penalty` (number ≥ 0): cost-units added when the rule fires
+- For `avoid_zone`: `zone` (integer 1–5) where A=1, B=2, C=3, D=4, E=5 (depot=0 is invalid)
+- For `order_priority`: `order_priority` (string) — exactly `express` or `standard`
+- For `shift_over_limit`: `limit_minutes` (number > 0) — e.g. 390 for 6.5h
+- Optional: `aggregation` (`per_stop` default, or `once_per_route`)
+
+Worked example — user says "Alice doesn't like Zone D":
+
+    "goal_terms": {
+      "worker_preference": {
+        "weight": 1.0,
+        "type": "soft",
+        "properties": {
+          "driver_preferences": [
+            {"vehicle_idx": 0, "condition": "avoid_zone", "zone": 4, "penalty": 50}
+          ]
+        }
+      }
+    }
+
+Rules:
+- The `driver_preferences` array is **atomic**: send the complete current list
+  whenever you change it. Partial merges of individual rules are not supported.
+- The system **deterministically synthesizes one participant-facing
+  `gathered` row per rule** (id `config-driver-pref-{vid}-{discriminator}`)
+  from this structured carrier — you do not need to write those rows
+  yourself, and you should not. Do **not** add a separate prose
+  `gathered` / `assumption` row that restates the same rule; it would
+  collide with the synthesized row and may be deduped or shadow it.
+- When the brief carries a non-empty `properties.driver_preferences`, copy it
+  verbatim into the panel under the same path. Do **not** re-derive rules from
+  prose when the structured array is present.
+- When introducing a new preference rule, also include `worker_preference` in
+  the goal term map (with at least a default weight) so the parent term is
+  active in the panel.
+""".strip()
+
+
 # Appended to the domain-neutral study system prompt when test_problem_id is vrptw.
 
 VRPTW_STUDY_PROMPT_APPENDIX = """
@@ -119,7 +174,7 @@ alias keys listed above. When a user asks about an objective that does not map c
   road disruptions are accounted for) to ground your reasoning.
 - Do not mention logistics, uploads, or traffic APIs before the user introduces
   that domain.
-""".strip()
+""".strip() + "\n\n" + DRIVER_PREFERENCES_BRIEF_CONTRACT
 
 
 VRPTW_CONFIG_DERIVE_SYSTEM_PROMPT = """
@@ -171,11 +226,12 @@ Rules:
   Emit only when the brief has explicit early-arrival or waiting evidence (e.g. "arrive too early",
   "early arrival", "idle wait", "waiting before window", or "cannot arrive more than X minutes early").
   Never infer this term from generic "slack", "buffer", "priority", or broad utilization language.
-- When the brief names worker-specific soft preferences, emit "driver_preferences" with
-  vehicle_idx: Alice=0, Bob=1, Carol=2, Dave=3, Eve=4; use conditions avoid_zone / order_priority /
-  shift_over_limit; include "limit_minutes" for long-shift discomfort when stated (e.g. 6.5h → 390).
-  For avoid_zone, use delivery-zone ids only: A=1, B=2, C=3, D=4, E=5. Never use zero-based zone indexing.
-  Include "worker_preference" in weights when driver_preferences is nonempty.
+- When the brief carries `goal_terms.worker_preference.properties.driver_preferences`,
+  copy each rule verbatim into `problem.driver_preferences` and include
+  `worker_preference` in `weights` (and `goal_terms.worker_preference`) so the
+  parent term is active. Do NOT re-derive rules from prose when the structured
+  array is present — the structured entry is authoritative. See the
+  `DRIVER_PREFERENCES_BRIEF_CONTRACT` section appended below for the rule shape.
 - "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
 - **Algorithm extraction is mandatory when the brief names one.** Any brief item
   (gathered or assumption) that names a search method commits the panel to that
@@ -192,4 +248,4 @@ Rules:
   `algorithm: "GA"` AND `use_greedy_init: true` together — emitting only one
   half is a bug.
 - Keep output compact and valid JSON.
-""".strip()
+""".strip() + "\n\n" + DRIVER_PREFERENCES_BRIEF_CONTRACT

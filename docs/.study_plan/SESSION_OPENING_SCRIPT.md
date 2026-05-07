@@ -7,7 +7,9 @@ A condensed script for the opening of each session — purpose statement, consen
 ## Pre-session checklist
 
 - [ ] Consent form ready (link or PDF)
+- [ ] Background self-report ready (survey link or sheet — Part 1 items: experience, expertise, familiarity)
 - [ ] Optimization literacy quiz ready (survey link, on-screen poll, or printed sheet — see [`OPTIMIZATION_LITERACY.md`](../.screener/OPTIMIZATION_LITERACY.md))
+- [ ] VRPTW-understanding items ready (Part 2 — administered after the task briefing, not here)
 - [ ] Knapsack orientation video queued ([`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md))
 - [ ] VRPTW task-briefing video queued
 - [ ] One-page VRPTW reference document on hand
@@ -41,13 +43,23 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ---
 
-## 2. Optimization literacy quiz (~2 min)
+## 2. Background block: self-report + literacy warm-up (~5–6 min)
 
-**[NOTE]** This is the **only** time the literacy score is collected. Administer **before** stance framing or any orientation material so the participant has not been exposed to study language. Don't show the scoring key, don't review correct answers afterward, and don't volunteer optimization-concept hints in this section.
+**[NOTE]** Two short instruments back-to-back, both before stance framing or any orientation material. **Order matters** — administer the self-report **first**, then the warm-up. Reversing them would let warm-up performance contaminate the self-rating, which is a well-known pitfall when an objective measure and a self-rated competence measure share a construct. Don't show the scoring key for the warm-up, don't review correct answers afterward, and don't volunteer optimization-concept hints in this section.
+
+### 2a. Self-reported experience (~3–4 min)
 
 **[SAY]**
 
-> Before we get into the study, I have a quick five-question warmup — multiple choice, no time pressure. We're just collecting some background context for the analysis. Please go with your honest take on each one; your score doesn't change anything about the rest of the session.
+> Before we get into the study, I'd like to ask you a few quick background questions about your experience with optimization. There are no right or wrong answers — we're just trying to understand the range of backgrounds participants are coming in with.
+
+**[ACTION]** Share the self-report (Part 1 items: prior coursework/work, overall expertise, familiarity with optimization, expertise using and coding optimization tools, familiarity with heuristics/metaheuristics). Stay quiet while they fill it in.
+
+### 2b. Optimization literacy warm-up (~2 min)
+
+**[SAY]**
+
+> Now a short five-question warm-up — multiple choice, no time pressure. We're collecting some additional background context for the analysis. Each question has an "I'm not sure" option — please use it freely if a question references something you don't recognize, rather than guessing. Otherwise, go with your honest take; your score doesn't change anything about the rest of the session.
 
 **[ACTION]** Share the quiz (link, on-screen poll, or printed sheet — see [`OPTIMIZATION_LITERACY.md`](../.screener/OPTIMIZATION_LITERACY.md)). Stay quiet while they fill it in.
 
@@ -114,9 +126,9 @@ A condensed script for the opening of each session — purpose statement, consen
 | Step | Duration | Cumulative |
 |------|----------|------------|
 | Purpose + consent + recording start | ~3 min | 3 |
-| Optimization literacy quiz | ~2 min | 5 |
-| Stance framing | ~3 min | 8 |
-| Orientation video + hands-on tutorial | ~7–10 min | 15–18 |
-| Task-briefing handoff (incl. video + reading) | ~10 min | 25–28 |
+| Background block: self-report (2a) + literacy warm-up (2b) | ~5–6 min | 8–9 |
+| Stance framing | ~3 min | 11–12 |
+| Orientation video + hands-on tutorial | ~7–10 min | 18–22 |
+| Task-briefing handoff (incl. video + reading) | ~10 min | 28–32 |
 
-The pre-interaction check (~5 min), interaction phase (~30 min), and post-task questionnaire + interview (~10–12 min) follow.
+The pre-interaction check (~5 min, includes the VRPTW-understanding items), interaction phase (~30 min), and post-task questionnaire + interview (~10–12 min) follow.

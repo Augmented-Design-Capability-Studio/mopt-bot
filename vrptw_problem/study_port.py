@@ -92,6 +92,25 @@ class VrptwStudyPort:
     def locked_companion_fields(self) -> dict[str, str]:
         return {"worker_preference": "driver_preferences"}
 
+    def prose_id_prefixes_for_goal_term(self, goal_term_key: str) -> tuple[str, ...]:
+        # Driver-preference prose rows live under `config-driver-pref-*`.
+        # When a structured `goal_terms.worker_preference` patch arrives,
+        # incoming items with this prefix should be deduped against the
+        # synthesized rows to prevent stale duplicates surviving a refresh.
+        if goal_term_key == "worker_preference":
+            return ("config-driver-pref-",)
+        return ()
+
+    def goal_term_properties_schema(self) -> dict | None:
+        from .panel_schema import VRPTW_GOAL_TERM_PROPERTIES_SCHEMA
+        return VRPTW_GOAL_TERM_PROPERTIES_SCHEMA
+
+    def synthesize_brief_items_from_goal_terms(
+        self, goal_terms: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        from vrptw_problem.brief_seed import synthesize_driver_preference_items
+        return synthesize_driver_preference_items(goal_terms)
+
     def mediocre_participant_starter_config(self) -> dict:
         from copy import deepcopy
         return deepcopy({

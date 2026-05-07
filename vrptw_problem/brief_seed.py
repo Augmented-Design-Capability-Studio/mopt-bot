@@ -18,6 +18,7 @@ If the brief contains no structural IDs and no LLM is available, this returns
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Any
 
 from app.algorithm_catalog import DEFAULT_EPOCHS, DEFAULT_POP_SIZE
@@ -206,18 +207,29 @@ def _structured_search_overlay_present(structured: dict[str, Any]) -> bool:
 def derive_problem_panel_from_brief(
     problem_brief: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Recover a panel from structurally-tagged brief items only.
+    """Recover a panel from the brief's structured `goal_terms` map and
+    structurally-tagged config-* items.
 
-    Returns ``None`` when the brief contains no recoverable config-* IDs — the
+    Returns ``None`` when the brief contains no recoverable signal — the
     LLM is the canonical path for anything else, and the caller will fall back
     to the starter panel.
+
+    `goal_terms` is the authoritative structured carrier (R4): when the brief
+    has it, top-level `weights` and `properties.driver_preferences` /
+    `properties.max_shift_hours` are projected from `goal_terms` by the
+    panel's `_apply_goal_terms_overlay` on a later pass. We just copy
+    `goal_terms` verbatim here — no regex, no prose parsing.
     """
     if not isinstance(problem_brief, dict):
         return None
 
+    brief_goal_terms = problem_brief.get("goal_terms")
+    structured_goal_terms_present = isinstance(brief_goal_terms, dict) and bool(brief_goal_terms)
+
     weights, structured = _extract_structured_slots(problem_brief)
     has_signal = (
         bool(weights)
+        or structured_goal_terms_present
         or structured["algorithm"] is not None
         or structured["epochs"] is not None
         or structured["pop_size"] is not None
@@ -241,6 +253,19 @@ def derive_problem_panel_from_brief(
         "only_active_terms": True if only_active_terms is None else only_active_terms,
         **algorithm_block,
     }
+    if structured_goal_terms_present:
+        # `goal_terms` is authoritative — project it onto top-level `weights`
+        # so downstream consumers (and the existing `_apply_goal_terms_overlay`)
+        # see consistent values regardless of which carrier the brief used.
+        problem["goal_terms"] = deepcopy(brief_goal_terms)
+        for key, entry in brief_goal_terms.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+            weight_val = entry.get("weight")
+            if isinstance(weight_val, bool) or not isinstance(weight_val, (int, float)):
+                continue
+            # goal_terms wins over any conflicting prose-derived weight.
+            problem["weights"][key] = float(weight_val)
     if structured["max_shift_hours"] is not None:
         problem["max_shift_hours"] = structured["max_shift_hours"]
     if structured["use_greedy_init"] is not None:
@@ -254,3 +279,120 @@ def derive_problem_panel_from_brief(
     if structured["random_seed"] is not None:
         problem["random_seed"] = int(structured["random_seed"])
     return {"problem": problem}
+
+
+# ---------------------------------------------------------------------------
+# Driver-preference prose synthesis (VRPTW-only)
+# ---------------------------------------------------------------------------
+#
+# `synthesize_driver_preference_items` projects the structured
+# `goal_terms.worker_preference.properties.driver_preferences` carrier into
+# participant-facing prose `gathered` items so the Definition tab renders
+# one row per rule. Stable id format: `config-driver-pref-{vid}-{disc}` —
+# the brief-merge slot reconciler dedupes / refreshes per save.
+#
+# Wired in via `StudyProblemPort.synthesize_brief_items_from_goal_terms`,
+# called from both the panel→brief sync (`_brief_items_from_panel`) and the
+# chat-turn brief patch flow (`apply_brief_patch_with_cleanup`). VRPTW owns
+# the wording; the shared brief layer never inspects rule content.
+
+_DRIVER_NAMES_BY_INDEX: dict[int, str] = {
+    0: "Alice",
+    1: "Bob",
+    2: "Carol",
+    3: "Dave",
+    4: "Eve",
+}
+
+_ZONE_LETTERS_BY_INDEX: dict[int, str] = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
+
+
+def _format_penalty_suffix(penalty: Any) -> str:
+    if isinstance(penalty, bool) or not isinstance(penalty, (int, float)):
+        return ""
+    if float(penalty).is_integer():
+        return f" (penalty {int(penalty)})"
+    return f" (penalty {float(penalty)})"
+
+
+def _format_driver_preference_rule(rule: dict[str, Any]) -> tuple[str, str] | None:
+    """Render one rule into (stable_id_suffix, prose_text). None if malformed."""
+    vid = rule.get("vehicle_idx")
+    if not isinstance(vid, int) or vid not in _DRIVER_NAMES_BY_INDEX:
+        return None
+    driver = _DRIVER_NAMES_BY_INDEX[vid]
+    cond = str(rule.get("condition") or "").strip().lower()
+    penalty_suffix = _format_penalty_suffix(rule.get("penalty"))
+    if cond == "avoid_zone":
+        zone = rule.get("zone")
+        if not isinstance(zone, int) or zone not in _ZONE_LETTERS_BY_INDEX:
+            return None
+        zone_letter = _ZONE_LETTERS_BY_INDEX[zone]
+        return (
+            f"{vid}-zone-{zone_letter}",
+            f"{driver} avoids deliveries in Zone {zone_letter} as a soft preference{penalty_suffix}.",
+        )
+    if cond == "order_priority":
+        priority = str(rule.get("order_priority") or "").strip().lower()
+        if priority not in {"express", "standard"}:
+            return None
+        return (
+            f"{vid}-order-{priority}",
+            f"{driver} avoids {priority}-priority orders as a soft preference{penalty_suffix}.",
+        )
+    if cond == "shift_over_limit":
+        limit_minutes = rule.get("limit_minutes")
+        if not isinstance(limit_minutes, (int, float)) or limit_minutes <= 0:
+            return None
+        hours = float(limit_minutes) / 60.0
+        hours_str = f"{hours:.1f}".rstrip("0").rstrip(".")
+        return (
+            f"{vid}-shift-{int(limit_minutes)}",
+            f"{driver}'s shift is capped at {hours_str}h as a soft preference{penalty_suffix}.",
+        )
+    return None
+
+
+def synthesize_driver_preference_items(
+    goal_terms: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Render driver-preference rules into participant-facing prose items.
+
+    Reads from `goal_terms.worker_preference.properties.driver_preferences`
+    (the canonical structured carrier). Malformed rules are skipped — the
+    structured carrier itself rejects invalid rules during normalize, so
+    this is just a safety belt.
+    """
+    if not isinstance(goal_terms, dict):
+        return []
+    wp = goal_terms.get("worker_preference")
+    if not isinstance(wp, dict):
+        return []
+    props = wp.get("properties")
+    if not isinstance(props, dict):
+        return []
+    rules = props.get("driver_preferences")
+    if not isinstance(rules, list):
+        return []
+    items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw in rules:
+        if not isinstance(raw, dict):
+            continue
+        rendered = _format_driver_preference_rule(raw)
+        if rendered is None:
+            continue
+        suffix, text = rendered
+        item_id = f"config-driver-pref-{suffix}"
+        if item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+        items.append(
+            {
+                "id": item_id,
+                "text": text,
+                "kind": "gathered",
+                "source": "agent",
+            }
+        )
+    return items

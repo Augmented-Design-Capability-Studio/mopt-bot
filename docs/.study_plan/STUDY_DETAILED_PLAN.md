@@ -44,9 +44,8 @@ Possible between-/within-subject factors:
   - **Static**: pre-rendered tables and plots.
   - **Interactive**: hover, zoom, or filter to explore routes, violations, and workloads.
 - **Optimization expertise (continuous covariate, not a between-subjects factor)**
-  - Measured via the [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md): a 5-item conceptual test of hard/soft requirements, multi-objective trade-offs, local-vs-global, stochasticity, and model-vs-reality. Score range 0–5.
-  - Administered **once**, at the **start of the main session** (post-consent, before any study materials, framing, or orientation), so prior exposure to study language doesn't prime answers. Not part of the screener; not used as a gate.
-  - Recorded for every participant and used as a moderator in analysis.
+  - Primary measure: an in-session **background self-report** (post-consent, pre-orientation) covering prior coursework, professional/research experience, hands-on solver use, coding experience with optimization, self-rated overall expertise, and self-rated familiarity with metaheuristic methods. This self-report is the covariate used as a moderator in analysis.
+  - Secondary signal: the [optimization literacy warm-up](../.screener/OPTIMIZATION_LITERACY.md) — a 5-item conceptual warm-up (score 0–5) administered immediately after the self-report. Useful as a soft cross-check on the self-rating; not the primary covariate.
   - Programming ability is not part of this construct: what is measured is conceptual understanding of optimization, not implementation skill.
 
 The primary contrast is **workflow mode (Agile vs Waterfall)** as a between-subjects factor. Optimization expertise is reported as a continuous moderator. Other factors above (user agency, visualization design) are held constant in the main study and may be explored in follow-up variants.
@@ -79,9 +78,11 @@ Participants complete the study remotely or in a controlled lab setting using a 
 
 1. **Introduction and consent** (~3 min)
    - Researcher reads the purpose statement and walks the participant through the consent form. Recording starts after consent.
-2. **Optimization literacy quiz** (~2 min)
-   - Participant completes the 5-item [optimization literacy instrument](../.screener/OPTIMIZATION_LITERACY.md) (multiple choice). Administered **before any study materials, framing, or orientation** so the participant has not been exposed to language that could prime concept recognition.
-   - Score (0–5) is recorded as a continuous covariate; not used as a gate. Researcher does not show the scoring key or discuss correct answers.
+2. **Background block: self-report + optimization literacy warm-up** (~5–6 min)
+   - **2a. Self-report (administered first)** — prior coursework/work, overall expertise, familiarity with optimization, expertise using and coding optimization tools, familiarity with heuristics/metaheuristics. Self-rated items use 7-point scales.
+   - **2b. Literacy warm-up (administered second)** — the 5-item [optimization literacy warm-up](../.screener/OPTIMIZATION_LITERACY.md) (multiple choice; each item includes an "I'm not sure" option so participants who don't recognize a concept can opt out rather than guess).
+   - **Order is intentional.** The self-report is administered first so warm-up performance cannot contaminate the self-rating — a well-known pitfall when an objective and a self-rated measure share a construct.
+   - Self-report responses are the primary expertise covariate. Warm-up score (0–5) and per-participant "I'm not sure" count are recorded as secondary signals. Neither is used as a gate. Researcher does not show the scoring key or discuss correct answers.
 3. **Stance framing** (~3 min)
    - Participants are told they are the person responsible for these scheduling decisions: they direct the AI assistant, but are not expected to write code or implement solutions themselves. They engage as themselves and are encouraged to notice where the interface does or does not support the kind of work they would want to do from that position.
 4. **Optimization orientation** (~7–10 min, including a ~3–4 min video and a hands-on tutorial on the interface)
@@ -94,7 +95,7 @@ Participants complete the study remotely or in a controlled lab setting using a 
    - Participants watch a short video introducing the QuickBite scheduling scenario and receive a printed reference document (data tables only) for use during the session. The system interface is also introduced. Time includes both video playback and reading.
    - **Briefing format is intentional.** Operational priorities are conveyed through the dispatcher-voiced video + physical document; participants are **not** given a written prompt they can copy-paste into chat. This forces them to extract operational concerns and rephrase them to the agent in their own words. How they perform that translation — verbatim relay, prioritized summary, interrogative discovery, etc. — is part of the data collected (see §1, *Observe operational-to-formal translation*; §4, *Translation language used in chat*).
 6. **Pre-interaction check** (~5 min)
-   - A short check that the participant has understood the task and the orientation. Brief because background information was already collected at screening.
+   - A short check that the participant has understood the task and the orientation. Includes the **VRPTW-understanding items** (open-ended: primary goal of the QuickBite task; which of the named factors is expected to be hardest to satisfy) — administered here, after the briefing, so responses reflect what the participant actually took away from the briefing rather than prior knowledge. Brief otherwise because general background information was already collected in step 2.
 7. **Interaction phase** (~30 min)
    - Participants interact with an AI agent through a chat-based interface to formulate and solve the problem.
    - The AI agent may gather information, make assumptions, and generate executable optimization procedures.

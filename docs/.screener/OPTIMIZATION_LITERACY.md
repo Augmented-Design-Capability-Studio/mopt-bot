@@ -1,10 +1,16 @@
-# Optimization Literacy Instrument
+# Optimization Literacy Warm-up
 
-A short instrument that measures a participant's conceptual understanding of optimization. Administered at the **start of the main session, immediately after consent and before any study materials are shown** (no orientation video, no stance framing, no task briefing yet), so the participant has not been exposed to language or framing that could prime concept recognition. Takes ~2 minutes; not used as a gate.
+A short conceptual warm-up administered at the **start of the main session, after consent and the background self-report, but before stance framing or any orientation material**. Takes ~2 minutes; not used as a gate.
 
-**This is a measurement instrument, not a gate.** The score (0–5) is recorded as a continuous covariate and used as a moderator in analysis. Low scorers are not excluded — they are part of the study.
+**This is a warm-up, not a measurement instrument.** Primary expertise signal comes from the separate background self-report (years of experience, coursework, solver use, self-rated confidence). The 0–5 score here is recorded as a secondary background signal — useful as a soft check on the self-report, not as the primary covariate. Low scorers are not excluded.
 
-The five items test conceptual reasoning by asking the participant to **apply** the relevant idea to a short scenario, not to recognize a definition. They do not require optimization vocabulary or programming.
+Each item carries an explicit **"I'm not sure"** option so participants who don't recognize a concept can opt out rather than guess. This keeps the warm-up consistent with the broader design choice of routing conceptual questions to the in-session AI agent rather than front-loading definitions. The five items ask the participant to **apply** a concept to a short scenario, not to recognize a definition. They do not require optimization vocabulary or programming.
+
+---
+
+## Participant-facing framing (shown before Q1)
+
+> Below are five short questions designed as a conceptual warm-up about computational optimization methods. Their purpose is to give us a preliminary sense of how you currently think about these problems — **your compensation is not tied to your responses**, and there's no need to worry about giving "wrong" answers. Each item also has an **"I'm not sure"** option; please pick it freely whenever a question references something you don't recognize, rather than guessing. Otherwise, choose the answer that best matches your honest intuition.
 
 | Q | Concept | Why it matters for the interface |
 |---|---------|----------------------------------|
@@ -16,77 +22,76 @@ The five items test conceptual reasoning by asking the participant to **apply** 
 
 ---
 
-## Q1. Hard requirement vs. soft goal
+## Q1. Hard constraint
 
-A delivery company sets up an optimizer with two requirements:
+A solution is considered valid only if all required (i.e., hard) constraints are satisfied. Your program finds a solution that scores extremely well on every objective, but one required constraint is violated by a small amount.
 
-- **Capacity rule:** No vehicle may exceed 1,000 lbs of cargo. The dispatcher marks this as a strict requirement that must never be violated.
-- **Cost goal:** Minimize total fuel cost.
+Is the solution valid?
 
-The optimizer returns a plan with the lowest fuel cost it could find, but one vehicle in the plan carries 1,050 lbs.
-
-Should this plan be accepted?
-
-- A. Yes — fuel cost was the goal, and this is the lowest the optimizer could achieve.
-- B. No — a strict requirement was violated.
-- C. Yes, provided the overage is small relative to capacity.
+- A. Yes — the violation is small, and the objective scores are excellent.
+- B. No — a required constraint is violated.
+- C. There is not enough information to decide.
+- D. I'm not sure.
 
 ---
 
 ## Q2. Multi-objective trade-off
 
-A scheduler compares two delivery plans for the same day:
+Your program finds a new solution that improves one objective but worsens another.
 
-- **Plan A:** All express orders are delivered on time, but total fuel use is 15% higher.
-- **Plan B:** Total fuel use is lower, but two express orders are delivered late.
+What determines whether the new solution is better than the previous one?
 
-Which plan is better?
-
-- A. Plan A — meeting express deadlines always outweighs saving fuel.
-- B. Plan B — when fuel cost is lower by a clear margin, it's the better choice.
-- C. It depends on how the express-order deadlines are weighted against fuel cost.
+- A. It is always better, because it improved on at least one objective.
+- B. It is always worse, because it made another objective worse.
+- C. It depends on how the objectives are prioritized against each other.
+- D. I'm not sure.
 
 ---
 
 ## Q3. Local vs. global
 
-You run an optimizer and get cost 120. You change one search setting, run again, and get cost 118.
+You run your program and get a solution. You change one configuration setting, run it again, and the new solution is slightly better than the previous one.
 
 What can you conclude?
 
-- A. The current setup has found the best possible answer; further runs aren't worthwhile.
-- B. The improvement is small enough to be considered noise.
-- C. There may still be room for a lower cost with more runs or different settings.
+- A. The overall best possible solution has now been found.
+- B. The change should be rejected because the improvement is too small to trust.
+- C. The solution may still be improved further by additional runs or different settings.
+- D. I'm not sure.
 
 ---
 
 ## Q4. Stochasticity
 
-You run an optimizer twice with **identical inputs and identical settings**. The two results differ slightly in cost.
+You run the same optimization method multiple times with **identical inputs and identical settings**. The results are slightly different each time.
 
-What is the most likely explanation?
+What is the best explanation?
 
-- A. The implementation has a bug — identical inputs should always produce identical outputs.
-- B. The search method explores possibilities in a partly random order, so different runs may take different paths.
-- C. The data or settings must have changed without you noticing.
+- A. The method is incorrect — identical inputs should always produce identical outputs.
+- B. The method may involve randomness or explore different search paths on different runs.
+- C. The problem has no valid solution, so the method is returning arbitrary results.
+- D. I'm not sure.
 
 ---
 
 ## Q5. Model vs. reality
 
-An optimizer returns a delivery schedule with the lowest possible cost for the model. The dispatch team rejects it because it requires parking on a street that's almost never available in the afternoon — a detail that was not captured in the model.
+An optimization program finds the solution with the highest score according to its scoring formula. However, in practice, this solution may still not work well.
 
-Why did this happen?
+Why?
 
-- A. The optimization didn't actually find the lowest-cost schedule.
-- B. The model's cost score didn't capture everything that matters in the real situation.
-- C. The schedule is correct by the model's measure; the team's concern reflects a workflow problem, not a model problem.
+- A. The program made a calculation error when computing the score.
+- B. The scoring formula may not fully capture what matters in real life.
+- C. The solution must violate a required condition; otherwise, it would work in practice.
+- D. I'm not sure.
 
 ---
 
 ## Scoring Key — do not show participants
 
-Score is the count of correct answers, range 0–5. **Not used as a gate.**
+Score is the count of correct answers, range 0–5. Recorded as background context alongside the self-report. **Not used as a gate.**
+
+**Handling "I'm not sure" (option D).** A "not sure" response is **not counted as correct** — it does not contribute to the 0–5 score. It is, however, **recorded distinctly from a wrong answer**, so post-hoc analysis can separate *honestly unfamiliar* from *confidently wrong* responses. Track this as either a per-participant "not sure" count or a per-item flag, depending on the survey tool used.
 
 | Q | Correct | What a wrong answer indicates |
 |---|---------|-------------------------------|
@@ -100,10 +105,10 @@ Score is the count of correct answers, range 0–5. **Not used as a gate.**
 
 ## Notes for administration
 
-- **Single administration**, at the **start of the main session**, after consent has been obtained and **before any study materials, framing, or orientation are shown** (no stance framing, no orientation video, no task briefing yet). This protects against priming from the study's own language.
-- Delivery method is flexible — a survey link the participant fills in silently, an on-screen poll, or a printed sheet — whichever fits the session format. Researcher records the score; do not show the scoring key.
+- **Single administration**, at the **start of the main session**, after consent and the background self-report, and **before stance framing, orientation video, or task briefing**. The short framing paragraph at the top of this instrument is read by the participant as part of the quiz itself; no other study language should precede it.
+- Delivery method is flexible — a survey link the participant fills in silently, an on-screen poll, or a printed sheet — whichever fits the session format. Researcher records the score; do not show the scoring key or discuss correct answers.
 - Budget ~2 minutes (5 multiple-choice items, no rationale required).
-- Record raw score (0–5) per participant. Do **not** use it to exclude.
+- Record both the raw score (0–5) and the per-participant count (or per-item flags) of **"I'm not sure"** responses. Do **not** use either to exclude.
 - This instrument is **not** part of the asynchronous screener; only [scheduling literacy](SCHEDULING_LITERACY.md) gates participation.
 
 ## Cross-references

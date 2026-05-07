@@ -92,6 +92,78 @@ def locked_goal_terms_prompt_section(panel_config: Any, test_problem_id: str | N
         "unlock it in Problem Config first.\n"
         f"{body}"
     )
+
+
+def current_weights_prompt_section(
+    panel_config: Any,
+    *,
+    test_problem_id: str | None = None,
+    temperature: str = "warm",
+) -> str | None:
+    """
+    Visible-chat prompt block surfacing each goal term's current numeric importance level
+    (weight) plus its constraint type, in human labels. Lets the assistant quote concrete
+    numbers when a participant asks "why is X at Y?" without forcing the LLM to extract
+    them from brief prose.
+
+    Suppressed in cold state (would leak benchmark identity through the labels).
+    """
+    if temperature == "cold":
+        return None
+    if not isinstance(panel_config, dict):
+        return None
+    problem = panel_config.get("problem") if isinstance(panel_config.get("problem"), dict) else None
+    if not isinstance(problem, dict):
+        return None
+    weights = problem.get("weights")
+    if not isinstance(weights, dict) or not weights:
+        return None
+
+    constraint_types = problem.get("constraint_types") if isinstance(problem.get("constraint_types"), dict) else {}
+    order = problem.get("goal_term_order") if isinstance(problem.get("goal_term_order"), list) else None
+
+    from app.problems.registry import get_study_port
+
+    labels = get_study_port(test_problem_id).weight_item_labels()
+
+    if order:
+        keys = [k for k in order if isinstance(k, str) and k in weights]
+        for k in sorted(weights):
+            if k not in keys:
+                keys.append(k)
+    else:
+        keys = sorted(weights)
+
+    type_label = {
+        "objective": "Objective",
+        "soft": "Soft",
+        "hard": "Hard",
+        "custom": "Custom",
+    }
+    lines: list[str] = []
+    for key in keys:
+        value = weights.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        label = labels.get(str(key), str(key).replace("_", " ").strip().title())
+        ctype_raw = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
+        ctype = type_label.get(str(ctype_raw or "objective").lower(), "Objective")
+        lines.append(f"- {label}: {float(value):g}  ({ctype})")
+    if not lines:
+        return None
+
+    body = "\n".join(lines)
+    return (
+        "## Current importance levels (saved Problem Config)\n"
+        "These are the participant's actual numeric weights right now, listed in their priority order. "
+        "When the participant asks **\"why is X at Y?\"** or **\"what are the current weights?\"**, quote "
+        "these values directly — by their human labels above, never by snake_case keys. Frame answers "
+        "relative to the rest of the list (which term dominates, which is being downweighted, what "
+        "constraint type each one carries).\n"
+        f"{body}"
+    )
+
+
 _EXPLICIT_VALUE_RE = re.compile(
     r"\b(?:set to|weight(?:ed)? to|weight(?:ed)? at|target(?:ed)? at|target(?:ed)? of|target of|penalty of)\s+(\d+(?:\.\d+)?)",
     re.IGNORECASE,
@@ -154,6 +226,7 @@ def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
         "run_summary": "",
         "items": [],
         "open_questions": [],
+        "goal_terms": {},
         "solver_scope": tmpl.get("solver_scope", "general_metaheuristic_translation"),
         "backend_template": tmpl.get("backend_template", "routing_time_windows"),
     }
@@ -698,6 +771,170 @@ def resolve_upload_open_questions_after_upload(brief: Any, uploaded_file_names: 
     )
 
 
+_GOAL_TERM_TYPE_VALUES: frozenset[str] = frozenset({"objective", "soft", "hard", "custom"})
+_DRIVER_PREF_CONDITIONS: frozenset[str] = frozenset({"avoid_zone", "order_priority", "shift_over_limit"})
+_DRIVER_PREF_AGGREGATIONS: frozenset[str] = frozenset({"per_stop", "once_per_route"})
+_DRIVER_PREF_ORDER_PRIORITIES: frozenset[str] = frozenset({"express", "standard"})
+
+
+def _normalize_driver_preference_rule(raw: Any) -> dict[str, Any] | None:
+    """Tolerant per-rule validator. Returns None on any structural failure so callers can drop the bad rule and keep the rest."""
+    if not isinstance(raw, dict):
+        return None
+    vid_raw = raw.get("vehicle_idx")
+    if isinstance(vid_raw, bool):
+        return None
+    try:
+        vid = int(vid_raw)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= vid <= 4:
+        return None
+    cond = str(raw.get("condition") or "").strip().lower()
+    if cond not in _DRIVER_PREF_CONDITIONS:
+        return None
+    pen_raw = raw.get("penalty")
+    if isinstance(pen_raw, bool) or not isinstance(pen_raw, (int, float)):
+        return None
+    if pen_raw < 0:
+        return None
+    out: dict[str, Any] = {"vehicle_idx": vid, "condition": cond, "penalty": float(pen_raw)}
+    if cond == "avoid_zone":
+        z_raw = raw.get("zone")
+        if isinstance(z_raw, bool):
+            return None
+        try:
+            z = int(z_raw)
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= z <= 5:
+            return None
+        out["zone"] = z
+    elif cond == "order_priority":
+        op = str(raw.get("order_priority") or "").strip().lower()
+        if op not in _DRIVER_PREF_ORDER_PRIORITIES:
+            return None
+        out["order_priority"] = op
+    elif cond == "shift_over_limit":
+        lm_raw = raw.get("limit_minutes")
+        if lm_raw is not None:
+            if isinstance(lm_raw, bool) or not isinstance(lm_raw, (int, float)) or lm_raw <= 0:
+                return None
+            out["limit_minutes"] = float(lm_raw)
+    agg_raw = raw.get("aggregation")
+    if agg_raw is not None:
+        agg = str(agg_raw).strip().lower()
+        if agg in _DRIVER_PREF_AGGREGATIONS:
+            out["aggregation"] = agg
+    return out
+
+
+def _normalize_goal_term_entry(raw: Any) -> dict[str, Any] | None:
+    """Tolerant goal-term entry validator. Returns None when no usable weight is present."""
+    if not isinstance(raw, dict):
+        return None
+    weight = raw.get("weight")
+    if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+        return None
+    out: dict[str, Any] = {"weight": float(weight)}
+    raw_type = str(raw.get("type") or "").strip().lower()
+    out["type"] = raw_type if raw_type in _GOAL_TERM_TYPE_VALUES else "objective"
+    if isinstance(raw.get("locked"), bool):
+        out["locked"] = bool(raw["locked"])
+    rank_raw = raw.get("rank")
+    if not isinstance(rank_raw, bool):
+        try:
+            rank = int(rank_raw)
+            if rank > 0:
+                out["rank"] = rank
+        except (TypeError, ValueError):
+            pass
+    props_raw = raw.get("properties")
+    if isinstance(props_raw, dict):
+        normalized_props: dict[str, Any] = {}
+        for prop_key, prop_val in props_raw.items():
+            if not isinstance(prop_key, str):
+                continue
+            if prop_key == "driver_preferences" and isinstance(prop_val, list):
+                rules = [
+                    rule
+                    for raw_rule in prop_val
+                    if (rule := _normalize_driver_preference_rule(raw_rule)) is not None
+                ]
+                normalized_props["driver_preferences"] = rules
+            elif prop_key == "max_shift_hours":
+                if (
+                    not isinstance(prop_val, bool)
+                    and isinstance(prop_val, (int, float))
+                    and prop_val > 0
+                ):
+                    normalized_props["max_shift_hours"] = float(prop_val)
+            else:
+                # Forward-compat: pass unknown property keys through unchanged so future
+                # problem domains can lean on goal_terms.properties without coordinating here.
+                normalized_props[prop_key] = deepcopy(prop_val)
+        if normalized_props:
+            out["properties"] = normalized_props
+    return out
+
+
+def _normalize_goal_terms_map(raw: Any) -> dict[str, dict[str, Any]]:
+    """Drop malformed entries silently; keep the rest. Preserves R1 mitigation."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        entry = _normalize_goal_term_entry(value)
+        if entry is None:
+            continue
+        out[key] = entry
+    return out
+
+
+def _merge_goal_term_entry(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge two goal-term entries.
+
+    Top-level fields (weight, type, rank, locked) — patch wins per key.
+    `properties` is deep-merged at the property-name level so updating only
+    `driver_preferences` does not drop a sibling like `max_shift_hours`.
+    Inside `properties`, list values (notably `driver_preferences`) are
+    replaced wholesale — rule lists are atomic; partial merges produce
+    rule-identity ambiguity we deliberately avoid.
+    """
+    out = deepcopy(base)
+    for key, val in patch.items():
+        if key == "properties" and isinstance(val, dict):
+            base_props = out.get("properties") if isinstance(out.get("properties"), dict) else {}
+            merged_props = deepcopy(base_props)
+            for prop_key, prop_val in val.items():
+                merged_props[prop_key] = deepcopy(prop_val)
+            out["properties"] = merged_props
+        else:
+            out[key] = deepcopy(val) if isinstance(val, (dict, list)) else val
+    return out
+
+
+def _merge_goal_terms_maps(
+    base: dict[str, Any] | None, patch: dict[str, Any] | None
+) -> dict[str, dict[str, Any]]:
+    """Per-key deep merge of two goal_terms maps."""
+    merged: dict[str, dict[str, Any]] = (
+        deepcopy(base) if isinstance(base, dict) else {}
+    )
+    if not isinstance(patch, dict):
+        return merged
+    for key, entry in patch.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        if isinstance(merged.get(key), dict):
+            merged[key] = _merge_goal_term_entry(merged[key], entry)
+        else:
+            merged[key] = deepcopy(entry)
+    return merged
+
+
 def _normalize_item(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
@@ -751,11 +988,13 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     questions = _coerce_question_list(raw.get("open_questions"))
     promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
     promoted_items = _reconcile_problem_brief_items(promoted_items)
+    goal_terms = _normalize_goal_terms_map(raw.get("goal_terms"))
     return {
         "goal_summary": goal_summary,
         "run_summary": run_summary,
         "items": promoted_items,
         "open_questions": questions,
+        "goal_terms": goal_terms,
         "solver_scope": solver_scope,
         "backend_template": backend_template,
     }
@@ -823,6 +1062,20 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
         merged["backend_template"] = (
             str(patch.get("backend_template") or base["backend_template"]).strip() or base["backend_template"]
         )
+    if "goal_terms" in patch:
+        # Per-key deep merge — see _merge_goal_term_entry for `properties` semantics.
+        # `replace_goal_terms` flag (when set true) replaces the full map instead.
+        # R5 belt-and-suspenders dedupe between structured rules and prose items
+        # is keyed off `StudyProblemPort.prose_id_prefixes_for_goal_term(...)`.
+        # The hook returns `()` for all current ports, so the safety net is
+        # dormant here; when a port adds a real prefix list, wire a filter pass
+        # at this point that drops `patch["items"]` entries whose `id` starts
+        # with any of those prefixes for the goal-term keys being patched.
+        if bool(patch.get("replace_goal_terms")):
+            merged["goal_terms"] = _normalize_goal_terms_map(patch.get("goal_terms"))
+        else:
+            normalized_patch = _normalize_goal_terms_map(patch.get("goal_terms"))
+            merged["goal_terms"] = _merge_goal_terms_maps(merged.get("goal_terms"), normalized_patch)
 
     if replace_editable_items and "items" not in patch:
         merged["items"] = []
@@ -972,7 +1225,31 @@ def sync_problem_brief_from_panel(
         and _problem_brief_item_slot(item) not in panel_slots
     ]
     merged["items"].extend(panel_items)
+
+    # Mirror the panel's structured `goal_terms` map (canonical solver-config
+    # storage on the panel side) into the brief verbatim. This makes manual
+    # UI-side edits — like adding a driver_preferences rule — first-class
+    # brief data without going through prose. The brief's `goal_terms` is
+    # the structured source of truth; the prose `config-weight-*` items
+    # above remain for participant-facing display.
+    panel_goal_terms = _panel_goal_terms(panel_config)
+    if panel_goal_terms is not None:
+        merged["goal_terms"] = panel_goal_terms
+
     return normalize_problem_brief(merged)
+
+
+def _panel_goal_terms(panel_config: Any) -> dict[str, Any] | None:
+    """Extract `panel.problem.goal_terms` as a dict, or None when absent."""
+    if not isinstance(panel_config, dict):
+        return None
+    problem = panel_config.get("problem") if isinstance(panel_config.get("problem"), dict) else panel_config
+    if not isinstance(problem, dict):
+        return None
+    goal_terms = problem.get("goal_terms")
+    if not isinstance(goal_terms, dict):
+        return None
+    return deepcopy(goal_terms)
 
 
 def _detect_algorithm_text(text: str) -> str | None:
@@ -1046,6 +1323,11 @@ def _slot_from_item_id(item_id: str) -> str | None:
         return f"weight:{weight_key}"
     if item_id.startswith("config-algorithm-param-"):
         return f"algorithm_param:{item_id.removeprefix('config-algorithm-param-')}"
+    if item_id.startswith("config-driver-pref-"):
+        # Each rule has a stable suffix (e.g. `0-zone-D`); slot id mirrors it
+        # so duplicate rules collapse via the slot reconciler while distinct
+        # rules (different vehicle/condition/discriminator) coexist.
+        return f"driver_pref:{item_id.removeprefix('config-driver-pref-')}"
     return None
 
 
@@ -1092,6 +1374,52 @@ def _numeric_field(d: dict[str, Any], key: str) -> int | float | None:
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def _weights_and_types_from_problem(
+    problem: dict[str, Any],
+) -> tuple[dict[str, float], dict[str, str]]:
+    """Pull (weights, constraint_types) from a panel `problem` block.
+
+    Prefers the canonical `goal_terms` map (post-sanitize storage); falls
+    back to the legacy top-level `weights` / `constraint_types` fields when
+    `goal_terms` is absent. On conflict, `goal_terms` wins — this enforces
+    the R4 "structured-wins" rule documented in the plan.
+    """
+    weights: dict[str, float] = {}
+    constraint_types: dict[str, str] = {}
+
+    goal_terms = problem.get("goal_terms")
+    if isinstance(goal_terms, dict):
+        for key, entry in goal_terms.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+            weight_val = entry.get("weight")
+            if isinstance(weight_val, bool) or not isinstance(weight_val, (int, float)):
+                continue
+            weights[key] = float(weight_val)
+            term_type = str(entry.get("type") or "").strip().lower()
+            if term_type in _GOAL_TERM_TYPE_VALUES:
+                constraint_types[key] = term_type
+
+    if not weights:
+        legacy_weights = problem.get("weights")
+        if isinstance(legacy_weights, dict):
+            for key, value in legacy_weights.items():
+                if not isinstance(key, str):
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    continue
+                weights[key] = float(value)
+        legacy_types = problem.get("constraint_types")
+        if isinstance(legacy_types, dict):
+            for key, value in legacy_types.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    lowered = value.strip().lower()
+                    if lowered in _GOAL_TERM_TYPE_VALUES:
+                        constraint_types[key] = lowered
+
+    return weights, constraint_types
+
+
 def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = None) -> list[dict[str, Any]]:
     from app.algorithm_catalog import (
         DEFAULT_ALGORITHM_PARAMS,
@@ -1126,17 +1454,14 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
     # not a participant-facing fact. It is intentionally NOT mirrored into the brief
     # so it never surfaces in the definition panel or the chat payload to the model.
 
-    weights = problem.get("weights")
-    constraint_types = (
-        problem.get("constraint_types")
-        if isinstance(problem.get("constraint_types"), dict)
-        else {}
-    )
-    if isinstance(weights, dict):
+    # Read weights and constraint types from `goal_terms` first — that's the
+    # canonical solver-config storage on the panel side after sanitization.
+    # Fall back to legacy top-level `weights` / `constraint_types` (for
+    # unsanitized / legacy panels and tests). On conflict, goal_terms wins.
+    weights, constraint_types = _weights_and_types_from_problem(problem)
+    if weights:
         for key in sorted(weights):
-            value = _numeric_field(weights, key)
-            if value is None:
-                continue
+            value = weights[key]
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             ctype = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
             items.append(
@@ -1195,5 +1520,20 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
                 f"Search strategy: {algorithm} ({', '.join(strategy_details)}).",
             )
         )
+
+    # Per-port prose synthesis from goal_terms (e.g. VRPTW renders one
+    # `config-driver-pref-*` row per driver_preference rule). Reads from the
+    # canonical `goal_terms` map only — never from prose.
+    goal_terms = problem.get("goal_terms")
+    if isinstance(goal_terms, dict) and goal_terms:
+        try:
+            extras = get_study_port(test_problem_id).synthesize_brief_items_from_goal_terms(
+                goal_terms
+            )
+        except AttributeError:
+            extras = []
+        for extra in extras:
+            if isinstance(extra, dict) and str(extra.get("id") or "").strip():
+                items.append(extra)
 
     return items

@@ -234,3 +234,210 @@ def test_brief_seed_skips_algorithm_when_no_mention():
     derived = derive_problem_panel_from_brief(brief)
     # No algorithm mention → no seed signal → returns None per docstring.
     assert derived is None
+
+
+def _alice_zone_d_rule():
+    return {
+        "vehicle_idx": 0,
+        "condition": "avoid_zone",
+        "zone": 4,
+        "penalty": 50,
+    }
+
+
+def test_brief_seed_recovers_driver_preferences_from_goal_terms_no_llm():
+    """Brief carries `goal_terms.worker_preference.properties.driver_preferences`;
+    deterministic derive must produce a panel with that rule at top-level
+    `driver_preferences` after the panel-side overlay runs.
+
+    This is the chat→panel path the original bug regressed: structured rules
+    in the brief must reach the panel without any prose parsing or LLM call.
+    """
+    from vrptw_problem.brief_seed import derive_problem_panel_from_brief
+    from vrptw_problem.study_bridge import sanitize_panel_weights
+
+    brief = {
+        "items": [],
+        "open_questions": [],
+        "goal_summary": "",
+        "goal_terms": {
+            "worker_preference": {
+                "weight": 1.0,
+                "type": "soft",
+                "properties": {"driver_preferences": [_alice_zone_d_rule()]},
+            }
+        },
+    }
+    derived = derive_problem_panel_from_brief(brief)
+    assert derived is not None
+    assert derived["problem"]["weights"]["worker_preference"] == 1.0
+
+    # Run through sanitize_panel_weights so `_apply_goal_terms_overlay`
+    # projects properties.driver_preferences → top-level driver_preferences.
+    sanitized, _warnings = sanitize_panel_weights(derived)
+    prefs = sanitized["problem"].get("driver_preferences", [])
+    assert len(prefs) == 1
+    assert prefs[0]["vehicle_idx"] == 0
+    assert prefs[0]["zone"] == 4
+
+
+def test_panel_to_brief_mirror_carries_driver_preferences_via_goal_terms():
+    """Panel-side manual add must become first-class brief data so the next
+    chat turn's LLM sees the rule via the brief's structured carrier."""
+    from app.problem_brief import default_problem_brief, sync_problem_brief_from_panel
+
+    base = default_problem_brief("vrptw")
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "worker_preference": {
+                    "weight": 5.0,
+                    "type": "soft",
+                    "properties": {"driver_preferences": [_alice_zone_d_rule()]},
+                }
+            }
+        }
+    }
+    next_brief = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    rules = next_brief["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
+    assert rules == [_alice_zone_d_rule()]
+    assert next_brief["goal_terms"]["worker_preference"]["weight"] == 5.0
+
+
+def test_panel_to_brief_synthesizes_prose_items_per_driver_preference():
+    """Each driver-preference rule must surface as one `config-driver-pref-*`
+    row in the brief items so the participant-facing Definition tab renders
+    'Alice avoids deliveries in Zone D…' alongside the structured rule the
+    solver consumes."""
+    from app.problem_brief import _brief_items_from_panel
+
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "worker_preference": {
+                    "weight": 1.0,
+                    "type": "soft",
+                    "properties": {
+                        "driver_preferences": [
+                            _alice_zone_d_rule(),
+                            {
+                                "vehicle_idx": 2,
+                                "condition": "order_priority",
+                                "order_priority": "express",
+                                "penalty": 50,
+                            },
+                            {
+                                "vehicle_idx": 3,
+                                "condition": "shift_over_limit",
+                                "limit_minutes": 390,
+                                "penalty": 50,
+                            },
+                        ]
+                    },
+                },
+            }
+        }
+    }
+    items = _brief_items_from_panel(panel, test_problem_id="vrptw")
+    ids = {it["id"] for it in items}
+    assert "config-driver-pref-0-zone-D" in ids
+    assert "config-driver-pref-2-order-express" in ids
+    assert "config-driver-pref-3-shift-390" in ids
+    alice = next(it for it in items if it["id"] == "config-driver-pref-0-zone-D")
+    assert "Alice" in alice["text"] and "Zone D" in alice["text"]
+    carol = next(it for it in items if it["id"] == "config-driver-pref-2-order-express")
+    assert "Carol" in carol["text"] and "express" in carol["text"]
+    dave = next(it for it in items if it["id"] == "config-driver-pref-3-shift-390")
+    assert "Dave" in dave["text"] and "6.5h" in dave["text"]
+
+
+def test_brief_synthesis_drops_stale_rows_when_rule_removed(monkeypatch):
+    """When a structured rule disappears from goal_terms, its prose row must
+    not survive on the next brief patch — `_synthesize_goal_term_prose_items`
+    drops items whose id-prefix is owned by the port."""
+    from app.problem_brief import normalize_problem_brief
+    from app.routers.sessions.derivation import _synthesize_goal_term_prose_items
+
+    # Brief still has a stale `config-driver-pref-0-zone-D` row from a prior
+    # turn, but the structured carrier no longer mentions Alice/Zone D.
+    brief = normalize_problem_brief({
+        "items": [
+            {
+                "id": "config-driver-pref-0-zone-D",
+                "text": "Alice avoids deliveries in Zone D as a soft preference.",
+                "kind": "gathered",
+                "source": "agent",
+            },
+        ],
+        "goal_terms": {
+            "worker_preference": {
+                "weight": 1.0,
+                "type": "soft",
+                "properties": {"driver_preferences": []},
+            }
+        },
+    })
+    next_brief = _synthesize_goal_term_prose_items(brief, test_problem_id="vrptw")
+    ids = {it["id"] for it in next_brief["items"]}
+    assert "config-driver-pref-0-zone-D" not in ids
+
+
+def test_existing_lock_preserve_test_still_works_with_goal_terms_present(monkeypatch):
+    """Regression: ensure the new `goal_terms` brief carrier doesn't break the
+    existing lock/preserve flow. Goal_terms in the brief should round-trip
+    cleanly through the lock-preserve sync."""
+    current_prefs = [_alice_zone_d_rule()]
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {"travel_time": 1.0, "worker_preference": 5.0},
+                    "locked_goal_terms": ["worker_preference"],
+                    "driver_preferences": current_prefs,
+                    "algorithm": "GA",
+                }
+            }
+        ),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+
+    def _fake_derive(self, brief):
+        # Brief now has goal_terms — the deterministic path can pick it up,
+        # but for this test we bypass it with a fixed derivation.
+        return {
+            "problem": {
+                "weights": {"travel_time": 9.0, "worker_preference": 99.0},
+                "driver_preferences": [
+                    {"vehicle_idx": 1, "condition": "order_priority",
+                     "order_priority": "standard", "penalty": 1.0,
+                     "aggregation": "per_stop"}
+                ],
+            }
+        }
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief={
+            "items": [],
+            "goal_terms": {
+                "worker_preference": {
+                    "weight": 5.0,
+                    "type": "soft",
+                    "properties": {"driver_preferences": current_prefs},
+                }
+            },
+        },
+        api_key=None,
+        model_name=None,
+    )
+
+    assert panel is not None
+    # Lock honored: locked weight stayed at 5.0.
+    assert panel["problem"]["goal_terms"]["worker_preference"]["weight"] == 5.0
+    # Lock honored: driver_preferences from current panel (not derived) preserved.
+    assert panel["problem"]["driver_preferences"] == current_prefs

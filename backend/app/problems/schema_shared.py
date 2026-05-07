@@ -51,32 +51,69 @@ CONSTRAINT_TYPES_SCHEMA: dict[str, Any] = {
     },
 }
 
-GOAL_TERM_ENTRY_SCHEMA: dict[str, Any] = {
+# Default `goal_terms[key].properties` shape — permissive. Each problem port
+# overrides via `goal_term_properties_schema()` when it has typed child fields
+# (e.g. VRPTW's `driver_preferences`, `max_shift_hours`). This module stays
+# problem-agnostic; it only declares the slot.
+_DEFAULT_GOAL_TERM_PROPERTIES_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": (
-        "Canonical per-goal-term representation. `weight` is numeric emphasis, "
-        "`type` is objective/soft/hard/custom, `locked` mirrors lock state, and "
-        "`properties` carries optional term-specific metadata."
+        "Optional term-specific metadata. Default is an open object — problem "
+        "ports add typed child fields by overriding "
+        "`StudyProblemPort.goal_term_properties_schema()`."
     ),
-    "properties": {
-        "weight": {"type": "number"},
-        "type": {"type": "string", "enum": ["objective", "soft", "hard", "custom"]},
-        "locked": {"type": "boolean"},
-        "rank": {"type": "integer", "minimum": 1},
-        "properties": {"type": "object"},
-    },
-    "required": ["weight"],
-    "additionalProperties": False,
+    "additionalProperties": True,
 }
 
-GOAL_TERMS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "description": (
-        "Goal-term map keyed by weight alias (e.g. travel_time, capacity_penalty). "
-        "Each entry can include weight, type, lock flag, and optional term-specific properties."
-    ),
-    "additionalProperties": GOAL_TERM_ENTRY_SCHEMA,
-}
+
+def goal_term_entry_schema(
+    properties_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a goal-term entry schema with a problem-specific `properties` shape.
+
+    `properties_schema` is the JSON schema for `goal_terms[key].properties` —
+    each port supplies its own (see `StudyProblemPort.goal_term_properties_schema`).
+    Pass `None` to get the permissive default.
+    """
+    return {
+        "type": "object",
+        "description": (
+            "Canonical per-goal-term representation. `weight` is numeric emphasis, "
+            "`type` is objective/soft/hard/custom, `locked` mirrors lock state, and "
+            "`properties` carries optional term-specific metadata."
+        ),
+        "properties": {
+            "weight": {"type": "number"},
+            "type": {"type": "string", "enum": ["objective", "soft", "hard", "custom"]},
+            "locked": {"type": "boolean"},
+            "rank": {"type": "integer", "minimum": 1},
+            "properties": properties_schema or _DEFAULT_GOAL_TERM_PROPERTIES_SCHEMA,
+        },
+        "required": ["weight"],
+        "additionalProperties": False,
+    }
+
+
+def goal_terms_schema(
+    properties_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a `goal_terms` map schema with a problem-specific entry shape."""
+    return {
+        "type": "object",
+        "description": (
+            "Goal-term map keyed by weight alias (e.g. travel_time, capacity_penalty). "
+            "Each entry can include weight, type, lock flag, and optional term-specific properties."
+        ),
+        "additionalProperties": goal_term_entry_schema(properties_schema),
+    }
+
+
+# Back-compat constants — permissive defaults used when no port-specific
+# schema is available. Problem-aware call sites should call
+# `goal_term_entry_schema(...)` / `goal_terms_schema(...)` with the port's
+# properties schema instead.
+GOAL_TERM_ENTRY_SCHEMA: dict[str, Any] = goal_term_entry_schema()
+GOAL_TERMS_SCHEMA: dict[str, Any] = goal_terms_schema()
 
 
 def wrap_panel_patch_schema(problem_inner: dict[str, Any]) -> dict[str, Any]:

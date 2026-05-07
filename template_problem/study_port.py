@@ -192,6 +192,21 @@ class TemplateProblemPort:
         # Return {} if no such coupling exists.
         return {}
 
+    def prose_id_prefixes_for_goal_term(self, goal_term_key: str) -> tuple[str, ...]:
+        # TODO: when a goal term in this problem has prose brief items
+        # (`config-...-` ids) that should be deduped against incoming
+        # structured `goal_terms[key]` patches, return the prefixes here.
+        # See the docstring on StudyProblemPort.prose_id_prefixes_for_goal_term.
+        # Default: no coupling.
+        return ()
+
+    def goal_term_properties_schema(self) -> dict | None:
+        # TODO: if any goal term in this problem has typed child fields
+        # under goal_terms[key].properties (e.g. like VRPTW's
+        # driver_preferences attached to worker_preference), return a JSON
+        # schema with those properties listed here. Default permissive.
+        return None
+
     # ------------------------------------------------------------------ #
     # Starter config — pushed by researcher at session start               #
     # ------------------------------------------------------------------ #

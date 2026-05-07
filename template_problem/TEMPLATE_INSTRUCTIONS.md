@@ -63,6 +63,20 @@ Gemini `response_json_schema` for `{ "problem": { ... } }` patches.
 Import `ALGORITHM_PARAMS_SCHEMA` from `app.problems.schema_shared` for the
 `algorithm_params` field (shared across all problems).
 
+#### Carrying domain-specific structured rules across the brief↔panel boundary
+
+If your problem has structured per-goal-term rules (VRPTW's `driver_preferences`
+is the canonical example), put them under
+`goal_terms[<weight_key>].properties.<field_name>` on the panel side and the
+**same nested path** on the brief. The brief layer already carries `goal_terms`
+end-to-end and `merge_problem_brief_patch` deep-merges `properties` per
+property name (with list values replaced wholesale). You get the round-trip
+for free — no new top-level brief field, no new port hook for transport.
+The brief-update LLM prompt should reference the contract path
+(`goal_terms.<key>.properties.<field>`) so the model emits structured JSON
+rather than prose; mirror VRPTW's `DRIVER_PREFERENCES_BRIEF_CONTRACT`
+constant in `vrptw_problem/study_prompts.py` as a model.
+
 ### 8. Register in `frontend/src/client/problemRegistry.ts`
 ```typescript
 import { MODULE as MYPROBLEM_MODULE } from "@myproblem/index";

@@ -93,7 +93,21 @@
       "Bash(grep -rEn \"\\\\\\\\.choices|\\\\\"choices\\\\\"|'choices'\" C:/Users/whyhowie/git-repo/mopt-bot/backend/ C:/Users/whyhowie/git-repo/mopt-bot/frontend/src/ --include='*.py' --include='*.ts' --include='*.tsx')",
       "Bash(grep -rn \"split\\\\|sentence\\\\|\\\\\\\\\\\\\\\\.\\\\\\\\!\\\\\\\\?\\\\;\" C:/Users/whyhowie/git-repo/mopt-bot/backend/app/problem_brief.py)",
       "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -c ' *)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "WebSearch",
+      "Bash(xargs ls -la)",
+      "Bash(./venv/Scripts/python *)",
+      "Bash(../venv/Scripts/python -m pytest tests/test_llm_schema.py tests/test_problem_brief.py -x -q)",
+      "Bash(../venv/Scripts/python -m pytest tests/ -x -q --ignore=tests/test_live_gemini.py)",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\python -m pytest backend\\\\tests\\\\ -x -q --ignore=backend\\\\tests\\\\test_live_gemini.py 2>&1 | Select-Object -Last 20)",
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_problem_brief.py vrptw_problem/tests/test_sync_vrptw.py -x --no-header)",
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest -m \"not live_gemini\" --no-header)",
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_live_gemini.py --no-header)",
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_live_gemini.py::test_brief_update_emits_structured_driver_preference_for_alice_zone_d --no-header)",
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest vrptw_problem/tests/test_sync_vrptw.py --no-header)",
+      "Bash(xargs -I {} cat \"{}\")",
+      "Bash(python3 /tmp/extract_calls.py)",
+      "Read(//c/tmp/**)"
     ]
   }
 }

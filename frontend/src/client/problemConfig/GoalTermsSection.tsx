@@ -59,7 +59,7 @@ export function removeLockedGoalTerm(list: string[], key: string): string[] {
 // ------------------------------------------------------------------
 
 const CONSTRAINT_TYPE_OPTIONS: { id: ConstraintType; label: string }[] = [
-  { id: "objective", label: "Obj" },
+  { id: "objective", label: "Objective" },
   { id: "soft", label: "Soft" },
   { id: "hard", label: "Hard" },
   { id: "custom", label: "Custom" },
@@ -82,12 +82,20 @@ function ConstraintTypeSelect({
     <ConfigSelect
       editable={editable}
       value={constraintType}
-      displayLabel={CONSTRAINT_TYPE_OPTIONS.find((o) => o.id === constraintType)?.label ?? "Obj"}
+      displayLabel={CONSTRAINT_TYPE_OPTIONS.find((o) => o.id === constraintType)?.label ?? "Objective"}
       onChange={(e) => onChange?.(e.target.value as ConstraintType)}
       onActivate={onActivate}
       focusKey={focusKey}
       className={`constraint-type-select constraint-type-select--${constraintType}`}
-      style={{ minWidth: "4.4rem", textAlign: "right", fontSize: "0.8rem" }}
+      style={{
+        minWidth: "5.8rem",
+        maxWidth: "6.5rem",
+        textAlign: "right",
+        fontSize: "0.8rem",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
     >
       {CONSTRAINT_TYPE_OPTIONS.map(({ id, label }) => (
         <option key={id} value={id}>

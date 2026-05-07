@@ -275,6 +275,7 @@ def apply_brief_patch_with_cleanup(
     Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
     """
     merged = merge_problem_brief_patch(base_problem_brief, patch_payload)
+    merged = _synthesize_goal_term_prose_items(merged, test_problem_id)
     if not enable_auto_open_question_cleanup or merged == base_problem_brief:
         consolidated, run_meta = consolidate_run_summary(
             merged,
@@ -303,6 +304,78 @@ def apply_brief_patch_with_cleanup(
         is_run_acknowledgement=is_run_acknowledgement,
     )
     return consolidated, {**meta, **run_meta}
+
+
+def _synthesize_goal_term_prose_items(
+    brief: dict[str, Any], test_problem_id: str | None
+) -> dict[str, Any]:
+    """Refresh participant-facing prose rows synthesized from `brief.goal_terms`
+    (e.g. VRPTW driver-preference rules → `config-driver-pref-*`).
+
+    For every goal-term key the port "owns" prose-row prefixes for
+    (via `prose_id_prefixes_for_goal_term`), this drops all existing items
+    matching those prefixes before re-adding the freshly synthesized set.
+    That way removing a rule (or all rules) is reflected in the Definition
+    on the next turn without stale rows hanging around.
+    """
+    from app.problem_brief import normalize_problem_brief
+    from app.problems.registry import get_study_port
+
+    if not isinstance(brief, dict):
+        return brief
+    goal_terms = brief.get("goal_terms") or {}
+    if not isinstance(goal_terms, dict):
+        return brief
+
+    try:
+        port = get_study_port(test_problem_id)
+        owned_prefixes: set[str] = set()
+        for key in goal_terms:
+            if not isinstance(key, str):
+                continue
+            for prefix in port.prose_id_prefixes_for_goal_term(key):
+                if isinstance(prefix, str) and prefix:
+                    owned_prefixes.add(prefix)
+        extras = (
+            port.synthesize_brief_items_from_goal_terms(goal_terms)
+            if goal_terms
+            else []
+        )
+    except AttributeError:
+        return brief
+
+    if not owned_prefixes and not extras:
+        return brief
+
+    next_brief = dict(brief)
+    base_items = list(brief.get("items") or [])
+    # Drop stale items the synthesizer owns — id-prefix only, never text.
+    kept_items = [
+        item
+        for item in base_items
+        if not (
+            isinstance(item, dict)
+            and any(
+                str(item.get("id") or "").startswith(prefix)
+                for prefix in owned_prefixes
+            )
+        )
+    ]
+    seen_ids = {
+        str(item.get("id") or "")
+        for item in kept_items
+        if isinstance(item, dict)
+    }
+    for extra in extras:
+        if not isinstance(extra, dict):
+            continue
+        item_id = str(extra.get("id") or "").strip()
+        if not item_id or item_id in seen_ids:
+            continue
+        kept_items.append(extra)
+        seen_ids.add(item_id)
+    next_brief["items"] = kept_items
+    return normalize_problem_brief(next_brief)
 
 
 def _run_with_timeout(callable_obj, timeout_sec: float):

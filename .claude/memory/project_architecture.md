@@ -7,8 +7,10 @@ type: project
 
 ## Core Data Flow
 1. Participant chats → LLM generates visible reply (fast path)
-2. Background task: LLM updates hidden `ProblemBrief` + derives config JSON
+2. Background task: LLM updates `ProblemBrief` + derives config JSON
 3. Frontend polls snapshot; shows panel spinners while derivation proceeds
+
+**Note:** The ProblemBrief is **visible to participants** in the Definition tab (goal summary, run summary, gathered info, assumptions, open questions). Participants can edit, add, remove, promote, and clean up entries directly. It is the participant-facing structured representation of the problem, not a hidden internal state.
 4. Participant saves definition → backend syncs brief ↔ panel
 5. Optimization gate check → POST /sessions/{id}/runs → MEALpy solver
 6. Result stored; chat turn acknowledges run result
