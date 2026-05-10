@@ -40,6 +40,23 @@ Worked example — user says "Alice doesn't like Zone D":
     }
 
 Rules:
+- **Same-turn structured emission is mandatory.** The moment the user
+  introduces a driver-preference rule (e.g. *"Alice doesn't like Zone D"*,
+  *"can you add something for Bob who prefers express orders"*) the
+  brief patch for **that turn** MUST include
+  `goal_terms.worker_preference.properties.driver_preferences = [...]`
+  with the rule populated. Emitting only a prose `items[]` row about the
+  rule is **insufficient** — without the structured carrier, the panel
+  receives no driver-preference and the synthesized prose row is never
+  rendered. The rule then quietly re-materialises on a *later* turn when
+  the LLM re-reads the brief, which the participant sees as the rule
+  flickering in and out. Avoid that by always landing the structured
+  carrier on the introducing turn.
+- **Provenance:** a driver-preference rule the user explicitly asked for
+  is `kind: "gathered"`, `source: "user"`, **not** an assumption — even
+  when your visible reply uses fait-accompli phrasing. The synthesized
+  prose row defaults to gathered for the same reason; do not override it
+  to assumption.
 - The `driver_preferences` array is **atomic**: send the complete current list
   whenever you change it. Partial merges of individual rules are not supported.
 - The system **deterministically synthesizes one participant-facing

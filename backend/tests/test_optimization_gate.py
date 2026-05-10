@@ -44,33 +44,45 @@ def test_intrinsic_agile_empty_display_keys_falls_back_to_any_weight():
 
 def test_intrinsic_waterfall_requires_engagement():
     brief = normalize_problem_brief(default_problem_brief())
-    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=False) is False
-    assert intrinsic_optimization_ready_waterfall(
-        brief,
-        optimization_gate_engaged=True,
-        panel_config={"problem": {"weights": {_W1: 10}}},
-    ) is True
+    panel_full = {"problem": {"weights": {_W1: 10}, "algorithm": "GA"}}
+    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=False, panel_config=panel_full) is False
+    assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config=panel_full) is True
 
 
-def test_intrinsic_waterfall_requires_config_or_strategy():
+def test_intrinsic_waterfall_requires_both_goal_term_and_algorithm():
+    """Waterfall: must have BOTH at least one goal-term weight AND a chosen algorithm.
+
+    Earlier the gate accepted "goal_term OR algorithm"; that allowed runs to fire
+    with goal terms but no chosen search strategy, violating the "specify before
+    solve" contract. Both must now be present.
+    """
     brief = normalize_problem_brief(default_problem_brief())
+    # Empty / no-config panels still fail.
     assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config=None) is False
     assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config={}) is False
+    # Goal term alone — fails (this is the regression the smoke test caught).
     assert intrinsic_optimization_ready_waterfall(
         brief,
         optimization_gate_engaged=True,
         panel_config={"problem": {"weights": {_W1: 10}}},
-    ) is True
+    ) is False
+    # Algorithm alone — fails (no goal term).
     assert intrinsic_optimization_ready_waterfall(
         brief,
         optimization_gate_engaged=True,
         panel_config={"problem": {"algorithm": "GA"}},
+    ) is False
+    # Both — passes.
+    assert intrinsic_optimization_ready_waterfall(
+        brief,
+        optimization_gate_engaged=True,
+        panel_config={"problem": {"weights": {_W1: 10}, "algorithm": "GA"}},
     ) is True
 
 
 def test_intrinsic_waterfall_engaged_empty_oq_no_panel_fallback():
     brief = normalize_problem_brief(default_problem_brief())
-    panel = json.loads(json.dumps({"problem": {"weights": {_W1: 10}}}))
+    panel = json.loads(json.dumps({"problem": {"weights": {_W1: 10}, "algorithm": "GA"}}))
     assert intrinsic_optimization_ready_waterfall(brief, optimization_gate_engaged=True, panel_config=panel) is True
     assert can_run_optimization("waterfall", False, False, panel, brief, optimization_gate_engaged=True) is True
 
@@ -140,7 +152,7 @@ def test_waterfall_participant_sync_sets_true_when_intrinsic_ready():
     row = SimpleNamespace(
         workflow_mode="waterfall",
         test_problem_id="vrptw",
-        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}}}),
+        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}, "algorithm": "GA"}}),
         problem_brief_json=json.dumps(brief),
         optimization_allowed=False,
         optimization_gate_engaged=True,
@@ -150,12 +162,28 @@ def test_waterfall_participant_sync_sets_true_when_intrinsic_ready():
     assert row.optimization_allowed is True
 
 
+def test_waterfall_participant_sync_clears_allowed_when_algorithm_missing():
+    """Goal terms present but no algorithm → run NOT ready, allowed must be cleared."""
+    brief = normalize_problem_brief(default_problem_brief())
+    row = SimpleNamespace(
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}}}),  # no algorithm
+        problem_brief_json=json.dumps(brief),
+        optimization_allowed=True,
+        optimization_gate_engaged=True,
+        updated_at=datetime.now(timezone.utc),
+    )
+    assert session_helpers.sync_optimization_allowed_after_participant_mutation(row) is True
+    assert row.optimization_allowed is False
+
+
 def test_waterfall_participant_sync_no_op_when_already_allowed_and_ready():
     brief = normalize_problem_brief(default_problem_brief())
     row = SimpleNamespace(
         workflow_mode="waterfall",
         test_problem_id="vrptw",
-        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}}}),
+        panel_config_json=json.dumps({"problem": {"weights": {_W1: 10}, "algorithm": "GA"}}),
         problem_brief_json=json.dumps(brief),
         optimization_allowed=True,
         optimization_gate_engaged=True,

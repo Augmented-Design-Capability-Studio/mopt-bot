@@ -162,6 +162,9 @@ class KnapsackStudyPort:
     def worker_preference_key(self) -> str | None:
         return None
 
+    def auto_anchored_goal_term_keys(self) -> frozenset[str]:
+        return frozenset(self.weight_display_keys())
+
     def visualization_capabilities(self) -> list[str]:
         return [
             "Convergence trend across iterations",

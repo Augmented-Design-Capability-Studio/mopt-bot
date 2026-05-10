@@ -906,7 +906,9 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     if patch_payload is not None:
                         if is_run_ack:
                             patch_payload = derivation.sanitize_run_ack_patch_payload(
-                                patch_payload, workflow_mode=row.workflow_mode
+                                patch_payload,
+                                workflow_mode=row.workflow_mode,
+                                test_problem_id=row.test_problem_id,
                             )
                         if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
                             patch_payload["replace_editable_items"] = True
@@ -995,53 +997,65 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     db.commit()
                     db.refresh(row)
                     proc_state = helpers.processing_state(row)
-            elif (
-                body.skip_hidden_brief_update
-                or body.skip_panel_derivation
-                or intent.is_interpret_only_context_message(body.content)
-                or not change_signal
-            ):
-                row = db.get(StudySession, session_id) or row
-                helpers.settle_processing_state(row, cancel_revision=True)
-                helpers.touch_session(row)
-                db.commit()
-                db.refresh(row)
-                proc_state = helpers.processing_state(row)
             else:
-                # Processing was already marked pending before the model call (see early
-                # mark above); reuse that same revision for the background derivation so we
-                # don't double-increment processing_revision per turn.
-                row = db.get(StudySession, session_id) or row
-                revision = int(row.processing_revision or 0)
-                proc_state = helpers.processing_state(row)
-                derivation.launch_background_derivation(
-                    session_id=session_id,
-                    revision=revision,
-                    user_text=brief_update_user_text,
-                    workflow_mode=row.workflow_mode,
-                    api_key=key,
-                    model_name=model,
-                    history_lines=hist,
-                    researcher_steers=researcher_steers,
-                    recent_runs_summary=recent_runs_summary,
-                    base_problem_brief=current_problem_brief,
-                    base_panel=current,
-                    cleanup_requested=cleanup_requested,
-                    clear_requested=clear_requested,
-                    is_run_acknowledgement=is_run_ack,
-                    is_answered_open_question=is_answer_save,
-                    is_config_save=is_config_save,
-                    is_upload_context=is_upload_context,
-                    is_tutorial_active=is_tutorial_active,
-                    test_problem_id=row.test_problem_id,
-                    # Pass the visible reply that just got sent so the hidden
-                    # brief turn can stay consistent with what the participant
-                    # already read (e.g. "Changes I made: increased the
-                    # lateness penalty"). Without this the visible chat and
-                    # the brief commit diverge — agent says it changed
-                    # something, but the panel/brief don't reflect it.
-                    visible_assistant_message=text,
+                # Unified background pipeline: always launches on real chat
+                # turns. The brief-update LLM call inside the pipeline is
+                # gated by `skip_brief_update_llm`, but coercion + OQ
+                # maintenance + sync always run. This sequencing replaces
+                # the earlier (parallel) split that had a race between BG
+                # derivation and standalone OQ maintenance.
+                #
+                # Skip the pipeline entirely only on caller-driven hard
+                # bypasses (skip_hidden_brief_update / skip_panel_derivation)
+                # or genuine synthetic context messages.
+                hard_skip_pipeline = (
+                    body.skip_hidden_brief_update
+                    or body.skip_panel_derivation
+                    or intent.is_interpret_only_context_message(body.content)
                 )
+                row = db.get(StudySession, session_id) or row
+                if hard_skip_pipeline:
+                    helpers.settle_processing_state(row, cancel_revision=True)
+                    helpers.touch_session(row)
+                    db.commit()
+                    db.refresh(row)
+                    proc_state = helpers.processing_state(row)
+                else:
+                    # Processing was already marked pending before the model call;
+                    # reuse the same revision so we don't double-increment.
+                    revision = int(row.processing_revision or 0)
+                    proc_state = helpers.processing_state(row)
+                    # When change_signal is False (concept questions, casual
+                    # chat, dismissals like "skip this for now"), skip the
+                    # brief-update LLM call to save the round-trip — but still
+                    # run OQ maintenance + coercion + sync inside the pipeline
+                    # so dismissals are honoured and gating stays correct.
+                    skip_brief_llm = not change_signal
+                    derivation.launch_background_derivation(
+                        session_id=session_id,
+                        revision=revision,
+                        user_text=brief_update_user_text,
+                        workflow_mode=row.workflow_mode,
+                        api_key=key,
+                        model_name=model,
+                        history_lines=hist,
+                        researcher_steers=researcher_steers,
+                        recent_runs_summary=recent_runs_summary,
+                        base_problem_brief=current_problem_brief,
+                        base_panel=current,
+                        cleanup_requested=cleanup_requested,
+                        clear_requested=clear_requested,
+                        is_run_acknowledgement=is_run_ack,
+                        is_answered_open_question=is_answer_save,
+                        is_config_save=is_config_save,
+                        is_upload_context=is_upload_context,
+                        is_tutorial_active=is_tutorial_active,
+                        test_problem_id=row.test_problem_id,
+                        # Pass the visible reply so the hidden brief turn AND
+                        # the OQ maintenance step share the same chat context.
+                        visible_assistant_message=text,
+                        skip_brief_update_llm=skip_brief_llm,
+                    )
 
             row = db.get(StudySession, session_id) or row
             panel_obj: dict[str, Any] | None = None
@@ -1828,6 +1842,7 @@ def cleanup_participant_open_questions(
         recent_runs_summary=recent_runs_summary,
         cleanup_mode=True,
         is_run_acknowledgement=False,
+        test_problem_id=row.test_problem_id,
     )
     cleaned_brief = coerce_problem_brief_for_workflow(cleaned_brief, row.workflow_mode)
     if cleaned_brief != current_problem_brief:

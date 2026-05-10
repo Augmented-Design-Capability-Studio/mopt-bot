@@ -57,7 +57,15 @@ export function intrinsicOptimizationReadyAgile(
   return displayWeightKeys.length > 0 && algo.length > 0;
 }
 
-/** Matches backend `optimization_gate.intrinsic_optimization_ready_waterfall`. */
+/**
+ * Matches backend `optimization_gate.intrinsic_optimization_ready_waterfall`.
+ *
+ * Waterfall requires **all** of: at least one goal-term weight, a non-empty
+ * algorithm, optimization gate engaged, and zero open-status open questions.
+ * Earlier versions accepted "goal_term OR algorithm"; that allowed runs with
+ * goal terms but no chosen search strategy, which violates waterfall's
+ * "specify before solve" contract. Now both must be present.
+ */
 export function intrinsicOptimizationReadyWaterfall(
   brief: ProblemBrief,
   optimizationGateEngaged: boolean,
@@ -66,7 +74,7 @@ export function intrinsicOptimizationReadyWaterfall(
   const { problem } = parseBaseProblemConfig(configText);
   const hasGoalTerm = Object.keys(problem.weights).length > 0;
   const hasSearchStrategy = problem.algorithm.trim().length > 0;
-  if (!hasGoalTerm && !hasSearchStrategy) return false;
+  if (!hasGoalTerm || !hasSearchStrategy) return false;
   if (!optimizationGateEngaged) return false;
   for (const q of brief.open_questions) {
     if (q.status === "open") return false;
@@ -149,14 +157,17 @@ export function runOptimizationDisabledHint(
     const { problem } = parseBaseProblemConfig(configText);
     const hasGoalTerm = Object.keys(problem.weights).length > 0;
     const hasSearchStrategy = problem.algorithm.trim().length > 0;
-    const hasWaterfallConfig = hasGoalTerm || hasSearchStrategy;
     const hasOpenQuestions = problemBrief?.open_questions.some((q) => q.status === "open") ?? false;
 
-    if (!hasWaterfallConfig && hasOpenQuestions) {
-      return "Add at least one goal term or choose a search strategy in Problem Config, then answer all open questions in the Definition tab.";
+    // Waterfall requires BOTH goal terms and a chosen algorithm.
+    if (!hasGoalTerm && !hasSearchStrategy) {
+      return "Add at least one goal term and choose a search strategy in Problem Config before optimization can run.";
     }
-    if (!hasWaterfallConfig) {
-      return "Add at least one goal term or choose a search strategy in Problem Config before optimization can run.";
+    if (!hasGoalTerm) {
+      return "Add at least one goal term in Problem Config before optimization can run.";
+    }
+    if (!hasSearchStrategy) {
+      return "Choose a search strategy (algorithm) in Problem Config before optimization can run.";
     }
     if (!session.optimization_gate_engaged) {
       return "Send a chat message or wait until open questions appear in the Definition tab before optimization can run.";

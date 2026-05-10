@@ -4,9 +4,15 @@ Each `goal_terms[key]` entry should be backed by at least one brief `items[]`
 row (a `gathered` fact, plus `assumption` rows in agile/demo). The brief-update
 LLM cites those rows by id in `evidence_item_ids`. This module enforces that
 contract — primary check is the cited ids; secondary is an embedding-cosine
-fallback against item text; tertiary is the per-port auto-anchor for terms
-whose own `properties` carry their justification (e.g. VRPTW's
-`worker_preference` is implicitly anchored when it has driver-preference rules).
+fallback against item text; tertiary is the per-port self-anchor hook
+(`StudyProblemPort.is_goal_term_self_anchored`) for terms whose own
+`properties` carry their justification, plus the closed-vocabulary opt-out
+(`StudyProblemPort.auto_anchored_goal_term_keys`) for problems whose key set
+is too tightly scoped for misuse to be plausible.
+
+Problem-specific knowledge (which keys self-anchor on which property fields,
+which keys can be auto-trusted) is owned by the port. This module stays
+problem-agnostic.
 
 Existing terms (already in `base_brief.goal_terms`) are tolerated without
 evidence — enforcement only fires on **newly introduced** keys, so the
@@ -74,24 +80,6 @@ def _valid_item_ids(brief: dict[str, Any] | None, kinds: frozenset[str]) -> set[
         if item_id:
             out.add(item_id)
     return out
-
-
-def _self_anchored_by_properties(key: str, entry: dict[str, Any]) -> bool:
-    """Per-port auto-anchor: a goal_term whose own structured properties carry
-    the user-stated rules is implicitly anchored. The structured rule list is
-    its own justification — there's no separate prose row to cite.
-    """
-    props = entry.get("properties") if isinstance(entry, dict) else None
-    if not isinstance(props, dict):
-        return False
-    if key == "worker_preference":
-        rules = props.get("driver_preferences")
-        if isinstance(rules, list) and rules:
-            return True
-    if key == "shift_limit":
-        if "max_shift_hours" in props:
-            return True
-    return False
 
 
 def _entry_anchor_text(key: str, entry: dict[str, Any]) -> str:
@@ -175,8 +163,9 @@ def is_goal_term_anchored(
     key: str,
     entry: dict[str, Any],
     valid_item_ids: set[str],
+    port: Any | None = None,
 ) -> bool:
-    """Cheap per-entry anchor check — explicit cite OR self-anchored properties.
+    """Cheap per-entry anchor check — port self-anchor OR explicit cite.
 
     The embedding fallback is intentionally NOT inside this function: it
     requires a network call and should be done once per batch of unanchored
@@ -184,8 +173,12 @@ def is_goal_term_anchored(
     """
     if not isinstance(entry, dict):
         return False
-    if _self_anchored_by_properties(key, entry):
-        return True
+    if port is not None:
+        try:
+            if port.is_goal_term_self_anchored(key, entry):
+                return True
+        except Exception:  # pragma: no cover — defensive
+            pass
     evidence = entry.get("evidence_item_ids")
     if isinstance(evidence, list):
         for eid in evidence:
@@ -201,6 +194,7 @@ def filter_unanchored_new_goal_terms(
     items: list[dict[str, Any]],
     workflow_mode: str | None,
     api_key: str | None = None,
+    test_problem_id: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Drop newly-introduced goal_term keys that have no evidence anchor.
 
@@ -209,9 +203,11 @@ def filter_unanchored_new_goal_terms(
     pass would *add*. Returns ``(filtered_goal_terms, dropped_keys)``.
 
     Anchor priority:
-    1. Explicit ``evidence_item_ids`` resolves to a valid items[] id.
-    2. Self-anchored properties (e.g. worker_preference + driver_preferences).
-    3. Embedding cosine ≥ threshold against any item text (if api_key given).
+    1. Key declared in port.auto_anchored_goal_term_keys() (closed-vocabulary
+       opt-out for problems whose key set is too small/intrinsic to misuse).
+    2. Explicit ``evidence_item_ids`` resolves to a valid items[] id.
+    3. Self-anchored properties (e.g. worker_preference + driver_preferences).
+    4. Embedding cosine ≥ threshold against any item text (if api_key given).
     """
     if not isinstance(proposed_goal_terms, dict):
         return {}, []
@@ -221,6 +217,18 @@ def filter_unanchored_new_goal_terms(
         if isinstance(base_gt, dict):
             base_keys = {k for k in base_gt.keys() if isinstance(k, str)}
 
+    port: Any | None = None
+    auto_anchored: frozenset[str] = frozenset()
+    if test_problem_id is not None:
+        try:
+            from app.problems.registry import get_study_port
+
+            port = get_study_port(test_problem_id)
+            auto_anchored = port.auto_anchored_goal_term_keys()
+        except Exception:  # pragma: no cover — defensive, never gate on registry hiccups
+            port = None
+            auto_anchored = frozenset()
+
     kinds = evidence_kinds_for_workflow(workflow_mode)
     valid_ids = _valid_item_ids({"items": items}, kinds)
 
@@ -229,10 +237,12 @@ def filter_unanchored_new_goal_terms(
     for key, entry in proposed_goal_terms.items():
         if not isinstance(key, str) or not isinstance(entry, dict):
             continue
-        if key in base_keys:
+        if key in base_keys or key in auto_anchored:
             cheap_anchored[key] = True
             continue
-        if is_goal_term_anchored(key=key, entry=entry, valid_item_ids=valid_ids):
+        if is_goal_term_anchored(
+            key=key, entry=entry, valid_item_ids=valid_ids, port=port
+        ):
             cheap_anchored[key] = True
             continue
         cheap_anchored[key] = False
@@ -260,6 +270,76 @@ def filter_unanchored_new_goal_terms(
             workflow_mode,
         )
     return filtered, dropped
+
+
+SEARCH_STRATEGY_PANEL_FIELDS: tuple[str, ...] = (
+    "algorithm",
+    "algorithm_params",
+    "epochs",
+    "pop_size",
+    "early_stop",
+    "early_stop_patience",
+    "early_stop_epsilon",
+    "use_greedy_init",
+    "random_seed",
+)
+
+
+_SEARCH_STRATEGY_BRIEF_SLOTS: frozenset[str] = frozenset(
+    {"search_strategy", "algorithm", "epochs", "pop_size"}
+)
+
+
+def brief_mentions_search_strategy(
+    brief: dict[str, Any] | None,
+    *,
+    test_problem_id: str | None = None,
+) -> bool:
+    """Return True iff the brief carries a gathered/assumption row that
+    justifies a search-strategy panel block.
+
+    Two signals (either is sufficient):
+
+    1. **Slot-tagged item.** A brief item whose id resolves to a search-
+       strategy slot (``search_strategy``, ``algorithm``, ``epochs``,
+       ``pop_size``, or any ``algorithm_param:*``). Slot detection goes
+       through ``problem_brief.problem_brief_item_slot``, which is port-
+       aware and returns the same slot keys whether the row was synthesized
+       from the panel or written by the LLM.
+    2. **Algorithm name mentioned in text.** Falls back to the closed-
+       vocabulary text scanner so chat-only mentions (e.g. *"let's start
+       with GA"*) count even before the panel has been synced.
+
+    The gate is workflow-agnostic and problem-agnostic: it only asks
+    whether the brief has a recorded reason to expose search-strategy
+    fields in the saved panel.
+    """
+    if not isinstance(brief, dict):
+        return False
+    raw_items = brief.get("items")
+    items: list[dict[str, Any]] = (
+        [item for item in raw_items if isinstance(item, dict)]
+        if isinstance(raw_items, list)
+        else []
+    )
+    if not items:
+        return False
+    if algorithm_mentioned_in_brief(items):
+        return True
+    try:
+        from app.problem_brief import problem_brief_item_slot
+    except Exception:  # pragma: no cover — defensive import
+        return False
+    for item in items:
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in {"gathered", "assumption"}:
+            continue
+        slot = problem_brief_item_slot(item, test_problem_id=test_problem_id)
+        if slot is None:
+            continue
+        if slot in _SEARCH_STRATEGY_BRIEF_SLOTS or slot.startswith("algorithm_param:"):
+            return True
+    return False
 
 
 def algorithm_mentioned_in_brief(items: list[dict[str, Any]] | None) -> bool:

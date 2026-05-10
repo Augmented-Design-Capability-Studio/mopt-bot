@@ -51,7 +51,7 @@ def _is_run_related_text(text: str) -> bool:
     return False
 
 
-def _format_run_context_line(run: dict[str, Any]) -> str:
+def _format_run_context_line(run: dict[str, Any], test_problem_id: str | None = None) -> str:
     run_number = run.get("run_number")
     algorithm = str(run.get("algorithm") or "").strip()
     cost = run.get("cost")
@@ -63,13 +63,18 @@ def _format_run_context_line(run: dict[str, Any]) -> str:
     if algorithm:
         details.append(f"algorithm {algorithm}")
     violations = run.get("violations")
-    if isinstance(violations, dict):
-        tw = violations.get("time_window_stop_count")
-        cap = violations.get("capacity_units_over")
-        if isinstance(tw, (int, float)):
-            details.append(f"time-window stops over {int(tw)}")
-        if isinstance(cap, (int, float)):
-            details.append(f"capacity units over {int(cap)}")
+    if isinstance(violations, dict) and test_problem_id is not None:
+        try:
+            from app.problems.registry import get_study_port
+
+            extras = get_study_port(test_problem_id).format_run_context_violation_details(
+                violations
+            )
+        except Exception:  # pragma: no cover — defensive
+            extras = []
+        for line in extras:
+            if isinstance(line, str) and line.strip():
+                details.append(line.strip())
     return ", ".join(details) + "."
 
 
@@ -79,6 +84,7 @@ def consolidate_run_summary(
     recent_runs_summary: list[dict[str, Any]] | None = None,
     cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
+    test_problem_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """
     Maintain a single rolling run summary. On cleanup, migrate run-related noisy rows/questions
@@ -124,7 +130,7 @@ def consolidate_run_summary(
     if recent_runs_summary:
         latest = recent_runs_summary[-1]
         if isinstance(latest, dict):
-            recent_line = _format_run_context_line(latest).strip()
+            recent_line = _format_run_context_line(latest, test_problem_id=test_problem_id).strip()
     parts: list[str] = []
     if existing:
         parts.append(existing)
@@ -157,7 +163,12 @@ def _is_bookkeeping(raw: dict[str, Any]) -> bool:
     return any(snippet in text for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS)
 
 
-def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_mode: str | None = None) -> dict[str, Any]:
+def _sanitize_run_ack_patch_payload(
+    patch_payload: dict[str, Any],
+    *,
+    workflow_mode: str | None = None,
+    test_problem_id: str | None = None,
+) -> dict[str, Any]:
     """
     Keep run-ack brief edits compact: allow open-question curation plus durable config-slot rows.
     Drop per-run/session bookkeeping rows to prevent Definition growth across runs.
@@ -182,7 +193,7 @@ def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_m
                 kept_items.append(raw)
                 kept_agile_assumption_count += 1
             continue
-        slot = problem_brief_item_slot(raw)
+        slot = problem_brief_item_slot(raw, test_problem_id=test_problem_id)
         if slot and not _is_bookkeeping(raw):
             kept_items.append(raw)
 
@@ -191,9 +202,16 @@ def _sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_m
     return sanitized
 
 
-def sanitize_run_ack_patch_payload(patch_payload: dict[str, Any], *, workflow_mode: str | None = None) -> dict[str, Any]:
+def sanitize_run_ack_patch_payload(
+    patch_payload: dict[str, Any],
+    *,
+    workflow_mode: str | None = None,
+    test_problem_id: str | None = None,
+) -> dict[str, Any]:
     """Public wrapper for run-ack patch sanitization."""
-    return _sanitize_run_ack_patch_payload(patch_payload, workflow_mode=workflow_mode)
+    return _sanitize_run_ack_patch_payload(
+        patch_payload, workflow_mode=workflow_mode, test_problem_id=test_problem_id
+    )
 
 
 def apply_open_question_cleanup_pass(
@@ -265,17 +283,22 @@ def _patch_likely_resolves_open_questions(
     The second LLM pass (`apply_open_question_cleanup_pass` with
     `infer_resolved=True`) is only useful when the patch plausibly resolves
     some open question. It's pure waste on patches that only edit weights,
-    swap algorithms, or refine prose. We approximate "could resolve an OQ"
-    as: the patch touches `open_questions`, OR adds at least one new
-    `gathered` row (the typical shape of a fact that retires an OQ).
+    swap algorithms, or refine prose — and actively harmful when the patch
+    is *adding* new OQs (the cleanup LLM has been observed to prune the
+    OQs that were just added, especially in waterfall after a run).
 
-    Conservative bias: when in doubt, return True so the deterministic
-    backstop's `infer_resolved=True` path runs. The cost we're avoiding is
-    the LLM round-trip, not the deterministic check.
+    "Could resolve an OQ" is approximated as: the patch is a deliberate
+    full-list replace (`replace_open_questions=True`), OR adds at least
+    one new `gathered` row (the typical shape of a fact that retires an
+    OQ). Adding-only OQs without a replace flag does NOT trigger the
+    cleanup pass.
     """
     if not isinstance(patch_payload, dict):
         return False
-    if "open_questions" in patch_payload:
+    if (
+        "open_questions" in patch_payload
+        and bool(patch_payload.get("replace_open_questions"))
+    ):
         return True
     incoming_items = patch_payload.get("items")
     if not isinstance(incoming_items, list):
@@ -339,6 +362,7 @@ def apply_brief_patch_with_cleanup(
             items=list(merged.get("items") or []),
             workflow_mode=workflow_mode,
             api_key=api_key,
+            test_problem_id=test_problem_id,
         )
         if dropped:
             log.warning(
@@ -347,12 +371,18 @@ def apply_brief_patch_with_cleanup(
             )
             merged = dict(merged)
             merged["goal_terms"] = filtered
+    # The cleanup pass calls the LLM with `infer_resolved=True` and may return
+    # an empty open_questions list — replacing OQs the LLM just added. Run-ack
+    # used to *force* this pass on every run, which was the regression that
+    # silently pruned waterfall OQs. Run-ack now uses the same
+    # `_patch_likely_resolves_open_questions` heuristic as ordinary turns:
+    # cleanup only fires when something in the patch could plausibly retire
+    # an existing OQ (full-list replace OR a new gathered row).
     skip_oq_cleanup_pass = (
         not enable_auto_open_question_cleanup
         or merged == base_problem_brief
         or (
             not cleanup_mode
-            and not is_run_acknowledgement
             and not _patch_likely_resolves_open_questions(base_problem_brief, patch_payload)
         )
     )
@@ -362,6 +392,7 @@ def apply_brief_patch_with_cleanup(
             recent_runs_summary=recent_runs_summary,
             cleanup_mode=cleanup_mode,
             is_run_acknowledgement=is_run_acknowledgement,
+            test_problem_id=test_problem_id,
         )
         return consolidated, {"removed_total": 0, **run_meta}
     cleaned, meta = apply_open_question_cleanup_pass(
@@ -382,6 +413,7 @@ def apply_brief_patch_with_cleanup(
         recent_runs_summary=recent_runs_summary,
         cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
+        test_problem_id=test_problem_id,
     )
     return consolidated, {**meta, **run_meta}
 
@@ -526,42 +558,70 @@ def _run_background_derivation(
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
     visible_assistant_message: str | None = None,
+    skip_brief_update_llm: bool = False,
 ) -> None:
+    """Unified background pipeline for one chat turn.
+
+    Steps (all sequential — no parallel threads, so OQ maintenance and the
+    brief-update merge cannot race):
+
+    1. Brief-update LLM (skipped when ``skip_brief_update_llm=True``, e.g.
+       on concept-question turns where the chat-turn classifier returned
+       ``change_intent=False`` — we still want OQ maintenance to run on
+       those turns to honour dismissals like *"skip this for now"*).
+    2. Patch merge + ``filter_unanchored_new_goal_terms``.
+    3. ``coerce_problem_brief_for_workflow`` (waterfall: assumption → OQ;
+       demo: drop assumption rows).
+    4. **OQ maintenance** — single focused Gemini call that owns add /
+       drop / keep / rephrase end-to-end.
+    5. Panel re-derivation + ``sync_optimization_allowed_after_participant_mutation``.
+    6. ``log_workflow_compliance``.
+
+    Folding OQ maintenance into this pipeline (instead of running it in a
+    parallel thread) was needed because the prior parallel design had a
+    race: BG derivation could write a new OQ from coercion AFTER the
+    standalone maintenance pass had already taken its snapshot, then the
+    maintenance write (with ``replace_open_questions=True``) wiped the
+    fresh OQ. Sequencing avoids that entirely.
+    """
     try:
         from app.services.llm import generate_problem_brief_update
         timeout_sec = get_settings().derivation_timeout_sec
-        try:
-            brief_turn = _run_with_timeout(
-                lambda: generate_problem_brief_update(
-                    user_text=user_text,
-                    history_lines=history_lines,
-                    api_key=api_key,
-                    model_name=model_name,
-                    current_problem_brief=base_problem_brief,
-                    workflow_mode=workflow_mode,
-                    current_panel=base_panel,
-                    recent_runs_summary=recent_runs_summary or None,
-                    researcher_steers=researcher_steers or None,
-                    cleanup_mode=cleanup_requested,
-                    is_run_acknowledgement=is_run_acknowledgement,
-                    is_answered_open_question=is_answered_open_question,
-                    is_config_save=is_config_save,
-                    is_upload_context=is_upload_context,
-                    is_tutorial_active=is_tutorial_active,
-                    test_problem_id=test_problem_id,
-                    visible_assistant_message=visible_assistant_message,
-                ),
-                timeout_sec,
-            )
-        except FuturesTimeoutError as exc:
-            raise TimeoutError("Brief derivation timed out") from exc
+        if skip_brief_update_llm:
+            brief_turn = None  # Treated below as "no brief patch this turn".
+        else:
+            try:
+                brief_turn = _run_with_timeout(
+                    lambda: generate_problem_brief_update(
+                        user_text=user_text,
+                        history_lines=history_lines,
+                        api_key=api_key,
+                        model_name=model_name,
+                        current_problem_brief=base_problem_brief,
+                        workflow_mode=workflow_mode,
+                        current_panel=base_panel,
+                        recent_runs_summary=recent_runs_summary or None,
+                        researcher_steers=researcher_steers or None,
+                        cleanup_mode=cleanup_requested,
+                        is_run_acknowledgement=is_run_acknowledgement,
+                        is_answered_open_question=is_answered_open_question,
+                        is_config_save=is_config_save,
+                        is_upload_context=is_upload_context,
+                        is_tutorial_active=is_tutorial_active,
+                        test_problem_id=test_problem_id,
+                        visible_assistant_message=visible_assistant_message,
+                    ),
+                    timeout_sec,
+                )
+            except FuturesTimeoutError as exc:
+                raise TimeoutError("Brief derivation timed out") from exc
 
         # `brief_turn is None` means the structured call failed (network /
         # parse / SDK error) — distinct from `brief_turn` returning empty
         # which means the LLM legitimately decided no patch was needed.
         # Surface the failure path so the participant gets a retry chip
         # instead of silently no-op.
-        if brief_turn is None:
+        if brief_turn is None and not skip_brief_update_llm:
             persist_processing_failure(
                 session_id,
                 revision,
@@ -570,7 +630,7 @@ def _run_background_derivation(
             return
 
         patch_payload: dict[str, Any] | None = None
-        if brief_turn.problem_brief_patch:
+        if brief_turn is not None and brief_turn.problem_brief_patch:
             patch_payload = dict(brief_turn.problem_brief_patch)
         elif clear_requested:
             patch_payload = {"items": [], "open_questions": []}
@@ -580,12 +640,20 @@ def _run_background_derivation(
         effective_problem_brief = base_problem_brief
         if patch_payload is not None:
             if is_run_acknowledgement:
-                patch_payload = _sanitize_run_ack_patch_payload(patch_payload)
-            elif cleanup_requested or brief_turn.cleanup_mode or brief_turn.replace_editable_items:
+                patch_payload = _sanitize_run_ack_patch_payload(
+                    patch_payload,
+                    workflow_mode=workflow_mode,
+                    test_problem_id=test_problem_id,
+                )
+            elif (
+                cleanup_requested
+                or (brief_turn is not None and brief_turn.cleanup_mode)
+                or (brief_turn is not None and brief_turn.replace_editable_items)
+            ):
                 patch_payload["replace_editable_items"] = True
             if clear_requested:
                 patch_payload["replace_open_questions"] = True
-            elif brief_turn.replace_open_questions:
+            elif brief_turn is not None and brief_turn.replace_open_questions:
                 patch_payload["replace_open_questions"] = True
             effective_problem_brief, meta = apply_brief_patch_with_cleanup(
                 base_problem_brief=base_problem_brief,
@@ -600,22 +668,128 @@ def _run_background_derivation(
                 test_problem_id=test_problem_id,
                 enable_auto_open_question_cleanup=True,
                 is_run_acknowledgement=is_run_acknowledgement,
-                cleanup_mode=cleanup_requested or bool(brief_turn.cleanup_mode),
+                cleanup_mode=cleanup_requested
+                or bool(brief_turn is not None and brief_turn.cleanup_mode),
             )
             if int(meta.get("removed_total", 0)) > 0:
                 log.info("Auto open-question cleanup removed %s question(s)", meta.get("removed_total"))
-            if (cleanup_requested or brief_turn.cleanup_mode) and base_panel:
+            if (
+                cleanup_requested
+                or (brief_turn is not None and brief_turn.cleanup_mode)
+            ) and base_panel:
                 effective_problem_brief = sync_problem_brief_from_panel(
                     effective_problem_brief, base_panel, test_problem_id=test_problem_id
                 )
 
-            # Apply workflow-specific invariants (waterfall: assumptions → OQs;
-            # demo: drop assumptions). Without this the background path bypasses
-            # the coercion that the synchronous chat-turn path already applies,
-            # leaving a window where the brief in DB still has assumption rows.
-            effective_problem_brief = coerce_problem_brief_for_workflow(
-                effective_problem_brief, workflow_mode
-            )
+        # Apply workflow-specific invariants (waterfall: assumptions → OQs;
+        # demo: drop assumptions). Idempotent on already-coerced briefs, so
+        # safe to run on the no-patch path too.
+        effective_problem_brief = coerce_problem_brief_for_workflow(
+            effective_problem_brief, workflow_mode
+        )
+
+        # OQ maintenance — single focused Gemini call that owns add / drop /
+        # keep / rephrase end-to-end. Runs **inside** this pipeline (not in
+        # a parallel thread) so it sequences AFTER the patch merge and the
+        # workflow coercion. The earlier parallel-thread design had a race:
+        # the standalone maintenance pass would snapshot OQs, the LLM would
+        # decide based on that snapshot, then between the snapshot and the
+        # write the BG derivation could append a fresh "Confirm or correct"
+        # OQ from coercion — and the maintenance write (with
+        # ``replace_open_questions=True``) would wipe it. Sequencing fixes
+        # that. Skipped only on synthetic / non-conversational turns whose
+        # OQ contract is owned by a more-specific path.
+        should_maintain_oqs = not (
+            cleanup_requested
+            or clear_requested
+            or is_run_acknowledgement
+            or is_upload_context
+            or is_config_save
+            or is_answered_open_question
+        )
+        if (
+            should_maintain_oqs
+            and api_key
+            and api_key.strip()
+            and visible_assistant_message
+            and visible_assistant_message.strip()
+        ):
+            try:
+                from app.services.llm import maintain_open_questions
+
+                current_oqs_for_maintenance = list(
+                    effective_problem_brief.get("open_questions") or []
+                )
+                # Fast-path skip: nothing to add/drop.
+                visible_has_question = "?" in (visible_assistant_message or "")
+                if current_oqs_for_maintenance or visible_has_question:
+                    recent_gathered_texts = [
+                        str(item.get("text") or "")
+                        for item in (effective_problem_brief.get("items") or [])
+                        if isinstance(item, dict)
+                        and str(item.get("kind") or "").strip().lower() == "gathered"
+                        and str(item.get("text") or "").strip()
+                    ][-8:]
+                    new_oqs = maintain_open_questions(
+                        workflow_mode=workflow_mode,
+                        user_message=user_text,
+                        visible_reply=visible_assistant_message,
+                        current_open_questions=current_oqs_for_maintenance,
+                        recent_gathered=recent_gathered_texts,
+                        api_key=api_key,
+                        model_name=model_name,
+                        test_problem_id=test_problem_id,
+                    )
+                    if new_oqs is not None:
+                        from app.problem_brief import merge_problem_brief_patch
+
+                        effective_problem_brief = merge_problem_brief_patch(
+                            effective_problem_brief,
+                            {
+                                "open_questions": new_oqs,
+                                "replace_open_questions": True,
+                            },
+                        )
+                        # Re-coerce in case maintenance left an assumption
+                        # implication (it shouldn't — this is defensive).
+                        effective_problem_brief = coerce_problem_brief_for_workflow(
+                            effective_problem_brief, workflow_mode
+                        )
+            except Exception:  # pragma: no cover — never block derivation
+                log.exception(
+                    "OQ maintenance step failed for session %s", session_id
+                )
+
+        # Deterministic post-derivation compliance check. Logs warnings when
+        # the chat / brief-update LLMs drift from mode-specific rules (e.g.
+        # waterfall reply asks a question but no OQ recorded; agile/demo
+        # claims a brief change but the brief is unchanged). The natural-
+        # language judgement ("did the reply ask a question / claim a
+        # change?") is reported by the brief-update LLM via its structured
+        # `visible_reply_intent` field — no regex over chat text. The check
+        # itself is pure set/diff logic and runs in microseconds. Skipped
+        # when the brief-update call was bypassed (no intent data) or
+        # failed to populate `visible_reply_intent`.
+        try:
+            intent = getattr(brief_turn, "visible_reply_intent", None) if brief_turn else None
+            if intent is not None:
+                from app.services.workflow_compliance import log_workflow_compliance
+
+                log_workflow_compliance(
+                    session_id=session_id,
+                    workflow_mode=workflow_mode,
+                    base_brief=base_problem_brief,
+                    new_brief=effective_problem_brief,
+                    visible_reply_claims_brief_change=bool(
+                        getattr(intent, "claims_brief_change", False)
+                    ),
+                    visible_reply_asks_user_question=bool(
+                        getattr(intent, "asks_user_question", False)
+                    ),
+                    is_run_acknowledgement=is_run_acknowledgement,
+                )
+        except Exception:  # pragma: no cover — never block derivation on the check
+            log.exception("Workflow compliance check failed for session %s", session_id)
 
         with SessionLocal() as db:
             row = db.get(StudySession, session_id)
@@ -694,3 +868,15 @@ def launch_background_derivation(**kwargs: Any) -> None:
         name=f"session-derive-{kwargs['session_id']}",
     )
     thread.start()
+
+
+# NOTE: ``launch_background_oq_maintenance`` was removed. OQ maintenance
+# now lives **inside** ``_run_background_derivation`` as a sequential step
+# after the patch merge + workflow coercion. The separate-thread design had
+# a race: the standalone task would snapshot OQs, the LLM would decide based
+# on that snapshot, and BG derivation could append a fresh "Confirm or
+# correct: …" OQ from coercion in between — then the maintenance write
+# (with ``replace_open_questions=True``) would wipe it. Sequencing fixes it.
+# The chat handler now launches the unified pipeline on every real turn,
+# passing ``skip_brief_update_llm=True`` when ``change_intent=False`` so
+# OQ maintenance still runs (e.g. for dismissals like *"skip this for now"*).

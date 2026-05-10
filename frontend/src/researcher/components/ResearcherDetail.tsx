@@ -365,13 +365,19 @@ export function ResearcherDetail({
                     if (message.role === "researcher" || !message.visible_to_participant) return "researcher-hidden";
                     return "assistant";
                   }}
-                  getBubbleClassName={(message) =>
-                    message.role === "researcher" || !message.visible_to_participant ? "bubble-researcher-hidden-note" : undefined
-                  }
+                  getBubbleClassName={(message) => {
+                    if (message.kind === "compliance") return "bubble-compliance-note";
+                    if (message.role === "researcher" || !message.visible_to_participant) return "bubble-researcher-hidden-note";
+                    return undefined;
+                  }}
                   renderHeading={(message) => (
                     <strong>
-                      {message.role}
-                      {!message.visible_to_participant ? " (hidden from participant)" : ""}
+                      {message.kind === "compliance" ? "compliance check" : message.role}
+                      {message.kind === "compliance"
+                        ? " (drift signal)"
+                        : !message.visible_to_participant
+                        ? " (hidden from participant)"
+                        : ""}
                     </strong>
                   )}
                 />

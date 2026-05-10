@@ -112,6 +112,121 @@ class StudyProblemPort(Protocol):
         """
         return None
 
+    def normalize_goal_term_property(
+        self, prop_key: str, prop_val: Any
+    ) -> tuple[bool, Any] | None:
+        """Port hook for validating one ``goal_terms[<any>].properties[<prop_key>]`` value.
+
+        The main backend iterates registered ports for each property key it
+        encounters during brief normalization. Contract:
+
+        - Return ``None`` when this port doesn't own the property key —
+          caller will try other ports, then fall back to generic pass-
+          through (deepcopy the value).
+        - Return ``(True, normalized_value)`` to keep the key with the
+          normalized value.
+        - Return ``(False, None)`` to drop the key (validation failed).
+
+        Default returns ``None``. VRPTW overrides for ``driver_preferences``
+        and ``max_shift_hours``; future ports can opt in for their own
+        structured property fields without coordinating with the backend.
+        """
+        return None
+
+    def problem_brief_item_slot(self, item: dict[str, Any]) -> str | None:
+        """Problem-specific slot key for a brief item, or None to defer to the
+        neutral slot detector.
+
+        Slots are how the brief-merge pipeline collapses duplicate rows that
+        represent the same setting (e.g. two prose rows both describing the
+        capacity weight should reconcile to one). The main backend handles
+        neutral slots — generic ``config-weight-<key>``, search strategy,
+        algorithm, epochs, pop_size, only_active_terms,
+        ``config-algorithm-param-*``. Ports return slot keys for their own
+        item-id prefixes (e.g. VRPTW maps ``config-shift-hard-penalty`` to
+        ``weight:shift_limit`` and ``config-driver-pref-*`` rows to
+        ``driver_pref:<suffix>``).
+
+        Default returns None. Ports override only for their own prefixes.
+        """
+        return None
+
+    def format_run_context_violation_details(
+        self, violations: dict[str, Any]
+    ) -> list[str]:
+        """Translate the run-result ``violations`` dict into short detail strings
+        appended to a run-context summary line.
+
+        Used by the brief-update pipeline's rolling run summary. The neutral
+        backend already includes run number, status, cost, and algorithm —
+        each port adds problem-specific violation phrasing here. VRPTW
+        emits time-window / capacity counts; knapsack returns nothing
+        (capacity overflow already shows up via its weight).
+        """
+        return []
+
+    def extra_managed_problem_fields(self) -> tuple[str, ...]:
+        """Problem-specific top-level panel fields that participate in
+        derive-from-brief management alongside the neutral set
+        (goal_terms, weights, constraint_types, only_active_terms,
+        algorithm, algorithm_params, epochs, pop_size, early_stop*,
+        use_greedy_init).
+
+        Used by ``sync.py``'s managed-fields list. Default is empty.
+        VRPTW returns its top-level fields like ``driver_preferences``,
+        ``max_shift_hours``, ``locked_assignments``.
+        """
+        return ()
+
+    def goal_term_property_field_mirrors(self) -> dict[str, str]:
+        """Mapping of `goal_term_key → top_level_panel_field` for properties
+        that are mirrored between `goal_terms[key].properties[<top_field>]`
+        and the panel's top-level `<top_field>` (e.g. VRPTW mirrors
+        `goal_terms.worker_preference.properties.driver_preferences` ↔
+        panel `driver_preferences`).
+
+        Used by the panel-derive merge: when the LLM derived a fresh
+        top-level `<top_field>` value, the stale nested copy under
+        `properties` must be dropped before the goal-terms overlay would
+        otherwise re-project the old value back. Default is empty (no
+        mirroring); ports opt in by listing their pairs.
+        """
+        return {}
+
+    def is_goal_term_self_anchored(self, key: str, entry: dict[str, Any]) -> bool:
+        """Return True iff this goal-term entry's own `properties` self-justify it.
+
+        Used by the brief-anchor check to skip evidence requirements for terms
+        whose structured rule list **is** the justification. Example: VRPTW's
+        `worker_preference` entry with `properties.driver_preferences=[…]`
+        carries every user-stated preference rule directly — there is no
+        separate prose row to cite, so the term is implicitly anchored.
+
+        Default returns False. Ports override to whitelist their own
+        property-anchor pairs. Keep the check shallow (key + presence/non-
+        emptiness of a known property field); semantic similarity belongs in
+        the embedding fallback inside the anchoring service.
+        """
+        return False
+
+    def auto_anchored_goal_term_keys(self) -> frozenset[str]:
+        """Goal-term keys that bypass the brief-anchor check.
+
+        The anchor check (`backend.app.services.goal_term_anchoring`) is
+        intended to catch *semantic misuse* of valid keys — e.g. an LLM
+        introducing VRPTW's `worker_preference` when no brief item mentions
+        drivers. For problems whose closed key set is small and tightly
+        scoped enough that misuse is implausible (every key is intrinsic to
+        the problem, not an optional add-on), the anchor check is friction
+        without a real signal. Such ports can return their full
+        `weight_display_keys()` here to opt out.
+
+        Default is empty: the anchor check applies. Knapsack overrides this
+        to return all three of its keys; VRPTW keeps the default so its
+        worker/shift-style add-ons stay gated.
+        """
+        return frozenset()
+
     def synthesize_brief_items_from_goal_terms(
         self, goal_terms: dict[str, Any]
     ) -> list[dict[str, Any]]:

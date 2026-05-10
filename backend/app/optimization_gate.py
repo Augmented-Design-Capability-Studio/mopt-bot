@@ -36,13 +36,18 @@ def intrinsic_optimization_ready_agile(
     panel_config: dict[str, Any] | None,
     weight_display_keys: list[str],
     worker_preference_key: str | None,
+    worker_preference_companion_field: str | None = None,
 ) -> bool:
     """At least one goal-term weight (display sense) and a non-empty algorithm on saved config.
 
     ``weight_display_keys`` is the ordered list of keys that count toward the gate — supplied by
-    the active problem module so the check is problem-agnostic.  ``worker_preference_key`` names
-    the one key (if any) whose inclusion in the gate requires ``driver_preferences`` to be
-    non-empty; pass ``None`` for problems that have no such concept.
+    the active problem module so the check is problem-agnostic.
+
+    ``worker_preference_key`` names the one weight key (if any) whose inclusion in the gate
+    requires the panel's ``worker_preference_companion_field`` (a top-level list-valued field
+    like VRPTW's ``driver_preferences``) to be non-empty. Both arguments are ``None`` for
+    problems without this concept (e.g. knapsack); they are supplied together by the active
+    port. Field names are never hardcoded here.
 
     When ``weight_display_keys`` is empty the function falls back to any-weight logic (same
     behaviour as ``intrinsic_optimization_ready_demo``).
@@ -62,9 +67,12 @@ def intrinsic_optimization_ready_agile(
     show_worker_block = False
     if worker_preference_key is not None:
         has_worker_weight = worker_preference_key in goal_term_keys
-        driver_prefs = inner.get("driver_preferences")
-        prefs_list = driver_prefs if isinstance(driver_prefs, list) else []
-        show_worker_block = has_worker_weight or len(prefs_list) > 0
+        companion_present = False
+        if worker_preference_companion_field:
+            companion = inner.get(worker_preference_companion_field)
+            companion_list = companion if isinstance(companion, list) else []
+            companion_present = len(companion_list) > 0
+        show_worker_block = has_worker_weight or companion_present
 
     display_weight_keys: list[str] = []
     for key in weight_display_keys:
@@ -82,11 +90,24 @@ def intrinsic_optimization_ready_waterfall(
     optimization_gate_engaged: bool,
     panel_config: dict[str, Any] | None = None,
 ) -> bool:
-    """Waterfall: session must be past cold start; no open questions (list may be empty or all answered)."""
+    """Waterfall gate.
+
+    Requires **all** of:
+
+    - At least one goal-term weight in the saved panel.
+    - A non-empty ``algorithm`` (search strategy) in the saved panel.
+    - ``optimization_gate_engaged`` (first user chat turn has happened).
+    - No open-status open questions remaining.
+
+    Earlier versions used ``not goal_term AND not search_strategy`` (i.e.
+    only failed when *both* were missing); that allowed runs with goal
+    terms but no chosen algorithm, which violates waterfall's "specify
+    before solve" contract. Now both must be present.
+    """
     inner = _inner_problem_from_panel(panel_config)
     has_goal_term = len(_goal_term_keys(inner)) > 0
     has_search_strategy = bool(str(inner.get("algorithm") or "").strip())
-    if not has_goal_term and not has_search_strategy:
+    if not has_goal_term or not has_search_strategy:
         return False
     if not optimization_gate_engaged:
         return False
@@ -121,10 +142,21 @@ def intrinsic_optimization_ready(
         from app.problems.registry import get_study_port
 
         port = get_study_port(problem_id)
+        wpk = port.worker_preference_key()
+        # Look up the companion field via the existing port hook so the gate
+        # never hardcodes a problem-specific field name.
+        companion_field: str | None = None
+        if wpk is not None:
+            companion_fields = port.locked_companion_fields()
+            if isinstance(companion_fields, dict):
+                cf = companion_fields.get(wpk)
+                if isinstance(cf, str) and cf:
+                    companion_field = cf
         return intrinsic_optimization_ready_agile(
             panel_config,
             port.weight_display_keys(),
-            port.worker_preference_key(),
+            wpk,
+            worker_preference_companion_field=companion_field,
         )
     if mode == "demo":
         return intrinsic_optimization_ready_demo(panel_config)

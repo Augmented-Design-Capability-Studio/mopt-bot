@@ -132,3 +132,13 @@ def get_study_port(problem_id: str | None) -> Any:
 def list_test_problems_meta() -> list[dict[str, Any]]:
     reg = register_study_ports()
     return [p.meta().to_api_dict() for p in reg.values()]
+
+
+def iter_study_ports() -> list[Any]:
+    """Snapshot of all registered study ports.
+
+    Useful when the main backend needs to ask "does any registered port
+    recognise this artefact?" without knowing the active session's
+    `test_problem_id`. Order matches registration order.
+    """
+    return list(register_study_ports().values())

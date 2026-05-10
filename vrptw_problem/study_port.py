@@ -105,6 +105,70 @@ class VrptwStudyPort:
         from .panel_schema import VRPTW_GOAL_TERM_PROPERTIES_SCHEMA
         return VRPTW_GOAL_TERM_PROPERTIES_SCHEMA
 
+    def goal_term_property_field_mirrors(self) -> dict[str, str]:
+        return {
+            "worker_preference": "driver_preferences",
+            "shift_limit": "max_shift_hours",
+        }
+
+    def extra_managed_problem_fields(self) -> tuple[str, ...]:
+        return ("max_shift_hours", "driver_preferences", "locked_assignments")
+
+    def normalize_goal_term_property(
+        self, prop_key: str, prop_val: Any
+    ) -> tuple[bool, Any] | None:
+        from vrptw_problem.goal_term_properties import normalize_goal_term_property
+
+        return normalize_goal_term_property(prop_key, prop_val)
+
+    def problem_brief_item_slot(self, item: dict[str, Any]) -> str | None:
+        item_id = str(item.get("id") or "")
+        if not item_id:
+            return None
+        if item_id == "config-shift-hard-penalty":
+            return "weight:shift_limit"
+        if item_id.startswith("config-weight-"):
+            weight_key = item_id.removeprefix("config-weight-")
+            # Backward-compat renames for legacy stored ids; canonical
+            # `_brief_items_from_panel` now writes the renamed forms directly.
+            if weight_key == "deadline_penalty":
+                return "weight:lateness_penalty"
+            if weight_key == "priority_penalty":
+                return "weight:express_miss_penalty"
+            return None  # generic config-weight-* handled by neutral slot
+        if item_id.startswith("config-driver-pref-"):
+            # Each rule has a stable suffix (e.g. `0-zone-D`); slot id mirrors
+            # it so duplicate rules collapse via the slot reconciler while
+            # distinct rules (different vehicle/condition/discriminator) coexist.
+            return f"driver_pref:{item_id.removeprefix('config-driver-pref-')}"
+        return None
+
+    def format_run_context_violation_details(
+        self, violations: dict[str, Any]
+    ) -> list[str]:
+        out: list[str] = []
+        tw = violations.get("time_window_stop_count")
+        cap = violations.get("capacity_units_over")
+        if isinstance(tw, (int, float)) and not isinstance(tw, bool):
+            out.append(f"time-window stops over {int(tw)}")
+        if isinstance(cap, (int, float)) and not isinstance(cap, bool):
+            out.append(f"capacity units over {int(cap)}")
+        return out
+
+    def is_goal_term_self_anchored(self, key: str, entry: dict[str, Any]) -> bool:
+        """VRPTW: `worker_preference` self-anchors when its rule list is non-empty;
+        `shift_limit` self-anchors when it carries a `max_shift_hours` value.
+        """
+        props = entry.get("properties") if isinstance(entry, dict) else None
+        if not isinstance(props, dict):
+            return False
+        if key == "worker_preference":
+            rules = props.get("driver_preferences")
+            return isinstance(rules, list) and bool(rules)
+        if key == "shift_limit":
+            return "max_shift_hours" in props
+        return False
+
     def synthesize_brief_items_from_goal_terms(
         self, goal_terms: dict[str, Any]
     ) -> list[dict[str, Any]]:

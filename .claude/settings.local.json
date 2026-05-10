@@ -111,7 +111,10 @@
       "Bash(python3 \"C:/Users/whyhowie/AppData/Local/Temp/extract_calls.py\")",
       "Bash(python3 \"C:/Users/whyhowie/AppData/Local/Temp/extract_calls2.py\")",
       "Bash(python3 -c ' *)",
-      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest -m \"not live_gemini\" --no-header -q)"
+      "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest -m \"not live_gemini\" --no-header -q)",
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_workflow_compliance.py -x -q)",
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_workflow_compliance.py backend/tests/test_llm_schema.py -x -q)",
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests -x -q --ignore=backend/tests/test_live_gemini.py)"
     ]
   }
 }

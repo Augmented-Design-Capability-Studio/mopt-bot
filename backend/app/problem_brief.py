@@ -772,61 +772,27 @@ def resolve_upload_open_questions_after_upload(brief: Any, uploaded_file_names: 
 
 
 _GOAL_TERM_TYPE_VALUES: frozenset[str] = frozenset({"objective", "soft", "hard", "custom"})
-_DRIVER_PREF_CONDITIONS: frozenset[str] = frozenset({"avoid_zone", "order_priority", "shift_over_limit"})
-_DRIVER_PREF_AGGREGATIONS: frozenset[str] = frozenset({"per_stop", "once_per_route"})
-_DRIVER_PREF_ORDER_PRIORITIES: frozenset[str] = frozenset({"express", "standard"})
 
 
-def _normalize_driver_preference_rule(raw: Any) -> dict[str, Any] | None:
-    """Tolerant per-rule validator. Returns None on any structural failure so callers can drop the bad rule and keep the rest."""
-    if not isinstance(raw, dict):
-        return None
-    vid_raw = raw.get("vehicle_idx")
-    if isinstance(vid_raw, bool):
-        return None
+def _normalize_property_via_ports(prop_key: str, prop_val: Any) -> tuple[bool, Any] | None:
+    """Ask each registered port whether it owns this goal-term property key.
+
+    Returns the first ``(keep, value)`` decision a port supplies, or ``None``
+    when no port claims the key. Stays problem-agnostic: this function never
+    references VRPTW or knapsack property names directly.
+    """
     try:
-        vid = int(vid_raw)
-    except (TypeError, ValueError):
+        from app.problems.registry import iter_study_ports
+    except Exception:  # pragma: no cover — defensive
         return None
-    if not 0 <= vid <= 4:
-        return None
-    cond = str(raw.get("condition") or "").strip().lower()
-    if cond not in _DRIVER_PREF_CONDITIONS:
-        return None
-    pen_raw = raw.get("penalty")
-    if isinstance(pen_raw, bool) or not isinstance(pen_raw, (int, float)):
-        return None
-    if pen_raw < 0:
-        return None
-    out: dict[str, Any] = {"vehicle_idx": vid, "condition": cond, "penalty": float(pen_raw)}
-    if cond == "avoid_zone":
-        z_raw = raw.get("zone")
-        if isinstance(z_raw, bool):
-            return None
+    for port in iter_study_ports():
         try:
-            z = int(z_raw)
-        except (TypeError, ValueError):
-            return None
-        if not 1 <= z <= 5:
-            return None
-        out["zone"] = z
-    elif cond == "order_priority":
-        op = str(raw.get("order_priority") or "").strip().lower()
-        if op not in _DRIVER_PREF_ORDER_PRIORITIES:
-            return None
-        out["order_priority"] = op
-    elif cond == "shift_over_limit":
-        lm_raw = raw.get("limit_minutes")
-        if lm_raw is not None:
-            if isinstance(lm_raw, bool) or not isinstance(lm_raw, (int, float)) or lm_raw <= 0:
-                return None
-            out["limit_minutes"] = float(lm_raw)
-    agg_raw = raw.get("aggregation")
-    if agg_raw is not None:
-        agg = str(agg_raw).strip().lower()
-        if agg in _DRIVER_PREF_AGGREGATIONS:
-            out["aggregation"] = agg
-    return out
+            decision = port.normalize_goal_term_property(prop_key, prop_val)
+        except Exception:  # pragma: no cover — defensive
+            continue
+        if decision is not None:
+            return decision
+    return None
 
 
 def _normalize_goal_term_entry(raw: Any) -> dict[str, Any] | None:
@@ -869,24 +835,16 @@ def _normalize_goal_term_entry(raw: Any) -> dict[str, Any] | None:
         for prop_key, prop_val in props_raw.items():
             if not isinstance(prop_key, str):
                 continue
-            if prop_key == "driver_preferences" and isinstance(prop_val, list):
-                rules = [
-                    rule
-                    for raw_rule in prop_val
-                    if (rule := _normalize_driver_preference_rule(raw_rule)) is not None
-                ]
-                normalized_props["driver_preferences"] = rules
-            elif prop_key == "max_shift_hours":
-                if (
-                    not isinstance(prop_val, bool)
-                    and isinstance(prop_val, (int, float))
-                    and prop_val > 0
-                ):
-                    normalized_props["max_shift_hours"] = float(prop_val)
-            else:
-                # Forward-compat: pass unknown property keys through unchanged so future
-                # problem domains can lean on goal_terms.properties without coordinating here.
+            decision = _normalize_property_via_ports(prop_key, prop_val)
+            if decision is None:
+                # No port owns this property key — pass through unchanged so
+                # future problem domains can lean on goal_terms.properties
+                # without coordinating with the main backend.
                 normalized_props[prop_key] = deepcopy(prop_val)
+                continue
+            keep, value = decision
+            if keep:
+                normalized_props[prop_key] = value
         if normalized_props:
             out["properties"] = normalized_props
     return out
@@ -1159,6 +1117,21 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
     open_questions = list(normalized.get("open_questions") or [])
     convert_to_oq = mode == "waterfall"
 
+    # Track existing OQ texts (case-insensitive, whitespace-collapsed) so
+    # that converting a fresh assumption with new id but identical text to
+    # one already coerced earlier doesn't duplicate the OQ. Without this
+    # dedupe, every chat turn that re-states the same agent-side assumption
+    # (with a freshly generated item id) leaves another "Confirm or
+    # correct: …" OQ behind.
+    def _norm_oq_text(s: Any) -> str:
+        return " ".join(str(s or "").strip().lower().split())
+
+    seen_oq_texts: set[str] = {
+        _norm_oq_text(q.get("text"))
+        for q in open_questions
+        if isinstance(q, dict)
+    }
+
     next_items: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -1172,14 +1145,22 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
         if not text:
             continue
         if convert_to_oq:
+            new_text = f"{_WATERFALL_ASSUMPTION_QUESTION_PREFIX}{text}"
+            normalized_new_text = _norm_oq_text(new_text)
+            if normalized_new_text in seen_oq_texts:
+                # Already represented by an existing OQ (likely from a prior
+                # turn that coerced an earlier assumption with the same
+                # underlying text but a different id). Drop the duplicate.
+                continue
             open_questions.append(
                 {
                     "id": f"question-open-from-assumption-{str(item.get('id') or '').strip() or _compact_uid()}",
-                    "text": f"{_WATERFALL_ASSUMPTION_QUESTION_PREFIX}{text}",
+                    "text": new_text,
                     "status": "open",
                     "answer_text": None,
                 }
             )
+            seen_oq_texts.add(normalized_new_text)
         # Demo: silently drop. Agent's prompt rule already requires a proper
         # OQ-with-choices to be emitted for tunable defaults; the panel keeps
         # the working value, so the run still works.
@@ -1205,7 +1186,7 @@ def sync_problem_brief_from_panel(
     for item in merged["items"]:
         if not isinstance(item, dict):
             continue
-        slot = _problem_brief_item_slot(item)
+        slot = _problem_brief_item_slot(item, test_problem_id=test_problem_id)
         if slot is None:
             continue
         kind = str(item.get("kind") or "").strip().lower()
@@ -1216,7 +1197,7 @@ def sync_problem_brief_from_panel(
 
     panel_items = _brief_items_from_panel(panel_config, test_problem_id=test_problem_id)
     for item in panel_items:
-        slot = _problem_brief_item_slot(item)
+        slot = _problem_brief_item_slot(item, test_problem_id=test_problem_id)
         if slot is None:
             continue
         prev = existing_slot_provenance.get(slot)
@@ -1229,14 +1210,14 @@ def sync_problem_brief_from_panel(
     panel_slots = {
         slot
         for item in panel_items
-        if (slot := _problem_brief_item_slot(item)) is not None
+        if (slot := _problem_brief_item_slot(item, test_problem_id=test_problem_id)) is not None
     }
     merged["items"] = [
         deepcopy(item)
         for item in merged["items"]
         if isinstance(item, dict)
         and not str(item.get("id") or "").startswith(CONFIG_ITEM_PREFIX)
-        and _problem_brief_item_slot(item) not in panel_slots
+        and _problem_brief_item_slot(item, test_problem_id=test_problem_id) not in panel_slots
     ]
     merged["items"].extend(panel_items)
 
@@ -1299,7 +1280,33 @@ def _weight_item_text(label: str, value: float, constraint_type: str | None) -> 
     return f"{label} is a primary objective term (weight {value})."
 
 
-def _problem_brief_item_slot(item: dict[str, Any]) -> str | None:
+def _problem_brief_item_slot(
+    item: dict[str, Any], test_problem_id: str | None = None
+) -> str | None:
+    # Port-specific slots take precedence so problem-only id prefixes (e.g.
+    # VRPTW's `config-driver-pref-*`, `config-shift-hard-penalty`) and any
+    # legacy-id renames are recognised before the neutral fallback. When the
+    # caller doesn't know the active session's test_problem_id (e.g. inside
+    # `normalize_problem_brief`), iterate all registered ports — the main
+    # backend stays problem-agnostic and the first port to recognise the
+    # item wins.
+    try:
+        from app.problems.registry import get_study_port, iter_study_ports
+
+        ports_to_try = (
+            [get_study_port(test_problem_id)]
+            if test_problem_id is not None
+            else iter_study_ports()
+        )
+    except Exception:  # pragma: no cover — defensive
+        ports_to_try = []
+    for port in ports_to_try:
+        try:
+            port_slot = port.problem_brief_item_slot(item)
+        except Exception:  # pragma: no cover — defensive
+            continue
+        if port_slot is not None:
+            return port_slot
     item_id = str(item.get("id") or "")
     slot = _slot_from_item_id(item_id)
     if slot is not None:
@@ -1310,12 +1317,22 @@ def _problem_brief_item_slot(item: dict[str, Any]) -> str | None:
     return _slot_from_text(text)
 
 
-def problem_brief_item_slot(item: dict[str, Any]) -> str | None:
+def problem_brief_item_slot(
+    item: dict[str, Any], test_problem_id: str | None = None
+) -> str | None:
     """Public wrapper for slot detection used by session-merge guards."""
-    return _problem_brief_item_slot(item)
+    return _problem_brief_item_slot(item, test_problem_id=test_problem_id)
 
 
 def _slot_from_item_id(item_id: str) -> str | None:
+    """Neutral (problem-agnostic) slot detection from an item id.
+
+    Problem-specific id prefixes are handled via
+    ``StudyProblemPort.problem_brief_item_slot``; this function handles only
+    the shared scaffolding ids (search strategy, algorithm, epochs,
+    pop_size, only_active_terms, generic ``config-weight-*``,
+    ``config-algorithm-param-*``).
+    """
     if item_id == "config-search-strategy":
         return "search_strategy"
     if item_id == "config-algorithm":
@@ -1326,22 +1343,10 @@ def _slot_from_item_id(item_id: str) -> str | None:
         return "pop_size"
     if item_id == "config-only-active-terms":
         return "only_active_terms"
-    if item_id == "config-shift-hard-penalty":
-        return "weight:shift_limit"
     if item_id.startswith("config-weight-"):
-        weight_key = item_id.removeprefix("config-weight-")
-        if weight_key == "deadline_penalty":
-            weight_key = "lateness_penalty"
-        elif weight_key == "priority_penalty":
-            weight_key = "express_miss_penalty"
-        return f"weight:{weight_key}"
+        return f"weight:{item_id.removeprefix('config-weight-')}"
     if item_id.startswith("config-algorithm-param-"):
         return f"algorithm_param:{item_id.removeprefix('config-algorithm-param-')}"
-    if item_id.startswith("config-driver-pref-"):
-        # Each rule has a stable suffix (e.g. `0-zone-D`); slot id mirrors it
-        # so duplicate rules collapse via the slot reconciler while distinct
-        # rules (different vehicle/condition/discriminator) coexist.
-        return f"driver_pref:{item_id.removeprefix('config-driver-pref-')}"
     return None
 
 

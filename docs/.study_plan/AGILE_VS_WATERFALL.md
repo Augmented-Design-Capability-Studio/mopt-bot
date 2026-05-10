@@ -13,7 +13,7 @@ This study keeps the workflow manipulation intentionally small and controlled.
    - **Waterfall:** Open questions are emphasized and expected to be resolved before running. The Definition should store **no assumption rows** in Waterfall (uncertainty is tracked as open questions until confirmed).
 
 3. **Post-run focus**
-   - **Agile:** After each run, the assistant focuses on one assumption-driven next refinement.
+   - **Agile:** After each run, the assistant focuses on one or two assumption-driven next refinement.
    - **Waterfall:** After each run, the assistant focuses on clarifying unresolved questions and specification quality.
 
 4. **Formulation behavior**

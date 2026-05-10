@@ -414,6 +414,16 @@ select:focus-visible {
   color: #6f4a79;
 }
 
+/* Workflow-compliance drift signal: amber-tinted so researchers can scan
+   the chat timeline for moments where the LLM violated mode invariants. */
+.bubble-compliance-note {
+  border-left: 4px solid #d18b16;
+  background: #fdf5e0;
+}
+.bubble-compliance-note .bubble-template-heading {
+  color: #8a5a0a;
+}
+
 .bubble-template {
   display: flex;
   flex-direction: column;

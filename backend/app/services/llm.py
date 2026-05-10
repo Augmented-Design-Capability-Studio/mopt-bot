@@ -23,6 +23,7 @@ from app.prompts.study_chat import (
     STUDY_CHAT_BRIEF_UPDATE_TASK,
     STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
     STUDY_CHAT_OQ_CLASSIFY_TASK,
+    STUDY_CHAT_OQ_MAINTAIN_TASK,
     STUDY_CHAT_PHASE_CONFIGURATION,
     STUDY_CHAT_PHASE_DISCOVERY,
     STUDY_CHAT_PHASE_STRUCTURING,
@@ -43,6 +44,7 @@ from app.schemas import (
     OpenQuestionClassification,
     OpenQuestionClassifierInput,
     OpenQuestionClassifierTurn,
+    OpenQuestionMaintenanceTurn,
     ProblemBriefUpdateTurn,
     RunTriggerIntentTurn,
 )
@@ -226,6 +228,17 @@ def _build_brief_update_response_schema(test_problem_id: str | None) -> dict[str
             "replace_editable_items": {"type": "boolean"},
             "replace_open_questions": {"type": "boolean"},
             "cleanup_mode": {"type": "boolean"},
+            # LLM-reported classification of the visible reply that just got
+            # sent. Used by the workflow-compliance check to decide whether
+            # the brief delta matches what the visible reply promised, without
+            # running brittle regexes on the natural-language reply text.
+            "visible_reply_intent": {
+                "type": "object",
+                "properties": {
+                    "claims_brief_change": {"type": "boolean"},
+                    "asks_user_question": {"type": "boolean"},
+                },
+            },
         },
     }
 
@@ -233,6 +246,26 @@ def _build_brief_update_response_schema(test_problem_id: str | None) -> dict[str
 # Back-compat constant — uses permissive defaults. Problem-aware code paths
 # call `_build_brief_update_response_schema(test_problem_id)` instead.
 BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = _build_brief_update_response_schema(None)
+
+OQ_MAINTAIN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "title": "OpenQuestionMaintenance",
+    "type": "object",
+    "properties": {
+        "open_questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    "required": ["open_questions"],
+}
+
 
 OQ_CLASSIFIER_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "title": "OpenQuestionClassifierTurn",
@@ -758,16 +791,115 @@ def _build_brief_update_system_instruction(
     # operate independently and can diverge — the most common failure is the
     # chat saying "Changes I made: …" while the hidden turn skips the patch.
     if visible_assistant_message and visible_assistant_message.strip():
+        is_waterfall = str(workflow_mode or "").strip().lower() == "waterfall"
+        # Workflow-aware assumption-vs-OQ split. Waterfall forbids
+        # `kind: "assumption"` rows at all (the workflow coercer would
+        # convert them to "Confirm or correct: …" OQs, which collides with
+        # the genuine OQ the visible reply already prompts for, producing
+        # duplicates). Agile/demo can use assumption proactively.
+        if is_waterfall:
+            search_strategy_rule = (
+                "- **Algorithm / search-strategy commitment (waterfall).** When\n"
+                "  the visible reply names a specific search method (e.g.\n"
+                "  *'starting from GA'*, *'I'll default to genetic search'*),\n"
+                "  the brief MUST record an `open_questions` entry asking the\n"
+                "  user to confirm or pick a different one. Do NOT emit a\n"
+                "  `kind: \"assumption\"` row in waterfall — the workflow does\n"
+                "  not allow assumptions, and emitting one creates a duplicate\n"
+                "  OQ via the workflow-coercion step. Only when the user has\n"
+                "  EXPLICITLY answered the algorithm question in chat (e.g.\n"
+                "  *'sure, GA'*, *'use SA'*) may you emit a `kind: \"gathered\"`\n"
+                "  row whose text names the algorithm by name (e.g. *'Search\n"
+                "  strategy is set to GA (genetic search).'*). Until then, keep\n"
+                "  the OQ open. The server strips the panel's algorithm field\n"
+                "  unless the brief has a gathered row that mentions a known\n"
+                "  algorithm name.\n"
+            )
+            question_rule = (
+                "- **Clarifying question in waterfall → emit `open_questions`.**\n"
+                "  When the visible reply asks the user something (e.g. *'how\n"
+                "  strict is the capacity limit?'*, *'which search method?'*),\n"
+                "  the brief MUST record an `open_questions` entry (merge-\n"
+                "  append; do not set `replace_open_questions` unless\n"
+                "  intentionally replacing the full list). Asking a question\n"
+                "  in chat without recording it is a regression. Never use\n"
+                "  `kind: \"assumption\"` to capture an unanswered question in\n"
+                "  waterfall.\n"
+            )
+        else:
+            search_strategy_rule = (
+                "- **Algorithm / search-strategy commitment (agile/demo).** When\n"
+                "  the visible reply names a specific search method (e.g.\n"
+                "  *'starting from GA'*, *'using SA for now'*), emit a\n"
+                "  `kind: \"assumption\"`, `source: \"agent\"` brief items[] row\n"
+                "  whose text names the algorithm by name (e.g. *'Search\n"
+                "  strategy is set to GA (genetic search) as a starting\n"
+                "  point.'*). The server strips the panel's algorithm field\n"
+                "  unless the brief mentions a known algorithm name —\n"
+                "  failing to land this row breaks the auto-first-run gate.\n"
+            )
+            question_rule = (
+                "- **Clarifying question or floated goal (agile/demo).** When\n"
+                "  the visible reply asks the user something or floats a\n"
+                "  possible goal/constraint to add, follow the workflow's\n"
+                "  own rules — agile prefers a tentative `assumption`; demo\n"
+                "  prefers an `open_questions` entry. Asking a question in\n"
+                "  chat without recording it is a regression.\n"
+            )
         parts.append(
             "## Visible assistant reply that JUST got sent to the user (this turn)\n"
-            "Treat the reply below as authoritative context for what the participant has\n"
-            "just been told. If it commits to a specific brief change (e.g. *'Changes I\n"
-            "made: increased the lateness penalty weight'*, *'I'll bump capacity\n"
-            "overflow to hard'*, *'Adding a workload-balance assumption'*), emit the\n"
-            "corresponding `problem_brief_patch` so the brief and the visible chat agree.\n"
-            "Do not contradict it. If the reply only describes future intent without\n"
-            "naming a concrete change (e.g. *'I'll think about that'*, *'Let me know what\n"
-            "you want next'*), no patch is required for that intent."
+            "Treat the reply below as authoritative context for what the participant\n"
+            "has just been told. The hidden brief MUST stay consistent with it:\n"
+            "\n"
+            "- **Committed change → emit the matching patch.** If the reply commits\n"
+            "  to a specific brief change (e.g. *'Changes I made: increased the\n"
+            "  lateness penalty weight'*, *'I'll bump capacity overflow to hard'*,\n"
+            "  *'Adding a workload-balance assumption'*), emit the corresponding\n"
+            "  `problem_brief_patch` so the brief and the visible chat agree.\n"
+            "- **Structured carrier → populate it on the same turn.** When the\n"
+            "  committed change is a goal term whose schema defines a\n"
+            "  `properties` shape (e.g. VRPTW's `worker_preference` carries\n"
+            "  rules under `properties.driver_preferences`; `shift_limit`\n"
+            "  carries `properties.max_shift_hours`), the patch MUST populate\n"
+            "  that structured carrier on this turn — not just write a prose\n"
+            "  `items[]` row. Emitting only a prose row leaves the panel\n"
+            "  blank, the synthesized prose row never renders, and the rule\n"
+            "  flickers in only on a later turn when you re-read the brief.\n"
+            "  See the active-benchmark appendix for the exact carrier path.\n"
+            "- **Provenance follows origin, not phrasing.** A change the user\n"
+            "  asked for (*'Alice doesn't like Zone D'*, *'add a shift\n"
+            "  limit'*) is `kind: \"gathered\"`, `source: \"user\"` — even if\n"
+            "  your visible reply uses fait-accompli phrasing. Reserve\n"
+            "  `kind: \"assumption\"` for terms you proactively introduced\n"
+            "  without a user request (typically post-run, motivated by run\n"
+            "  feedback the user did not name).\n"
+            f"{search_strategy_rule}"
+            f"{question_rule}"
+            "- **Pure descriptive / future-intent text → no patch needed.** If the\n"
+            "  reply only describes future intent without naming a concrete change\n"
+            "  or asking anything (e.g. *'I'll think about that'*, *'Let me know\n"
+            "  what you want next'*), no patch is required for that intent.\n"
+            "\n"
+            "Never contradict the visible reply.\n"
+            "\n"
+            "## Visible-reply intent classification (required)\n"
+            "Also populate `visible_reply_intent` with two booleans describing\n"
+            "the visible reply you just read:\n"
+            "\n"
+            "- `claims_brief_change`: true iff the reply states or implies that\n"
+            "  the brief / Definition / solver setup was just changed (past tense\n"
+            "  fait accompli — *'I've added X'*, *'Bumped Y to 12'*, *'Changes I\n"
+            "  made: …'*, *'Mapped lateness to a soft constraint'*). False when\n"
+            "  the reply only describes future intent (*'I'll think about it'*),\n"
+            "  asks a question, gives a concept explanation, invites an upload,\n"
+            "  or says *'setting up your first run'* in the future-intent sense.\n"
+            "  This flag is what downstream compliance uses to verify the\n"
+            "  matching `problem_brief_patch` actually landed — be honest about\n"
+            "  it: if you did NOT emit a patch, set this false.\n"
+            "- `asks_user_question`: true iff the reply explicitly asks the user\n"
+            "  to answer something (clarifying question, choice between options,\n"
+            "  *'would you like…'*, *'should I…'*). False for rhetorical or\n"
+            "  conversational questions that do not require a user answer.\n"
         )
         parts.append("```\n" + visible_assistant_message.strip() + "\n```")
     lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
@@ -1002,6 +1134,96 @@ def generate_problem_brief_update(
     except Exception as e:
         log.warning("Brief-update structured call failed (%s); returning None to signal failure", e)
         return None
+
+
+def maintain_open_questions(
+    *,
+    workflow_mode: str,
+    user_message: str,
+    visible_reply: str,
+    current_open_questions: list[dict[str, Any]],
+    recent_gathered: list[str],
+    api_key: str,
+    model_name: str,
+    test_problem_id: str | None = None,
+) -> list[dict[str, Any]] | None:
+    """Run a focused Gemini call to maintain ``open_questions`` end-to-end.
+
+    Inputs cover only what the OQ decision needs — the user's last message,
+    the agent's visible reply, the current OQ list, and a short summary of
+    recent gathered facts. The model returns the FULL updated list (adds /
+    drops / keeps / rephrases), and callers replace the brief's
+    ``open_questions`` with that list (preserving answered state for ids that
+    round-trip via ``_preserve_answered_state`` in ``merge_problem_brief_patch``).
+
+    Deliberately decoupled from the brief-update LLM so the OQ contract is
+    not entangled with goal_terms / items merging — this fixes the regression
+    where the brief LLM would either skip an OQ-add or unexpectedly prune
+    an OQ the user had not actually dismissed.
+
+    Returns:
+        ``list[dict]`` (the new full OQ list, each ``{"id"?: str, "text": str}``)
+        on success, or ``None`` on any failure (no key, network error, parse
+        failure). On ``None`` the caller keeps the existing OQ list — never
+        a destructive default.
+    """
+    if not api_key or not model_name:
+        return None
+    parts = [
+        *_system_prompt_openers(test_problem_id, current_problem_brief=None),
+        _workflow_prompt(workflow_mode),
+        STUDY_CHAT_OQ_MAINTAIN_TASK,
+    ]
+    system_instruction = "\n\n".join(parts)
+    payload = {
+        "workflow_mode": workflow_mode,
+        "user_message": str(user_message or ""),
+        "visible_reply": str(visible_reply or ""),
+        "current_open_questions": [
+            {
+                "id": str(q.get("id") or ""),
+                "text": str(q.get("text") or ""),
+            }
+            for q in current_open_questions or []
+            if isinstance(q, dict) and str(q.get("text") or "").strip()
+        ],
+        "recent_gathered": [str(t) for t in (recent_gathered or []) if str(t).strip()][:8],
+    }
+    user_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=OQ_MAINTAIN_RESPONSE_JSON_SCHEMA,
+    )
+    try:
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=user_text,
+            config=config,
+        )
+        raw = resp.text
+        log.info(
+            "OQ-maintain Gemini raw response: %s",
+            raw if raw is not None else "<no text>",
+        )
+        if isinstance(resp.parsed, dict):
+            turn = OpenQuestionMaintenanceTurn.model_validate(resp.parsed)
+        elif raw:
+            turn = OpenQuestionMaintenanceTurn.model_validate_json(raw)
+        else:
+            return None
+    except Exception as e:
+        log.warning("OQ-maintain structured call failed (%s); returning None", e)
+        return None
+    return [
+        {
+            "text": item.text.strip(),
+            **({"id": item.id.strip()} if item.id and item.id.strip() else {}),
+        }
+        for item in turn.open_questions
+        if item.text and item.text.strip()
+    ]
 
 
 def classify_answered_open_questions(

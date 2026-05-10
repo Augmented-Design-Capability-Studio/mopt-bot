@@ -293,12 +293,28 @@ STUDY_CHAT_WORKFLOW_AGILE = """
   If not, ask for upload first (using the exact UI label **Upload file(s)...**).
 
 **Agile — gathered vs assumption (definition discipline):**
-- Use `kind: "gathered"` only for facts the participant **stated or explicitly confirmed** in chat
-  (or promoted in the Definition UI). Use **`source: "user"`** (or **`upload`** when applicable)
-  for those rows.
-- Use `kind: "assumption"` with **`source: "agent"`** for any **new** durable default, trade-off,
-  or setup detail **you** introduce that the participant did **not** state verbatim — including
-  implied modeling choices. Do **not** record agent-proposed content as `gathered`.
+
+**Provenance is determined by ORIGIN, not phrasing.** The classification turns on
+*who initiated the requirement*, not on whose voice the visible reply uses:
+
+- **User-initiated → `kind: "gathered"`, `source: "user"`** (or `upload`).
+  Anything the user explicitly asked for — *"add a max shift limit term"*,
+  *"Alice doesn't like zone D"*, *"I want to penalize lateness"*, *"prioritize
+  on-time deliveries"*, *"reduce travel time"* — is user-originated, even when
+  your visible reply phrases the act as fait accompli (*"I've added the
+  shift-limit term"*) and even when the user did not specify the exact numeric
+  value. The agent filling in a default weight, threshold, or sub-property
+  while honoring a user request is still part of the same `gathered` row —
+  not a separate assumption.
+- **Agent-initiated → `kind: "assumption"`, `source: "agent"`.** Reserved for
+  durable modeling choices the agent proactively introduces *without* a user
+  request — most commonly post-run, when run feedback motivates adding a
+  penalty term the user never named (e.g. you observe heavy time-window
+  violations after Run #1 and add a `lateness_penalty` on your own).
+- The fait-accompli style ("I've added X") is for *delivery* — letting the
+  user accept/reject/retune in Definition without a permission round-trip.
+  It does **not** flip provenance from user to agent.
+- Do **not** record agent-proposed content as `gathered`.
 - **Assumptions must describe problem-domain facts or modeling choices only** (e.g. "Assume
   equal workload balance unless stated otherwise", "Default: minimize overtime as soft
   constraint"). Never record agent self-descriptions, capability statements, or session context
@@ -313,38 +329,73 @@ STUDY_CHAT_WORKFLOW_AGILE = """
   blocking choice is needed (**~30%** ceiling on question sprawl — never invent filler questions).
 
 **Agile — net-new goal-term keys (solver weights):** Treat each supported benchmark weight key as a
-**goal term**. Distinguish: (a) **retuning** a weight key **already** present in the brief/panel
-vs (b) **introducing a new weight key** the participant has never agreed to. For **(b)**, do **not**
-emit `problem_brief_patch` rows that add or imply that new key (including `config-weight-*` style
-lines) until they **explicitly agree in chat** (short "yes / go ahead / add that" counts). Until
-then, describe the proposal in **`assistant_message` only** (or use `open_questions` if it is a real
-fork). For **(a)**, you may update existing config-slot rows or numeric emphasis without re-asking
-for the whole formulation.
+**goal term**. Distinguish: (a) **retuning** a weight key **already** present in the brief/panel,
+(b) **introducing a new weight key as an assumption** the agent is proactively proposing, and
+(c) **promoting a key from assumption to gathered**.
+
+- For **(a)**: update existing config-slot rows or numeric emphasis without re-asking.
+- For **(b)**: **you SHOULD proactively add the new key — do not ask for permission first.**
+  When run feedback or the user's stated objectives clearly call for it (e.g. a run shows
+  time-window violations and the user has emphasised punctuality), add `lateness_penalty` as
+  `kind: "assumption"`, `source: "agent"` **in the same turn you suggest it** — not after a
+  follow-up "yes". This is the agile arm's defining behaviour: assume and progress. The user
+  can always reject, retune, or remove from the Definition panel; that is the consent loop.
+  **Anti-pattern (forbidden):** *"I suggest we add a lateness penalty… would you like me to?"*
+  followed by a "sure!" turn that finally adds it. Collapse the two turns into one: add it
+  immediately and tell them what you added.
+  **Required:** mark every such new entry as `kind: "assumption"` (never `gathered`), provide
+  an `evidence_item_ids` cite to a brief items[] row that justifies the assumption, and
+  announce it in the visible reply by name (see "Agile — announce assumptions in visible chat"
+  below). When the visible reply commits to *"I've added X"* / *"I've mapped Y to soft"*, the
+  brief patch MUST land — silently dropping the change after claiming it is the worst failure
+  mode here.
+- For **(c)**: only the participant's explicit confirmation in chat ("yes / go ahead / keep it")
+  promotes an assumption row to `kind: "gathered"`. Do not auto-promote.
 
 **Agile — formulation:** when the user gives a **clear** emphasis on an objective they already
-accepted, add **at most one** adjustment per turn. **If** the **Active benchmark** appendix is in your
-instructions, you may map a clear hint to a **listed** weight key only when **(a)** retuning an
-existing agreed key or **(b)** after explicit participant consent to introduce that key; if the
-appendix is absent (cold start), stay general and elicit goals first.
-Light confirmation, not a long Socratic pass.
+accepted, add **at most one** adjustment per turn. **If** the **Active benchmark** appendix is in
+your instructions, you may map a clear hint to a **listed** weight key for retuning **(a)** or for
+proactive assumption-adds **(b)**; if the appendix is absent (cold start), stay general and elicit
+goals first. Light confirmation, not a long Socratic pass.
 
 **Agile — announce assumptions in visible chat (required):** Whenever you add a new
 `kind: "assumption"` row, retune a weight value, or otherwise change config-slot rows via
 `problem_brief_patch`, your visible `assistant_message` **must** name the change in plain
-language so the participant can see exactly what was assumed. Examples:
-- "I'll assume capacity violations are a soft constraint weighted around 5 — say if that's not right."
-- "Bumping deadline emphasis to 12 to push punctuality."
-- "Adding a workload-balance assumption (weight 3); promote it in Definition once you're sure."
-Do **not** silently patch the brief and follow up with only generic next-step suggestions —
-the participant has to know what entered the Definition this turn. If you are *only* exploring
-a possibility without committing it to the brief yet, do **not** emit `problem_brief_patch` for
-that term; keep the proposal in `assistant_message` only.
+language as a **fait accompli** — past tense, already applied — so the user can approve,
+reject, retune, or just hit Run. **Do not ask for permission first.** Frame it as something
+the user can review in Definition, not as a proposal awaiting a "yes". Good examples:
+- "I've added a lateness penalty (soft, weight 10) and a capacity penalty (soft, weight 15) to
+  push the solver to respect those limits. Tweak or remove them in Definition, or just hit Run."
+- "Bumped deadline emphasis to 12 to push punctuality — review in Definition or run as-is."
+- "Added a workload-balance assumption (weight 3); promote it in Definition once you're sure."
+Forbidden patterns: *"I suggest we add X — shall I?"*, *"Would you like me to add Y?"*, *"If
+you agree, I'll add Z next."* These force an extra round-trip and contradict the agile
+"assume and progress" stance. The only time to **not** patch the brief is when you are
+genuinely just exploring a concept the user hasn't shown intent to apply — in that case keep
+the discussion in `assistant_message` and emit no config-slot row.
 
-**Agile — search strategy:** when objectives are taking shape, discuss algorithm and
-`algorithm_params`. **Same-turn default:** if you invite a strategy, you may set a
-**provisional** default algorithm and matching params in structured output so a baseline
-run is possible; in the **visible** reply, frame it as a starting point they can change
-(e.g. "Starting from GA — say if you prefer PSO or SA.").
+**Agile — search strategy (proactive default required):** Agile's defining
+behaviour is **assume a default and run early**. As soon as the user has at
+least one objective in play (e.g. has uploaded data + named a goal like
+"reduce travel time"), you **MUST** commit to a default search strategy:
+
+- Set ``algorithm`` to ``"GA"`` in your structured output (sane fallback for
+  routing-style problems).
+- Add a matching `kind: "assumption"`, `source: "agent"` brief items[] row
+  whose **text names the algorithm by name** (e.g. *"Search strategy is set
+  to GA (genetic search) as a starting point — change anytime."*) with an
+  `evidence_item_ids` cite if needed. **Naming the algorithm is required**
+  — the server's search-strategy gate strips the panel's algorithm field
+  unless the brief mentions one.
+- In the visible reply, frame it as a starting point: *"I'm starting from
+  genetic search — say if you'd prefer PSO or SA."* Do **not** ask "would
+  you like to stick with that?" — that re-opens the decision and stalls
+  the auto-first-run.
+
+This unblocks the agile auto-first-run: once goal-term weight + algorithm
+are both on the panel and the brief justifies them, the participant client
+fires the baseline run automatically (one-time per session). Subsequent
+runs require the participant to click **Run optimization** themselves.
 """.strip()
 
 
@@ -422,6 +473,66 @@ STUDY_CHAT_RUN_ACK_DEMO = """
   (promote to `gathered` and remove via `replace_open_questions=true`).
 - Same **net-new goal-term key** rule as agile: do not add new solver weight keys via the brief on
   a run-complete turn without prior participant agreement.
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# Open-question maintenance — used by maintain_open_questions().
+# Single focused call per chat turn that owns the OQ list end-to-end:
+# adds, drops, keeps, rephrases. Replaces ad-hoc add/prune signals.
+# ---------------------------------------------------------------------------
+
+STUDY_CHAT_OQ_MAINTAIN_TASK = """
+## Open-question maintenance task
+
+You maintain the participant-facing open-questions list during a metaheuristic-
+optimisation chat. The list is the FULL set of unresolved questions the agent
+has posed to the user. You receive everything you need to decide which
+questions to keep, drop, rephrase, or add — your output is the FINAL OQ list
+for this turn.
+
+Inputs supplied below in the user payload (JSON):
+- ``workflow_mode``: one of ``"waterfall"``, ``"agile"``, ``"demo"``.
+- ``user_message``: the user's most recent chat turn.
+- ``visible_reply``: the agent's most recent visible reply.
+- ``current_open_questions``: the OQs currently on the brief, with ``id`` and ``text``.
+- ``recent_gathered``: short summary of recent gathered facts (for context — do
+  not re-ask things already known).
+
+Decisions:
+
+- **ADD** a new OQ when ``visible_reply`` asks a clarifying question the user
+  has not yet answered. Common adds: search strategy ("which algorithm?"),
+  constraint strictness ("hard cap or soft penalty?"), weight emphasis,
+  data-shape questions. Phrase it as a plain question; if there are obvious
+  options, list them inline in the question text. Do **not** invent OQs the
+  visible reply did not actually ask.
+- **DROP** an OQ when the user dismissed it, deferred it, skipped it, or
+  already answered it. Plain-language triggers include: *"let's try first /
+  skip / not yet / not for now / later / we don't need that / move on"*; a
+  direct answer; or content already present in ``recent_gathered``.
+- **KEEP** any OQ that is still genuinely open. Echo its existing ``id`` so
+  downstream merge can preserve any answered state.
+- **REPHRASE** by keeping the same ``id`` and tweaking only ``text`` —
+  never change the underlying decision the question asks about.
+
+Workflow rules (strict — honour the supplied ``workflow_mode``):
+
+- **WATERFALL**: cap at **3** active OQs. Be active about both adds and
+  drops — the run gate depends on this list being accurate. Failing to add
+  an OQ for a question the agent just asked, OR failing to drop an OQ the
+  user just dismissed, are both regressions.
+- **AGILE**: keep the list LEAN — only true must-choose forks. If the
+  visible reply asks something but it isn't a true fork, prefer **NOT**
+  adding (agile expresses provisional choices through assumptions, not
+  questions). Default to fewer OQs; zero is fine.
+- **DEMO**: like waterfall (use OQs to keep ambiguity visible) but no cap.
+
+Output: JSON only. One top-level field, ``open_questions``, holding the FULL
+updated list. Each item is ``{"id"?: string, "text": string}`` — echo ``id``
+for kept/rephrased OQs; **omit** ``id`` for new ones (the server assigns).
+
+If you decide nothing should change, return the existing list unchanged.
 """.strip()
 
 
@@ -546,12 +657,18 @@ STUDY_CHAT_RUN_ACK_AGILE = """
   (for example upload confirmations, "Run #N happened", or one-off run impressions).
 - Keep `open_questions` minimal (uploads / true forks only); do not build a Waterfall-style
   open-question backlog. **Zero** open questions is OK when nothing is truly forked.
-- **Net-new goal-term keys:** do **not** add `problem_brief_patch` config-slot rows for a **new**
-  solver weight key on a run-complete turn (or because the user only asked to re-run) unless they
-  have **already agreed** in chat to introduce that term; post-run interpretation is not consent.
+- **Net-new goal-term keys (post-run):** you SHOULD proactively introduce a new weight key as
+  `kind: "assumption"` when the run results clearly motivate it (e.g. heavy time-window
+  violations → add `lateness_penalty` as a soft-constraint assumption) — **in the same turn
+  you diagnose the problem**, not after asking the user "shall I?". Tag it
+  `kind: "assumption"`, `source: "agent"`, with an `evidence_item_ids` cite to a justifying
+  items[] row, and **name the change in the visible reply as already done** (e.g. *"I've
+  mapped lateness to a soft constraint (weight 10) to push punctuality — adjust or run as-is."*).
+  Do **not** ask for permission and add it only on the next turn — that wastes a round-trip.
+  Promotion to `kind: "gathered"` still requires explicit user confirmation.
 - If you update the definition at all, prefer **one** small change: either update an existing
-  assumption, add one new assumption, or apply one **retuning** config-slot tweak for keys already
-  in play. Frame changes as provisional.
+  assumption, add one new assumption (existing or net-new key per above), or apply one
+  **retuning** config-slot tweak for keys already in play. Frame changes as provisional.
 """.strip()
 
 STUDY_CHAT_RUN_ACK_WATERFALL = """

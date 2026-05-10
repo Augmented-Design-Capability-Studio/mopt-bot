@@ -6,16 +6,16 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ## Pre-session checklist
 
-- [ ] Consent form ready (link or PDF)
-- [ ] Background self-report ready (survey link or sheet — Part 1 items: experience, expertise, familiarity)
-- [ ] Optimization literacy quiz ready (survey link, on-screen poll, or printed sheet — see [`OPTIMIZATION_LITERACY.md`](../.screener/OPTIMIZATION_LITERACY.md))
-- [ ] VRPTW-understanding items ready (Part 2 — administered after the task briefing, not here)
-- [ ] Knapsack orientation video queued ([`ORIENTATION_VIDEO_SCRIPT.md`](ORIENTATION_VIDEO_SCRIPT.md))
-- [ ] VRPTW task-briefing video queued
-- [ ] One-page VRPTW reference document on hand
-- [ ] Recording software ready (screen + audio)
-- [ ] Interface URL loaded with assigned **workflow mode** (Agile or Waterfall)
-- [ ] Participant ID and condition recorded in session log
+- Consent form ready (link or PDF)
+- Background self-report ready (survey link or sheet — Part 1 items: experience, expertise, familiarity)
+- Optimization literacy quiz ready (survey link, on-screen poll, or printed sheet — see `[OPTIMIZATION_LITERACY.md](../.screener/OPTIMIZATION_LITERACY.md)`)
+- VRPTW-understanding items ready (Part 2 — administered after the task briefing, not here)
+- Knapsack orientation video queued (`[ORIENTATION_VIDEO_SCRIPT.md](ORIENTATION_VIDEO_SCRIPT.md)`)
+- VRPTW task-briefing video queued
+- One-page VRPTW reference document on hand
+- Recording software ready (screen + audio)
+- Interface URL loaded with assigned **workflow mode** (Agile or Waterfall)
+- Participant ID and condition recorded in session log
 
 ---
 
@@ -25,9 +25,11 @@ A condensed script for the opening of each session — purpose statement, consen
 
 > Hi [name], thanks for joining. I'm [researcher].
 >
-> Today we'll have you try out a research prototype — an AI-assisted interface for **metaheuristic optimization**, designed as a general-purpose tool that could be applied to a wide range of optimization problems. For this session it's set up around a specific delivery-scheduling scenario as a test case, but the interface itself is meant to be domain-agnostic. We're not testing you; we're testing the interface — your honest reactions, including frustrations or "I'd never use this for X", are exactly what we want.
+> Today we'll have you try out a research prototype — an AI-assisted interface for **metaheuristic optimization**, designed as a general-purpose tool that could be applied to a wide range of optimization problems involving trade-offs. We designed the interface because we believe that very soon, people with or without technical knowledge can take advantage of AI programming agents to create optimization programs to solve their own problems, which usually has to be completed by a human programmer nowadays.
 >
-> The session is about 70–75 minutes: a quick warmup quiz, then a short video with a hands-on tutorial, then another video and some reading for our formal task, a quick interview to check your experience and understanding, followed by the formal task for about 30 minutes, and at the end, a conversation. You can stop or take a break anytime.
+> In this study, we're not testing you; we're testing the interface — your honest reactions, including frustrations or "I'd never use this for X", are exactly what we want.
+>
+> The session is about 70–75 minutes: a quick warmup quiz, then a short video with a hands-on tutorial, then another video and some reading for our formal task, a quick interview to check your experience and understanding, followed by the formal task for about 30 minutes, and at the end, a conversation. You can stop or take a break anytime. You will be compensated $25 if you complete this whole session.
 
 **[ACTION]** Share the consent form. Wait for signature.
 
@@ -45,13 +47,13 @@ A condensed script for the opening of each session — purpose statement, consen
 
 ## 2. Background block: self-report + literacy warm-up (~5–6 min)
 
-**[NOTE]** Two short instruments back-to-back, both before stance framing or any orientation material. **Order matters** — administer the self-report **first**, then the warm-up. Reversing them would let warm-up performance contaminate the self-rating, which is a well-known pitfall when an objective measure and a self-rated competence measure share a construct. Don't show the scoring key for the warm-up, don't review correct answers afterward, and don't volunteer optimization-concept hints in this section.
+**[NOTE]** Two short instruments back-to-back, both before stance framing or any orientation material.
 
 ### 2a. Self-reported experience (~3–4 min)
 
 **[SAY]**
 
-> Before we get into the study, I'd like to ask you a few quick background questions about your experience with optimization. There are no right or wrong answers — we're just trying to understand the range of backgrounds participants are coming in with.
+> Before we get into the study, I'd like to ask you a few quick background questions about your experience with optimization. There are no right or wrong answers — we're just trying to understand the range of backgrounds participants are coming in with. We will then complete 5 warm-up multiple choice questions.
 
 **[ACTION]** Share the self-report (Part 1 items: prior coursework/work, overall expertise, familiarity with optimization, expertise using and coding optimization tools, familiarity with heuristics/metaheuristics). Stay quiet while they fill it in.
 
@@ -59,9 +61,9 @@ A condensed script for the opening of each session — purpose statement, consen
 
 **[SAY]**
 
-> Now a short five-question warm-up — multiple choice, no time pressure. We're collecting some additional background context for the analysis. Each question has an "I'm not sure" option — please use it freely if a question references something you don't recognize, rather than guessing. Otherwise, go with your honest take; your score doesn't change anything about the rest of the session.
+> Now a short five-question warm-up about your understanding of computational optimization. Each question has an "I'm not sure" option — please use it freely if a question references something you don't recognize, rather than guessing. Otherwise, go with your honest take; your score doesn't change anything about the rest of the session or your compensation.
 
-**[ACTION]** Share the quiz (link, on-screen poll, or printed sheet — see [`OPTIMIZATION_LITERACY.md`](../.screener/OPTIMIZATION_LITERACY.md)). Stay quiet while they fill it in.
+**[ACTION]** Share the quiz (link, on-screen poll, or printed sheet — see `[OPTIMIZATION_LITERACY.md](../.screener/OPTIMIZATION_LITERACY.md)`). Stay quiet while they fill it in.
 
 **[ACTION]** Once they're done, record the score (0–5) in the session log. Do **not** review answers with the participant.
 
@@ -100,6 +102,7 @@ A condensed script for the opening of each session — purpose statement, consen
 > Any questions about anything in the video?
 
 **[NOTE]** Brief discussion only.
+
 - If they ask how it relates to the actual task, deflect: *"See if the connections feel natural once you see it."*
 - If they seem unsure about the packing/knapsack idea itself, **route them to the agent** rather than explaining it yourself: *"Try asking it in chat once we start the hands-on part — explaining things like that is exactly what it's there for."* Don't define the problem for them; the goal is for them to practice using the agent the same way they will during the formal task.
 
@@ -117,18 +120,20 @@ A condensed script for the opening of each session — purpose statement, consen
 
 **[ACTION]** Play the **VRPTW task-briefing video** and hand over the reference document. Give maximum 3 minutes for the participant to read through the session.
 
-**[NOTE]** End of opening. Continue with the **pre-interaction check** ([`STUDY_DETAILED_PLAN.md`](STUDY_DETAILED_PLAN.md) §5, step 6), then the interaction phase.
+**[NOTE]** End of opening. Continue with the **pre-interaction check** (`[STUDY_DETAILED_PLAN.md](STUDY_DETAILED_PLAN.md)` §5, step 6), then the interaction phase.
 
 ---
 
 ## Timing summary
 
-| Step | Duration | Cumulative |
-|------|----------|------------|
-| Purpose + consent + recording start | ~3 min | 3 |
-| Background block: self-report (2a) + literacy warm-up (2b) | ~5–6 min | 8–9 |
-| Stance framing | ~3 min | 11–12 |
-| Orientation video + hands-on tutorial | ~7–10 min | 18–22 |
-| Task-briefing handoff (incl. video + reading) | ~10 min | 28–32 |
 
-The pre-interaction check (~5 min, includes the VRPTW-understanding items), interaction phase (~30 min), and post-task questionnaire + interview (~10–12 min) follow.
+| Step                                                       | Duration  | Cumulative |
+| ---------------------------------------------------------- | --------- | ---------- |
+| Purpose + consent + recording start                        | ~3 min    | 3          |
+| Background block: self-report (2a) + literacy warm-up (2b) | ~5–6 min  | 8–9        |
+| Stance framing                                             | ~3 min    | 11–12      |
+| Orientation video + hands-on tutorial                      | ~7–10 min | 18–22      |
+| Task-briefing handoff (incl. video + reading)              | ~10 min   | 28–32      |
+
+
+The pre-interaction check (~~5 min, includes the VRPTW-understanding items), interaction phase (~~30 min), and post-task questionnaire + interview (~10–12 min) follow.

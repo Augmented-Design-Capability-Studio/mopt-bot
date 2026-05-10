@@ -226,6 +226,7 @@ def _merge_non_destructive_managed_fields(
     problem_brief: dict | None = None,
     workflow_mode: str | None = None,
     api_key: str | None = None,
+    test_problem_id: str | None = None,
 ) -> dict:
     managed_keys = (
         "goal_terms",
@@ -272,12 +273,20 @@ def _merge_non_destructive_managed_fields(
         # by `_apply_goal_terms_overlay`, clobbering the LLM's fresh values. Drop nested
         # copies only for the keys the LLM derived authoritative top-level values for —
         # if the LLM omitted them, keep the current properties so the round-trip via
-        # goal_terms.properties still recovers driver_preferences / max_shift_hours.
-        _properties_overrides = (
-            ("worker_preference", "driver_preferences"),
-            ("shift_limit", "max_shift_hours"),
-        )
-        for goal_key, top_field in _properties_overrides:
+        # goal_terms.properties still recovers the mirrored field. The pairing is
+        # problem-specific (e.g. VRPTW mirrors `worker_preference.properties.driver_preferences`
+        # ↔ panel `driver_preferences`), supplied by the active port.
+        property_field_mirrors: dict[str, str] = {}
+        if test_problem_id is not None:
+            try:
+                from app.problems.registry import get_study_port
+
+                property_field_mirrors = (
+                    get_study_port(test_problem_id).goal_term_property_field_mirrors()
+                )
+            except Exception:  # pragma: no cover — defensive
+                property_field_mirrors = {}
+        for goal_key, top_field in property_field_mirrors.items():
             if top_field not in derived_problem:
                 continue
             entry = merged_goal_terms.get(goal_key)
@@ -342,6 +351,7 @@ def _merge_non_destructive_managed_fields(
                 items=list((problem_brief or {}).get("items") or []),
                 workflow_mode=workflow_mode,
                 api_key=api_key,
+                test_problem_id=test_problem_id,
             )
             if dropped:
                 log.warning(
@@ -398,25 +408,43 @@ def _merge_non_destructive_managed_fields(
     return merged
 
 
-def _managed_problem_fields() -> tuple[str, ...]:
-    """Managed keys are re-derived from brief each turn unless preserve mode is requested."""
-    return (
-        "goal_terms",
-        "weights",
-        "constraint_types",
-        "only_active_terms",
-        "algorithm",
-        "algorithm_params",
-        "epochs",
-        "pop_size",
-        "max_shift_hours",
-        "driver_preferences",
-        "locked_assignments",
-        "early_stop",
-        "early_stop_patience",
-        "early_stop_epsilon",
-        "use_greedy_init",
-    )
+_NEUTRAL_MANAGED_PROBLEM_FIELDS: tuple[str, ...] = (
+    "goal_terms",
+    "weights",
+    "constraint_types",
+    "only_active_terms",
+    "algorithm",
+    "algorithm_params",
+    "epochs",
+    "pop_size",
+    "early_stop",
+    "early_stop_patience",
+    "early_stop_epsilon",
+    "use_greedy_init",
+)
+
+
+def _managed_problem_fields(port: Any | None = None) -> tuple[str, ...]:
+    """Managed keys are re-derived from brief each turn unless preserve mode is requested.
+
+    Combines the neutral solver-shaped fields with any port-supplied extras
+    (e.g. VRPTW's ``driver_preferences``, ``max_shift_hours``,
+    ``locked_assignments``). Order is preserved and duplicates are dropped.
+    """
+    if port is None:
+        return _NEUTRAL_MANAGED_PROBLEM_FIELDS
+    try:
+        extras = tuple(port.extra_managed_problem_fields())
+    except Exception:  # pragma: no cover — defensive
+        extras = ()
+    seen: set[str] = set()
+    out: list[str] = []
+    for key in _NEUTRAL_MANAGED_PROBLEM_FIELDS + extras:
+        if not isinstance(key, str) or key in seen:
+            continue
+        out.append(key)
+        seen.add(key)
+    return tuple(out)
 
 
 def _backfill_solver_fields_from_seed(
@@ -515,7 +543,7 @@ def sync_panel_from_problem_brief(
     next_panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
     current_problem = deepcopy(next_panel.get("problem")) if isinstance(next_panel.get("problem"), dict) else {}
     next_problem = deepcopy(current_problem)
-    for key in _managed_problem_fields():
+    for key in _managed_problem_fields(port):
         next_problem.pop(key, None)
     companion_fields = port.locked_companion_fields()
 
@@ -528,11 +556,32 @@ def sync_panel_from_problem_brief(
             problem_brief=problem_brief,
             workflow_mode=workflow_mode or row.workflow_mode,
             api_key=api_key,
+            test_problem_id=test_problem_id,
         )
     next_problem.update(derived_problem)
     if seed_panel is None:
         seed_panel = port.derive_problem_panel_from_brief(problem_brief)
     next_problem = _backfill_solver_fields_from_seed(seed_panel, next_problem)
+
+    # Workflow-legitimacy gate: search-strategy panel fields must be backed by
+    # a corresponding brief row (gathered/assumption naming an algorithm, or a
+    # search-strategy slot mirrored from a prior panel). Without this, problem
+    # ports that hard-default an algorithm in their brief→panel seed (e.g.
+    # VRPTW's ``"GA" if any goal-term signal``) would expose a search-strategy
+    # block before the agent has discussed it with the participant — which
+    # both breaks waterfall's "ask before configure" rule and misleads agile.
+    # The check is problem-agnostic; problem-specific knowledge stays in the
+    # ports' slot detection and the closed algorithm-name vocabulary.
+    from app.services.goal_term_anchoring import (
+        SEARCH_STRATEGY_PANEL_FIELDS,
+        brief_mentions_search_strategy,
+    )
+
+    if not brief_mentions_search_strategy(
+        problem_brief, test_problem_id=test_problem_id
+    ):
+        for key in SEARCH_STRATEGY_PANEL_FIELDS:
+            next_problem.pop(key, None)
 
     # Structural errors only — raises GoalTermValidationError on shape / type / order bugs.
     validate_problem_goal_terms(problem=next_problem)

@@ -222,6 +222,19 @@ class ConsolidatedChatTurn(BaseModel):
     question_clause: str | None = None
 
 
+class VisibleReplyIntent(BaseModel):
+    """LLM-reported classification of the visible chat reply for this turn.
+
+    The brief-update LLM sees both the visible reply and the workflow context,
+    so we have it self-classify the rhetorical intent and reuse the result
+    downstream (e.g. workflow-compliance checks) — instead of running a regex
+    over natural-language text, which is unreliable.
+    """
+
+    claims_brief_change: bool = False
+    asks_user_question: bool = False
+
+
 class ProblemBriefUpdateTurn(BaseModel):
     """Structured hidden Gemini reply for brief extraction/update only."""
 
@@ -229,6 +242,7 @@ class ProblemBriefUpdateTurn(BaseModel):
     replace_editable_items: bool = False
     replace_open_questions: bool = False
     cleanup_mode: bool = False
+    visible_reply_intent: VisibleReplyIntent | None = None
 
 
 class OpenQuestionClassifierInput(BaseModel):
@@ -258,6 +272,25 @@ class OpenQuestionClassifierTurn(BaseModel):
     """Top-level structured response from classify_answered_open_questions."""
 
     classifications: list[OpenQuestionClassification] = Field(default_factory=list)
+
+
+class OpenQuestionMaintenanceItem(BaseModel):
+    """One entry in the maintenance pass output. ``id`` is echoed for kept /
+    rephrased OQs; omitted (caller assigns) for newly-added ones."""
+
+    id: str | None = None
+    text: str
+
+
+class OpenQuestionMaintenanceTurn(BaseModel):
+    """Output of the dedicated OQ maintenance LLM pass.
+
+    Carries the FULL updated list of open questions for this turn — the
+    caller replaces the brief's open_questions with this list (preserving
+    answered state for ids that round-trip).
+    """
+
+    open_questions: list[OpenQuestionMaintenanceItem] = Field(default_factory=list)
 
 
 class PostMessagesResponse(BaseModel):
