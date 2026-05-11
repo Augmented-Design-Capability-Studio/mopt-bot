@@ -1,7 +1,5 @@
 # Session Opening — Researcher Script
 
-A condensed script for the opening of each session — purpose statement, consent, the optimization literacy quiz, stance framing, and the cues to play the orientation and task-briefing videos. Read it through once before piloting; mild paraphrasing during sessions is fine, but the **stance framing** (§3) should land the same way every time, since drift there is a confound for the workflow comparison.
-
 **Conventions:** **[SAY]** = read aloud; **[ACTION]** = do; **[NOTE]** = researcher-only.
 
 ## Pre-session checklist
