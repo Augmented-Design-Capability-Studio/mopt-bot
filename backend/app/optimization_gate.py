@@ -165,6 +165,71 @@ def intrinsic_optimization_ready(
     return False
 
 
+def gate_status(
+    workflow_mode: str,
+    panel_config: dict[str, Any] | None,
+    problem_brief: Any,
+    optimization_gate_engaged: bool = False,
+    problem_id: str | None = None,
+) -> dict[str, Any]:
+    """Structured snapshot of run-prerequisite state for prompt injection.
+
+    Returns deterministic flags the chat / brief-update / maintenance prompts
+    can read by name. Pure state-reading: no NL parsing, no regex. Mirrors
+    the checks in :func:`intrinsic_optimization_ready` but exposes the
+    breakdown instead of a single bool so prompts can reason about *what*
+    is missing, in phase order.
+
+    The ``missing`` list is ordered for waterfall's elicitation phases
+    (goal_term first, then search_strategy, then open_questions, then
+    gate_engaged) so the chat prompt can pop the head and ask about it.
+    Agile / demo consume the same flags but treat ``search_strategy``
+    missing as an assumption-to-add cue rather than a question.
+    """
+    inner = _inner_problem_from_panel(panel_config)
+    has_goal_term = len(_goal_term_keys(inner)) > 0
+    has_search_strategy = bool(str(inner.get("algorithm") or "").strip())
+
+    brief = normalize_problem_brief(problem_brief)
+    questions_raw = brief.get("open_questions") or []
+    open_count = 0
+    for q in questions_raw:
+        if not isinstance(q, dict):
+            continue
+        if _normalize_question_status(q.get("status")) == "open":
+            open_count += 1
+
+    mode = str(workflow_mode or "").strip().lower()
+    missing: list[str] = []
+    if not has_goal_term:
+        missing.append("goal_term")
+    if not has_search_strategy:
+        missing.append("search_strategy")
+    if mode == "waterfall":
+        if open_count > 0:
+            missing.append("open_questions")
+        if not optimization_gate_engaged:
+            missing.append("gate_engaged")
+
+    ready = intrinsic_optimization_ready(
+        workflow_mode,
+        panel_config,
+        problem_brief,
+        optimization_gate_engaged=optimization_gate_engaged,
+        problem_id=problem_id,
+    )
+
+    return {
+        "workflow_mode": mode,
+        "goal_term_present": has_goal_term,
+        "search_strategy_present": has_search_strategy,
+        "open_questions_pending": open_count,
+        "gate_engaged": bool(optimization_gate_engaged) if mode == "waterfall" else True,
+        "ready_to_run": bool(ready),
+        "missing": missing,
+    }
+
+
 def can_run_optimization(
     workflow_mode: str,
     optimization_allowed: bool,

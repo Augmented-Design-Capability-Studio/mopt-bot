@@ -164,6 +164,7 @@ type UseParticipantSessionActionsArgs = {
   candidateRunIds: number[];
   syncMessages: () => Promise<void>;
   syncSession: () => Promise<void>;
+  syncRuns: () => Promise<void>;
   startEagerMessagePoll: () => void;
   refetchSnapshots?: () => void | Promise<void>;
 };
@@ -215,6 +216,7 @@ export function useClientSessionActions({
   candidateRunIds,
   syncMessages,
   syncSession,
+  syncRuns,
   startEagerMessagePoll,
   refetchSnapshots,
 }: UseParticipantSessionActionsArgs) {
@@ -274,6 +276,18 @@ export function useClientSessionActions({
         });
         const response = normalizePostMessagesResponse(raw);
         const outgoing = response.messages;
+        // If the server auto-triggered an optimization, the response carries
+        // a `kind === "run"` "Run NN finished" line but no run payload — the
+        // new run only lands via the next /runs poll (up to RUN_POLL_MS later),
+        // which makes the chat message appear well before the visualization
+        // updates. Pull runs (and snapshots) first so the viz is in place by
+        // the time we render the finished-line. The manual button flow gets
+        // the run body inline, so the two land together there already.
+        const hasRunFinished = outgoing.some((m) => m.kind === "run");
+        if (hasRunFinished) {
+          await syncRuns();
+          if (refetchSnapshots) await refetchSnapshots();
+        }
         setMessages((current) => mergeMessagesFromPost(current, outgoing));
         if (outgoing.length) setLastMsgId(outgoing[outgoing.length - 1]!.id);
         applyPanelConfigFromResponse(response.panel_config);
@@ -292,12 +306,14 @@ export function useClientSessionActions({
       applyProcessingFromResponse,
       applyPanelConfigFromResponse,
       applyProblemBriefFromResponse,
+      refetchSnapshots,
       session?.status,
       sessionId,
       setAiPending,
       setLastMsgId,
       setMessages,
       startEagerMessagePoll,
+      syncRuns,
       token,
     ],
   );

@@ -346,6 +346,7 @@ export function useClientController() {
     candidateRunIds,
     syncMessages: sync.syncMessages,
     syncSession: sync.syncSession,
+    syncRuns: sync.syncRuns,
     startEagerMessagePoll: sync.startEagerMessagePoll,
     refetchSnapshots: loadSnapshots,
   });

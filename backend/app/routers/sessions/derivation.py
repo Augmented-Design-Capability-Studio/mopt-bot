@@ -158,6 +158,101 @@ def consolidate_run_summary(
     return normalize_problem_brief(updated), {"moved_items": moved_items, "moved_questions": moved_questions}
 
 
+def _apply_assumption_actions(
+    brief: dict[str, Any], actions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Apply per-row assumption decisions returned by the maintenance LLM.
+
+    Each action carries a target ``id`` and one of:
+    - ``keep``: no-op.
+    - ``rephrase``: update only ``text``; preserve kind/source.
+    - ``drop``: remove the items[] row.
+    - ``promote_to_gathered``: lock the row in. Sets ``kind="gathered"`` and
+      ``source="user"`` because the user originated the lock-in (see
+      ``feedback_provenance_origin_not_phrasing``). ``rephrased_text``
+      becomes the new ``text``.
+
+    Unknown ids and unknown actions are ignored. The caller re-runs
+    ``coerce_problem_brief_for_workflow`` after this so any residual
+    workflow invariants still hold.
+    """
+    if not actions:
+        return brief
+    items = list(brief.get("items") or [])
+    items_by_id: dict[str, int] = {}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "").strip()
+        if item_id:
+            items_by_id[item_id] = index
+
+    drop_ids: set[str] = set()
+    for raw_action in actions:
+        if not isinstance(raw_action, dict):
+            continue
+        item_id = str(raw_action.get("id") or "").strip()
+        action = str(raw_action.get("action") or "").strip().lower()
+        if not item_id or action not in {
+            "keep",
+            "rephrase",
+            "drop",
+            "promote_to_gathered",
+        }:
+            continue
+        if item_id not in items_by_id:
+            # Stale id (the row was already replaced or removed by an earlier
+            # step in this turn). Silently skip.
+            continue
+        idx = items_by_id[item_id]
+        target = items[idx]
+        if not isinstance(target, dict):
+            continue
+        # Only act on rows that are actually assumption rows. If the LLM
+        # tries to mutate a gathered row, ignore the action — gathered
+        # rows have their own lifecycle (chat-side correction or
+        # cleanup pass).
+        if str(target.get("kind") or "").strip().lower() != "assumption":
+            continue
+        if action == "keep":
+            continue
+        if action == "drop":
+            drop_ids.add(item_id)
+            continue
+        rephrased = str(raw_action.get("rephrased_text") or "").strip()
+        if action == "rephrase":
+            if not rephrased:
+                continue  # nothing to apply
+            new_item = dict(target)
+            new_item["text"] = rephrased
+            items[idx] = new_item
+            continue
+        if action == "promote_to_gathered":
+            if not rephrased:
+                # Promotion without rephrased_text — fall back to the
+                # current text. The kind/source flip is the load-bearing
+                # piece; the wording can stay.
+                rephrased = str(target.get("text") or "").strip()
+            new_item = dict(target)
+            new_item["kind"] = "gathered"
+            new_item["source"] = "user"
+            if rephrased:
+                new_item["text"] = rephrased
+            items[idx] = new_item
+
+    if drop_ids:
+        items = [
+            item
+            for item in items
+            if not (
+                isinstance(item, dict)
+                and str(item.get("id") or "").strip() in drop_ids
+            )
+        ]
+
+    return {**brief, "items": items}
+
+
 def _is_bookkeeping(raw: dict[str, Any]) -> bool:
     text = str(raw.get("text") or "").strip().lower()
     return any(snippet in text for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS)
@@ -559,6 +654,7 @@ def _run_background_derivation(
     test_problem_id: str | None = None,
     visible_assistant_message: str | None = None,
     skip_brief_update_llm: bool = False,
+    gate_status: dict[str, Any] | None = None,
 ) -> None:
     """Unified background pipeline for one chat turn.
 
@@ -610,6 +706,7 @@ def _run_background_derivation(
                         is_tutorial_active=is_tutorial_active,
                         test_problem_id=test_problem_id,
                         visible_assistant_message=visible_assistant_message,
+                        gate_status=gate_status,
                     ),
                     timeout_sec,
                 )
@@ -715,14 +812,41 @@ def _run_background_derivation(
             and visible_assistant_message.strip()
         ):
             try:
-                from app.services.llm import maintain_open_questions
+                from app.services.llm import maintain_definition_state
 
                 current_oqs_for_maintenance = list(
                     effective_problem_brief.get("open_questions") or []
                 )
-                # Fast-path skip: nothing to add/drop.
+                mode_lower = str(workflow_mode or "").strip().lower()
+                # In agile/demo, assumption rows participate in the
+                # lifecycle pass too (modify-promote, drop, rephrase).
+                # Waterfall briefs never have assumption rows, so the
+                # current_assumptions input stays None on those turns.
+                current_assumptions: list[dict[str, Any]] = []
+                if mode_lower in ("agile", "demo"):
+                    for item in (effective_problem_brief.get("items") or []):
+                        if not isinstance(item, dict):
+                            continue
+                        if str(item.get("kind") or "").strip().lower() != "assumption":
+                            continue
+                        item_id = str(item.get("id") or "").strip()
+                        text_val = str(item.get("text") or "").strip()
+                        if item_id and text_val:
+                            current_assumptions.append(
+                                {"id": item_id, "text": text_val}
+                            )
+
+                # Fast-path skip: nothing for the LLM to act on. Skip when
+                # there are no current OQs, no current assumptions worth
+                # acting on, and the visible reply contains no question
+                # marker. This keeps cold and trivially-acknowledging
+                # turns free of the maintenance round-trip.
                 visible_has_question = "?" in (visible_assistant_message or "")
-                if current_oqs_for_maintenance or visible_has_question:
+                if (
+                    current_oqs_for_maintenance
+                    or current_assumptions
+                    or visible_has_question
+                ):
                     recent_gathered_texts = [
                         str(item.get("text") or "")
                         for item in (effective_problem_brief.get("items") or [])
@@ -730,19 +854,22 @@ def _run_background_derivation(
                         and str(item.get("kind") or "").strip().lower() == "gathered"
                         and str(item.get("text") or "").strip()
                     ][-8:]
-                    new_oqs = maintain_open_questions(
+                    maintain_result = maintain_definition_state(
                         workflow_mode=workflow_mode,
                         user_message=user_text,
                         visible_reply=visible_assistant_message,
                         current_open_questions=current_oqs_for_maintenance,
+                        current_assumptions=current_assumptions or None,
                         recent_gathered=recent_gathered_texts,
                         api_key=api_key,
                         model_name=model_name,
                         test_problem_id=test_problem_id,
+                        gate_status=gate_status,
                     )
-                    if new_oqs is not None:
+                    if maintain_result is not None:
                         from app.problem_brief import merge_problem_brief_patch
 
+                        new_oqs = maintain_result.get("open_questions") or []
                         effective_problem_brief = merge_problem_brief_patch(
                             effective_problem_brief,
                             {
@@ -750,6 +877,21 @@ def _run_background_derivation(
                                 "replace_open_questions": True,
                             },
                         )
+
+                        # Apply assumption-row decisions in agile/demo. The
+                        # actions mutate items[] in place by id; provenance
+                        # on promote_to_gathered follows ORIGIN — the user
+                        # locked it in, so we set source="user" (memory:
+                        # feedback_provenance_origin_not_phrasing).
+                        if (
+                            mode_lower in ("agile", "demo")
+                            and maintain_result.get("assumption_actions")
+                        ):
+                            effective_problem_brief = _apply_assumption_actions(
+                                effective_problem_brief,
+                                maintain_result["assumption_actions"],
+                            )
+
                         # Re-coerce in case maintenance left an assumption
                         # implication (it shouldn't — this is defensive).
                         effective_problem_brief = coerce_problem_brief_for_workflow(
@@ -757,7 +899,7 @@ def _run_background_derivation(
                         )
             except Exception:  # pragma: no cover — never block derivation
                 log.exception(
-                    "OQ maintenance step failed for session %s", session_id
+                    "Definition-maintenance step failed for session %s", session_id
                 )
 
         # Deterministic post-derivation compliance check. Logs warnings when
@@ -773,7 +915,43 @@ def _run_background_derivation(
         try:
             intent = getattr(brief_turn, "visible_reply_intent", None) if brief_turn else None
             if intent is not None:
-                from app.services.workflow_compliance import log_workflow_compliance
+                from app.services.workflow_compliance import (
+                    log_workflow_compliance,
+                    synthesize_missing_oq_for_waterfall,
+                )
+                # Waterfall auto-repair: when the visible reply asked a
+                # question but the LLM didn't land an OQ AND we know what's
+                # missing from the gate, synthesise a templated OQ. This is
+                # a safety net — the prompt-side rules in §4 are the
+                # primary path. Synthesis text is deterministic (templated
+                # from gate_status.missing), not parsed from the reply.
+                synthesised = synthesize_missing_oq_for_waterfall(
+                    workflow_mode=workflow_mode,
+                    base_brief=base_problem_brief,
+                    new_brief=effective_problem_brief,
+                    visible_reply_asks_user_question=bool(
+                        getattr(intent, "asks_user_question", False)
+                    ),
+                    gate_status=gate_status,
+                )
+                if synthesised is not None:
+                    from app.problem_brief import merge_problem_brief_patch
+
+                    effective_problem_brief = merge_problem_brief_patch(
+                        effective_problem_brief,
+                        {
+                            "open_questions": [synthesised],
+                            "replace_open_questions": False,
+                        },
+                    )
+                    effective_problem_brief = coerce_problem_brief_for_workflow(
+                        effective_problem_brief, workflow_mode
+                    )
+                    log.info(
+                        "Synthesised waterfall OQ for session %s (template=%s)",
+                        session_id,
+                        synthesised["text"][:60],
+                    )
 
                 log_workflow_compliance(
                     session_id=session_id,

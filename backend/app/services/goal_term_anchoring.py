@@ -33,26 +33,13 @@ _AGILE_LIKE_MODES = frozenset({"agile", "demo"})
 # item mentions drivers/preferences), not to gate every borderline match.
 _EMBEDDING_ANCHOR_THRESHOLD = 0.55
 
-# Canonical MEALpy algorithm names + aliases the participant might use.
-# Closed vocabulary by design (5 algorithms only). Matching is case-insensitive
-# substring against item text — robust enough for this small a key set, and
-# avoids reintroducing the brittle regex-against-NL patterns we've been moving
-# away from for everything else.
-_ALGORITHM_BRIEF_ALIASES: tuple[str, ...] = (
-    "ga",
-    "genetic algorithm",
-    "genetic search",
-    "evolutionary search",
-    "pso",
-    "particle swarm",
-    "swarm search",
-    "sa",
-    "simulated annealing",
-    "annealing search",
-    "swarmsa",
-    "swarm-based simulated annealing",
-    "acor",
-    "ant colony",
+# Closed vocabulary of MEALpy algorithm names + plain-language aliases —
+# the canonical source lives in `app.algorithm_catalog` so anchoring,
+# prompts, and (future) frontend stay aligned. Matching is case-
+# insensitive substring against item text.
+from app.algorithm_catalog import (
+    ALGORITHM_BRIEF_ALIASES as _ALGORITHM_BRIEF_ALIASES,
+    ALGORITHM_BRIEF_ALIAS_MAP as _ALGORITHM_BRIEF_ALIAS_MAP,
 )
 
 
@@ -340,6 +327,55 @@ def brief_mentions_search_strategy(
         if slot in _SEARCH_STRATEGY_BRIEF_SLOTS or slot.startswith("algorithm_param:"):
             return True
     return False
+
+
+def extract_algorithm_from_brief(items: list[dict[str, Any]] | None) -> str | None:
+    """Return the first canonical algorithm name mentioned in any brief item.
+
+    Closed 5-algorithm vocabulary (single source of truth:
+    ``ALGORITHM_BRIEF_ALIAS_MAP``). Scan order is by descending alias length
+    so longer/more-specific aliases win — e.g. *"swarm-based simulated
+    annealing"* resolves to ``SwarmSA`` rather than ``SA``.
+
+    Used by problem-port brief→panel seeds so that when the brief carries a
+    gathered/assumption row naming an algorithm (e.g. *"Genetic search is
+    being used."*), the deterministic seed can populate ``panel.algorithm``
+    even when the LLM panel-derive omits it. Returns ``None`` when no item
+    text contains an alias. Word-boundary checked for the 2-3 char acronyms
+    (``ga``, ``sa``, ``pso``, ``acor``) to avoid false positives.
+    """
+    if not isinstance(items, list):
+        return None
+    short_aliases = frozenset({"ga", "sa", "pso", "acor"})
+    aliases_by_length = sorted(
+        _ALGORITHM_BRIEF_ALIAS_MAP.items(),
+        key=lambda kv: len(kv[0]),
+        reverse=True,
+    )
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").lower()
+        if not text:
+            continue
+        for alias, canonical in aliases_by_length:
+            if alias not in text:
+                continue
+            if alias in short_aliases:
+                idx = 0
+                while True:
+                    pos = text.find(alias, idx)
+                    if pos < 0:
+                        break
+                    before_ok = pos == 0 or not text[pos - 1].isalnum()
+                    after_pos = pos + len(alias)
+                    after_ok = after_pos >= len(text) or not text[after_pos].isalnum()
+                    if before_ok and after_ok:
+                        return canonical
+                    idx = pos + 1
+            else:
+                return canonical
+    return None
 
 
 def algorithm_mentioned_in_brief(items: list[dict[str, Any]] | None) -> bool:

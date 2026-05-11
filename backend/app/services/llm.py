@@ -22,6 +22,7 @@ from app.problems.schema_shared import GOAL_TERMS_SCHEMA, goal_terms_schema
 from app.prompts.study_chat import (
     STUDY_CHAT_BRIEF_UPDATE_TASK,
     STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
+    STUDY_CHAT_ITEMS_DISCIPLINE,
     STUDY_CHAT_OQ_CLASSIFY_TASK,
     STUDY_CHAT_OQ_MAINTAIN_TASK,
     STUDY_CHAT_PHASE_CONFIGURATION,
@@ -31,12 +32,16 @@ from app.prompts.study_chat import (
     STUDY_CHAT_RUN_ACK_BASE,
     STUDY_CHAT_RUN_ACK_DEMO,
     STUDY_CHAT_RUN_ACK_WATERFALL,
+    STUDY_CHAT_SANDBOX_RULES,
     STUDY_CHAT_STRUCTURED_JSON_RULES,
     STUDY_CHAT_SYSTEM_PROMPT,
     STUDY_CHAT_VISIBLE_REPLY_TASK,
+    STUDY_CHAT_VISUALIZATION_GUIDANCE,
     STUDY_CHAT_WORKFLOW_AGILE,
     STUDY_CHAT_WORKFLOW_DEMO,
     STUDY_CHAT_WORKFLOW_WATERFALL,
+    sandbox_rules_relevant,
+    visualization_guidance_relevant,
 )
 from app.schemas import (
     ChatModelTurn,
@@ -248,7 +253,7 @@ def _build_brief_update_response_schema(test_problem_id: str | None) -> dict[str
 BRIEF_UPDATE_RESPONSE_JSON_SCHEMA: dict[str, Any] = _build_brief_update_response_schema(None)
 
 OQ_MAINTAIN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
-    "title": "OpenQuestionMaintenance",
+    "title": "DefinitionMaintenance",
     "type": "object",
     "properties": {
         "open_questions": {
@@ -260,6 +265,29 @@ OQ_MAINTAIN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                     "text": {"type": "string"},
                 },
                 "required": ["text"],
+            },
+        },
+        # Per-row decisions on `kind: "assumption"` rows in the brief's
+        # `items[]`. Agile/demo only; waterfall LLMs should leave this
+        # empty (the server also ignores it on waterfall turns).
+        "assumption_actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "keep",
+                            "rephrase",
+                            "drop",
+                            "promote_to_gathered",
+                        ],
+                    },
+                    "rephrased_text": {"type": "string"},
+                },
+                "required": ["id", "action"],
             },
         },
     },
@@ -440,6 +468,32 @@ def _phase_prompt(phase: WorkflowPhase) -> str:
     return STUDY_CHAT_PHASE_DISCOVERY
 
 
+def _gate_status_prompt_block(gate_status: dict[str, Any] | None) -> str | None:
+    """Render the structured run-gate snapshot for prompt injection.
+
+    The dict comes from :func:`app.optimization_gate.gate_status` and carries
+    deterministic flags (``goal_term_present``, ``search_strategy_present``,
+    ``open_questions_pending``, ``gate_engaged``, ``ready_to_run``,
+    ``missing``). Prompts read these flags by name to decide whether to ask
+    about a missing prerequisite (waterfall) or fait-accompli a default
+    (agile). No NL parsing — the values are produced from saved panel /
+    brief state, not from chat text.
+    """
+    if not isinstance(gate_status, dict) or not gate_status:
+        return None
+    blob = json.dumps(gate_status, indent=2, ensure_ascii=False, sort_keys=True)
+    return (
+        "## Run-gate status (machine-readable; reflects saved panel + brief)\n"
+        "Use these flags to decide what the next reply must do. ``missing`` is\n"
+        "ordered by waterfall elicitation phase (goal_term → search_strategy →\n"
+        "open_questions → gate_engaged); pop the head and address it. In\n"
+        "agile, ``search_strategy`` missing is a fait-accompli cue (assume a\n"
+        "default and announce); in waterfall it is an ask cue (ask in chat\n"
+        "AND record an open_questions row).\n"
+        f"```json\n{blob}\n```"
+    )
+
+
 def _run_ack_prompt(workflow_mode: str) -> str:
     if workflow_mode == "agile":
         wf_addendum = STUDY_CHAT_RUN_ACK_AGILE
@@ -580,6 +634,7 @@ def _build_structured_system_instruction(
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_STRUCTURED_JSON_RULES,
+        STUDY_CHAT_ITEMS_DISCIPLINE,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
@@ -629,6 +684,7 @@ def _build_visible_chat_system_instruction(
     model_name: str | None = None,
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -698,6 +754,39 @@ def _build_visible_chat_system_instruction(
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    # Sandbox rules ("don't write code / show source") only matter when the
+    # user is probing the sandbox (asks about code, library, implementation
+    # details) or on cold start (the most common moment for that probe).
+    # Skipping them on neutral turns saves ~20 lines of prompt budget.
+    if sandbox_rules_relevant(user_text, cold=cold):
+        parts.append(STUDY_CHAT_SANDBOX_RULES)
+    else:
+        log.debug(
+            "Skipping STUDY_CHAT_SANDBOX_RULES (cold=%s, no sandbox keywords)",
+            cold,
+        )
+    # Visualization guidance is a ~50-line block; load it only when this
+    # turn could plausibly need it. Two triggers (either suffices):
+    #   - We're at or near the pre-first-run announcement window:
+    #     no completed runs yet AND we're not on a cold-start turn
+    #     (cold-start ≈ no goals/items/OQs yet, so nothing to announce).
+    #   - The user message explicitly mentions a visualization-shaped
+    #     keyword (chart, plot, color route, axis, etc.), which is when
+    #     the change-request half kicks in.
+    has_completed_runs = bool(recent_runs_summary)
+    if (
+        visualization_guidance_relevant(user_text)
+        or (not has_completed_runs and not cold)
+    ):
+        parts.append(STUDY_CHAT_VISUALIZATION_GUIDANCE)
+    else:
+        log.debug(
+            "Skipping STUDY_CHAT_VISUALIZATION_GUIDANCE for this turn "
+            "(cold=%s, has_completed_runs=%s, viz_keyword_match=%s)",
+            cold,
+            has_completed_runs,
+            False,
+        )
     # Run-button awareness — keep the agent honest about whether the
     # participant can actually click Run optimization right now. Pairs with the
     # "## Run-button awareness" section in STUDY_CHAT_SYSTEM_PROMPT.
@@ -706,6 +795,9 @@ def _build_visible_chat_system_instruction(
     elif run_button_enabled is False:
         reason = (run_disabled_reason or "Run prerequisites are not yet met.").strip()
         parts.append(f"Run optimization button: DISABLED — reason: {reason}")
+    gate_block = _gate_status_prompt_block(gate_status)
+    if gate_block:
+        parts.append(gate_block)
     if doc_excerpts:
         parts.append("Reference excerpts (participant-safe docs):")
         parts.append("\n\n".join(f"- {excerpt}" for excerpt in doc_excerpts))
@@ -746,6 +838,149 @@ def _build_visible_chat_system_instruction(
     return "\n\n".join(parts)
 
 
+def _visible_reply_consistency_block(
+    workflow_mode: str, visible_assistant_message: str
+) -> str:
+    """Workflow-aware "the brief MUST stay consistent with the visible
+    reply" block, plus the visible_reply_intent classification rules.
+
+    Extracted to keep ``_build_brief_update_system_instruction`` legible
+    — the inline version was ~110 lines of branched prose. This helper
+    returns the same content, branched on workflow_mode. Includes the
+    delimited reply text, so the caller appends the returned string
+    verbatim with no further wrapping.
+
+    The waterfall branch forbids ``kind: "assumption"`` for clarifying
+    questions and search-strategy commitments. Agile/demo allow proactive
+    `assumption` rows. The "structured carrier on same turn" + "provenance
+    follows origin" rules are always-on (port-agnostic generalisation
+    of, e.g., VRPTW's worker_preference / shift_limit carriers).
+    """
+    is_waterfall = str(workflow_mode or "").strip().lower() == "waterfall"
+    if is_waterfall:
+        search_strategy_rule = (
+            "- **Algorithm / search-strategy commitment (waterfall).** When\n"
+            "  the visible reply names a specific search method (e.g.\n"
+            "  *'starting from GA'*, *'I'll default to genetic search'*),\n"
+            "  the brief MUST record an `open_questions` entry asking the\n"
+            "  user to confirm or pick a different one. Do NOT emit a\n"
+            "  `kind: \"assumption\"` row in waterfall — the workflow does\n"
+            "  not allow assumptions, and emitting one creates a duplicate\n"
+            "  OQ via the workflow-coercion step. Only when the user has\n"
+            "  EXPLICITLY answered the algorithm question in chat (e.g.\n"
+            "  *'sure, GA'*, *'use SA'*) may you emit a `kind: \"gathered\"`\n"
+            "  row whose text names the algorithm by name (e.g. *'Search\n"
+            "  strategy is set to GA (genetic search).'*). Until then, keep\n"
+            "  the OQ open. The server strips the panel's algorithm field\n"
+            "  unless the brief has a gathered row that mentions a known\n"
+            "  algorithm name.\n"
+        )
+        question_rule = (
+            "- **Clarifying question in waterfall → emit `open_questions`\n"
+            "  (MUST, not heuristic).** When the visible reply asks the\n"
+            "  user something (e.g. *'how strict is the capacity limit?'*,\n"
+            "  *'which search method?'*, *'would you like to introduce\n"
+            "  penalties for late arrivals or capacity limits?'*), the\n"
+            "  brief MUST record an `open_questions` entry on this turn\n"
+            "  (merge-append; do not set `replace_open_questions` unless\n"
+            "  intentionally replacing the full list). This obligation\n"
+            "  is symmetric with the `visible_reply_intent.asks_user_\n"
+            "  question` flag you also emit — if you set that flag true,\n"
+            "  the patch MUST contain a matching new OQ. Asking a\n"
+            "  question in chat without recording it is a regression.\n"
+            "  Never use `kind: \"assumption\"` to capture an unanswered\n"
+            "  question in waterfall.\n"
+        )
+    else:
+        search_strategy_rule = (
+            "- **Algorithm / search-strategy commitment (agile/demo).** When\n"
+            "  the visible reply names a specific search method (e.g.\n"
+            "  *'starting from GA'*, *'using SA for now'*), emit a\n"
+            "  `kind: \"assumption\"`, `source: \"agent\"` brief items[] row\n"
+            "  whose text names the algorithm by name (e.g. *'Search\n"
+            "  strategy is set to GA (genetic search) as a starting\n"
+            "  point.'*). The server strips the panel's algorithm field\n"
+            "  unless the brief mentions a known algorithm name —\n"
+            "  failing to land this row breaks the auto-first-run gate.\n"
+        )
+        question_rule = (
+            "- **Clarifying question or floated goal (agile/demo, MUST).**\n"
+            "  When the visible reply asks the user something or floats\n"
+            "  a possible goal/constraint to add, follow the workflow's\n"
+            "  own rules — agile prefers a tentative `kind: \"assumption\"`\n"
+            "  items[] row (announced as fait accompli); demo prefers an\n"
+            "  `open_questions` entry. Either way, the structured patch\n"
+            "  MUST land this turn. This obligation is symmetric with\n"
+            "  `visible_reply_intent.asks_user_question` /\n"
+            "  `claims_brief_change`: if either flag is true, the patch\n"
+            "  MUST contain at least one matching row (new OQ for an\n"
+            "  unanswered question; new items[] row for a claimed\n"
+            "  change). Announcing in chat without landing the row is a\n"
+            "  regression — the user sees the announcement but the panel\n"
+            "  stays blank.\n"
+        )
+    body = (
+        "## Visible assistant reply that JUST got sent to the user (this turn)\n"
+        "Treat the reply below as authoritative context for what the participant\n"
+        "has just been told. The hidden brief MUST stay consistent with it:\n"
+        "\n"
+        "- **Committed change → emit the matching patch.** If the reply commits\n"
+        "  to a specific brief change (e.g. *'Changes I made: increased the\n"
+        "  lateness penalty weight'*, *'I'll bump capacity overflow to hard'*,\n"
+        "  *'Adding a workload-balance assumption'*), emit the corresponding\n"
+        "  `problem_brief_patch` so the brief and the visible chat agree.\n"
+        "- **Structured carrier → populate it on the same turn.** When the\n"
+        "  committed change is a goal term whose schema defines a\n"
+        "  `properties` shape (e.g. VRPTW's `worker_preference` carries\n"
+        "  rules under `properties.driver_preferences`; `shift_limit`\n"
+        "  carries `properties.max_shift_hours`), the patch MUST populate\n"
+        "  that structured carrier on this turn — not just write a prose\n"
+        "  `items[]` row. Emitting only a prose row leaves the panel\n"
+        "  blank, the synthesized prose row never renders, and the rule\n"
+        "  flickers in only on a later turn when you re-read the brief.\n"
+        "  See the active-benchmark appendix for the exact carrier path.\n"
+        "- **Provenance follows origin, not phrasing.** A change the user\n"
+        "  asked for (*'Alice doesn't like Zone D'*, *'add a shift\n"
+        "  limit'*) is `kind: \"gathered\"`, `source: \"user\"` — even if\n"
+        "  your visible reply uses fait-accompli phrasing. Reserve\n"
+        "  `kind: \"assumption\"` for terms you proactively introduced\n"
+        "  without a user request (typically post-run, motivated by run\n"
+        "  feedback the user did not name).\n"
+        f"{search_strategy_rule}"
+        f"{question_rule}"
+        "- **Pure descriptive / future-intent text → no patch needed.** If the\n"
+        "  reply only describes future intent without naming a concrete change\n"
+        "  or asking anything (e.g. *'I'll think about that'*, *'Let me know\n"
+        "  what you want next'*), no patch is required for that intent.\n"
+        "\n"
+        "Never contradict the visible reply.\n"
+        "\n"
+        "## Visible-reply intent classification (required)\n"
+        "Also populate `visible_reply_intent` with two booleans describing\n"
+        "the visible reply you just read:\n"
+        "\n"
+        "- `claims_brief_change`: true iff the reply states or implies that\n"
+        "  the brief / Definition / solver setup was just changed (past tense\n"
+        "  fait accompli — *'I've added X'*, *'Bumped Y to 12'*, *'Changes I\n"
+        "  made: …'*, *'Mapped lateness to a soft constraint'*). False when\n"
+        "  the reply only describes future intent (*'I'll think about it'*),\n"
+        "  asks a question, gives a concept explanation, invites an upload,\n"
+        "  or says *'setting up your first run'* in the future-intent sense.\n"
+        "  This flag is what downstream compliance uses to verify the\n"
+        "  matching `problem_brief_patch` actually landed — be honest about\n"
+        "  it: if you did NOT emit a patch, set this false.\n"
+        "- `asks_user_question`: true iff the reply explicitly asks the user\n"
+        "  to answer something (clarifying question, choice between options,\n"
+        "  *'would you like…'*, *'should I…'*). False for rhetorical or\n"
+        "  conversational questions that do not require a user answer.\n"
+        "\n"
+        "```\n"
+        + visible_assistant_message.strip()
+        + "\n```"
+    )
+    return body
+
+
 def _build_brief_update_system_instruction(
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
@@ -760,6 +995,7 @@ def _build_brief_update_system_instruction(
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
     visible_assistant_message: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> str:
     phase = resolve_workflow_phase(
         current_problem_brief,
@@ -781,127 +1017,25 @@ def _build_brief_update_system_instruction(
         _workflow_prompt(workflow_mode),
         _phase_prompt(phase),
         STUDY_CHAT_BRIEF_UPDATE_TASK,
+        STUDY_CHAT_ITEMS_DISCIPLINE,
         STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
+    gate_block = _gate_status_prompt_block(gate_status)
+    if gate_block:
+        parts.append(gate_block)
     # Pass the visible chat reply that JUST got sent to the user (before this
     # hidden brief turn runs) so the brief can stay consistent with what the
     # participant just read. Without this, the brief LLM and the chat LLM
     # operate independently and can diverge — the most common failure is the
     # chat saying "Changes I made: …" while the hidden turn skips the patch.
     if visible_assistant_message and visible_assistant_message.strip():
-        is_waterfall = str(workflow_mode or "").strip().lower() == "waterfall"
-        # Workflow-aware assumption-vs-OQ split. Waterfall forbids
-        # `kind: "assumption"` rows at all (the workflow coercer would
-        # convert them to "Confirm or correct: …" OQs, which collides with
-        # the genuine OQ the visible reply already prompts for, producing
-        # duplicates). Agile/demo can use assumption proactively.
-        if is_waterfall:
-            search_strategy_rule = (
-                "- **Algorithm / search-strategy commitment (waterfall).** When\n"
-                "  the visible reply names a specific search method (e.g.\n"
-                "  *'starting from GA'*, *'I'll default to genetic search'*),\n"
-                "  the brief MUST record an `open_questions` entry asking the\n"
-                "  user to confirm or pick a different one. Do NOT emit a\n"
-                "  `kind: \"assumption\"` row in waterfall — the workflow does\n"
-                "  not allow assumptions, and emitting one creates a duplicate\n"
-                "  OQ via the workflow-coercion step. Only when the user has\n"
-                "  EXPLICITLY answered the algorithm question in chat (e.g.\n"
-                "  *'sure, GA'*, *'use SA'*) may you emit a `kind: \"gathered\"`\n"
-                "  row whose text names the algorithm by name (e.g. *'Search\n"
-                "  strategy is set to GA (genetic search).'*). Until then, keep\n"
-                "  the OQ open. The server strips the panel's algorithm field\n"
-                "  unless the brief has a gathered row that mentions a known\n"
-                "  algorithm name.\n"
-            )
-            question_rule = (
-                "- **Clarifying question in waterfall → emit `open_questions`.**\n"
-                "  When the visible reply asks the user something (e.g. *'how\n"
-                "  strict is the capacity limit?'*, *'which search method?'*),\n"
-                "  the brief MUST record an `open_questions` entry (merge-\n"
-                "  append; do not set `replace_open_questions` unless\n"
-                "  intentionally replacing the full list). Asking a question\n"
-                "  in chat without recording it is a regression. Never use\n"
-                "  `kind: \"assumption\"` to capture an unanswered question in\n"
-                "  waterfall.\n"
-            )
-        else:
-            search_strategy_rule = (
-                "- **Algorithm / search-strategy commitment (agile/demo).** When\n"
-                "  the visible reply names a specific search method (e.g.\n"
-                "  *'starting from GA'*, *'using SA for now'*), emit a\n"
-                "  `kind: \"assumption\"`, `source: \"agent\"` brief items[] row\n"
-                "  whose text names the algorithm by name (e.g. *'Search\n"
-                "  strategy is set to GA (genetic search) as a starting\n"
-                "  point.'*). The server strips the panel's algorithm field\n"
-                "  unless the brief mentions a known algorithm name —\n"
-                "  failing to land this row breaks the auto-first-run gate.\n"
-            )
-            question_rule = (
-                "- **Clarifying question or floated goal (agile/demo).** When\n"
-                "  the visible reply asks the user something or floats a\n"
-                "  possible goal/constraint to add, follow the workflow's\n"
-                "  own rules — agile prefers a tentative `assumption`; demo\n"
-                "  prefers an `open_questions` entry. Asking a question in\n"
-                "  chat without recording it is a regression.\n"
-            )
         parts.append(
-            "## Visible assistant reply that JUST got sent to the user (this turn)\n"
-            "Treat the reply below as authoritative context for what the participant\n"
-            "has just been told. The hidden brief MUST stay consistent with it:\n"
-            "\n"
-            "- **Committed change → emit the matching patch.** If the reply commits\n"
-            "  to a specific brief change (e.g. *'Changes I made: increased the\n"
-            "  lateness penalty weight'*, *'I'll bump capacity overflow to hard'*,\n"
-            "  *'Adding a workload-balance assumption'*), emit the corresponding\n"
-            "  `problem_brief_patch` so the brief and the visible chat agree.\n"
-            "- **Structured carrier → populate it on the same turn.** When the\n"
-            "  committed change is a goal term whose schema defines a\n"
-            "  `properties` shape (e.g. VRPTW's `worker_preference` carries\n"
-            "  rules under `properties.driver_preferences`; `shift_limit`\n"
-            "  carries `properties.max_shift_hours`), the patch MUST populate\n"
-            "  that structured carrier on this turn — not just write a prose\n"
-            "  `items[]` row. Emitting only a prose row leaves the panel\n"
-            "  blank, the synthesized prose row never renders, and the rule\n"
-            "  flickers in only on a later turn when you re-read the brief.\n"
-            "  See the active-benchmark appendix for the exact carrier path.\n"
-            "- **Provenance follows origin, not phrasing.** A change the user\n"
-            "  asked for (*'Alice doesn't like Zone D'*, *'add a shift\n"
-            "  limit'*) is `kind: \"gathered\"`, `source: \"user\"` — even if\n"
-            "  your visible reply uses fait-accompli phrasing. Reserve\n"
-            "  `kind: \"assumption\"` for terms you proactively introduced\n"
-            "  without a user request (typically post-run, motivated by run\n"
-            "  feedback the user did not name).\n"
-            f"{search_strategy_rule}"
-            f"{question_rule}"
-            "- **Pure descriptive / future-intent text → no patch needed.** If the\n"
-            "  reply only describes future intent without naming a concrete change\n"
-            "  or asking anything (e.g. *'I'll think about that'*, *'Let me know\n"
-            "  what you want next'*), no patch is required for that intent.\n"
-            "\n"
-            "Never contradict the visible reply.\n"
-            "\n"
-            "## Visible-reply intent classification (required)\n"
-            "Also populate `visible_reply_intent` with two booleans describing\n"
-            "the visible reply you just read:\n"
-            "\n"
-            "- `claims_brief_change`: true iff the reply states or implies that\n"
-            "  the brief / Definition / solver setup was just changed (past tense\n"
-            "  fait accompli — *'I've added X'*, *'Bumped Y to 12'*, *'Changes I\n"
-            "  made: …'*, *'Mapped lateness to a soft constraint'*). False when\n"
-            "  the reply only describes future intent (*'I'll think about it'*),\n"
-            "  asks a question, gives a concept explanation, invites an upload,\n"
-            "  or says *'setting up your first run'* in the future-intent sense.\n"
-            "  This flag is what downstream compliance uses to verify the\n"
-            "  matching `problem_brief_patch` actually landed — be honest about\n"
-            "  it: if you did NOT emit a patch, set this false.\n"
-            "- `asks_user_question`: true iff the reply explicitly asks the user\n"
-            "  to answer something (clarifying question, choice between options,\n"
-            "  *'would you like…'*, *'should I…'*). False for rhetorical or\n"
-            "  conversational questions that do not require a user answer.\n"
+            _visible_reply_consistency_block(
+                workflow_mode, visible_assistant_message
+            )
         )
-        parts.append("```\n" + visible_assistant_message.strip() + "\n```")
     lock_blob = locked_goal_terms_prompt_section(current_panel or {}, test_problem_id=test_problem_id)
     if lock_blob:
         parts.append(lock_blob)
@@ -989,6 +1123,7 @@ def _plain_fallback_reply(
     test_problem_id: str | None = None,
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> str:
     system = _build_visible_chat_system_instruction(
         user_text=user_text,
@@ -1005,6 +1140,7 @@ def _plain_fallback_reply(
         model_name=model_name,
         run_button_enabled=run_button_enabled,
         run_disabled_reason=run_disabled_reason,
+        gate_status=gate_status,
     )
     client = genai.Client(api_key=api_key)
     chat = client.chats.create(
@@ -1034,6 +1170,7 @@ def generate_visible_chat_reply(
     test_problem_id: str | None = None,
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> str:
     client = genai.Client(api_key=api_key)
     system_instruction = _build_visible_chat_system_instruction(
@@ -1051,6 +1188,7 @@ def generate_visible_chat_reply(
         model_name=model_name,
         run_button_enabled=run_button_enabled,
         run_disabled_reason=run_disabled_reason,
+        gate_status=gate_status,
     )
     chat = client.chats.create(
         model=model_name,
@@ -1081,6 +1219,7 @@ def generate_problem_brief_update(
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
     visible_assistant_message: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> ProblemBriefUpdateTurn | None:
     """Run the hidden brief-update structured call.
 
@@ -1104,6 +1243,7 @@ def generate_problem_brief_update(
         is_tutorial_active=is_tutorial_active,
         test_problem_id=test_problem_id,
         visible_assistant_message=visible_assistant_message,
+        gate_status=gate_status,
     )
     history = _history_to_contents(history_lines)
     config = types.GenerateContentConfig(
@@ -1136,35 +1276,37 @@ def generate_problem_brief_update(
         return None
 
 
-def maintain_open_questions(
+def maintain_definition_state(
     *,
     workflow_mode: str,
     user_message: str,
     visible_reply: str,
     current_open_questions: list[dict[str, Any]],
+    current_assumptions: list[dict[str, Any]] | None = None,
     recent_gathered: list[str],
     api_key: str,
     model_name: str,
     test_problem_id: str | None = None,
-) -> list[dict[str, Any]] | None:
-    """Run a focused Gemini call to maintain ``open_questions`` end-to-end.
+    gate_status: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Run one focused Gemini call to maintain definition state end-to-end.
 
-    Inputs cover only what the OQ decision needs — the user's last message,
-    the agent's visible reply, the current OQ list, and a short summary of
-    recent gathered facts. The model returns the FULL updated list (adds /
-    drops / keeps / rephrases), and callers replace the brief's
-    ``open_questions`` with that list (preserving answered state for ids that
-    round-trip via ``_preserve_answered_state`` in ``merge_problem_brief_patch``).
+    For all workflow modes this returns the FULL updated open-question list
+    (adds / drops / keeps / rephrases). For agile/demo it additionally
+    returns ``assumption_actions`` — per-row decisions on each existing
+    ``kind: "assumption"`` row in the brief's ``items[]``: keep / rephrase
+    / drop / promote_to_gathered. (Waterfall has no assumption rows.)
 
-    Deliberately decoupled from the brief-update LLM so the OQ contract is
-    not entangled with goal_terms / items merging — this fixes the regression
-    where the brief LLM would either skip an OQ-add or unexpectedly prune
-    an OQ the user had not actually dismissed.
+    Deliberately decoupled from the brief-update LLM so the definition
+    lifecycle is owned by one focused call rather than entangled with
+    goal_terms / items merging — that entanglement was the regression
+    where the brief LLM would skip an OQ-add or prune an OQ the user had
+    not actually dismissed.
 
     Returns:
-        ``list[dict]`` (the new full OQ list, each ``{"id"?: str, "text": str}``)
-        on success, or ``None`` on any failure (no key, network error, parse
-        failure). On ``None`` the caller keeps the existing OQ list — never
+        ``{"open_questions": [...], "assumption_actions": [...]}`` on
+        success. ``None`` on any failure (no key, network error, parse
+        failure). On ``None`` the caller keeps the existing state — never
         a destructive default.
     """
     if not api_key or not model_name:
@@ -1174,8 +1316,11 @@ def maintain_open_questions(
         _workflow_prompt(workflow_mode),
         STUDY_CHAT_OQ_MAINTAIN_TASK,
     ]
+    gate_block = _gate_status_prompt_block(gate_status)
+    if gate_block:
+        parts.append(gate_block)
     system_instruction = "\n\n".join(parts)
-    payload = {
+    payload: dict[str, Any] = {
         "workflow_mode": workflow_mode,
         "user_message": str(user_message or ""),
         "visible_reply": str(visible_reply or ""),
@@ -1189,6 +1334,20 @@ def maintain_open_questions(
         ],
         "recent_gathered": [str(t) for t in (recent_gathered or []) if str(t).strip()][:8],
     }
+    # Only include current_assumptions in the payload when the workflow
+    # actually uses them — keeps waterfall prompts uncluttered.
+    mode_lower = str(workflow_mode or "").strip().lower()
+    if mode_lower in ("agile", "demo") and current_assumptions:
+        payload["current_assumptions"] = [
+            {
+                "id": str(a.get("id") or ""),
+                "text": str(a.get("text") or ""),
+            }
+            for a in current_assumptions
+            if isinstance(a, dict)
+            and str(a.get("id") or "").strip()
+            and str(a.get("text") or "").strip()
+        ]
     user_text = json.dumps(payload, ensure_ascii=False, indent=2)
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -1204,7 +1363,7 @@ def maintain_open_questions(
         )
         raw = resp.text
         log.info(
-            "OQ-maintain Gemini raw response: %s",
+            "Definition-maintain Gemini raw response: %s",
             raw if raw is not None else "<no text>",
         )
         if isinstance(resp.parsed, dict):
@@ -1214,9 +1373,11 @@ def maintain_open_questions(
         else:
             return None
     except Exception as e:
-        log.warning("OQ-maintain structured call failed (%s); returning None", e)
+        log.warning(
+            "Definition-maintain structured call failed (%s); returning None", e
+        )
         return None
-    return [
+    open_questions = [
         {
             "text": item.text.strip(),
             **({"id": item.id.strip()} if item.id and item.id.strip() else {}),
@@ -1224,6 +1385,58 @@ def maintain_open_questions(
         for item in turn.open_questions
         if item.text and item.text.strip()
     ]
+    assumption_actions: list[dict[str, Any]] = []
+    # Only honour assumption_actions on agile/demo turns. Even if the LLM
+    # mistakenly emits them on a waterfall turn, the brief has no
+    # assumption rows for them to act on, so dropping the field is safe.
+    if mode_lower in ("agile", "demo"):
+        for action in turn.assumption_actions:
+            entry: dict[str, Any] = {
+                "id": action.id.strip(),
+                "action": action.action,
+            }
+            if action.rephrased_text and action.rephrased_text.strip():
+                entry["rephrased_text"] = action.rephrased_text.strip()
+            if entry["id"]:
+                assumption_actions.append(entry)
+    return {
+        "open_questions": open_questions,
+        "assumption_actions": assumption_actions,
+    }
+
+
+def maintain_open_questions(
+    *,
+    workflow_mode: str,
+    user_message: str,
+    visible_reply: str,
+    current_open_questions: list[dict[str, Any]],
+    recent_gathered: list[str],
+    api_key: str,
+    model_name: str,
+    test_problem_id: str | None = None,
+) -> list[dict[str, Any]] | None:
+    """Backward-compat shim: returns just the open_questions list.
+
+    New callers should use :func:`maintain_definition_state`, which also
+    returns assumption-row decisions for agile/demo. This wrapper keeps
+    older callers / monkey-patched tests working without forcing them to
+    learn the richer return shape.
+    """
+    result = maintain_definition_state(
+        workflow_mode=workflow_mode,
+        user_message=user_message,
+        visible_reply=visible_reply,
+        current_open_questions=current_open_questions,
+        current_assumptions=None,
+        recent_gathered=recent_gathered,
+        api_key=api_key,
+        model_name=model_name,
+        test_problem_id=test_problem_id,
+    )
+    if result is None:
+        return None
+    return result.get("open_questions") or []
 
 
 def classify_answered_open_questions(
@@ -1347,6 +1560,7 @@ def generate_consolidated_chat_turn(
     test_problem_id: str | None = None,
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> ConsolidatedChatTurn | None:
     """Single structured Gemini call: visible reply + intent flags.
 
@@ -1372,6 +1586,7 @@ def generate_consolidated_chat_turn(
         model_name=model_name,
         run_button_enabled=run_button_enabled,
         run_disabled_reason=run_disabled_reason,
+        gate_status=gate_status,
     )
     system_instruction = f"{base_system}\n\n{_CONSOLIDATED_CHAT_OUTPUT_RULES}"
 
@@ -1439,6 +1654,7 @@ def generate_chat_turn(
     test_problem_id: str | None = None,
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> ChatModelTurn:
     """Compatibility wrapper that now prioritizes the visible assistant reply."""
     try:
@@ -1458,6 +1674,7 @@ def generate_chat_turn(
             test_problem_id=test_problem_id,
             run_button_enabled=run_button_enabled,
             run_disabled_reason=run_disabled_reason,
+            gate_status=gate_status,
         )
     except Exception as e:
         log.warning("Visible chat failed (%s); using plain fallback", e)
@@ -1477,6 +1694,7 @@ def generate_chat_turn(
             test_problem_id=test_problem_id,
             run_button_enabled=run_button_enabled,
             run_disabled_reason=run_disabled_reason,
+            gate_status=gate_status,
         )
     return ChatModelTurn(assistant_message=text, panel_patch=None)
 

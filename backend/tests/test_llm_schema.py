@@ -9,6 +9,7 @@ from app.services.llm import (
     _build_brief_update_response_schema,
     _build_brief_update_system_instruction,
     _build_structured_system_instruction,
+    _visible_reply_consistency_block,
 )
 
 
@@ -175,6 +176,182 @@ def test_visible_reply_context_block_requires_algorithm_named_brief_row():
     assert "search-strategy gate" in flat or "strips the" in flat
 
 
+def test_visible_reply_consistency_block_waterfall_branch_keywords():
+    """Direct shape test of the extracted helper. Waterfall variant must
+    forbid `kind: "assumption"` for clarifying questions / search-strategy
+    and use `open_questions` instead. The same-turn structured carrier and
+    provenance-follows-origin rules are workflow-agnostic."""
+    block = _visible_reply_consistency_block(
+        "waterfall", "Would you like to add capacity penalties?"
+    )
+    flat = " ".join(block.split())
+    # Workflow-agnostic rules.
+    assert "Structured carrier" in flat
+    assert "Provenance follows origin" in flat
+    # Waterfall-specific.
+    assert "Clarifying question in waterfall" in flat
+    assert "Algorithm / search-strategy commitment (waterfall)" in flat
+    assert "Never use `kind: \"assumption\"`" in flat
+    # Always-on tail.
+    assert "Visible-reply intent classification" in flat
+
+
+def test_sandbox_rules_omitted_on_neutral_warm_turn():
+    """STUDY_CHAT_SANDBOX_RULES (~20 lines of stay-in-character code-hiding
+    prose) should NOT load on a warm turn whose user message has no
+    sandbox-probing keywords."""
+    warm_brief = {
+        "goal_summary": "Reduce travel time across the fleet.",
+        "items": [
+            {
+                "id": "g1",
+                "text": "User wants to minimize travel time.",
+                "kind": "gathered",
+                "source": "user",
+            }
+        ],
+        "open_questions": [],
+    }
+    system = _build_visible_chat_system_instruction(
+        user_text="thanks, that's helpful",
+        current_problem_brief=warm_brief,
+        workflow_mode="waterfall",
+    )
+    # Unique marker phrase from the sandbox-rules body.
+    assert "Study sandbox (fixed backend)" not in system
+
+
+def test_sandbox_rules_loaded_on_cold_start():
+    """Cold-start turn: the user has no items / OQs / summary yet — most
+    likely moment to probe the sandbox. Sandbox rules MUST load."""
+    cold_brief = {"items": [], "open_questions": [], "goal_summary": ""}
+    system = _build_visible_chat_system_instruction(
+        user_text="hi, what can you do?",
+        current_problem_brief=cold_brief,
+        workflow_mode="waterfall",
+    )
+    assert "Study sandbox (fixed backend)" in system
+
+
+def test_sandbox_rules_loaded_on_code_keyword():
+    """Even on a warm turn, a code/library/implementation keyword in the
+    user message must reload the sandbox rules."""
+    warm_brief = {
+        "goal_summary": "Reduce travel time across the fleet.",
+        "items": [
+            {
+                "id": "g1",
+                "text": "User wants to minimize travel time.",
+                "kind": "gathered",
+                "source": "user",
+            }
+        ],
+        "open_questions": [],
+    }
+    system = _build_visible_chat_system_instruction(
+        user_text="can you show me the code you wrote?",
+        current_problem_brief=warm_brief,
+        workflow_mode="waterfall",
+    )
+    assert "Study sandbox (fixed backend)" in system
+
+
+def test_visualization_guidance_omitted_on_neutral_warm_turn(monkeypatch):
+    """STUDY_CHAT_VISUALIZATION_GUIDANCE is the rare-edge-case ~50-line block.
+    On a warm turn whose user message has no viz keywords AND there are
+    completed runs (so the pre-first-run announcement window has passed),
+    the block should be omitted from the visible-chat instruction."""
+    # Cold start would also skip the block, so seed a non-cold brief.
+    warm_brief = {
+        "goal_summary": "Reduce travel time across the fleet.",
+        "items": [
+            {
+                "id": "g1",
+                "text": "User wants to minimize travel time.",
+                "kind": "gathered",
+                "source": "user",
+            }
+        ],
+        "open_questions": [],
+    }
+    system = _build_visible_chat_system_instruction(
+        user_text="thanks, that's helpful",
+        current_problem_brief=warm_brief,
+        workflow_mode="waterfall",
+        # Completed runs exist → past the announcement window.
+        recent_runs_summary=[{"run_number": 1, "ok": True, "cost": 100.0}],
+    )
+    # Unique marker phrase from the visualization-guidance body (NOT the
+    # cross-reference text in STUDY_CHAT_SYSTEM_PROMPT).
+    assert "Pre-first-run visualization announcement (once only)" not in system
+    assert "If the user asks to **reshape, restyle, add, or remove**" not in system
+
+
+def test_visualization_guidance_loads_on_viz_keyword():
+    """When the user message mentions a visualization keyword (e.g. 'chart',
+    'color route', 'heatmap'), the visualization guidance MUST load even if
+    the announcement window has passed."""
+    warm_brief = {
+        "goal_summary": "Reduce travel time across the fleet.",
+        "items": [
+            {
+                "id": "g1",
+                "text": "User wants to minimize travel time.",
+                "kind": "gathered",
+                "source": "user",
+            }
+        ],
+        "open_questions": [],
+    }
+    system = _build_visible_chat_system_instruction(
+        user_text="can you make this a bar chart instead?",
+        current_problem_brief=warm_brief,
+        workflow_mode="waterfall",
+        recent_runs_summary=[{"run_number": 1, "ok": True, "cost": 100.0}],
+    )
+    assert "If the user asks to **reshape, restyle, add, or remove**" in system
+
+
+def test_visualization_guidance_loads_pre_first_run_window():
+    """Before any runs complete (and on a warm turn with goals in play),
+    the pre-first-run announcement should load so the agent can take
+    credit for prepared views once."""
+    warm_brief = {
+        "goal_summary": "Reduce travel time across the fleet.",
+        "items": [
+            {
+                "id": "g1",
+                "text": "User wants to minimize travel time.",
+                "kind": "gathered",
+                "source": "user",
+            }
+        ],
+        "open_questions": [],
+    }
+    system = _build_visible_chat_system_instruction(
+        user_text="ok let's go",
+        current_problem_brief=warm_brief,
+        workflow_mode="waterfall",
+        recent_runs_summary=None,  # no runs yet → announcement window
+    )
+    assert "Pre-first-run visualization announcement (once only)" in system
+
+
+def test_visible_reply_consistency_block_agile_branch_keywords():
+    """Agile/demo variant uses `kind: "assumption"` proactively and must
+    NOT carry the waterfall-specific 'Never use `kind: "assumption"`' line."""
+    block = _visible_reply_consistency_block(
+        "agile", "I've added a lateness penalty (soft, weight 10)."
+    )
+    flat = " ".join(block.split())
+    assert "Algorithm / search-strategy commitment (agile/demo)" in flat
+    assert "Clarifying question or floated goal (agile/demo, MUST)" in flat
+    assert "Structured carrier" in flat
+    assert "Provenance follows origin" in flat
+    # Agile branch must NOT inherit the waterfall-only prohibition.
+    assert "Never use `kind: \"assumption\"`" not in flat
+
+
 def test_brief_update_schema_carries_visible_reply_intent_classification():
     """Compliance no longer regex-matches the visible reply text — instead the
     brief-update LLM self-reports the intent in `visible_reply_intent`. The
@@ -281,3 +458,53 @@ def test_system_prompt_openers_includes_appendix_when_warm_knapsack():
     parts = llm._system_prompt_openers("knapsack", b)
     assert len(parts) == 2
     assert "0/1 knapsack" in parts[1]
+
+
+# ---------------------------------------------------------------------------
+# Gate-status block in system instructions.
+# ---------------------------------------------------------------------------
+
+
+_GATE_STATUS_FIXTURE = {
+    "workflow_mode": "waterfall",
+    "goal_term_present": True,
+    "search_strategy_present": False,
+    "open_questions_pending": 0,
+    "gate_engaged": True,
+    "ready_to_run": False,
+    "missing": ["search_strategy"],
+}
+
+
+_GATE_BLOCK_MARKER = "## Run-gate status (machine-readable"
+
+
+def test_visible_chat_system_instruction_renders_gate_status_block():
+    system = _build_visible_chat_system_instruction(
+        user_text="ok let's go",
+        current_problem_brief=default_problem_brief(),
+        workflow_mode="waterfall",
+        gate_status=_GATE_STATUS_FIXTURE,
+    )
+    assert _GATE_BLOCK_MARKER in system
+    assert '"search_strategy_present": false' in system
+
+
+def test_visible_chat_system_instruction_omits_block_when_gate_status_absent():
+    system = _build_visible_chat_system_instruction(
+        user_text="ok",
+        current_problem_brief=default_problem_brief(),
+        workflow_mode="waterfall",
+        gate_status=None,
+    )
+    assert _GATE_BLOCK_MARKER not in system
+
+
+def test_brief_update_system_instruction_renders_gate_status_block():
+    system = _build_brief_update_system_instruction(
+        current_problem_brief=default_problem_brief(),
+        workflow_mode="waterfall",
+        gate_status=_GATE_STATUS_FIXTURE,
+    )
+    assert _GATE_BLOCK_MARKER in system
+    assert '"search_strategy_present": false' in system

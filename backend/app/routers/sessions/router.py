@@ -697,10 +697,19 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     if run_button_enabled_for_chat
                     else _run_gate_blocked_message(row, current_problem_brief, _has_upload)
                 )
+                from app.optimization_gate import gate_status as _gate_status_fn
+                gate_status_for_chat = _gate_status_fn(
+                    row.workflow_mode,
+                    current,
+                    current_problem_brief,
+                    optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+                    problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
+                )
             except Exception:
                 log.exception("Run-readiness probe failed for session %s; omitting from chat prompt", session_id)
                 run_button_enabled_for_chat = None
                 run_disabled_reason_for_chat = None
+                gate_status_for_chat = None
             turn = None
             cleanup_requested = False
             clear_requested = False
@@ -749,6 +758,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                     test_problem_id=row.test_problem_id,
                     run_button_enabled=run_button_enabled_for_chat,
                     run_disabled_reason=run_disabled_reason_for_chat,
+                    gate_status=gate_status_for_chat,
                 )
 
                 if consolidated is not None:
@@ -838,6 +848,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                                 test_problem_id=row.test_problem_id,
                                 run_button_enabled=run_button_enabled_for_chat,
                                 run_disabled_reason=run_disabled_reason_for_chat,
+                                gate_status=gate_status_for_chat,
                             )
                             text = turn.assistant_message
                         except Exception:
@@ -1055,6 +1066,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                         # the OQ maintenance step share the same chat context.
                         visible_assistant_message=text,
                         skip_brief_update_llm=skip_brief_llm,
+                        gate_status=gate_status_for_chat,
                     )
 
             row = db.get(StudySession, session_id) or row

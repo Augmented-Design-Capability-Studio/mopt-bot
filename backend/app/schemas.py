@@ -282,15 +282,52 @@ class OpenQuestionMaintenanceItem(BaseModel):
     text: str
 
 
+class AssumptionMaintenanceItem(BaseModel):
+    """One assumption-row decision returned by the maintenance pass.
+
+    Used in agile/demo modes only — waterfall has no assumption rows. The
+    server applies the action to the items[] row identified by ``id``:
+
+    - ``keep``: no-op.
+    - ``rephrase``: update only ``text`` to ``rephrased_text``; preserve
+      ``kind`` and ``source`` (still a `kind: "assumption"`, `source:
+      "agent"` row).
+    - ``drop``: remove the row entirely.
+    - ``promote_to_gathered``: lock the row in. Set ``kind`` to
+      ``"gathered"`` and ``source`` to ``"user"`` (the user originated the
+      lock-in — see memory ``feedback_provenance_origin_not_phrasing``).
+      ``rephrased_text`` carries the locked-in natural-language sentence.
+    """
+
+    id: str
+    action: Literal["keep", "rephrase", "drop", "promote_to_gathered"]
+    rephrased_text: str | None = None
+
+
 class OpenQuestionMaintenanceTurn(BaseModel):
-    """Output of the dedicated OQ maintenance LLM pass.
+    """Output of the dedicated definition-maintenance LLM pass.
 
     Carries the FULL updated list of open questions for this turn — the
     caller replaces the brief's open_questions with this list (preserving
     answered state for ids that round-trip).
+
+    For agile/demo turns it also carries ``assumption_actions``: per-row
+    decisions on each existing ``kind: "assumption"`` row (keep / rephrase
+    / drop / promote_to_gathered). Waterfall ignores this field because
+    waterfall briefs never store assumption rows.
+
+    Name kept as ``OpenQuestionMaintenanceTurn`` for backwards
+    compatibility with earlier callers; the alias
+    ``DefinitionMaintenanceTurn`` is the preferred name going forward.
     """
 
     open_questions: list[OpenQuestionMaintenanceItem] = Field(default_factory=list)
+    assumption_actions: list[AssumptionMaintenanceItem] = Field(default_factory=list)
+
+
+# Preferred name (alias of OpenQuestionMaintenanceTurn). Use this in new
+# code; the older name is retained so existing imports continue to work.
+DefinitionMaintenanceTurn = OpenQuestionMaintenanceTurn
 
 
 class PostMessagesResponse(BaseModel):

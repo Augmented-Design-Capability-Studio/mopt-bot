@@ -114,7 +114,13 @@
       "Bash(C:/Users/whyhowie/git-repo/mopt-bot/venv/Scripts/python.exe -m pytest -m \"not live_gemini\" --no-header -q)",
       "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_workflow_compliance.py -x -q)",
       "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_workflow_compliance.py backend/tests/test_llm_schema.py -x -q)",
-      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests -x -q --ignore=backend/tests/test_live_gemini.py)"
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests -x -q --ignore=backend/tests/test_live_gemini.py)",
+      "Bash(echo \"Exit: $?\")",
+      "PowerShell(Set-Location frontend; npx tsc --noEmit 2>&1; Write-Output \"Exit: $LASTEXITCODE\")",
+      "Bash(findstr /r /s \"run_disabled_reason\\\\|can_run_optimization\" \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\app\")",
+      "PowerShell($loc = Get-Location; Write-Output \"PWD: $loc\"; Get-ChildItem -Name | Select-Object -First 15)",
+      "PowerShell(npx tsc --noEmit 2>&1; Write-Output \"Exit: $LASTEXITCODE\")",
+      "Bash(./.venv/Scripts/python.exe -m pytest backend/tests/test_gate_status.py backend/tests/test_workflow_compliance_autorepair.py backend/tests/test_llm_schema.py backend/tests/test_oq_maintenance.py -x -q)"
     ]
   }
 }

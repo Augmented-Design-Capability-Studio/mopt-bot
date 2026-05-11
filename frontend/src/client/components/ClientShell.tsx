@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { type TutorialStepId } from "@shared/api";
 import type {
@@ -639,7 +641,23 @@ export function ClientShell({
           <div className="participant-tutorial-head">
             <div className="participant-tutorial-title">{activeTutorialStep.title}</div>
           </div>
-          <p>{activeTutorialStep.body}</p>
+          <div className="participant-tutorial-body bubble-markdown">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({ node: _node, ...props }) => (
+                  <a {...props} target="_blank" rel="noreferrer noopener" />
+                ),
+                code: ({ node: _node, className: codeClassName, children, ...props }) => (
+                  <code className={`mono ${codeClassName ?? ""}`.trim()} {...props}>
+                    {children}
+                  </code>
+                ),
+              }}
+            >
+              {activeTutorialStep.body}
+            </ReactMarkdown>
+          </div>
           {activeTutorialStep.actions && activeTutorialStep.actions.length > 0 ? (
             <div className="participant-tutorial-actions">
               {activeTutorialStep.actions.map((action, idx) => (

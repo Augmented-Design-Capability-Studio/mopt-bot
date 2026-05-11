@@ -127,6 +127,69 @@ def assess_workflow_compliance(
     return issues
 
 
+_MISSING_OQ_TEMPLATES: dict[str, str] = {
+    # Templated OQ texts keyed by `gate_status.missing` head item. These are
+    # the only synthesised questions — anything else falls through to the
+    # compliance warning. Templates are problem-agnostic and avoid naming
+    # specific solver internals so they read as natural participant prompts.
+    "search_strategy": (
+        "Which search method should we use? Options include genetic "
+        "search (GA), particle swarm (PSO), or simulated annealing (SA)."
+    ),
+    "goal_term": (
+        "What is the primary objective you want to optimize for this run?"
+    ),
+}
+
+
+def synthesize_missing_oq_for_waterfall(
+    *,
+    workflow_mode: str | None,
+    base_brief: dict[str, Any] | None,
+    new_brief: dict[str, Any] | None,
+    visible_reply_asks_user_question: bool,
+    gate_status: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Auto-repair: build a single OQ row when waterfall asks a question
+    in chat but the LLM forgot to record it.
+
+    Returns ``None`` when no synthesis is appropriate (mode != waterfall,
+    no question asked, OQ delta already exists, gate has nothing to
+    template against, or template not found). The returned dict is shaped
+    like a fresh ``open_questions`` entry — caller is expected to append
+    it to the brief and re-run coercion.
+
+    Synthesis is **deterministic**: the OQ text is templated from
+    ``gate_status.missing[0]`` (the highest-priority missing prerequisite),
+    not parsed from the assistant's free-form reply. This keeps the auto-
+    repair regex-free; the trade-off is it only fires for the prerequisites
+    we have templates for (currently ``search_strategy``, ``goal_term``).
+    Other unrecorded questions still surface as a compliance warning.
+    """
+    if str(workflow_mode or "").strip().lower() != "waterfall":
+        return None
+    if not visible_reply_asks_user_question:
+        return None
+    if not isinstance(base_brief, dict) or not isinstance(new_brief, dict):
+        return None
+    base_ids = _open_question_ids(base_brief)
+    new_ids = _open_question_ids(new_brief)
+    if (new_ids - base_ids) or _has_open_status_question(new_brief):
+        # Either a new OQ was added this turn, or an open OQ already
+        # captures whatever the question is. Nothing to repair.
+        return None
+    if not isinstance(gate_status, dict):
+        return None
+    missing = gate_status.get("missing") or []
+    if not isinstance(missing, list) or not missing:
+        return None
+    head = str(missing[0] or "").strip()
+    template = _MISSING_OQ_TEMPLATES.get(head)
+    if not template:
+        return None
+    return {"text": template, "status": "open"}
+
+
 def log_workflow_compliance(
     *,
     session_id: str,

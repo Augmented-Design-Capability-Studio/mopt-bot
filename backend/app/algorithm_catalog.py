@@ -8,6 +8,75 @@ from typing import Any
 DEFAULT_EPOCHS = 100
 DEFAULT_POP_SIZE = 50
 
+
+# Closed vocabulary of MEALpy algorithm acronyms used everywhere as the
+# canonical key set: structured-output schemas, the optimizer registry,
+# and the brief-anchor "did the user mention an algorithm?" check.
+CANONICAL_ALGORITHM_NAMES: tuple[str, ...] = ("GA", "PSO", "SA", "SwarmSA", "ACOR")
+
+
+# Plain-language aliases the participant or LLM may use in chat. Lowercase
+# so callers can do case-insensitive substring matching without re-casing.
+# Single source of truth — duplicated lists in prompts or anchoring should
+# import from here, not redeclare.
+ALGORITHM_BRIEF_ALIASES: tuple[str, ...] = (
+    "ga",
+    "genetic algorithm",
+    "genetic search",
+    "evolutionary search",
+    "pso",
+    "particle swarm",
+    "swarm search",
+    "sa",
+    "simulated annealing",
+    "annealing search",
+    "swarmsa",
+    "swarm-based simulated annealing",
+    "acor",
+    "ant colony",
+)
+
+
+# Alias → canonical algorithm map used by brief-extraction. Same vocabulary
+# as ``ALGORITHM_BRIEF_ALIASES`` (single source of truth); kept as a separate
+# mapping so callers can recover the canonical name rather than just a bool.
+# Order is irrelevant for callers — lookup is by alias key with a longest-
+# match scan, so "swarm-based simulated annealing" resolves to SwarmSA even
+# though "simulated annealing" alone resolves to SA.
+ALGORITHM_BRIEF_ALIAS_MAP: dict[str, str] = {
+    # GA
+    "ga": "GA",
+    "genetic algorithm": "GA",
+    "genetic search": "GA",
+    "evolutionary search": "GA",
+    # PSO
+    "pso": "PSO",
+    "particle swarm": "PSO",
+    "swarm search": "PSO",
+    # SA
+    "sa": "SA",
+    "simulated annealing": "SA",
+    "annealing search": "SA",
+    # SwarmSA
+    "swarmsa": "SwarmSA",
+    "swarm-based simulated annealing": "SwarmSA",
+    # ACOR
+    "acor": "ACOR",
+    "ant colony": "ACOR",
+}
+
+
+# Participant-facing nicknames for the five algorithms — used in prompts
+# that need to surface the option list to the LLM (e.g. waterfall OQ
+# phrasing, agile "starting from GA — say if you'd prefer …" lines).
+ALGORITHM_NICKNAMES_PARTICIPANT: tuple[str, ...] = (
+    "genetic search (GA)",
+    "swarm search (PSO)",
+    "annealing search (SA)",
+    "swarm-based simulated annealing (SwarmSA)",
+    "ant colony (ACOR)",
+)
+
 # Allowed algorithm_params keys per algorithm — same filter sets as optimizer model construction.
 ALLOWED_ALGORITHM_PARAMS: dict[str, frozenset[str]] = {
     "GA": frozenset({"pc", "pm"}),
