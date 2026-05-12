@@ -185,6 +185,10 @@ export type Session = {
   optimization_allowed: boolean;
   /** When true, participant Run stays off even if intrinsic readiness or permit would allow it. */
   optimization_runs_blocked_by_researcher: boolean;
+  /** Researcher gate for autonomous runs. Default false — every run requires a participant
+   *  click or a clearly user-initiated chat request. When true, agile may auto-fire its
+   *  baseline run once the panel + data are ready (the legacy auto-first-run behaviour). */
+  allow_agent_autorun: boolean;
   /** Researcher-controlled tutorial visibility toggle for participant UI. */
   participant_tutorial_enabled: boolean;
   /** Researcher-selected tutorial step for soft jump; null means natural progression. */
@@ -252,6 +256,13 @@ export function sessionPanelToConfigText(panel: Session["panel_config"]): string
   return JSON.stringify(panel, null, 2);
 }
 
+export type MessageMeta = {
+  /** Set on assistant turns whose visible reply invites the participant to run
+   *  optimization (e.g. "click Run when you're ready"). Used by the client
+   *  chat bubble to render an inline Run button alongside the message. */
+  is_run_invitation?: boolean;
+};
+
 export type Message = {
   id: number;
   created_at: string;
@@ -259,6 +270,7 @@ export type Message = {
   content: string;
   visible_to_participant: boolean;
   kind: string;
+  meta?: MessageMeta | null;
 };
 
 export type PostMessagesResponse = {
@@ -275,6 +287,12 @@ function isLooseMessage(x: unknown): x is Record<string, unknown> {
 }
 
 function coerceMessage(o: Record<string, unknown>): Message {
+  const rawMeta = o.meta;
+  const meta: MessageMeta | null = (
+    rawMeta && typeof rawMeta === "object" && !Array.isArray(rawMeta)
+      ? (rawMeta as MessageMeta)
+      : null
+  );
   return {
     id: o.id as number,
     created_at: typeof o.created_at === "string" ? o.created_at : "",
@@ -282,6 +300,7 @@ function coerceMessage(o: Record<string, unknown>): Message {
     content: o.content as string,
     visible_to_participant: typeof o.visible_to_participant === "boolean" ? o.visible_to_participant : true,
     kind: typeof o.kind === "string" ? o.kind : "chat",
+    meta,
   };
 }
 

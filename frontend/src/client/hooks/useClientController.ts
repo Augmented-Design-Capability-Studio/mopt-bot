@@ -353,6 +353,11 @@ export function useClientController() {
 
   useEffect(() => {
     if (session?.workflow_mode !== "agile" || session.status !== "active") return;
+    // Researcher-gated: the agile auto-first-run is OFF by default. The
+    // researcher toggles `allow_agent_autorun` on the session when they want
+    // the legacy "assume default + auto-run baseline" behaviour. Without it,
+    // the participant clicks Run (panel button or inline chat-bubble button).
+    if (!session.allow_agent_autorun) return;
     if (!agileAutorunStorageKey) return;
     if (busy || optimizing || aiPending) return;
     const processing = session.processing;

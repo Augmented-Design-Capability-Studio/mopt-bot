@@ -22,6 +22,7 @@ import type { TutorialAction } from "../../tutorial/types";
 import { ChatSection } from "../chat/ChatSection";
 import { type EditMode } from "../lib/clientTypes";
 import type { ClientOpsState } from "../lib/clientOps";
+import { computeCanRunOptimization, runOptimizationDisabledHint } from "../lib/optimizationGate";
 import { formatProcessingError } from "../lib/processingErrors";
 import { ConfigPanel } from "../problemConfig/ConfigPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
@@ -229,6 +230,31 @@ export function ClientShell({
           : "Working...";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
   const backgroundProcessingErrorMessage = formatProcessingError(backgroundProcessingError);
+  // Chat-bubble Run button: mirrors the panel Run button's gate so an
+  // invitation in chat doesn't promise a click that won't fire. Tooltip uses
+  // the same disabled-hint copy participants already see on the panel.
+  const chatRunReady = computeCanRunOptimization(
+    session,
+    configText,
+    problemBrief,
+    hasUploadedData,
+    testProblemMeta,
+  ) && !sessionTerminated && !optimizing && editMode === "none";
+  const chatRunDisabledHint = chatRunReady
+    ? undefined
+    : (sessionTerminated
+        ? "This session has ended."
+        : optimizing
+          ? "An optimization run is already in progress."
+          : editMode !== "none"
+            ? "Save or cancel your current edits before running optimization."
+            : runOptimizationDisabledHint(
+                session,
+                configText,
+                problemBrief,
+                hasUploadedData,
+                testProblemMeta,
+              ) || "Run prerequisites are not yet met.");
   const accentClass = workflowAccentClass(session?.workflow_mode);
   const inDemoMode = (session?.workflow_mode ?? "").toLowerCase() === "demo";
   const serverPn = (session?.participant_number ?? "").trim();
@@ -521,6 +547,9 @@ export function ClientShell({
             processingErrorMessage={backgroundProcessingErrorMessage}
             onRetrySync={onSyncProblemConfig}
             retryBusy={syncingProblemConfig || backgroundProcessingPending}
+            onRunOptimize={onRunOptimize}
+            runReady={chatRunReady}
+            runDisabledHint={chatRunDisabledHint}
           />
         </section>
 

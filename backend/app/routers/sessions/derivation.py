@@ -603,6 +603,7 @@ def append_message(
     content: str,
     visible: bool,
     kind: str = "chat",
+    meta: dict[str, Any] | None = None,
 ) -> ChatMessage:
     m = ChatMessage(
         session_id=session_id,
@@ -610,6 +611,7 @@ def append_message(
         content=content,
         visible_to_participant=visible,
         kind=kind,
+        meta_json=json.dumps(meta, ensure_ascii=False) if meta else None,
     )
     db.add(m)
     s = db.get(StudySession, session_id)

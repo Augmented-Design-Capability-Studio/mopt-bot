@@ -463,6 +463,8 @@ def patch_session(
         row.optimization_allowed = body.optimization_allowed
     if body.optimization_runs_blocked_by_researcher is not None:
         row.optimization_runs_blocked_by_researcher = body.optimization_runs_blocked_by_researcher
+    if body.allow_agent_autorun is not None:
+        row.allow_agent_autorun = body.allow_agent_autorun
     if body.participant_tutorial_enabled is not None:
         row.participant_tutorial_enabled = body.participant_tutorial_enabled
     if "tutorial_step_override" in body.model_fields_set:
@@ -878,7 +880,14 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             except Exception:
                 log.exception("Participant turn pipeline failed for session %s", session_id)
             text = intent.sanitize_visible_assistant_reply(text)
-            am = derivation.append_message(db, session_id, "assistant", text, True)
+            # Persist the run-invitation flag in meta_json so the client chat
+            # bubble can render an inline Run button when the agent's reply
+            # itself invites a run. Only set when truthy to keep meta_json
+            # null for normal chat messages.
+            assistant_meta = {"is_run_invitation": True} if assistant_invites_run_now else None
+            am = derivation.append_message(
+                db, session_id, "assistant", text, True, meta=assistant_meta,
+            )
             out.append(MessageOut.model_validate(am))
             # Trigger gating: the brief-update + panel-derivation pipelines are the
             # most expensive part of the per-turn cost.  If the user message was a

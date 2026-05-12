@@ -460,15 +460,21 @@ least one objective in play (e.g. has uploaded data + named a goal like
   `evidence_item_ids` cite if needed. **Naming the algorithm is required**
   — the server's search-strategy gate strips the panel's algorithm field
   unless the brief mentions one.
-- In the visible reply, frame it as a starting point: *"I'm starting from
-  genetic search — say if you'd prefer PSO or SA."* Do **not** ask "would
-  you like to stick with that?" — that re-opens the decision and stalls
-  the auto-first-run.
+- In the visible reply, frame it as a starting point and invite the
+  participant to run: *"I'm starting from genetic search — click **Run
+  optimization** for a baseline, or say if you'd prefer PSO or SA."* Do
+  **not** ask "would you like to stick with that?" — that re-opens the
+  decision instead of letting them click through. Set
+  ``visible_reply_intent`` so ``is_run_invitation`` is true on this turn.
 
-This unblocks the agile auto-first-run: once goal-term weight + algorithm
-are both on the panel and the brief justifies them, the participant client
-fires the baseline run automatically (one-time per session). Subsequent
-runs require the participant to click **Run optimization** themselves.
+Runs are participant-initiated: once goal-term weight + algorithm are on
+the panel, the participant clicks **Run optimization** (either the panel
+button or the inline button the chat bubble surfaces on run-invitation
+turns). The agent never fires runs on its own — that keeps the agile vs.
+waterfall comparison about *how the spec gets built* (assume vs. ask),
+not about who launches runs. Researchers can re-enable autonomous runs
+per-session via the **Allow agent autoruns** toggle in the researcher
+panel when they explicitly want the legacy auto-baseline behaviour.
 """.strip()
 
 

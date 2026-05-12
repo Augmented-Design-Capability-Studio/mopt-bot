@@ -33,6 +33,12 @@ class StudySession(Base):
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     optimization_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     optimization_runs_blocked_by_researcher: Mapped[bool] = mapped_column(Boolean, default=False)
+    # When False (default), the agent never fires a run on its own — every run
+    # requires a participant button click or a clearly user-initiated chat
+    # request (LLM-classified `intent_type in {affirm_invite, direct_request}`).
+    # When True, the client may auto-fire the agile baseline run once panel +
+    # data are ready (the historical "agile auto-first-run" behaviour).
+    allow_agent_autorun: Mapped[bool] = mapped_column(Boolean, default=False)
     participant_tutorial_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     tutorial_step_override: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tutorial_chat_started: Mapped[bool] = mapped_column(Boolean, default=False)

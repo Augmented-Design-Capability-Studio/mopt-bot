@@ -220,6 +220,7 @@ def session_to_out(row: StudySession) -> SessionOut:
         processing=processing_state(row),
         optimization_allowed=row.optimization_allowed,
         optimization_runs_blocked_by_researcher=row.optimization_runs_blocked_by_researcher,
+        allow_agent_autorun=bool(getattr(row, "allow_agent_autorun", False)),
         participant_tutorial_enabled=bool(getattr(row, "participant_tutorial_enabled", False)),
         tutorial_step_override=getattr(row, "tutorial_step_override", None),
         tutorial_chat_started=bool(getattr(row, "tutorial_chat_started", False)),

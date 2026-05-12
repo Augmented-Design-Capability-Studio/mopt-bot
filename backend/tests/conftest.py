@@ -36,6 +36,18 @@ from _pytest.terminal import TerminalReporter
 _LIVE_MARKER = "live_gemini"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_database_schema() -> None:
+    """Run ``ensure_database_shape`` once per test session so column-additions
+    in production code (e.g. ``allow_agent_autorun``) reach the dev sqlite
+    file the suite shares. Without this, schema-evolving commits break
+    pipeline tests that touch the real ``sessions`` table.
+    """
+    from app.db_maintenance import ensure_database_shape
+
+    ensure_database_shape()
+
+
 @pytest.fixture(autouse=True)
 def _stub_gemini_helpers(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
     """Stub Gemini helpers so non-live tests never touch the network.

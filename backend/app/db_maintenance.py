@@ -20,6 +20,7 @@ def ensure_database_shape() -> None:
     _ensure_sessions_participant_number_column()
     _ensure_sessions_processing_columns()
     _ensure_sessions_optimization_runs_blocked_column()
+    _ensure_sessions_allow_agent_autorun_column()
     _ensure_sessions_participant_tutorial_enabled_column()
     _ensure_sessions_tutorial_step_override_column()
     _ensure_sessions_tutorial_tracking_columns()
@@ -109,6 +110,22 @@ def _ensure_sessions_optimization_runs_blocked_column() -> None:
             )
         )
     log.info("Added sessions.optimization_runs_blocked_by_researcher column")
+
+
+def _ensure_sessions_allow_agent_autorun_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "allow_agent_autorun" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE sessions ADD COLUMN allow_agent_autorun BOOLEAN NOT NULL DEFAULT 0"
+            )
+        )
+    log.info("Added sessions.allow_agent_autorun column")
 
 
 def _ensure_sessions_participant_tutorial_enabled_column() -> None:

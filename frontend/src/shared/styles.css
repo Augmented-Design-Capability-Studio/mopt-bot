@@ -640,6 +640,16 @@ select:focus-visible {
   max-width: 14rem;
 }
 
+.chat-bubble-run {
+  padding-top: 0.35rem;
+}
+
+.chat-bubble-run__button {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+  font-weight: 600;
+}
+
 .chat-upload-chip {
   display: inline-flex;
   align-items: center;
@@ -1826,9 +1836,94 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
 
 .researcher-controls-grid {
   display: flex;
-  gap: 1rem;
+  gap: 1.25rem;
   flex-wrap: wrap;
   align-items: flex-start;
+}
+
+.researcher-controls-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 13rem;
+  /* Used by un-labeled blocks below to align with labeled controls in
+     adjacent columns (roughly one label line-height + the label-to-control
+     gap). Tune here if label typography changes. */
+  --researcher-label-offset: 1.2rem;
+}
+
+/* Push dummy files: no label of its own, so shift it down to sit flush
+   with the Test problem select in column 1. */
+.researcher-controls-column > .researcher-action-button-column {
+  margin-top: var(--researcher-label-offset);
+}
+
+/* Column 3 has no label header, so its first checkbox would otherwise sit
+   level with the Workflow LABEL in column 1 (which is too high). Push it
+   down so it lines up with the first interactive control instead. */
+.researcher-controls-column > .researcher-toggle-column:first-child {
+  margin-top: var(--researcher-label-offset);
+}
+
+.researcher-tutorial-step-select {
+  width: 13rem;
+  min-width: 13rem;
+  margin-left: 0.35rem;
+}
+
+/* Fourth column (Helpers only): cap the width so the expanded accordion
+   stays a tidy panel rather than stretching with its hint paragraph.
+   Adjust here if helper content grows. */
+.researcher-controls-grid > .researcher-controls-column:nth-child(4) {
+  max-width: 18rem;
+}
+
+/* Column 4 has no label header and no checkbox stack above the accordion,
+   so the summary would otherwise sit level with column 1's "Workflow"
+   label. Shift it down to align with the first interactive control. */
+.researcher-controls-grid > .researcher-controls-column:nth-child(4) > .researcher-helpers {
+  margin-top: var(--researcher-label-offset);
+}
+
+.researcher-helpers {
+  margin-top: 0.3rem;
+  font-size: 0.85rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.researcher-helpers > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0.15rem 0;
+  user-select: none;
+}
+
+.researcher-helpers__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.45rem 0 0.1rem 0.6rem;
+  border-left: 2px solid var(--border, #d0c4b3);
+  margin-top: 0.25rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.researcher-helpers__content > * {
+  /* Keep buttons / labels from forcing the column wider than the cap. */
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.researcher-helpers__content label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  line-height: 1.2;
 }
 
 .researcher-control-group {
@@ -1838,9 +1933,10 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
 }
 
 .researcher-workflow-select {
-  min-height: 2.1rem;
-  padding: 0.3rem 0.45rem;
-  font-weight: 600;
+  min-height: 1.9rem;
+  padding: 0.22rem 0.4rem;
+  font-weight: 500;
+  font-size: 0.88rem;
 }
 
 .researcher-save-button {

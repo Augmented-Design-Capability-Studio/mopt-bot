@@ -144,7 +144,7 @@ def test_agile_workflow_prompt_requires_decisive_search_strategy_default():
     """Agile must commit a default search strategy on the first turn that has
     objectives in play AND name the algorithm in a brief items[] row — the
     server's search-strategy gate strips the panel's algorithm field
-    otherwise, which blocks the auto-first-run.
+    otherwise, which blocks the participant from clicking Run.
     """
     system = _build_brief_update_system_instruction(
         current_problem_brief={"goal_summary": "", "items": []},
@@ -155,8 +155,11 @@ def test_agile_workflow_prompt_requires_decisive_search_strategy_default():
     assert "MUST" in flat and "default search strategy" in flat
     # Must name the algorithm in a brief row so the gate passes.
     assert "names the algorithm by name" in flat
-    # Must call out the auto-first-run dependency explicitly.
-    assert "auto-first-run" in flat
+    # The visible reply on the same turn must invite the participant to run.
+    # (The legacy "auto-first-run" autorun was removed in favour of a
+    # participant click + optional researcher override.)
+    assert "is_run_invitation" in flat
+    assert "Run optimization" in flat
 
 
 def test_visible_reply_context_block_requires_algorithm_named_brief_row():

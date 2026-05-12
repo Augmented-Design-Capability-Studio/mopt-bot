@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -48,6 +49,7 @@ class SessionPatch(BaseModel):
     problem_brief: dict[str, Any] | None = None
     optimization_allowed: bool | None = None
     optimization_runs_blocked_by_researcher: bool | None = None
+    allow_agent_autorun: bool | None = None
     participant_tutorial_enabled: bool | None = None
     tutorial_step_override: TutorialStepIdLiteral | None = None
     gemini_model: str | None = None
@@ -103,6 +105,7 @@ class SessionOut(BaseModel):
     processing: SessionProcessingState = Field(default_factory=SessionProcessingState)
     optimization_allowed: bool
     optimization_runs_blocked_by_researcher: bool
+    allow_agent_autorun: bool = False
     participant_tutorial_enabled: bool = False
     tutorial_step_override: TutorialStepIdLiteral | None = None
     tutorial_chat_started: bool = False
@@ -161,10 +164,37 @@ class MessageOut(BaseModel):
     content: str
     visible_to_participant: bool
     kind: str
+    meta: dict[str, Any] | None = None
 
     @field_serializer("created_at")
     def _serialize_created_at(self, value: datetime) -> str:
         return serialize_utc_datetime(value)
+
+    @classmethod
+    def model_validate(cls, obj: Any, **kwargs: Any) -> "MessageOut":  # type: ignore[override]
+        # Decode meta_json (stored as a Text column on ChatMessage) into the
+        # `meta` dict the API exposes. Kept tolerant: a malformed string just
+        # becomes None so a single bad row never breaks the chat list.
+        if hasattr(obj, "meta_json") and not isinstance(obj, dict):
+            raw = getattr(obj, "meta_json", None)
+            parsed: dict[str, Any] | None = None
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    decoded = json.loads(raw)
+                    parsed = decoded if isinstance(decoded, dict) else None
+                except json.JSONDecodeError:
+                    parsed = None
+            data = {
+                "id": obj.id,
+                "created_at": obj.created_at,
+                "role": obj.role,
+                "content": obj.content,
+                "visible_to_participant": obj.visible_to_participant,
+                "kind": obj.kind,
+                "meta": parsed,
+            }
+            return super().model_validate(data, **kwargs)
+        return super().model_validate(obj, **kwargs)
 
 
 class ChatModelTurn(BaseModel):

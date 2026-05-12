@@ -161,180 +161,206 @@ export function ResearcherDetail({
           </div>
 
           <div className="researcher-controls-grid">
-            <label className="muted researcher-control-group">
-              Workflow
-              <select
-                value={detail.workflow_mode}
-                onChange={(e) => void onPatchSession({ workflow_mode: e.target.value })}
-                className="researcher-workflow-select"
-              >
-                <option value="agile">agile</option>
-                <option value="waterfall">waterfall</option>
-                <option value="demo">demo</option>
-              </select>
-            </label>
-
-            <label className="muted researcher-control-group">
-              Test problem
-              <select
-                value={detail.test_problem_id ?? "vrptw"}
-                title="Changing mid-session can mix incompatible run artifacts; prefer new sessions when possible."
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (
-                    runs.length > 0 &&
-                    next !== (detail.test_problem_id ?? "vrptw") &&
-                    !window.confirm(
-                      "This session already has optimization runs. Switching the test problem can mix incompatible result shapes in history. Continue?",
-                    )
-                  ) {
-                    return;
-                  }
-                  void onPatchSession({ test_problem_id: next });
-                }}
-                className="researcher-workflow-select"
-              >
-                {testProblemsMeta.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} ({p.id})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="muted researcher-control-group">
-              Participant number
-              <div style={{ display: "flex", gap: "0.35rem" }}>
-                <input
-                  type="text"
-                  value={participantNumberDraft}
-                  disabled={busy}
-                  onChange={(e) => setParticipantNumberDraft(e.target.value)}
-                  placeholder="e.g. 007"
-                  className="researcher-control-input"
-                />
-                <button
-                  type="button"
-                  disabled={busy || !participantNumberChanged}
-                  className={
-                    participantNumberChanged
-                      ? "researcher-save-button researcher-save-button--dirty"
-                      : "researcher-save-button"
-                  }
-                  onClick={() => void onPatchSession({ participant_number: participantNumberDraft })}
+            {/* Column 1: stacked selects (Workflow + Test problem). */}
+            <div className="researcher-controls-column">
+              <label className="muted researcher-control-group">
+                Workflow
+                <select
+                  value={detail.workflow_mode}
+                  onChange={(e) => void onPatchSession({ workflow_mode: e.target.value })}
+                  className="researcher-workflow-select"
                 >
-                  Save
-                </button>
-              </div>
-            </label>
+                  <option value="agile">agile</option>
+                  <option value="waterfall">waterfall</option>
+                  <option value="demo">demo</option>
+                </select>
+              </label>
 
-            <div className="muted researcher-control-group">
-              <span>More actions & settings</span>
-              <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
-                <div className="researcher-action-button-column">
-                  <button type="button" disabled={busy} onClick={() => void onPushParticipantStarterPanel()}>
-                    Push starter problem config
-                  </button>
-                  <button type="button" disabled={busy} onClick={() => void onPushDummyParticipantUpload()}>
-                    Push dummy files
+              <label className="muted researcher-control-group">
+                Test problem
+                <select
+                  value={detail.test_problem_id ?? "vrptw"}
+                  title="Changing mid-session can mix incompatible run artifacts; prefer new sessions when possible."
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (
+                      runs.length > 0 &&
+                      next !== (detail.test_problem_id ?? "vrptw") &&
+                      !window.confirm(
+                        "This session already has optimization runs. Switching the test problem can mix incompatible result shapes in history. Continue?",
+                      )
+                    ) {
+                      return;
+                    }
+                    void onPatchSession({ test_problem_id: next });
+                  }}
+                  className="researcher-workflow-select"
+                >
+                  {testProblemsMeta.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {/* Column 2: participant input + push action buttons. */}
+            <div className="researcher-controls-column">
+              <label className="muted researcher-control-group">
+                Participant number
+                <div style={{ display: "flex", gap: "0.35rem" }}>
+                  <input
+                    type="text"
+                    value={participantNumberDraft}
+                    disabled={busy}
+                    onChange={(e) => setParticipantNumberDraft(e.target.value)}
+                    placeholder="e.g. 007"
+                    className="researcher-control-input"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !participantNumberChanged}
+                    className={
+                      participantNumberChanged
+                        ? "researcher-save-button researcher-save-button--dirty"
+                        : "researcher-save-button"
+                    }
+                    onClick={() => void onPatchSession({ participant_number: participantNumberDraft })}
+                  >
+                    Save
                   </button>
                 </div>
-                <div className="researcher-toggle-column">
-                  <label title="Sets the stored run permit on the session. Uncheck to block runs. Participant definition/chat updates re-align the permit with intrinsic readiness (waterfall open questions, etc.); check again to override until the next participant update.">
-                    <input
-                      type="checkbox"
-                      checked={runButtonPermitOn}
-                      onChange={(e) => {
-                        const on = e.target.checked;
-                        if (on) {
-                          const hasOpenQuestions =
-                            detail.workflow_mode === "waterfall" &&
-                            detail.problem_brief.open_questions.some((q) => q.status === "open");
-                          if (
-                            hasOpenQuestions &&
-                            !window.confirm(
-                              "This session still has open questions in the problem definition. Enable the Run button anyway? The participant will be able to run optimization before those questions are answered.",
-                            )
-                          ) {
-                            return;
-                          }
+              </label>
+              <div className="researcher-action-button-column">
+                <button type="button" disabled={busy} onClick={() => void onPushDummyParticipantUpload()}>
+                  Push dummy files
+                </button>
+              </div>
+            </div>
+
+            {/* Column 3: the two everyday checkboxes researchers actually flip
+                mid-session. Demo / recovery affordances live in column 4. */}
+            <div className="researcher-controls-column">
+              <div className="researcher-toggle-column">
+                <label title="Sets the stored run permit on the session. Uncheck to block runs. Participant definition/chat updates re-align the permit with intrinsic readiness (waterfall open questions, etc.); check again to override until the next participant update.">
+                  <input
+                    type="checkbox"
+                    checked={runButtonPermitOn}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      if (on) {
+                        const hasOpenQuestions =
+                          detail.workflow_mode === "waterfall" &&
+                          detail.problem_brief.open_questions.some((q) => q.status === "open");
+                        if (
+                          hasOpenQuestions &&
+                          !window.confirm(
+                            "This session still has open questions in the problem definition. Enable the Run button anyway? The participant will be able to run optimization before those questions are answered.",
+                          )
+                        ) {
+                          return;
                         }
-                        void onPatchSession(
-                          on
-                            ? {
-                                optimization_runs_blocked_by_researcher: false,
-                                optimization_allowed: true,
-                              }
-                            : { optimization_runs_blocked_by_researcher: true },
-                        );
-                      }}
-                    />{" "}
-                    {"'Run' button available."}
-                  </label>
-                  <label>
+                      }
+                      void onPatchSession(
+                        on
+                          ? {
+                              optimization_runs_blocked_by_researcher: false,
+                              optimization_allowed: true,
+                            }
+                          : { optimization_runs_blocked_by_researcher: true },
+                      );
+                    }}
+                  />{" "}
+                  {"'Run' button available"}
+                </label>
+                <label
+                  title={
+                    inDemoMode
+                      ? demoTutorialDisabledTooltip
+                      : "When enabled, the participant can see and replay tutorial bubbles for this session. If the participant dismisses, tutorial is turned off for this session. Progression is event-driven from participant actions."
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={detail.participant_tutorial_enabled}
+                    disabled={busy || inDemoMode}
+                    onChange={(e) =>
+                      void onPatchSession(
+                        e.target.checked
+                          ? {
+                              participant_tutorial_enabled: true,
+                              tutorial_step_override: detail.tutorial_step_override ?? "chat-info",
+                            }
+                          : { participant_tutorial_enabled: false },
+                      )
+                    }
+                  />{" "}
+                  Show tutorial
+                  <select
+                    value={detail.tutorial_step_override ?? "chat-info"}
+                    disabled={busy || !detail.participant_tutorial_enabled || inDemoMode}
+                    onChange={(e) =>
+                      void onPatchSession({
+                        tutorial_step_override: e.target.value,
+                      })
+                    }
+                    className="researcher-workflow-select researcher-tutorial-step-select"
+                    title={
+                      inDemoMode
+                        ? demoTutorialDisabledTooltip
+                        : "Set current tutorial step. Selecting an earlier step rewinds tutorial tracking state only (chat/runs/config data are unchanged). Step 3 advances only after the participant explicitly clicks the Definition tab."
+                    }
+                  >
+                    {TUTORIAL_STEP_IDS.map((stepId) => (
+                      <option key={stepId} value={stepId}>
+                        {tutorialStepLabels[stepId]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            {/* Column 4: Helpers — demo / recovery affordances (starter config +
+                rarely-flipped toggles). Native <details>/<summary> keeps it
+                keyboard-accessible without extra React state. */}
+            <div className="researcher-controls-column">
+              <details className="researcher-helpers">
+                <summary className="muted">Helpers</summary>
+                <div className="researcher-helpers__content">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    title="New participant sessions start with empty panels unless you push this deliberately mediocre starter (sparse objectives and a weak search setup)."
+                    onClick={() => void onPushParticipantStarterPanel()}
+                  >
+                    Push starter problem config
+                  </button>
+                  <label title="Restricts scoring to objectives the participant explicitly listed. Affects only how runs are scored — does not change which weights are in the panel.">
                     <input
                       type="checkbox"
                       checked={getOnlyActiveTerms(detail.panel_config)}
                       disabled={busy}
                       onChange={(e) => void onSetOnlyActiveTerms(e.target.checked)}
                     />{" "}
-                    Only score explicitly listed objectives
+                    Only score listed objectives <span className="muted">(default on)</span>
                   </label>
-                  <label
-                    title={
-                      inDemoMode
-                        ? demoTutorialDisabledTooltip
-                        : "When enabled, the participant can see and replay tutorial bubbles for this session. If the participant dismisses, tutorial is turned off for this session. Progression is event-driven from participant actions."
-                    }
-                  >
+                  <label title="When checked, the agent may fire a run on its own once panel + data are ready (the legacy agile auto-first-run). Off by default: every run requires a participant click or a clearly user-initiated chat request — keeps the agile/waterfall workflow comparison fair.">
                     <input
                       type="checkbox"
-                      checked={detail.participant_tutorial_enabled}
-                      disabled={busy || inDemoMode}
+                      checked={detail.allow_agent_autorun}
+                      disabled={busy}
                       onChange={(e) =>
-                        void onPatchSession(
-                          e.target.checked
-                            ? {
-                                participant_tutorial_enabled: true,
-                                tutorial_step_override: detail.tutorial_step_override ?? "chat-info",
-                              }
-                            : { participant_tutorial_enabled: false },
-                        )
+                        void onPatchSession({ allow_agent_autorun: e.target.checked })
                       }
                     />{" "}
-                    Show participant tutorial
-                    <select
-                      value={detail.tutorial_step_override ?? "chat-info"}
-                      disabled={busy || !detail.participant_tutorial_enabled || inDemoMode}
-                      onChange={(e) =>
-                        void onPatchSession({
-                          tutorial_step_override: e.target.value,
-                        })
-                      }
-                      className="researcher-workflow-select"
-                      style={{ width: "8.5rem", minWidth: "8.5rem", marginLeft: "0.45rem" }}
-                      title={
-                        inDemoMode
-                          ? demoTutorialDisabledTooltip
-                          : "Set current tutorial step. Selecting an earlier step rewinds tutorial tracking state only (chat/runs/config data are unchanged). Step 3 advances only after the participant explicitly clicks the Definition tab."
-                      }
-                    >
-                      {TUTORIAL_STEP_IDS.map((stepId) => (
-                        <option key={stepId} value={stepId}>
-                          {tutorialStepLabels[stepId]}
-                        </option>
-                      ))}
-                    </select>
+                    Allow agent autoruns <span className="muted">(default off)</span>
                   </label>
                 </div>
-              </div>
+              </details>
             </div>
           </div>
-
-          <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
-            New participant sessions start with empty panels until you push this deliberately mediocre starter (sparse
-            objectives and a weak search setup).
-          </p>
 
           <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center" }}>
             <StatusChip
