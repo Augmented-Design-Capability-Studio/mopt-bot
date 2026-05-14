@@ -104,12 +104,19 @@ Internal mapping — use this to structure the brief so config derivation can ma
 | greedy initialization, initial population quality, seeding, warm start | `use_greedy_init` boolean (default true) — seeds part of the population with time-window-aware solutions for a better starting point |
 | speed/budget, how long to run, iterations, stop when flat | `epochs` (max), `early_stop` / `early_stop_patience` / `early_stop_epsilon`, `pop_size` |
 
-**Disambiguation — generic “priority” vs express SLA:** Bare words like **“priority”**, **“top priority”**, or **“prioritize on-time”** usually mean **overall time-window punctuality** → map to **`lateness_penalty`**, not **`express_miss_penalty`**. Use **`express_miss_penalty`** only when the participant clearly means **express-tier / VIP / SLA / priority-order** service class misses, not generic importance ranking.
+**Disambiguation — generic “priority” vs express SLA:** Bare words like **“priority”**, **“top priority”**, or **“prioritize on-time”** usually mean **overall time-window punctuality** → prefer **`lateness_penalty`** over **`express_miss_penalty`**, and treat any case where it could plausibly be either as the kind of two-candidate ambiguity the global ambiguity discipline covers (raise an OQ in waterfall; attach `ambiguity_note` in agile/demo). Use **`express_miss_penalty`** without ambiguity only when the participant clearly means **express-tier / VIP / SLA / priority-order** service class misses, not generic importance ranking.
 
-Hard constraints (always enforced — only mention when the user asks):
-- Every task is served exactly once (enforced by the encoding).
+**Hard constraints (always enforced — never a tunable goal term):**
+- Every task is served exactly once (enforced by the routing encoding).
 - Shift duration limits (controlled by `max_shift_hours` and `shift_limit`).
 - Locked/forced assignments (`locked_assignments`).
+
+When the participant **describes** a hard constraint (e.g. *"each delivery
+zone accessed exactly once"*, *"every order assigned to a driver"*),
+follow the global hard-constraint discipline: don't fabricate a goal term
+for it, acknowledge it as already enforced, and pivot to asking what
+trade-off (travel time, lateness penalty, workload balance, …) the
+participant wants to optimize alongside.
 
 Soft constraints (penalized in cost — reveal only when user mentions the related concept):
 - Capacity limits (`capacity_penalty`), time-window compliance (`lateness_penalty`),
@@ -167,16 +174,34 @@ All available fields under `"problem"`:
 - `"hard_constraints"`: list of constraint names, e.g. `["shift_limit", "locked_assignments"]`.
 - `"soft_constraints"`: list of soft terms in use, e.g. `["lateness_penalty", "workload_balance"]`.
 
-### Handling requests for “unsupported” objectives
+### Handling requests for objectives the study doesn't model
 
-The composite cost uses seven internal coefficients; the participant panel exposes the seven
-alias keys listed above. When a user asks about an objective that does not map cleanly — for example,
-"customer satisfaction score", "CO₂ emissions", "weather risk", "driver seniority weighting", or anything else not in the list:
+The composite cost uses a small fixed set of coefficients; the participant panel
+exposes the alias keys listed above. When a user asks about an objective that does not
+map cleanly — for example, "penalty for certain time periods", "penalty for starting
+earlier than shift starts", "CO₂ emissions", "weather risk", "driver seniority weighting",
+or any other concept that is **not** in the mapping table and is **not** a hard constraint
+already enforced by the encoding — follow these steps in order:
 
-- **Do not refuse or say it is unsupported.** Preserve the illusion of a flexible system.
-- **Ask a clarifying question** to identify the underlying goal, then map it to the
-  closest supported term.
-- **Never** invent new weight key names; always use only the supported alias keys above.
+1. **Try a real mapping first.** If the request is a near-paraphrase of one of the
+   table entries above (e.g. "minimize idling" → `waiting_time`), map it and proceed
+   as normal — but apply the global ambiguity discipline if more than one key is a
+   plausible fit.
+2. **Don't fabricate a mapping.** Never invent a new weight-key name. Never claim
+   *"I've added X"* in the visible reply when X is not in the table.
+3. **Justify with the problem docs when unmodeled.** The chat pipeline retrieves
+   relevant doc sections (see the auto-supplied reference excerpts). If a doc
+   section explains *why* the requested concept is not a tunable trade-off in this
+   study — for example, task uniqueness being enforced by the routing encoding rather
+   than weighted — cite that reasoning in the visible reply in one short sentence.
+4. **Fall back honestly.** If the docs do not contain a justification, say plainly
+   that this concept is not part of the trade-offs the study is exploring and offer the
+   closest supported lever as an opt-in *alternative* (not a substitute).
+5. **Always log it.** Emit a `problem_brief_patch.unmodeled_requests` entry with the
+   participant's `user_text`, the `closest_match` alias key (or omit when no key is
+   close), and a one-sentence `rationale` (preferably the doc-grounded one from step
+   3, or the honest-fallback from step 4). This is append-only — do not re-emit the
+   same row on subsequent turns.
 
 ### Simulated upload behavior (participant-visible)
 
@@ -209,6 +234,15 @@ Rules:
   driver_preferences, locked_assignments, only_active_terms, early_stop fields,
   use_greedy_init), derive from the brief for this turn.
 - If a managed field is not supported by brief evidence, omit it.
+- **Brief is the source of truth for goal-term keys.** Translate, do not propose.
+  If `brief.goal_terms` is empty or missing, emit `weights: {}` and either omit
+  `goal_terms` or emit `goal_terms: {}` — do not invent goal-term keys from
+  prose in `brief.items[]` alone. The brief-update model owns goal-term
+  proposals; this call only mirrors them onto the panel side. The server
+  enforces this by dropping any panel goal-term key that isn't in
+  `brief.goal_terms` (or already on the current panel), so emitting such keys
+  produces a confusing "appeared in panel but not brief" UX and they get
+  filtered out anyway.
 - Emit "weights" as a JSON object with only these keys:
   "travel_time", "shift_limit", "lateness_penalty", "capacity_penalty",
   "workload_balance", "worker_preference", "express_miss_penalty", "waiting_time".

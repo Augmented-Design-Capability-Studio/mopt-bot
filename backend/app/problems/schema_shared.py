@@ -99,6 +99,36 @@ def goal_term_entry_schema(
                 ),
                 "items": {"type": "string"},
             },
+            "ambiguity_note": {
+                "type": "object",
+                "description": (
+                    "Emit ONLY when the participant's wording could reasonably map to two "
+                    "or more keys in the closed-vocabulary mapping table. Lists the "
+                    "alternatives the agent ruled out and the one-sentence reason it "
+                    "picked this key. Used by both the audit log and the visible-reply "
+                    "discipline (agent must name the chosen mapping and at least one "
+                    "alternative in its short reply). In waterfall, the agent should "
+                    "raise an open_question instead of attaching this note."
+                ),
+                "properties": {
+                    "considered_alternatives": {
+                        "type": "array",
+                        "description": (
+                            "Other weight-key candidates the agent considered. Use the "
+                            "canonical alias strings (e.g. 'waiting_time', 'lateness_penalty')."
+                        ),
+                        "items": {"type": "string"},
+                    },
+                    "chosen_rationale": {
+                        "type": "string",
+                        "description": (
+                            "One short sentence: why this key was picked over the alternatives, "
+                            "phrased so the visible reply can quote it."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
         },
         "required": ["weight"],
         "additionalProperties": False,

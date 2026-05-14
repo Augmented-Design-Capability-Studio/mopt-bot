@@ -214,6 +214,21 @@ export type Session = {
   gemini_key_configured: boolean;
   /** Incremented on researcher reset; client may reload when this increases. */
   content_reset_revision?: number;
+  /** Researcher-facing diagnostic: mismatches between brief.goal_terms and
+   *  panel.problem.goal_terms (key set, weight/type/locked, mirror fields).
+   *  Empty when aligned. */
+  brief_panel_drift?: BriefPanelDriftEntry[];
+};
+
+export type BriefPanelDriftKind = "missing_in_panel" | "missing_in_brief" | "value_mismatch" | "mirror_mismatch";
+
+export type BriefPanelDriftEntry = {
+  kind: BriefPanelDriftKind;
+  key: string;
+  /** Field name for value/mirror mismatches (e.g. "weight", "driver_preferences"). */
+  detail?: string;
+  brief_value?: unknown;
+  panel_value?: unknown;
 };
 
 export type SessionProcessingStatus = "idle" | "pending" | "ready" | "failed";
@@ -261,6 +276,11 @@ export type MessageMeta = {
    *  optimization (e.g. "click Run when you're ready"). Used by the client
    *  chat bubble to render an inline Run button alongside the message. */
   is_run_invitation?: boolean;
+  /** Set when the pre-release probe re-asked the model to fix a commitment /
+   *  gate mismatch this turn. Used to render a small "verified after re-check"
+   *  badge on the chat bubble so participants can see when the system intervened
+   *  to keep the visible reply consistent with the structural state. */
+  verified_after_retry?: boolean;
 };
 
 export type Message = {

@@ -52,6 +52,7 @@ export function ClientApp() {
       busy={controller.busy}
       chatBusy={controller.chatBusy}
       syncingProblemConfig={controller.syncingProblemConfig}
+      syncingProblemBrief={controller.syncingProblemBrief}
       clientOps={controller.clientOps}
       optimizing={controller.optimizing}
       error={controller.error}
@@ -84,6 +85,7 @@ export function ClientApp() {
       onEnsureDefinitionEditing={controller.ensureDefinitionEditing}
       isDefinitionDirty={controller.isDefinitionDirty}
       onSyncProblemConfig={controller.syncProblemConfig}
+      onSyncProblemBrief={controller.syncProblemBrief}
       onRecoverGoalTerms={controller.recoverGoalTerms}
       onEnterConfigEdit={controller.enterConfigEdit}
       onCancelConfigEdit={controller.cancelConfigEdit}

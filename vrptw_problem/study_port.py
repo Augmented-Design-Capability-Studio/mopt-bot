@@ -155,6 +155,49 @@ class VrptwStudyPort:
             out.append(f"capacity units over {int(cap)}")
         return out
 
+    def brief_item_ids_to_strip_on_goal_term_removal(
+        self,
+        removed_keys: set[str],
+        prior_goal_terms: dict[str, Any],
+        brief_items: list[dict[str, Any]],
+    ) -> set[str]:
+        """VRPTW cascade: also strip auto-synthesized prose rows tied to a
+        removed term. Otherwise removing ``worker_preference`` would leave the
+        ``config-driver-pref-*`` rows that ``synthesize_brief_items_from_goal_terms``
+        generated, and the next derive pass would re-introduce the rule set."""
+        ids: set[str] = set()
+        # Evidence-cite items (the LLM-explicit dependency) — neutral default.
+        for key in removed_keys:
+            entry = prior_goal_terms.get(key) if isinstance(prior_goal_terms, dict) else None
+            if not isinstance(entry, dict):
+                continue
+            evidence = entry.get("evidence_item_ids")
+            if isinstance(evidence, list):
+                for eid in evidence:
+                    if isinstance(eid, str) and eid:
+                        ids.add(eid)
+        # Auto-rows: scan all items once and match against per-key prefixes /
+        # known stable ids. Keep matching conditions in sync with
+        # ``problem_brief_item_slot`` and ``synthesize_brief_items_from_goal_terms``.
+        if not isinstance(brief_items, list):
+            return ids
+        for item in brief_items:
+            if not isinstance(item, dict):
+                continue
+            item_id = str(item.get("id") or "")
+            if not item_id:
+                continue
+            if "worker_preference" in removed_keys and item_id.startswith(
+                "config-driver-pref-"
+            ):
+                ids.add(item_id)
+            if "shift_limit" in removed_keys and (
+                item_id == "config-shift-hard-penalty"
+                or item_id == "config-weight-shift_limit"
+            ):
+                ids.add(item_id)
+        return ids
+
     def is_goal_term_self_anchored(self, key: str, entry: dict[str, Any]) -> bool:
         """VRPTW: `worker_preference` self-anchors when its rule list is non-empty;
         `shift_limit` self-anchors when it carries a `max_shift_hours` value.

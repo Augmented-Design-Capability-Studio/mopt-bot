@@ -41,6 +41,8 @@ type ResearcherDetailProps = {
   onExportJson: () => void | Promise<void>;
   onCopySessionLink: () => void | Promise<void>;
   onResetSession: () => void | Promise<void>;
+  onResyncPanelFromBrief: () => void | Promise<void>;
+  onResyncBriefFromPanel: () => void | Promise<void>;
   onTerminate: () => void | Promise<void>;
   onRemoveSession: () => void | Promise<void>;
   onSendSteer: () => void | Promise<void>;
@@ -72,6 +74,8 @@ export function ResearcherDetail({
   onExportJson,
   onCopySessionLink,
   onResetSession,
+  onResyncPanelFromBrief,
+  onResyncBriefFromPanel,
   onTerminate,
   onRemoveSession,
   onSendSteer,
@@ -159,6 +163,76 @@ export function ResearcherDetail({
               Delete session
             </button>
           </div>
+
+          {detail.brief_panel_drift && detail.brief_panel_drift.length > 0 && (() => {
+            const driftKinds = new Set(detail.brief_panel_drift.map((d) => d.kind));
+            const hasBriefOnly = driftKinds.has("missing_in_panel");
+            const hasPanelOnly = driftKinds.has("missing_in_brief");
+            const hasValueOrMirror = driftKinds.has("value_mismatch") || driftKinds.has("mirror_mismatch");
+            return (
+              <div
+                role="alert"
+                style={{
+                  marginTop: "0.75rem",
+                  padding: "0.75rem 1rem",
+                  border: "1px solid #d97706",
+                  background: "#fff7ed",
+                  borderRadius: "0.4rem",
+                  fontSize: "0.9rem",
+                  color: "#7c2d12",
+                }}
+              >
+                <strong>Brief ↔ Problem Config drift detected ({detail.brief_panel_drift.length}).</strong>{" "}
+                <span style={{ marginLeft: "0.25rem" }}>
+                  {hasBriefOnly && hasPanelOnly
+                    ? "Mismatches go both ways below — use both buttons (each direction adopts the other side)."
+                    : hasBriefOnly
+                      ? "The brief has keys the Problem Config doesn't. Use \"Sync to config\" to push them into the panel."
+                      : hasPanelOnly
+                        ? "The Problem Config has keys the brief doesn't. Use \"Sync to def.\" to mirror the panel into the brief."
+                        : hasValueOrMirror
+                          ? "Values disagree — pick the side you trust and run that direction's sync."
+                          : "Run a sync direction to reconcile."}
+                </span>
+                <ul style={{ margin: "0.5rem 0 0.5rem 1.25rem", padding: 0 }}>
+                  {detail.brief_panel_drift.slice(0, 5).map((entry, i) => (
+                    <li key={`${entry.kind}-${entry.key}-${entry.detail ?? ""}-${i}`}>
+                      <code>{entry.key}</code>
+                      {entry.detail ? <> · <code>{entry.detail}</code></> : null} —{" "}
+                      {entry.kind === "missing_in_panel"
+                        ? "in brief, not in Problem Config"
+                        : entry.kind === "missing_in_brief"
+                          ? "in Problem Config, not in brief"
+                          : entry.kind === "mirror_mismatch"
+                            ? "mirror field out of sync"
+                            : "value differs (brief vs panel)"}
+                    </li>
+                  ))}
+                  {detail.brief_panel_drift.length > 5 && (
+                    <li>
+                      <em>… and {detail.brief_panel_drift.length - 5} more</em>
+                    </li>
+                  )}
+                </ul>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onResyncPanelFromBrief()}
+                  >
+                    Sync to config
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onResyncBriefFromPanel()}
+                  >
+                    Sync to def.
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="researcher-controls-grid">
             {/* Column 1: stacked selects (Workflow + Test problem). */}
@@ -319,6 +393,24 @@ export function ResearcherDetail({
                     ))}
                   </select>
                 </label>
+              </div>
+              <div className="researcher-action-button-column researcher-action-button-column--row">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onResyncPanelFromBrief()}
+                  title="Re-derive the Problem Config from the current brief without clearing locks or researcher-set values."
+                >
+                  Sync to config
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onResyncBriefFromPanel()}
+                  title="Mirror the current Problem Config into the brief (closes drift where the panel has keys the brief doesn't)."
+                >
+                  Sync to def.
+                </button>
               </div>
             </div>
 

@@ -127,6 +127,7 @@ class SessionOut(BaseModel):
     gemini_model: str | None
     gemini_key_configured: bool = False
     content_reset_revision: int = 0
+    brief_panel_drift: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_serializer("created_at", "updated_at")
     def _serialize_datetimes(self, value: datetime) -> str:
@@ -242,6 +243,12 @@ class ConsolidatedChatTurn(BaseModel):
     # Used downstream to decide whether an `affirm_invite` from the user (the
     # next turn) should auto-fire a run.
     is_run_invitation: bool = False
+    # Self-classified rhetorical intent of the visible reply, used by the
+    # pre-release probe to detect "I added X" claims with no matching patch.
+    # Mirrors the brief-update LLM's `visible_reply_intent` so the probe can
+    # see it before persistence (rather than only after derivation).
+    claims_brief_change: bool = False
+    asks_user_question: bool = False
     # Clause split for mixed-intent turns ("Yes, change X. Also, what is Y?").
     # `change_clause` is fed into the hidden brief-update LLM as the canonical
     # user_text for that pass — keeps the brief pipeline narrowly scoped to the

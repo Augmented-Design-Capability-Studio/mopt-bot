@@ -120,7 +120,23 @@
       "Bash(findstr /r /s \"run_disabled_reason\\\\|can_run_optimization\" \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\app\")",
       "PowerShell($loc = Get-Location; Write-Output \"PWD: $loc\"; Get-ChildItem -Name | Select-Object -First 15)",
       "PowerShell(npx tsc --noEmit 2>&1; Write-Output \"Exit: $LASTEXITCODE\")",
-      "Bash(./.venv/Scripts/python.exe -m pytest backend/tests/test_gate_status.py backend/tests/test_workflow_compliance_autorepair.py backend/tests/test_llm_schema.py backend/tests/test_oq_maintenance.py -x -q)"
+      "Bash(./.venv/Scripts/python.exe -m pytest backend/tests/test_gate_status.py backend/tests/test_workflow_compliance_autorepair.py backend/tests/test_llm_schema.py backend/tests/test_oq_maintenance.py -x -q)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\" -Recurse -Filter \"*prompt*\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object -First 30)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -m pytest backend/tests/test_problem_brief.py -x -q)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest backend/tests/test_problem_brief.py -x -q 2>&1 | Select-Object -Last 30)",
+      "PowerShell(Get-ChildItem -Force | Where-Object { $_.PSIsContainer } | Select-Object Name)",
+      "PowerShell(\\(Get-Content backend\\\\tests\\\\test_sync.py | Measure-Object -Line\\).Lines)",
+      "Bash(findstr /R \"def study_prompt_appendix\" app\\\\problems\\\\*.py)",
+      "Bash(sort -t: -k2 -n -r)",
+      "PowerShell(venv\\\\Scripts\\\\python.exe _cleanup_skipped.py)",
+      "Bash(python *)",
+      "Bash(findstr /r /n \"client.models.generate_content\\\\|client.chats.create\\\\|_embed_texts\" backend\\\\app\\\\services\\\\llm.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/ -x -q --ignore=backend/tests/test_live_gemini.py)",
+      "Bash(sort -t: -k2 -n)",
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_gate_aware_chat_turn.py -x -q)",
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_visible_reply_commitments.py backend/tests/test_llm_schema.py backend/tests/test_problem_brief.py backend/tests/test_sessions.py backend/tests/test_optimization_gate.py backend/tests/test_sync.py -q)",
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/ -q -x --ignore=backend/tests/test_live_gemini.py)"
     ]
   }
 }

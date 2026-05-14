@@ -61,6 +61,7 @@ type ClientShellProps = {
   busy: boolean;
   chatBusy: boolean;
   syncingProblemConfig: boolean;
+  syncingProblemBrief: boolean;
   clientOps: ClientOpsState;
   optimizing: boolean;
   error: string | null;
@@ -93,6 +94,7 @@ type ClientShellProps = {
   onEnsureDefinitionEditing: () => void;
   isDefinitionDirty: boolean;
   onSyncProblemConfig: () => void | Promise<void>;
+  onSyncProblemBrief: () => void | Promise<void>;
   onRecoverGoalTerms?: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
@@ -136,6 +138,7 @@ export function ClientShell({
   busy,
   chatBusy,
   syncingProblemConfig,
+  syncingProblemBrief,
   clientOps,
   optimizing,
   error,
@@ -168,6 +171,7 @@ export function ClientShell({
   onEnsureDefinitionEditing,
   isDefinitionDirty,
   onSyncProblemConfig,
+  onSyncProblemBrief,
   onRecoverGoalTerms,
   onEnterConfigEdit,
   onCancelConfigEdit,
@@ -219,12 +223,35 @@ export function ClientShell({
     return null;
   }, [messages]);
   const isPostRunAnalysisPending = aiPending && lastAssistantMessage?.kind === "run";
+  // Elapsed-time heuristic for the "Verifying changes..." label: once the AI
+  // round has been pending for ~3s we assume the backend's pre-release probe
+  // is in its retry leg (the only thing that routinely takes that long after
+  // the initial draft). Swap the label so participants see *what* the system
+  // is doing instead of a flat "Thinking…" spinner. Exact retry timing is
+  // hidden inside a single HTTP request, so a duration heuristic is the
+  // cheapest way to expose the state without streaming/SSE plumbing.
+  const [chatAiElapsedMs, setChatAiElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!aiPending) {
+      setChatAiElapsedMs(0);
+      return;
+    }
+    const startedAt = performance.now();
+    setChatAiElapsedMs(0);
+    const id = window.setInterval(() => {
+      setChatAiElapsedMs(performance.now() - startedAt);
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [aiPending]);
+  const aiVerifying = aiPending && chatAiElapsedMs >= 3000;
   const chatPendingLabel = optimizing
     ? "Running optimization..."
     : isPostRunAnalysisPending
       ? "Configuring visualization and analyzing run..."
       : aiPending
-        ? "Thinking..."
+        ? aiVerifying
+          ? "Verifying changes..."
+          : "Thinking..."
         : backgroundProcessingPending
           ? "Updating definition and configuration..."
           : "Working...";
@@ -563,6 +590,7 @@ export function ClientShell({
             editMode={editMode}
             busy={busy}
             syncingProblemConfig={syncingProblemConfig}
+            syncingProblemBrief={syncingProblemBrief}
             clientOps={clientOps}
             backgroundBriefPending={backgroundBriefPending}
             backgroundConfigPending={backgroundConfigPending}
@@ -583,6 +611,7 @@ export function ClientShell({
             onRequestDefinitionCleanup={onRequestDefinitionCleanup}
             onRequestOpenQuestionCleanup={onRequestOpenQuestionCleanup}
             onSyncProblemConfig={onSyncProblemConfig}
+            onSyncProblemBrief={onSyncProblemBrief}
             onRecoverGoalTerms={onRecoverGoalTerms}
             onEnterConfigEdit={onEnterConfigEdit}
             onCancelConfigEdit={onCancelConfigEdit}

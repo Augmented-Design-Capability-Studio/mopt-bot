@@ -77,6 +77,7 @@ export function useClientController() {
   const [configEditSnapshot, setConfigEditSnapshot] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncingProblemConfig, setSyncingProblemConfig] = useState(false);
+  const [syncingProblemBrief, setSyncingProblemBrief] = useState(false);
   const [clientOps, setClientOps] = useState(DEFAULT_CLIENT_OPS_STATE);
   const [optimizing, setOptimizing] = useState(false);
   const optimizingRef = useRef(false);
@@ -334,6 +335,7 @@ export function useClientController() {
     setEditMode,
     setBusy,
     setSyncingProblemConfig,
+    setSyncingProblemBrief,
     setOptimizing,
     optimizingRef,
     setError,
@@ -511,6 +513,7 @@ export function useClientController() {
     busy,
     chatBusy,
     syncingProblemConfig,
+    syncingProblemBrief,
     clientOps,
     optimizing,
     error,
@@ -553,6 +556,7 @@ export function useClientController() {
     applyTutorialConfigPatch: actions.applyTutorialConfigPatch,
     saveProblemBrief: actions.saveProblemBrief,
     syncProblemConfig: actions.syncProblemConfig,
+    syncProblemBrief: actions.syncProblemBrief,
     recoverGoalTerms: actions.recoverGoalTerms,
     runOptimize: actions.runOptimize,
     cancelOptimize: actions.cancelOptimize,

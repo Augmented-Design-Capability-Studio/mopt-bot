@@ -227,9 +227,54 @@ def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
         "items": [],
         "open_questions": [],
         "goal_terms": {},
+        "unmodeled_requests": [],
+        # LLM-judged conversation warmth (one-way sticky). False = the
+        # conversation hasn't arrived at the problem-module's topic yet, so
+        # the system prompt hides the benchmark appendix and the LLM stays
+        # domain-neutral. The brief-update model flips this to True once it
+        # judges the participant has engaged with the benchmark's subject
+        # matter; once True it never returns to False — see
+        # ``merge_problem_brief_patch``.
+        "topic_engaged": False,
         "solver_scope": tmpl.get("solver_scope", "general_metaheuristic_translation"),
         "backend_template": tmpl.get("backend_template", "routing_time_windows"),
     }
+
+
+def _normalize_unmodeled_request(raw: Any) -> dict[str, Any] | None:
+    """Normalize one ``unmodeled_requests`` entry.
+
+    Each entry tracks something the participant asked for that has no
+    matching goal-term key and is not a hard constraint already enforced by
+    the encoding. The shape is intentionally small — researcher-facing
+    triage value, not a structured solver input. Returns ``None`` when the
+    entry has no usable ``user_text`` (without that, the row is noise).
+    """
+    if not isinstance(raw, dict):
+        return None
+    user_text = raw.get("user_text")
+    if not isinstance(user_text, str):
+        return None
+    user_text = user_text.strip()
+    if not user_text:
+        return None
+    out: dict[str, Any] = {"user_text": user_text}
+    closest = raw.get("closest_match")
+    if isinstance(closest, str):
+        closest = closest.strip()
+        if closest:
+            out["closest_match"] = closest
+    rationale = raw.get("rationale")
+    if isinstance(rationale, str):
+        rationale = rationale.strip()
+        if rationale:
+            out["rationale"] = rationale
+    at = raw.get("at")
+    if isinstance(at, str):
+        at = at.strip()
+        if at:
+            out["at"] = at
+    return out
 
 
 CHAT_PROMPT_COLD_BACKEND_TEMPLATE = "deferred"
@@ -240,24 +285,45 @@ CHAT_PROMPT_COLD_SYSTEM_ITEM_TEXT = (
 
 
 def is_chat_cold_start(brief: dict[str, Any] | None) -> bool:
+    """Cold-start = the conversation has not yet arrived at the problem-module's
+    topic, so the system prompt hides benchmark vocabulary and server-side
+    monitors (upload / goal / algorithm) stay dormant.
+
+    Two signals, OR'd:
+
+    1. **LLM-judged flag.** ``brief.topic_engaged`` is one-way sticky and
+       set when the brief-update LLM emits ``topic_engaged_next: true``.
+       Primary signal when present.
+    2. **Content fallback.** Any ``items[]`` row with
+       ``source in {user, upload}`` and non-empty text, OR a non-empty
+       ``goal_summary``. Agent-pushed defaults (``source: agent``) are
+       deliberately excluded so a mediocre starter push or an agile
+       pre-confirmation assumption doesn't flip warmth on its own.
+
+    The fallback exists because the LLM is unreliable at emitting
+    ``topic_engaged_next``. Without it, the monitors never run even when
+    the participant has clearly engaged with the domain — exactly the
+    failure mode that left a session with no algorithm assumption and no
+    goal OQ despite the user describing a routing problem and uploading
+    data.
     """
-    True when the participant-facing definition is still empty: no goal summary, no open
-    questions, and no gathered/assumption items.
-    """
-    if not brief or not isinstance(brief, dict):
+    if not isinstance(brief, dict):
         return True
+    if bool(brief.get("topic_engaged")):
+        return False
     if str(brief.get("goal_summary") or "").strip():
         return False
-    oq = brief.get("open_questions")
-    if isinstance(oq, list) and len(oq) > 0:
-        return False
     items = brief.get("items")
-    if not isinstance(items, list):
-        return True
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("kind") or "").strip().lower() in {"gathered", "assumption"} and str(item.get("text") or "").strip():
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "").strip().lower()
+            if source not in {"user", "upload"}:
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
             return False
     return True
 
@@ -829,6 +895,31 @@ def _normalize_goal_term_entry(raw: Any) -> dict[str, Any] | None:
             seen.add(cleaned)
         if evidence_ids:
             out["evidence_item_ids"] = evidence_ids
+    note_raw = raw.get("ambiguity_note")
+    if isinstance(note_raw, dict):
+        rationale_raw = note_raw.get("chosen_rationale")
+        alternatives_raw = note_raw.get("considered_alternatives")
+        cleaned_alternatives: list[str] = []
+        if isinstance(alternatives_raw, list):
+            seen_alts: set[str] = set()
+            for alt in alternatives_raw:
+                if not isinstance(alt, str):
+                    continue
+                cleaned_alt = alt.strip()
+                if not cleaned_alt or cleaned_alt in seen_alts:
+                    continue
+                cleaned_alternatives.append(cleaned_alt)
+                seen_alts.add(cleaned_alt)
+        rationale = (
+            rationale_raw.strip() if isinstance(rationale_raw, str) else ""
+        )
+        if cleaned_alternatives or rationale:
+            note_out: dict[str, Any] = {}
+            if cleaned_alternatives:
+                note_out["considered_alternatives"] = cleaned_alternatives
+            if rationale:
+                note_out["chosen_rationale"] = rationale
+            out["ambiguity_note"] = note_out
     props_raw = raw.get("properties")
     if isinstance(props_raw, dict):
         normalized_props: dict[str, Any] = {}
@@ -961,12 +1052,27 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
     promoted_items = _reconcile_problem_brief_items(promoted_items)
     goal_terms = _normalize_goal_terms_map(raw.get("goal_terms"))
+    unmodeled_raw = raw.get("unmodeled_requests")
+    unmodeled_requests: list[dict[str, Any]] = []
+    if isinstance(unmodeled_raw, list):
+        seen_texts: set[str] = set()
+        for entry in unmodeled_raw:
+            normalized = _normalize_unmodeled_request(entry)
+            if normalized is None:
+                continue
+            key = normalized["user_text"].lower()
+            if key in seen_texts:
+                continue
+            seen_texts.add(key)
+            unmodeled_requests.append(normalized)
     return {
         "goal_summary": goal_summary,
         "run_summary": run_summary,
         "items": promoted_items,
         "open_questions": questions,
         "goal_terms": goal_terms,
+        "unmodeled_requests": unmodeled_requests,
+        "topic_engaged": bool(raw.get("topic_engaged")),
         "solver_scope": solver_scope,
         "backend_template": backend_template,
     }
@@ -1037,17 +1143,46 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     if "goal_terms" in patch:
         # Per-key deep merge — see _merge_goal_term_entry for `properties` semantics.
         # `replace_goal_terms` flag (when set true) replaces the full map instead.
-        # R5 belt-and-suspenders dedupe between structured rules and prose items
-        # is keyed off `StudyProblemPort.prose_id_prefixes_for_goal_term(...)`.
-        # The hook returns `()` for all current ports, so the safety net is
-        # dormant here; when a port adds a real prefix list, wire a filter pass
-        # at this point that drops `patch["items"]` entries whose `id` starts
-        # with any of those prefixes for the goal-term keys being patched.
+        # Defence against LLM-emitted prose rows that would collide with the
+        # synthesizer's id namespace (e.g. `config-driver-pref-*`) is enforced
+        # at the JSON-schema layer via `port.all_synthesized_id_prefixes()` —
+        # see `_build_problem_brief_item_schema` in `app.services.llm`.
+        # Gemini rejects any items[] entry whose id matches a forbidden prefix,
+        # so by the time the patch reaches this merge step, the id namespace is
+        # already exclusive to the synthesizer.
         if bool(patch.get("replace_goal_terms")):
             merged["goal_terms"] = _normalize_goal_terms_map(patch.get("goal_terms"))
         else:
             normalized_patch = _normalize_goal_terms_map(patch.get("goal_terms"))
             merged["goal_terms"] = _merge_goal_terms_maps(merged.get("goal_terms"), normalized_patch)
+
+    if "unmodeled_requests" in patch:
+        # Append-only by default — once a participant request is logged as
+        # unmodeled it stays in the audit trail so researchers can review what
+        # users wanted that wasn't covered. Dedupe by `user_text` to avoid
+        # blowups if the LLM re-emits the same row on a subsequent turn.
+        existing_unmodeled = (
+            list(merged.get("unmodeled_requests") or [])
+            if isinstance(merged.get("unmodeled_requests"), list)
+            else []
+        )
+        seen_unmodeled = {
+            str(entry.get("user_text") or "").strip().lower()
+            for entry in existing_unmodeled
+            if isinstance(entry, dict)
+        }
+        incoming_unmodeled = patch.get("unmodeled_requests")
+        if isinstance(incoming_unmodeled, list):
+            for raw in incoming_unmodeled:
+                normalized_entry = _normalize_unmodeled_request(raw)
+                if normalized_entry is None:
+                    continue
+                key = normalized_entry["user_text"].lower()
+                if key in seen_unmodeled:
+                    continue
+                seen_unmodeled.add(key)
+                existing_unmodeled.append(normalized_entry)
+        merged["unmodeled_requests"] = existing_unmodeled
 
     if replace_editable_items and "items" not in patch:
         merged["items"] = []
@@ -1080,6 +1215,15 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
             seen_identity.add(identity)
 
         merged["items"] = result_items
+
+    # Topic-warmth is a one-way sticky flag. The brief-update LLM emits
+    # ``topic_engaged_next: true`` once it judges the conversation has arrived
+    # at the problem-module's topic; we OR-fold into the persisted flag.
+    # ``false`` is never honored — once warm, the system stays warm so a
+    # later off-topic detour doesn't re-leak the cold-start sandbox guard.
+    incoming_warmth = patch.get("topic_engaged_next")
+    if isinstance(incoming_warmth, bool) and incoming_warmth:
+        merged["topic_engaged"] = True
 
     return normalize_problem_brief(merged)
 
@@ -1229,6 +1373,33 @@ def sync_problem_brief_from_panel(
     # above remain for participant-facing display.
     panel_goal_terms = _panel_goal_terms(panel_config)
     if panel_goal_terms is not None:
+        prior_goal_terms = base.get("goal_terms")
+        if not isinstance(prior_goal_terms, dict):
+            prior_goal_terms = {}
+        removed_keys = {
+            key for key in prior_goal_terms.keys() if key not in panel_goal_terms
+        }
+        if removed_keys and test_problem_id is not None:
+            try:
+                from app.problems.registry import get_study_port
+
+                port = get_study_port(test_problem_id)
+                strip_ids = port.brief_item_ids_to_strip_on_goal_term_removal(
+                    removed_keys=removed_keys,
+                    prior_goal_terms=prior_goal_terms,
+                    brief_items=list(merged.get("items") or []),
+                )
+            except Exception:  # pragma: no cover — defensive, never block the sync
+                strip_ids = set()
+            if strip_ids:
+                merged["items"] = [
+                    item
+                    for item in merged["items"]
+                    if not (
+                        isinstance(item, dict)
+                        and str(item.get("id") or "") in strip_ids
+                    )
+                ]
         merged["goal_terms"] = panel_goal_terms
 
     return normalize_problem_brief(merged)

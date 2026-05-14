@@ -121,11 +121,26 @@ export function ChatSection({
                 </div>
               )
               : null;
-            if (!uploadChips && !runButton) return null;
+            // "Verified after re-check" — surfaced when the backend's
+            // pre-release probe re-asked the model this turn to reconcile a
+            // commitment / gate mismatch. Tiny inline badge so participants
+            // can see the system intervened without it dominating the reply.
+            const verifiedBadge = message.meta?.verified_after_retry && message.role !== "user"
+              ? (
+                <div
+                  className="chat-bubble-verified"
+                  title="The system asked the agent to recheck its draft against the run-button gate before sending."
+                >
+                  <span aria-hidden="true">✓</span> Verified after re-check
+                </div>
+              )
+              : null;
+            if (!uploadChips && !runButton && !verifiedBadge) return null;
             return (
               <>
                 {uploadChips}
                 {runButton}
+                {verifiedBadge}
               </>
             );
           }}

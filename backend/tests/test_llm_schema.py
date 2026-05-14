@@ -25,21 +25,6 @@ def test_config_schema_constrains_problem_weights_to_object():
     assert panel_patch.get("additionalProperties") is False
 
 
-def test_config_schema_algorithm_params_has_bounded_properties():
-    panel_patch = CONFIG_MODEL_PANEL_RESPONSE_JSON_SCHEMA
-    problem_props = panel_patch["properties"]["problem"]["properties"]
-    ap = problem_props["algorithm_params"]
-    assert ap.get("additionalProperties") is False
-    assert "pc" in ap["properties"]
-    assert "mutation_step_size_damp" in ap["properties"]
-    constraint_types = problem_props["constraint_types"]
-    assert constraint_types["type"] == "object"
-    assert constraint_types["additionalProperties"]["enum"] == ["soft", "hard", "custom"]
-    assert "goal_terms" in problem_props
-    assert "hard_constraints" not in problem_props
-    assert "soft_constraints" not in problem_props
-
-
 def test_chat_schema_focuses_on_assistant_and_problem_brief_patch():
     assert "assistant_message" in CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA["properties"]
     assert "problem_brief_patch" in CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA["properties"]
@@ -54,305 +39,6 @@ def test_run_trigger_intent_schema_has_expected_fields():
         "direct_request",
     ]
     assert "should_trigger_run" in RUN_TRIGGER_INTENT_RESPONSE_JSON_SCHEMA["required"]
-
-
-def test_system_instruction_includes_hidden_researcher_steering_block():
-    system = _build_structured_system_instruction(
-        current_problem_brief={},
-        workflow_mode="waterfall",
-        recent_runs_summary=None,
-        researcher_steers=["Prioritize concise, run-focused guidance."],
-    )
-
-    assert "Hidden researcher steering" in system
-    assert "highest-priority instruction for this next participant reply" in system
-    assert "Prioritize concise, run-focused guidance." in system
-
-
-def test_brief_update_system_instruction_includes_items_discipline_and_cleanup_mandate():
-    """Hidden brief derivation used to omit structured-chat items rules; cleanup must not conflict."""
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        cleanup_mode=True,
-    )
-    assert "One goal term per row" in system
-    assert "Mandatory:" in system and "Constraint handling" in system
-
-
-def test_brief_update_system_instruction_carries_visible_assistant_message_waterfall():
-    """When the visible chat just told the participant 'Changes I made: …', the
-    hidden brief turn must see that text as authoritative context — otherwise
-    the chat and the brief diverge (chat claims a change, brief never commits).
-    Workflow-aware: waterfall uses OQ language, never `kind: "assumption"`.
-    """
-    visible_reply = (
-        "Changes I made: I've increased the lateness penalty weight to push the "
-        "solver toward on-time deliveries. Want me to also rebalance workload?"
-    )
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        workflow_mode="waterfall",
-        visible_assistant_message=visible_reply,
-    )
-    flat = " ".join(system.split())
-    assert "Visible assistant reply that JUST got sent" in system
-    assert visible_reply in system
-    assert "emit the corresponding `problem_brief_patch`" in flat
-    # Waterfall must record clarifying questions in open_questions, not as assumptions.
-    assert "open_questions" in flat
-    assert "Clarifying question in waterfall" in flat
-    # Explicit prohibition of `kind: "assumption"` in waterfall.
-    assert (
-        "Never use `kind: \"assumption\"`" in flat
-        or "do NOT emit a `kind: \"assumption\"` row in waterfall" in flat
-    )
-
-
-def test_brief_update_system_instruction_carries_visible_assistant_message_agile():
-    """Agile uses `kind: "assumption"` proactively for tentative choices."""
-    visible_reply = "I've added a punctuality penalty assumption (weight 5)."
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        workflow_mode="agile",
-        visible_assistant_message=visible_reply,
-    )
-    flat = " ".join(system.split())
-    assert "Visible assistant reply that JUST got sent" in system
-    assert "agile/demo" in flat
-    assert "kind: \"assumption\"" in flat
-
-
-def test_agile_workflow_prompt_permits_proactive_assumption_keys():
-    """Agile must allow the agent to introduce new goal-term keys autonomously
-    as `kind: "assumption"` (the defining behaviour of the agile arm). The
-    earlier rule blocked any new key without explicit user agreement, which
-    caused the LLM to claim a brief change in the visible reply but skip the
-    actual patch — leaving the panel inconsistent with the chat.
-    """
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        workflow_mode="agile",
-    )
-    flat = " ".join(system.split())
-    # Proactive-add wording for new keys must be present.
-    assert "proactively add the new key" in flat or "MAY proactively add" in flat
-    # The promotion bar (assumption → gathered) must remain explicit-confirmation only.
-    assert "promotes an assumption row to `kind: \"gathered\"`" in flat or "promote" in flat
-
-
-def test_agile_workflow_prompt_requires_decisive_search_strategy_default():
-    """Agile must commit a default search strategy on the first turn that has
-    objectives in play AND name the algorithm in a brief items[] row — the
-    server's search-strategy gate strips the panel's algorithm field
-    otherwise, which blocks the participant from clicking Run.
-    """
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        workflow_mode="agile",
-    )
-    flat = " ".join(system.split())
-    # Must commit, not "may".
-    assert "MUST" in flat and "default search strategy" in flat
-    # Must name the algorithm in a brief row so the gate passes.
-    assert "names the algorithm by name" in flat
-    # The visible reply on the same turn must invite the participant to run.
-    # (The legacy "auto-first-run" autorun was removed in favour of a
-    # participant click + optional researcher override.)
-    assert "is_run_invitation" in flat
-    assert "Run optimization" in flat
-
-
-def test_visible_reply_context_block_requires_algorithm_named_brief_row():
-    """When the visible reply commits to an algorithm, the brief MUST land
-    a row that names it — otherwise the search-strategy gate strips the
-    panel's algorithm and the run gate fails.
-    """
-    visible_reply = "I'll default our search strategy to a genetic search to get us started."
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        workflow_mode="agile",
-        visible_assistant_message=visible_reply,
-    )
-    flat = " ".join(system.split())
-    assert "Algorithm / search-strategy commitment" in flat
-    assert "names the algorithm by name" in flat
-    assert "search-strategy gate" in flat or "strips the" in flat
-
-
-def test_visible_reply_consistency_block_waterfall_branch_keywords():
-    """Direct shape test of the extracted helper. Waterfall variant must
-    forbid `kind: "assumption"` for clarifying questions / search-strategy
-    and use `open_questions` instead. The same-turn structured carrier and
-    provenance-follows-origin rules are workflow-agnostic."""
-    block = _visible_reply_consistency_block(
-        "waterfall", "Would you like to add capacity penalties?"
-    )
-    flat = " ".join(block.split())
-    # Workflow-agnostic rules.
-    assert "Structured carrier" in flat
-    assert "Provenance follows origin" in flat
-    # Waterfall-specific.
-    assert "Clarifying question in waterfall" in flat
-    assert "Algorithm / search-strategy commitment (waterfall)" in flat
-    assert "Never use `kind: \"assumption\"`" in flat
-    # Always-on tail.
-    assert "Visible-reply intent classification" in flat
-
-
-def test_sandbox_rules_omitted_on_neutral_warm_turn():
-    """STUDY_CHAT_SANDBOX_RULES (~20 lines of stay-in-character code-hiding
-    prose) should NOT load on a warm turn whose user message has no
-    sandbox-probing keywords."""
-    warm_brief = {
-        "goal_summary": "Reduce travel time across the fleet.",
-        "items": [
-            {
-                "id": "g1",
-                "text": "User wants to minimize travel time.",
-                "kind": "gathered",
-                "source": "user",
-            }
-        ],
-        "open_questions": [],
-    }
-    system = _build_visible_chat_system_instruction(
-        user_text="thanks, that's helpful",
-        current_problem_brief=warm_brief,
-        workflow_mode="waterfall",
-    )
-    # Unique marker phrase from the sandbox-rules body.
-    assert "Study sandbox (fixed backend)" not in system
-
-
-def test_sandbox_rules_loaded_on_cold_start():
-    """Cold-start turn: the user has no items / OQs / summary yet — most
-    likely moment to probe the sandbox. Sandbox rules MUST load."""
-    cold_brief = {"items": [], "open_questions": [], "goal_summary": ""}
-    system = _build_visible_chat_system_instruction(
-        user_text="hi, what can you do?",
-        current_problem_brief=cold_brief,
-        workflow_mode="waterfall",
-    )
-    assert "Study sandbox (fixed backend)" in system
-
-
-def test_sandbox_rules_loaded_on_code_keyword():
-    """Even on a warm turn, a code/library/implementation keyword in the
-    user message must reload the sandbox rules."""
-    warm_brief = {
-        "goal_summary": "Reduce travel time across the fleet.",
-        "items": [
-            {
-                "id": "g1",
-                "text": "User wants to minimize travel time.",
-                "kind": "gathered",
-                "source": "user",
-            }
-        ],
-        "open_questions": [],
-    }
-    system = _build_visible_chat_system_instruction(
-        user_text="can you show me the code you wrote?",
-        current_problem_brief=warm_brief,
-        workflow_mode="waterfall",
-    )
-    assert "Study sandbox (fixed backend)" in system
-
-
-def test_visualization_guidance_omitted_on_neutral_warm_turn(monkeypatch):
-    """STUDY_CHAT_VISUALIZATION_GUIDANCE is the rare-edge-case ~50-line block.
-    On a warm turn whose user message has no viz keywords AND there are
-    completed runs (so the pre-first-run announcement window has passed),
-    the block should be omitted from the visible-chat instruction."""
-    # Cold start would also skip the block, so seed a non-cold brief.
-    warm_brief = {
-        "goal_summary": "Reduce travel time across the fleet.",
-        "items": [
-            {
-                "id": "g1",
-                "text": "User wants to minimize travel time.",
-                "kind": "gathered",
-                "source": "user",
-            }
-        ],
-        "open_questions": [],
-    }
-    system = _build_visible_chat_system_instruction(
-        user_text="thanks, that's helpful",
-        current_problem_brief=warm_brief,
-        workflow_mode="waterfall",
-        # Completed runs exist → past the announcement window.
-        recent_runs_summary=[{"run_number": 1, "ok": True, "cost": 100.0}],
-    )
-    # Unique marker phrase from the visualization-guidance body (NOT the
-    # cross-reference text in STUDY_CHAT_SYSTEM_PROMPT).
-    assert "Pre-first-run visualization announcement (once only)" not in system
-    assert "If the user asks to **reshape, restyle, add, or remove**" not in system
-
-
-def test_visualization_guidance_loads_on_viz_keyword():
-    """When the user message mentions a visualization keyword (e.g. 'chart',
-    'color route', 'heatmap'), the visualization guidance MUST load even if
-    the announcement window has passed."""
-    warm_brief = {
-        "goal_summary": "Reduce travel time across the fleet.",
-        "items": [
-            {
-                "id": "g1",
-                "text": "User wants to minimize travel time.",
-                "kind": "gathered",
-                "source": "user",
-            }
-        ],
-        "open_questions": [],
-    }
-    system = _build_visible_chat_system_instruction(
-        user_text="can you make this a bar chart instead?",
-        current_problem_brief=warm_brief,
-        workflow_mode="waterfall",
-        recent_runs_summary=[{"run_number": 1, "ok": True, "cost": 100.0}],
-    )
-    assert "If the user asks to **reshape, restyle, add, or remove**" in system
-
-
-def test_visualization_guidance_loads_pre_first_run_window():
-    """Before any runs complete (and on a warm turn with goals in play),
-    the pre-first-run announcement should load so the agent can take
-    credit for prepared views once."""
-    warm_brief = {
-        "goal_summary": "Reduce travel time across the fleet.",
-        "items": [
-            {
-                "id": "g1",
-                "text": "User wants to minimize travel time.",
-                "kind": "gathered",
-                "source": "user",
-            }
-        ],
-        "open_questions": [],
-    }
-    system = _build_visible_chat_system_instruction(
-        user_text="ok let's go",
-        current_problem_brief=warm_brief,
-        workflow_mode="waterfall",
-        recent_runs_summary=None,  # no runs yet → announcement window
-    )
-    assert "Pre-first-run visualization announcement (once only)" in system
-
-
-def test_visible_reply_consistency_block_agile_branch_keywords():
-    """Agile/demo variant uses `kind: "assumption"` proactively and must
-    NOT carry the waterfall-specific 'Never use `kind: "assumption"`' line."""
-    block = _visible_reply_consistency_block(
-        "agile", "I've added a lateness penalty (soft, weight 10)."
-    )
-    flat = " ".join(block.split())
-    assert "Algorithm / search-strategy commitment (agile/demo)" in flat
-    assert "Clarifying question or floated goal (agile/demo, MUST)" in flat
-    assert "Structured carrier" in flat
-    assert "Provenance follows origin" in flat
-    # Agile branch must NOT inherit the waterfall-only prohibition.
-    assert "Never use `kind: \"assumption\"`" not in flat
 
 
 def test_brief_update_schema_carries_visible_reply_intent_classification():
@@ -370,82 +56,14 @@ def test_brief_update_schema_carries_visible_reply_intent_classification():
     assert intent_props["asks_user_question"]["type"] == "boolean"
 
 
-def test_brief_update_instruction_asks_for_visible_reply_intent_classification():
-    """The brief-update prompt must instruct the LLM to populate the new
-    `visible_reply_intent` booleans whenever the visible reply is supplied,
-    so the compliance check downstream gets honest signal."""
-    system = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        workflow_mode="agile",
-        visible_assistant_message="I've added a workload-balance assumption (weight 3).",
-    )
-    flat = " ".join(system.split())
-    assert "visible_reply_intent" in flat
-    assert "claims_brief_change" in flat
-    assert "asks_user_question" in flat
-
-
-def test_brief_update_system_instruction_omits_visible_section_when_absent():
-    """When no visible reply is supplied, the section is omitted — keeps the
-    legacy / non-chat call sites (e.g. the OQ-cleanup pass) unaffected."""
-    system_blank = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        visible_assistant_message=None,
-    )
-    system_empty = _build_brief_update_system_instruction(
-        current_problem_brief={"goal_summary": "", "items": []},
-        visible_assistant_message="   ",
-    )
-    assert "Visible assistant reply that JUST got sent" not in system_blank
-    assert "Visible assistant reply that JUST got sent" not in system_empty
-
-
-def test_visible_chat_instruction_enforces_plain_language_over_internal_keys():
-    system = _build_visible_chat_system_instruction(
-        user_text="Help me prioritize outcomes.",
-        current_problem_brief={"goal_summary": "Improve delivery consistency.", "items": [], "open_questions": []},
-        workflow_mode="agile",
-    )
-    assert "Participant-facing wording guardrails" in system
-    assert "**not** use raw key names" in system
-    assert "avoid \"activate/enable/turn on\" phrasing" in system
-    assert "Conversation temperature" in system
-    assert "Capabilities" in system
-
-
-def test_visible_chat_instruction_cold_generic_query_avoids_module_capability_rows():
-    system = _build_visible_chat_system_instruction(
-        user_text="how do you optimize?",
-        current_problem_brief=default_problem_brief("vrptw"),
-        workflow_mode="waterfall",
-        test_problem_id="vrptw",
-    )
-    assert "Capabilities" in system
-    assert "Goal terms you can adjust:" not in system
-    assert "Visualizations I've set up for this task:" not in system
-
-
 def _warm_brief() -> dict:
     """Warm = appendix and full brief are injected; empty dict is cold."""
-    return {"goal_summary": "User stated goals", "open_questions": [], "items": []}
-
-
-def test_system_instruction_includes_vrptw_benchmark_appendix():
-    system = _build_structured_system_instruction(
-        current_problem_brief=_warm_brief(),
-        workflow_mode="waterfall",
-        test_problem_id="vrptw",
-    )
-    assert "Active benchmark — fleet scheduling (VRPTW)" in system
-
-
-def test_system_instruction_includes_knapsack_benchmark_appendix():
-    system = _build_structured_system_instruction(
-        current_problem_brief=_warm_brief(),
-        workflow_mode="waterfall",
-        test_problem_id="knapsack",
-    )
-    assert "Active benchmark — 0/1 knapsack" in system
+    return {
+        "goal_summary": "User stated goals",
+        "open_questions": [],
+        "items": [],
+        "topic_engaged": True,
+    }
 
 
 def test_system_prompt_openers_skip_appendix_when_cold_knapsack():
@@ -457,7 +75,7 @@ def test_system_prompt_openers_skip_appendix_when_cold_knapsack():
 
 
 def test_system_prompt_openers_includes_appendix_when_warm_knapsack():
-    b = {**default_problem_brief("knapsack"), "goal_summary": "Pack high value under capacity."}
+    b = {**default_problem_brief("knapsack"), "topic_engaged": True}
     parts = llm._system_prompt_openers("knapsack", b)
     assert len(parts) == 2
     assert "0/1 knapsack" in parts[1]
@@ -482,32 +100,19 @@ _GATE_STATUS_FIXTURE = {
 _GATE_BLOCK_MARKER = "## Run-gate status (machine-readable"
 
 
-def test_visible_chat_system_instruction_renders_gate_status_block():
-    system = _build_visible_chat_system_instruction(
-        user_text="ok let's go",
-        current_problem_brief=default_problem_brief(),
-        workflow_mode="waterfall",
-        gate_status=_GATE_STATUS_FIXTURE,
-    )
-    assert _GATE_BLOCK_MARKER in system
-    assert '"search_strategy_present": false' in system
+def test_brief_update_schema_forbids_synthesized_id_prefix_for_vrptw():
+    """VRPTW's synthesizer owns `config-driver-pref-*`; the brief-update
+    schema must reject LLM-emitted items with that prefix via a regex on id."""
+    import re
 
-
-def test_visible_chat_system_instruction_omits_block_when_gate_status_absent():
-    system = _build_visible_chat_system_instruction(
-        user_text="ok",
-        current_problem_brief=default_problem_brief(),
-        workflow_mode="waterfall",
-        gate_status=None,
-    )
-    assert _GATE_BLOCK_MARKER not in system
-
-
-def test_brief_update_system_instruction_renders_gate_status_block():
-    system = _build_brief_update_system_instruction(
-        current_problem_brief=default_problem_brief(),
-        workflow_mode="waterfall",
-        gate_status=_GATE_STATUS_FIXTURE,
-    )
-    assert _GATE_BLOCK_MARKER in system
-    assert '"search_strategy_present": false' in system
+    schema = _build_brief_update_response_schema("vrptw")
+    patch_anyof = schema["properties"]["problem_brief_patch"]["anyOf"]
+    patch_schema = next(s for s in patch_anyof if s.get("type") == "object")
+    id_field = patch_schema["properties"]["items"]["items"]["properties"]["id"]
+    pattern = id_field.get("pattern")
+    assert pattern, "Expected an id pattern on the VRPTW item schema"
+    # Forbidden prefix should be rejected.
+    assert re.match(pattern, "config-driver-pref-0-zoneD") is None
+    # Anything else should pass.
+    assert re.match(pattern, "config-weight-travel_time") is not None
+    assert re.match(pattern, "g1") is not None

@@ -207,16 +207,30 @@ def sync_optimization_allowed_after_participant_mutation(row: StudySession) -> b
 
 
 def session_to_out(row: StudySession) -> SessionOut:
+    tpid = str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID)
+    panel_payload = panel_dict(row)
+    brief_payload = problem_brief_dict(row)
+    try:
+        from app.routers.sessions.sync import compute_brief_panel_drift
+
+        drift = compute_brief_panel_drift(
+            problem_brief=brief_payload,
+            panel_config=panel_payload,
+            test_problem_id=tpid,
+        )
+    except Exception:  # pragma: no cover — defensive, drift is diagnostic-only
+        drift = []
     return SessionOut(
         id=row.id,
         created_at=row.created_at,
         updated_at=row.updated_at,
         workflow_mode=row.workflow_mode,
         participant_number=row.participant_number,
-        test_problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
+        test_problem_id=tpid,
         status=row.status,
-        panel_config=panel_dict(row),
-        problem_brief=problem_brief_dict(row),
+        panel_config=panel_payload,
+        problem_brief=brief_payload,
+        brief_panel_drift=drift,
         processing=processing_state(row),
         optimization_allowed=row.optimization_allowed,
         optimization_runs_blocked_by_researcher=row.optimization_runs_blocked_by_researcher,

@@ -650,6 +650,21 @@ select:focus-visible {
   font-weight: 600;
 }
 
+.chat-bubble-verified {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: #2f7a44;
+  font-style: italic;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.chat-bubble-verified span {
+  font-style: normal;
+  font-weight: 700;
+}
+
 .chat-upload-chip {
   display: inline-flex;
   align-items: center;
@@ -1959,6 +1974,18 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+/* Side-by-side variant for column 3's sync buttons. Lay the buttons in a
+   horizontal row and shave the default 1.2rem top offset down to ~0.2rem
+   so the row sits vertically flush with column 2's "Push dummy files"
+   button (which lives one control-group lower in its column). */
+.researcher-action-button-column--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.researcher-controls-column > .researcher-action-button-column--row {
+  margin-top: 0.2rem;
 }
 
 .dialog-backdrop {

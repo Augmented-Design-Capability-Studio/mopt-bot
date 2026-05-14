@@ -166,6 +166,143 @@ def _apply_weight_overrides_to_goal_terms(problem: dict[str, Any], overrides: di
             entry["weight"] = float(value)
 
 
+def _drift_entry(
+    *,
+    kind: str,
+    key: str,
+    brief_value: Any = None,
+    panel_value: Any = None,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {"kind": kind, "key": key}
+    if brief_value is not None:
+        entry["brief_value"] = brief_value
+    if panel_value is not None:
+        entry["panel_value"] = panel_value
+    if detail:
+        entry["detail"] = detail
+    return entry
+
+
+def compute_brief_panel_drift(
+    problem_brief: dict[str, Any] | None,
+    panel_config: dict[str, Any] | None,
+    test_problem_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Drift entries between ``brief.goal_terms`` and ``panel.problem.goal_terms``.
+
+    Researcher-facing diagnostic. Surfaces three kinds of mismatch:
+
+    - ``"missing_in_panel"`` / ``"missing_in_brief"``: a goal-term key in one
+      side but not the other.
+    - ``"value_mismatch"``: same key on both sides but ``weight``, ``type``, or
+      ``locked`` differs.
+    - ``"mirror_mismatch"``: a goal-term property that the active port mirrors
+      to a top-level panel field (e.g. VRPTW's
+      ``goal_terms.worker_preference.properties.driver_preferences`` ↔
+      ``panel.problem.driver_preferences``) is out of sync.
+
+    Returns ``[]`` when both inputs are absent — no inputs means no drift.
+    Used by ``helpers.session_to_out`` to expose ``brief_panel_drift`` and by
+    the researcher resync endpoint to label what changed.
+
+    No cold-start suppression: starter panels deliberately ship without
+    ``goal_terms`` now (the agent populates them via assumption / OQ once the
+    conversation warms up), so a fresh session is naturally drift-free — both
+    sides agree on the empty map. Any drift that surfaces here is real.
+    """
+    drift: list[dict[str, Any]] = []
+    brief_goal_terms = (
+        problem_brief.get("goal_terms")
+        if isinstance(problem_brief, dict) and isinstance(problem_brief.get("goal_terms"), dict)
+        else {}
+    )
+    panel_problem = None
+    if isinstance(panel_config, dict):
+        candidate = panel_config.get("problem")
+        if isinstance(candidate, dict):
+            panel_problem = candidate
+        else:
+            panel_problem = panel_config
+    panel_goal_terms = (
+        panel_problem.get("goal_terms")
+        if isinstance(panel_problem, dict) and isinstance(panel_problem.get("goal_terms"), dict)
+        else {}
+    )
+    brief_keys = {k for k in brief_goal_terms.keys() if isinstance(k, str)}
+    panel_keys = {k for k in panel_goal_terms.keys() if isinstance(k, str)}
+    for key in sorted(brief_keys - panel_keys):
+        drift.append(_drift_entry(kind="missing_in_panel", key=key))
+    for key in sorted(panel_keys - brief_keys):
+        drift.append(_drift_entry(kind="missing_in_brief", key=key))
+    for key in sorted(brief_keys & panel_keys):
+        brief_entry = brief_goal_terms.get(key) if isinstance(brief_goal_terms.get(key), dict) else {}
+        panel_entry = panel_goal_terms.get(key) if isinstance(panel_goal_terms.get(key), dict) else {}
+        for field in ("weight", "type", "locked"):
+            if field not in brief_entry and field not in panel_entry:
+                continue
+            brief_val = brief_entry.get(field)
+            panel_val = panel_entry.get(field)
+            if field == "weight":
+                try:
+                    if (
+                        isinstance(brief_val, (int, float))
+                        and not isinstance(brief_val, bool)
+                        and isinstance(panel_val, (int, float))
+                        and not isinstance(panel_val, bool)
+                        and abs(float(brief_val) - float(panel_val)) < 1e-9
+                    ):
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            if brief_val == panel_val:
+                continue
+            drift.append(
+                _drift_entry(
+                    kind="value_mismatch",
+                    key=key,
+                    brief_value=brief_val,
+                    panel_value=panel_val,
+                    detail=field,
+                )
+            )
+
+    # Mirror-field drift: properties the active port mirrors to top-level
+    # panel fields. The two stores must agree row-for-row.
+    if test_problem_id is not None and isinstance(panel_problem, dict):
+        try:
+            from app.problems.registry import get_study_port
+
+            port = get_study_port(test_problem_id)
+            mirrors = port.goal_term_property_field_mirrors()
+        except Exception:  # pragma: no cover — defensive
+            mirrors = {}
+        for goal_key, top_field in (mirrors or {}).items():
+            brief_entry = brief_goal_terms.get(goal_key)
+            if not isinstance(brief_entry, dict):
+                continue
+            brief_props = brief_entry.get("properties") if isinstance(brief_entry.get("properties"), dict) else {}
+            brief_mirror_val = brief_props.get(top_field)
+            panel_mirror_val = panel_problem.get(top_field)
+            if brief_mirror_val == panel_mirror_val:
+                continue
+            if brief_mirror_val is None and panel_mirror_val in (None, [], {}, ""):
+                continue
+            if panel_mirror_val is None and brief_mirror_val in (None, [], {}, ""):
+                continue
+            drift.append(
+                _drift_entry(
+                    kind="mirror_mismatch",
+                    key=goal_key,
+                    brief_value=brief_mirror_val,
+                    panel_value=panel_mirror_val,
+                    detail=top_field,
+                )
+            )
+
+    return drift
+
+
 def _run_with_timeout(callable_obj, timeout_sec: float):
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(callable_obj)
@@ -360,6 +497,47 @@ def _merge_non_destructive_managed_fields(
                 )
                 merged_goal_terms = filtered
         merged["goal_terms"] = merged_goal_terms
+
+    # Brief-as-source-of-truth (strict subset). The panel-derive LLM can
+    # translate ``brief.goal_terms`` into a panel, but it cannot *propose* new
+    # goal-term keys — neither from prose in ``brief.items[]`` nor from a
+    # ``current_panel.goal_terms`` carry-over. The brief-update model owns
+    # that proposal; once brief.goal_terms drops a key, it must drop from the
+    # panel too. Allowing ``current_goal_terms`` here was leaky: a key that
+    # slipped onto the panel via one turn's LLM proposal would survive every
+    # subsequent turn under ``preserve_missing_managed_fields=True``, even
+    # though the brief never carried it. Legitimate participant panel edits
+    # (e.g. weight bumps) already mirror back to the brief through the panel
+    # PATCH handler, so the brief is always at least as inclusive as the
+    # panel for any user-driven mutation.
+    if problem_brief is not None:
+        merged_goal_terms_final = _goal_terms_from_problem(merged)
+        brief_goal_terms_raw = (
+            (problem_brief or {}).get("goal_terms")
+            if isinstance((problem_brief or {}).get("goal_terms"), dict)
+            else {}
+        )
+        allowed_keys = {
+            k
+            for k in (brief_goal_terms_raw.keys() if isinstance(brief_goal_terms_raw, dict) else [])
+            if isinstance(k, str)
+        }
+        unauthorized = [k for k in list(merged_goal_terms_final.keys()) if k not in allowed_keys]
+        if unauthorized:
+            log.warning(
+                "Panel-derive dropped goal_terms not in brief: %s",
+                unauthorized,
+            )
+            for k in unauthorized:
+                merged_goal_terms_final.pop(k, None)
+            merged["goal_terms"] = merged_goal_terms_final
+            # Keep the legacy `weights` map in lockstep so the downstream
+            # `_rebuild_goal_terms_metadata` (study_bridge) can't resurrect the
+            # dropped keys from a stale weights projection.
+            if isinstance(merged.get("weights"), dict):
+                for k in unauthorized:
+                    merged["weights"].pop(k, None)
+
     current_weights = _weights_from_problem(current_problem)
     derived_weights = _weights_from_problem(merged)
     if current_weights:
@@ -386,7 +564,7 @@ def _merge_non_destructive_managed_fields(
         from app.services.goal_term_anchoring import algorithm_mentioned_in_brief
 
         items_for_check = list((problem_brief or {}).get("items") or [])
-        if not algorithm_mentioned_in_brief(items_for_check):
+        if not algorithm_mentioned_in_brief(items_for_check, workflow_mode=workflow_mode):
             search_strategy_keys = ("algorithm", "epochs", "pop_size", "algorithm_params")
             switched: list[str] = []
             for key in search_strategy_keys:
@@ -578,7 +756,9 @@ def sync_panel_from_problem_brief(
     )
 
     if not brief_mentions_search_strategy(
-        problem_brief, test_problem_id=test_problem_id
+        problem_brief,
+        test_problem_id=test_problem_id,
+        workflow_mode=workflow_mode or row.workflow_mode,
     ):
         for key in SEARCH_STRATEGY_PANEL_FIELDS:
             next_problem.pop(key, None)

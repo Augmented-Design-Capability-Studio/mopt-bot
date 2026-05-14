@@ -254,6 +254,54 @@ export function useResearcherController() {
     }
   }
 
+  async function resyncPanelFromBrief() {
+    if (!selected || !savedToken.trim()) return;
+    setBusy(true);
+    try {
+      const next = await apiFetch<Session>(
+        `/sessions/${selected}/resync-panel-from-brief`,
+        savedToken.trim(),
+        { method: "POST" },
+      );
+      setDetail(next);
+      setError(null);
+      setNotice(
+        next.brief_panel_drift && next.brief_panel_drift.length > 0
+          ? `Synced panel from brief. ${next.brief_panel_drift.length} drift entr${next.brief_panel_drift.length === 1 ? "y" : "ies"} remain — try "Sync to def." for keys the panel has but the brief doesn't.`
+          : "Synced panel from brief. No drift remaining.",
+      );
+    } catch (e) {
+      setNotice(null);
+      setError(describeApiError(e, "Sync to config failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resyncBriefFromPanel() {
+    if (!selected || !savedToken.trim()) return;
+    setBusy(true);
+    try {
+      const next = await apiFetch<Session>(
+        `/sessions/${selected}/resync-brief-from-panel`,
+        savedToken.trim(),
+        { method: "POST" },
+      );
+      setDetail(next);
+      setError(null);
+      setNotice(
+        next.brief_panel_drift && next.brief_panel_drift.length > 0
+          ? `Mirrored panel into brief. ${next.brief_panel_drift.length} drift entr${next.brief_panel_drift.length === 1 ? "y" : "ies"} remain — try "Sync to config" for keys the brief has but the panel doesn't.`
+          : "Mirrored panel into brief. No drift remaining.",
+      );
+    } catch (e) {
+      setNotice(null);
+      setError(describeApiError(e, "Mirror to def. failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function resetSession() {
     if (!selected || !savedToken.trim()) return;
     if (!window.confirm("Reset this session? This clears chat, runs, and snapshots, but keeps participant number and model settings.")) {
@@ -509,6 +557,8 @@ export function useResearcherController() {
     sendSteer,
     terminate,
     resetSession,
+    resyncPanelFromBrief,
+    resyncBriefFromPanel,
     removeSession,
     removeSelectedSessions,
     removeRun,

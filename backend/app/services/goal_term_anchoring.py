@@ -281,6 +281,7 @@ def brief_mentions_search_strategy(
     brief: dict[str, Any] | None,
     *,
     test_problem_id: str | None = None,
+    workflow_mode: str | None = None,
 ) -> bool:
     """Return True iff the brief carries a gathered/assumption row that
     justifies a search-strategy panel block.
@@ -311,15 +312,16 @@ def brief_mentions_search_strategy(
     )
     if not items:
         return False
-    if algorithm_mentioned_in_brief(items):
+    if algorithm_mentioned_in_brief(items, workflow_mode=workflow_mode):
         return True
     try:
         from app.problem_brief import problem_brief_item_slot
     except Exception:  # pragma: no cover — defensive import
         return False
+    accepted_kinds = evidence_kinds_for_workflow(workflow_mode) if workflow_mode is not None else {"gathered", "assumption"}
     for item in items:
         kind = str(item.get("kind") or "").strip().lower()
-        if kind not in {"gathered", "assumption"}:
+        if kind not in accepted_kinds:
             continue
         slot = problem_brief_item_slot(item, test_problem_id=test_problem_id)
         if slot is None:
@@ -378,7 +380,10 @@ def extract_algorithm_from_brief(items: list[dict[str, Any]] | None) -> str | No
     return None
 
 
-def algorithm_mentioned_in_brief(items: list[dict[str, Any]] | None) -> bool:
+def algorithm_mentioned_in_brief(
+    items: list[dict[str, Any]] | None,
+    workflow_mode: str | None = None,
+) -> bool:
     """Return True iff at least one brief item names a known search algorithm.
 
     Used by the panel-derive merge to decide whether the LLM is allowed to
@@ -386,16 +391,28 @@ def algorithm_mentioned_in_brief(items: list[dict[str, Any]] | None) -> bool:
     algorithm_params fields. If no item names an algorithm, the LLM's choice
     is treated as unsolicited and the current panel value is preserved.
 
+    When ``workflow_mode`` is provided, only items of an accepted
+    ``kind`` count as evidence (waterfall: ``gathered`` only; agile/demo:
+    ``gathered`` or ``assumption``). When ``None`` (back-compat default),
+    every kind is accepted.
+
     Closed 5-algorithm vocabulary; case-insensitive substring match. Word-
     boundary checked for the short aliases (`ga`, `sa`, `pso`, `acor`) to
     avoid false positives like "garbage" or "psoriasis".
     """
     if not isinstance(items, list):
         return False
+    accepted_kinds = (
+        evidence_kinds_for_workflow(workflow_mode) if workflow_mode is not None else None
+    )
     short_aliases = frozenset({"ga", "sa", "pso", "acor"})
     for item in items:
         if not isinstance(item, dict):
             continue
+        if accepted_kinds is not None:
+            kind = str(item.get("kind") or "").strip().lower()
+            if kind not in accepted_kinds:
+                continue
         text = str(item.get("text") or "").lower()
         if not text:
             continue

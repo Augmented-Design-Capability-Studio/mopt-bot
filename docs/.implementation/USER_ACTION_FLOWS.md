@@ -245,13 +245,13 @@ The Definition tab shows the brief: `goal_summary`, gathered items, assumptions,
 
 ---
 
-### C2. Click "Sync" (re-derive panel from current brief, no save)
+### C2. Click "Sync to config" (re-derive panel from saved brief, no save)
 
-**UI**: "Sync" button on the Definition tab (`useClientSessionActions.syncProblemConfig`).
-**Wire**: `PATCH /sessions/{id}/problem-brief` with the current brief and ack `"Problem config synced from the saved definition."`. **No chat post.**
+**UI**: "Sync to config" button on the Definition tab (`useClientSessionActions.syncProblemConfig`). The researcher panel surfaces the same button.
+**Wire**: `POST /sessions/{id}/resync-panel-from-brief` (no body). **No chat post.** Counterpart of `POST /resync-brief-from-panel` (the "Sync to def." direction). Accepts either the client or researcher token.
 
 #### Required outputs
-- Re-derived panel.
+- Re-derived panel from the *saved* brief (no brief mutation).
 - No chat noise.
 
 #### Inferences
@@ -468,7 +468,6 @@ These are documented to prevent accidentally adding LLM calls.
 | Per-rule prose synthesis from goal_terms | port `synthesize_brief_items_from_goal_terms` (VRPTW: one `config-driver-pref-*` row per rule, rendered in `vrptw_problem/brief_seed.synthesize_driver_preference_items`) | Yes |
 | Stale prose-row dedupe when goal_terms change | port `prose_id_prefixes_for_goal_term` + id-prefix filter in `_synthesize_goal_term_prose_items` (no text inspection) | Yes |
 | Snapshot pruning (FIFO 2000) | `session_snapshots.py` | Yes |
-| Workflow phase | `resolve_workflow_phase` from brief shape | Yes |
 | Sanitize panel weights / clip ranges | port `sanitize_panel_config` | Yes |
 | Cancellation flag check | `solve_cancel.py` | Yes |
 | Tutorial step transitions | `patchForTutorialEvent` | Yes |

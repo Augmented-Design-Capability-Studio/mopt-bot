@@ -152,6 +152,7 @@ type UseParticipantSessionActionsArgs = {
   setEditMode: (value: import("../lib/clientTypes").EditMode) => void;
   setBusy: (value: boolean) => void;
   setSyncingProblemConfig: (value: boolean) => void;
+  setSyncingProblemBrief: (value: boolean) => void;
   setOptimizing: (value: boolean) => void;
   optimizingRef: MutableRefObject<boolean>;
   setError: (value: string | null) => void;
@@ -204,6 +205,7 @@ export function useClientSessionActions({
   setEditMode,
   setBusy,
   setSyncingProblemConfig,
+  setSyncingProblemBrief,
   setOptimizing,
   optimizingRef,
   setError,
@@ -743,7 +745,6 @@ export function useClientSessionActions({
       setError("A background definition/config update is still running. Wait for it to settle, then sync again.");
       return;
     }
-    const cleanedBrief = cleanProblemBriefForCompare(problemBrief);
     syncingProblemConfigRef.current = true;
     setSyncingProblemConfig(true);
     setClientOps((prev) => ({ ...prev, syncingConfig: true }));
@@ -751,13 +752,9 @@ export function useClientSessionActions({
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 30000);
     try {
-      const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/problem-brief`, token, {
-        method: "PATCH",
+      const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/resync-panel-from-brief`, token, {
+        method: "POST",
         signal: controller.signal,
-        body: JSON.stringify({
-          problem_brief: cleanedBrief,
-          acknowledgement: "Problem config synced from the saved definition.",
-        }),
       });
       setSession(nextSession);
       problemPanelHydrationRef.current = "follow";
@@ -787,6 +784,49 @@ export function useClientSessionActions({
     setSyncingProblemConfig,
     setProblemBrief,
     setSession,
+    token,
+  ]);
+
+  const syncProblemBrief = useCallback(async () => {
+    if (!token || !sessionId) return;
+    if (syncingProblemConfigRef.current) return;
+    if (session?.processing?.brief_status === "pending" || session?.processing?.config_status === "pending") {
+      setError("A background definition/config update is still running. Wait for it to settle, then sync again.");
+      return;
+    }
+    setSyncingProblemBrief(true);
+    setError(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30000);
+    try {
+      const nextSession = await apiFetch<Session>(`/sessions/${sessionId}/resync-brief-from-panel`, token, {
+        method: "POST",
+        signal: controller.signal,
+      });
+      setSession(nextSession);
+      problemPanelHydrationRef.current = "follow";
+      setConfigText(sessionPanelToConfigText(nextSession.panel_config));
+      setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        setError("Sync timed out after 30s.");
+      } else {
+        setError(error instanceof Error ? error.message : "Sync failed");
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      setSyncingProblemBrief(false);
+    }
+  }, [
+    problemPanelHydrationRef,
+    session?.processing?.brief_status,
+    session?.processing?.config_status,
+    sessionId,
+    setConfigText,
+    setError,
+    setProblemBrief,
+    setSession,
+    setSyncingProblemBrief,
     token,
   ]);
 
@@ -1086,6 +1126,7 @@ export function useClientSessionActions({
     applyTutorialConfigPatch,
     saveProblemBrief,
     syncProblemConfig,
+    syncProblemBrief,
     recoverGoalTerms,
     restoreFromSnapshot,
     runOptimize,

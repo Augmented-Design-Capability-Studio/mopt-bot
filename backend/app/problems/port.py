@@ -151,6 +151,39 @@ class StudyProblemPort(Protocol):
         """
         return None
 
+    def brief_item_ids_to_strip_on_goal_term_removal(
+        self,
+        removed_keys: set[str],
+        prior_goal_terms: dict[str, Any],
+        brief_items: list[dict[str, Any]],
+    ) -> set[str]:
+        """Brief-item ids that should be dropped when these goal-term keys are
+        removed from the panel.
+
+        Without this cascade, a removed goal term's supporting prose (and the
+        evidence cites the LLM made) lingers in ``brief.items[]``. On the next
+        chat turn the LLM re-derives the term from that prose and the
+        self-anchor check passes, so the removal silently reverts.
+
+        Default strategy: strip any items whose ids appear in
+        ``prior_goal_terms[key].evidence_item_ids`` — these are the rows the
+        LLM explicitly cited as justifying the term, so they were added in
+        service of it. Ports override to extend with their own prefix-based
+        auto-rows (e.g. VRPTW also strips ``config-driver-pref-*`` rows when
+        ``worker_preference`` is removed).
+        """
+        ids: set[str] = set()
+        for key in removed_keys:
+            entry = prior_goal_terms.get(key) if isinstance(prior_goal_terms, dict) else None
+            if not isinstance(entry, dict):
+                continue
+            evidence = entry.get("evidence_item_ids")
+            if isinstance(evidence, list):
+                for eid in evidence:
+                    if isinstance(eid, str) and eid:
+                        ids.add(eid)
+        return ids
+
     def format_run_context_violation_details(
         self, violations: dict[str, Any]
     ) -> list[str]:
@@ -253,3 +286,34 @@ class StudyProblemPort(Protocol):
 
     def problem_brief_template_fields(self) -> dict[str, str]:
         """solver_scope, backend_template, etc. for new sessions."""
+
+
+def all_synthesized_id_prefixes(port: Any) -> frozenset[str]:
+    """Aggregate of every id-prefix the given port's synthesizer owns.
+
+    The brief-patch JSON schema rejects LLM-emitted ``items[]`` whose ``id``
+    starts with any of these prefixes, so the synthesizer's id namespace is
+    reserved — preventing the LLM from authoring rows that would collide with
+    auto-generated ones (e.g. VRPTW's ``config-driver-pref-*``).
+
+    Aggregates from ``port.prose_id_prefixes_for_goal_term`` over
+    ``port.weight_display_keys``. Free function (rather than a port method)
+    because ``StudyProblemPort`` is a structural Protocol and per-port classes
+    don't inherit defaults.
+    """
+    out: set[str] = set()
+    try:
+        keys = port.weight_display_keys()
+    except Exception:  # pragma: no cover — defensive
+        return frozenset()
+    for key in keys:
+        if not isinstance(key, str):
+            continue
+        try:
+            prefixes = port.prose_id_prefixes_for_goal_term(key)
+        except Exception:  # pragma: no cover — defensive
+            continue
+        for prefix in prefixes:
+            if isinstance(prefix, str) and prefix:
+                out.add(prefix)
+    return frozenset(out)

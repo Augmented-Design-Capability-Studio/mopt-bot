@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from google import genai
 from google.genai import types
@@ -20,14 +20,17 @@ from app.problems.registry import get_study_port
 from app.problems.schema_shared import GOAL_TERMS_SCHEMA, goal_terms_schema
 
 from app.prompts.study_chat import (
+    STUDY_CHAT_AMBIGUITY_DISCIPLINE,
     STUDY_CHAT_BRIEF_UPDATE_TASK,
+    STUDY_CHAT_GROUNDING_DISCIPLINE,
+    STUDY_CHAT_HARD_CONSTRAINT_DISCIPLINE,
     STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
     STUDY_CHAT_ITEMS_DISCIPLINE,
+    STUDY_CHAT_OUT_OF_SCOPE_DISCIPLINE,
+    STUDY_CHAT_WARMTH_JUDGMENT,
     STUDY_CHAT_OQ_CLASSIFY_TASK,
     STUDY_CHAT_OQ_MAINTAIN_TASK,
-    STUDY_CHAT_PHASE_CONFIGURATION,
-    STUDY_CHAT_PHASE_DISCOVERY,
-    STUDY_CHAT_PHASE_STRUCTURING,
+    STUDY_CHAT_SEARCH_STRATEGY_ANCHORING,
     STUDY_CHAT_RUN_ACK_AGILE,
     STUDY_CHAT_RUN_ACK_BASE,
     STUDY_CHAT_RUN_ACK_DEMO,
@@ -148,6 +151,55 @@ _PROBLEM_BRIEF_ITEM_SCHEMA: dict[str, Any] = {
     "required": ["id", "text", "kind", "source"],
 }
 
+
+def _escape_regex_literal(raw: str) -> str:
+    """Escape regex metacharacters for use inside a negative lookahead literal."""
+    metas = r".^$*+?{}[]\|()/"
+    out: list[str] = []
+    for ch in raw:
+        if ch in metas:
+            out.append("\\")
+        out.append(ch)
+    return "".join(out)
+
+
+def _build_problem_brief_item_schema(
+    forbidden_id_prefixes: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Item schema with an optional id-prefix forbid (reserves the synthesizer
+    namespace, e.g. VRPTW's ``config-driver-pref-*``).
+
+    JSON Schema ``pattern`` is matched against the entire string by Gemini's
+    structured output. A negative-lookahead anchor (``^(?!…)``) rejects ids
+    that start with any forbidden prefix while accepting everything else.
+    """
+    item_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "text": {"type": "string"},
+            "kind": {"type": "string", "enum": ["gathered", "assumption"]},
+            "source": {"type": "string", "enum": ["user", "upload", "agent"]},
+        },
+        "required": ["id", "text", "kind", "source"],
+    }
+    prefixes = sorted(
+        p for p in (forbidden_id_prefixes or ()) if isinstance(p, str) and p
+    )
+    if prefixes:
+        lookaheads = "".join(f"(?!{_escape_regex_literal(p)})" for p in prefixes)
+        item_schema["properties"]["id"] = {
+            "type": "string",
+            "pattern": f"^{lookaheads}.*",
+            "description": (
+                "Items[].id reserves a synthesizer namespace — do NOT start "
+                "the id with any of these auto-generated prefixes: "
+                f"{', '.join(prefixes)}. Pick a fresh id outside these prefixes."
+            ),
+        }
+    return item_schema
+
+
 _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -157,13 +209,56 @@ _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
     "required": ["id", "text"],
 }
 
-def _build_problem_brief_patch_schema(goal_terms_subschema: dict[str, Any]) -> dict[str, Any]:
+_PROBLEM_BRIEF_UNMODELED_REQUEST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Log of a participant request that does not map to any defined goal-term "
+        "key and is not a hard constraint already enforced by the encoding. "
+        "Emit one entry per genuinely-unmodeled request — used by researchers "
+        "to triage what users wanted that the study didn't cover. Append-only "
+        "on merge: never re-emit existing rows."
+    ),
+    "properties": {
+        "user_text": {
+            "type": "string",
+            "description": (
+                "Short quote of what the participant asked for, in their words "
+                "(e.g. 'penalty for driving during 7-9am peak hours')."
+            ),
+        },
+        "closest_match": {
+            "type": "string",
+            "description": (
+                "Optional: the closest supported alias key, if any (e.g. "
+                "'travel_time'). Use null/omit when nothing in the table is a "
+                "reasonable proxy."
+            ),
+        },
+        "rationale": {
+            "type": "string",
+            "description": (
+                "One sentence explaining why this is unmodeled — preferably "
+                "grounded in the problem docs (e.g. 'task uniqueness is "
+                "enforced by the routing encoding, not weighted')."
+            ),
+        },
+    },
+    "required": ["user_text"],
+    "additionalProperties": False,
+}
+
+
+def _build_problem_brief_patch_schema(
+    goal_terms_subschema: dict[str, Any],
+    forbidden_id_prefixes: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    item_schema = _build_problem_brief_item_schema(forbidden_id_prefixes)
     return {
         "type": "object",
         "properties": {
             "goal_summary": {"type": "string"},
             "run_summary": {"type": "string"},
-            "items": {"type": "array", "items": _PROBLEM_BRIEF_ITEM_SCHEMA},
+            "items": {"type": "array", "items": item_schema},
             "open_questions": {
                 "type": "array",
                 "items": {
@@ -175,6 +270,24 @@ def _build_problem_brief_patch_schema(goal_terms_subschema: dict[str, Any]) -> d
             },
             "goal_terms": goal_terms_subschema,
             "replace_goal_terms": {"type": "boolean"},
+            "unmodeled_requests": {
+                "type": "array",
+                "items": _PROBLEM_BRIEF_UNMODELED_REQUEST_SCHEMA,
+            },
+            "topic_engaged_next": {
+                "type": "boolean",
+                "description": (
+                    "Set to true ONCE this turn's conversation arrives at the "
+                    "problem-module's topic (participant describes their "
+                    "optimization problem, names domain entities, asks what's "
+                    "being optimized, refers to uploaded domain data, etc.). "
+                    "One-way sticky: omit / leave false on small-talk or "
+                    "off-topic turns; never emit false to downgrade. The "
+                    "merge OR-folds true into the brief's persisted "
+                    "topic_engaged flag, which gates whether the next system "
+                    "prompt exposes benchmark-specific vocabulary."
+                ),
+            },
             "solver_scope": {"type": "string"},
             "backend_template": {"type": "string"},
         },
@@ -209,6 +322,38 @@ CHAT_MODEL_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "required": ["assistant_message"],
 }
 
+def _build_chat_turn_response_schema(test_problem_id: str | None) -> dict[str, Any]:
+    """Per-problem chat-turn response schema: ``assistant_message`` plus the
+    structured ``problem_brief_patch`` the brief-update used to emit
+    separately. Letting one LLM call produce both means the visible reply and
+    the brief patch are guaranteed to come from the same model context — no
+    more "visible reply claimed a change but the stored brief is unchanged"
+    drift between two separate calls.
+    """
+    port = get_study_port(test_problem_id)
+    goal_terms_sub = goal_terms_schema(port.goal_term_properties_schema())
+    return {
+        "title": "ChatModelTurn",
+        "type": "object",
+        "properties": {
+            "assistant_message": {
+                "type": "string",
+                "description": "Visible reply to the participant.",
+            },
+            "problem_brief_patch": {
+                "anyOf": [
+                    _build_problem_brief_patch_schema(goal_terms_sub),
+                    {"type": "null"},
+                ],
+            },
+            "replace_editable_items": {"type": "boolean"},
+            "replace_open_questions": {"type": "boolean"},
+            "cleanup_mode": {"type": "boolean"},
+        },
+        "required": ["assistant_message"],
+    }
+
+
 def _build_brief_update_response_schema(test_problem_id: str | None) -> dict[str, Any]:
     """Per-problem brief-update response schema.
 
@@ -220,13 +365,15 @@ def _build_brief_update_response_schema(test_problem_id: str | None) -> dict[str
     port = get_study_port(test_problem_id)
     properties_subschema = port.goal_term_properties_schema()
     goal_terms_sub = goal_terms_schema(properties_subschema)
+    from app.problems.port import all_synthesized_id_prefixes
+    forbidden_prefixes = all_synthesized_id_prefixes(port)
     return {
         "title": "ProblemBriefUpdateTurn",
         "type": "object",
         "properties": {
             "problem_brief_patch": {
                 "anyOf": [
-                    _build_problem_brief_patch_schema(goal_terms_sub),
+                    _build_problem_brief_patch_schema(goal_terms_sub, forbidden_prefixes),
                     {"type": "null"},
                 ],
             },
@@ -376,6 +523,27 @@ CONSOLIDATED_CHAT_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         },
         "confidence": {"type": "number"},
         "is_run_invitation": {"type": "boolean"},
+        # Self-classified intent of the visible reply. The pre-release probe
+        # uses these to detect "I added X" / "I asked Y" mismatches before
+        # persistence — same semantics as the brief-update LLM's
+        # visible_reply_intent, just produced one round-trip earlier.
+        "claims_brief_change": {
+            "type": "boolean",
+            "description": (
+                "True iff the visible reply commits a change to the brief "
+                "(e.g. 'Added X', 'Changes I made: …', 'I've bumped …'). "
+                "False for purely informational replies, questions, or "
+                "acknowledgements that don't promise a structural change."
+            ),
+        },
+        "asks_user_question": {
+            "type": "boolean",
+            "description": (
+                "True iff the visible reply asks the participant a question "
+                "(content-bearing question mark, not a rhetorical aside). "
+                "Used to keep open_questions in sync."
+            ),
+        },
         # Clause split for mixed-intent turns. Quoting the user's own words
         # (lightly edited) keeps the brief-update LLM scoped to the edit half
         # and avoids the concept-question half polluting brief patches.
@@ -404,6 +572,8 @@ CONSOLIDATED_CHAT_TURN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "should_trigger_run",
         "intent_type",
         "is_run_invitation",
+        "claims_brief_change",
+        "asks_user_question",
     ],
 }
 
@@ -438,9 +608,6 @@ CHAT_TEMPERATURE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "required": ["temperature"],
 }
 
-WorkflowPhase = Literal["discovery", "structuring", "configuration"]
-
-
 def _history_to_contents(history_lines: list[tuple[str, str]]) -> list[types.Content]:
     """Map DB roles user/assistant to Gemini user/model Content turns."""
     out: list[types.Content] = []
@@ -458,14 +625,6 @@ def _workflow_prompt(workflow_mode: str) -> str:
     if workflow_mode == "demo":
         return STUDY_CHAT_WORKFLOW_DEMO
     return STUDY_CHAT_WORKFLOW_WATERFALL
-
-
-def _phase_prompt(phase: WorkflowPhase) -> str:
-    if phase == "configuration":
-        return STUDY_CHAT_PHASE_CONFIGURATION
-    if phase == "structuring":
-        return STUDY_CHAT_PHASE_STRUCTURING
-    return STUDY_CHAT_PHASE_DISCOVERY
 
 
 def _gate_status_prompt_block(gate_status: dict[str, Any] | None) -> str | None:
@@ -569,42 +728,6 @@ def _system_prompt_openers(
     return parts
 
 
-def resolve_workflow_phase(
-    current_problem_brief: dict[str, Any] | None,
-    workflow_mode: str = "waterfall",
-    current_panel: dict[str, Any] | None = None,
-    recent_runs_summary: list[dict[str, Any]] | None = None,
-) -> WorkflowPhase:
-    brief = current_problem_brief or {}
-    goal_summary = str(brief.get("goal_summary") or "").strip()
-    items = brief.get("items") if isinstance(brief.get("items"), list) else []
-    open_questions = brief.get("open_questions") if isinstance(brief.get("open_questions"), list) else []
-    non_system_items = [
-        item
-        for item in items
-        if isinstance(item, dict)
-        and str(item.get("kind") or "").strip().lower() in {"gathered", "assumption"}
-        and str(item.get("text") or "").strip()
-    ]
-    has_panel = bool(current_panel and isinstance(current_panel, dict))
-    has_successful_run = any(bool(run.get("ok")) for run in (recent_runs_summary or []))
-
-    if workflow_mode in ("agile", "demo"):
-        if has_successful_run or has_panel:
-            return "configuration"
-        if goal_summary or non_system_items:
-            return "structuring"
-        return "discovery"
-
-    if has_successful_run:
-        return "configuration"
-    if has_panel and len(non_system_items) >= 4 and len(open_questions) == 0:
-        return "configuration"
-    if goal_summary or len(non_system_items) >= 2:
-        return "structuring"
-    return "discovery"
-
-
 def _build_structured_system_instruction(
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
@@ -614,12 +737,6 @@ def _build_structured_system_instruction(
     current_panel: dict[str, Any] | None = None,
     test_problem_id: str | None = None,
 ) -> str:
-    phase = resolve_workflow_phase(
-        current_problem_brief,
-        workflow_mode=workflow_mode,
-        current_panel=current_panel,
-        recent_runs_summary=recent_runs_summary,
-    )
     cold = is_chat_cold_start(current_problem_brief)
     brief_for_prompt = surface_problem_brief_for_chat_prompt(
         current_problem_brief, cold=cold
@@ -632,9 +749,10 @@ def _build_structured_system_instruction(
     parts = [
         *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
-        _phase_prompt(phase),
         STUDY_CHAT_STRUCTURED_JSON_RULES,
         STUDY_CHAT_ITEMS_DISCIPLINE,
+        STUDY_CHAT_AMBIGUITY_DISCIPLINE,
+        STUDY_CHAT_OUT_OF_SCOPE_DISCIPLINE,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
@@ -685,13 +803,8 @@ def _build_visible_chat_system_instruction(
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
+    commit_audit_note: str | None = None,
 ) -> str:
-    phase = resolve_workflow_phase(
-        current_problem_brief,
-        workflow_mode=workflow_mode,
-        current_panel=current_panel,
-        recent_runs_summary=recent_runs_summary,
-    )
     cold = is_chat_cold_start(current_problem_brief)
     brief_for_prompt = surface_problem_brief_for_chat_prompt(
         current_problem_brief, cold=cold
@@ -746,7 +859,6 @@ def _build_visible_chat_system_instruction(
     parts = [
         *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
-        _phase_prompt(phase),
         build_temperature_guardrails_block(profile.temperature),
         build_execution_mode_block(profile.execution_mode),
         capabilities_block,
@@ -835,6 +947,27 @@ def _build_visible_chat_system_instruction(
                 "- Transition naturally from the recent conversation instead of sounding abrupt.\n"
                 f"{steer_blob}"
             )
+    # Pre-release gate audit (retry-only): when an earlier draft of this turn
+    # committed to a run-CTA but the deterministic post-commit gate check
+    # showed the Run button would still be DISABLED, the router rejects the
+    # draft and re-prompts the LLM with this audit block. Two valid
+    # resolutions: (1) fix the structural gap so the gate actually opens, or
+    # (2) soften the visible reply so it stops inviting the participant to
+    # click Run.
+    if commit_audit_note and commit_audit_note.strip():
+        parts.append(
+            "## Pre-release gate audit (revise this draft)\n\n"
+            + commit_audit_note.strip()
+            + "\n\n"
+            "Pick exactly one resolution:\n"
+            "- **Fix the gap**: emit the missing structured carrier in `problem_brief_patch` "
+            "(the items[] row that anchors the commitment, plus the matching "
+            "`goal_terms` / algorithm assumption as the gap requires).\n"
+            "- **Soften the visible reply**: do not invite the participant to click "
+            "**Run optimization**; instead, state what's still missing and ask one focused "
+            "question (or commit the missing piece on this turn).\n"
+            "Do NOT keep the run-invitation phrasing while leaving the gap open."
+        )
     return "\n\n".join(parts)
 
 
@@ -997,12 +1130,6 @@ def _build_brief_update_system_instruction(
     visible_assistant_message: str | None = None,
     gate_status: dict[str, Any] | None = None,
 ) -> str:
-    phase = resolve_workflow_phase(
-        current_problem_brief,
-        workflow_mode=workflow_mode,
-        current_panel=current_panel,
-        recent_runs_summary=recent_runs_summary,
-    )
     cold = is_chat_cold_start(current_problem_brief)
     brief_for_prompt = surface_problem_brief_for_chat_prompt(
         current_problem_brief, cold=cold
@@ -1012,13 +1139,23 @@ def _build_brief_update_system_instruction(
         if brief_for_prompt is not None
         else "{}"
     )
+    # Order: basic patch-shape disciplines first (items + hidden-brief rules),
+    # then specialised additions (ambiguity, out-of-scope, warmth). Reordering
+    # matters — the LLM was sometimes emitting an empty patch when the new
+    # specialised sections came before the basic discipline, apparently
+    # losing the "always commit items + goal_terms" anchor under prompt
+    # bloat.
     parts = [
         *_system_prompt_openers(test_problem_id, current_problem_brief),
         _workflow_prompt(workflow_mode),
-        _phase_prompt(phase),
         STUDY_CHAT_BRIEF_UPDATE_TASK,
         STUDY_CHAT_ITEMS_DISCIPLINE,
         STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
+        STUDY_CHAT_GROUNDING_DISCIPLINE,
+        STUDY_CHAT_HARD_CONSTRAINT_DISCIPLINE,
+        STUDY_CHAT_AMBIGUITY_DISCIPLINE,
+        STUDY_CHAT_OUT_OF_SCOPE_DISCIPLINE,
+        STUDY_CHAT_WARMTH_JUDGMENT,
         "Current problem brief (compact authoritative memory for this turn):",
         brief_blob,
     ]
@@ -1171,9 +1308,20 @@ def generate_visible_chat_reply(
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
-) -> str:
+) -> ChatModelTurn:
+    """Unified chat-turn call: one LLM round-trip producing both the visible
+    reply (``assistant_message``) AND the structured ``problem_brief_patch``.
+
+    Returns a ``ChatModelTurn``. The chronic "visible reply claimed a brief
+    change but the stored brief is unchanged" workflow-compliance violation
+    is structurally impossible here — both fields come from the same model
+    context, so they cannot disagree the way the previous two-call
+    architecture allowed (visible chat + separate hidden brief-update). The
+    background pipeline still applies the patch through the existing brief
+    merge / anchor / monitor passes; this function just generates it.
+    """
     client = genai.Client(api_key=api_key)
-    system_instruction = _build_visible_chat_system_instruction(
+    visible_part = _build_visible_chat_system_instruction(
         user_text=user_text,
         current_problem_brief=current_problem_brief,
         workflow_mode=workflow_mode,
@@ -1190,15 +1338,85 @@ def generate_visible_chat_reply(
         run_disabled_reason=run_disabled_reason,
         gate_status=gate_status,
     )
+    # Append brief-update discipline so the same LLM emits the matching patch.
+    # Keep the visible-chat builder as the prefix (it's the participant-facing
+    # voice + tone block); brief discipline is the data-shape contract.
+    brief_part = _build_brief_update_system_instruction(
+        current_problem_brief=current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
+        is_tutorial_active=is_tutorial_active,
+        test_problem_id=test_problem_id,
+        visible_assistant_message=None,
+        gate_status=gate_status,
+    )
+    combined = (
+        visible_part
+        + "\n\n---\n\n"
+        + brief_part
+        + "\n\n## Output (CRITICAL — JSON only)\n\n"
+        "Your response MUST be a single JSON object with both:\n"
+        "- `assistant_message` (REQUIRED): the visible reply (1–3 short sentences typically).\n"
+        "- `problem_brief_patch` (REQUIRED whenever the visible reply commits to ANY change): "
+        "the structured update matching the visible reply.\n"
+        "\n"
+        "**Commit detection.** If `assistant_message` contains phrasing like *Changes I made:*, "
+        "*I've added*, *I've set*, *I'm using*, *I've configured*, *primary objective*, *as a baseline*, "
+        "*default to*, or otherwise asserts a brief / panel mutation, this is a **commit**.\n"
+        "\n"
+        "**Hard requirement for commits:** when committing, `problem_brief_patch` MUST contain BOTH:\n"
+        "  (1) an `items[]` row capturing the user's wording (`kind: gathered` if the user asked / "
+        "stated it; `kind: assumption` if you proposed it proactively), AND\n"
+        "  (2) when committing a goal-term concept, the matching `goal_terms[<key>]` entry "
+        "(with `weight`, `type`, and `evidence_item_ids` citing the items[] row id you just emitted), AND\n"
+        "  (3) when committing an algorithm / search strategy, a gathered (or assumption-kind in agile) "
+        "items[] row naming the algorithm by name so the panel-derive picks it up.\n"
+        "\n"
+        "**Anti-pattern (FORBIDDEN):** emitting `assistant_message: \"I've added travel-time emphasis…\"` "
+        "with `problem_brief_patch: null` (or with the patch missing the goal_term / items row). The "
+        "visible reply becomes a lie; the workflow-compliance check flags it; the participant ends up "
+        "confused. If you are not ready to commit on this turn, **don't use commit phrasing in the "
+        "assistant_message** — ask an open question instead.\n"
+        "\n"
+        "**Concrete example.** User says *'I'd like to shorten total travel time'*. Emit:\n"
+        "```json\n"
+        "{\n"
+        '  "assistant_message": "I\\u2019ve set total travel time as your primary objective\\u2026",\n'
+        '  "problem_brief_patch": {\n'
+        '    "items": [\n'
+        '      {"id": "g-user-travel-1", "text": "User wants to minimize total travel time.", "kind": "gathered", "source": "user"}\n'
+        '    ],\n'
+        '    "goal_terms": {\n'
+        '      "travel_time": {"weight": 1.0, "type": "objective", "evidence_item_ids": ["g-user-travel-1"]}\n'
+        '    }\n'
+        '  }\n'
+        "}\n"
+        "```\n"
+    )
+    schema = _build_chat_turn_response_schema(test_problem_id)
     chat = client.chats.create(
         model=model_name,
-        config=types.GenerateContentConfig(system_instruction=system_instruction),
+        config=types.GenerateContentConfig(
+            system_instruction=combined,
+            response_mime_type="application/json",
+            response_json_schema=schema,
+        ),
         history=_history_to_contents(history_lines),
     )
     resp = chat.send_message(user_text)
-    if not resp.text:
+    if resp.parsed is not None:
+        if isinstance(resp.parsed, ChatModelTurn):
+            return resp.parsed
+        if isinstance(resp.parsed, dict):
+            return ChatModelTurn.model_validate(resp.parsed)
+    raw = resp.text
+    if not raw:
         raise RuntimeError("Empty model response")
-    return resp.text.strip()
+    return ChatModelTurn.model_validate_json(raw)
 
 
 def generate_problem_brief_update(
@@ -1532,6 +1750,14 @@ _CONSOLIDATED_CHAT_OUTPUT_RULES = (
     "- `is_run_invitation` (bool): true if `assistant_message` ITSELF asks the participant to "
     "start/trigger/launch a run now (so the next turn's affirmative reply can auto-fire). "
     "False for replies that only describe config changes or discuss possible future runs.\n"
+    "- `claims_brief_change` (bool): true iff `assistant_message` commits a structural change "
+    "to the brief — phrases like 'Changes I made:', 'I've added', 'Added X', 'Bumped …', "
+    "'Set search strategy to …'. False for replies that only ask, explain, or describe future "
+    "actions ('once you confirm I'll add …'). This MUST match what the brief patch actually "
+    "does this turn: a true claim with no matching edit will trigger a deterministic retry.\n"
+    "- `asks_user_question` (bool): true iff `assistant_message` asks the participant a "
+    "content-bearing question (not a rhetorical aside, not 'ready to run?'). Used to keep "
+    "open_questions in sync with the visible reply.\n"
     "- `change_clause` (string): when the user's message mixes an edit ask with a concept "
     "question (e.g. 'Yes, bump punctuality. Also, where do traffic times come from?'), put "
     "the edit half here — quote or lightly paraphrase the user's own words, NEVER expand "
@@ -1561,6 +1787,7 @@ def generate_consolidated_chat_turn(
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
+    commit_audit_note: str | None = None,
 ) -> ConsolidatedChatTurn | None:
     """Single structured Gemini call: visible reply + intent flags.
 
@@ -1587,6 +1814,7 @@ def generate_consolidated_chat_turn(
         run_button_enabled=run_button_enabled,
         run_disabled_reason=run_disabled_reason,
         gate_status=gate_status,
+        commit_audit_note=commit_audit_note,
     )
     system_instruction = f"{base_system}\n\n{_CONSOLIDATED_CHAT_OUTPUT_RULES}"
 
@@ -1656,9 +1884,13 @@ def generate_chat_turn(
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
 ) -> ChatModelTurn:
-    """Compatibility wrapper that now prioritizes the visible assistant reply."""
+    """Single-call chat turn: visible reply AND structured brief patch from
+    the same LLM context. Falls back to a plain text-only turn if structured
+    generation fails (network / parse / SDK error) — the brief-update
+    background pipeline then runs as a follow-up to fill the patch the
+    fallback couldn't produce."""
     try:
-        text = generate_visible_chat_reply(
+        return generate_visible_chat_reply(
             user_text=user_text,
             history_lines=history_lines,
             api_key=api_key,
@@ -1677,26 +1909,264 @@ def generate_chat_turn(
             gate_status=gate_status,
         )
     except Exception as e:
-        log.warning("Visible chat failed (%s); using plain fallback", e)
-        text = _plain_fallback_reply(
-            user_text,
-            history_lines,
-            api_key,
-            model_name,
-            current_problem_brief,
-            workflow_mode,
-            current_panel,
-            recent_runs_summary,
-            researcher_steers,
-            cleanup_mode,
-            is_run_acknowledgement,
-            is_tutorial_active=is_tutorial_active,
-            test_problem_id=test_problem_id,
-            run_button_enabled=run_button_enabled,
-            run_disabled_reason=run_disabled_reason,
-            gate_status=gate_status,
-        )
+        log.warning("Unified chat-turn structured call failed (%s); using plain fallback", e)
+    text = _plain_fallback_reply(
+        user_text,
+        history_lines,
+        api_key,
+        model_name,
+        current_problem_brief,
+        workflow_mode,
+        current_panel,
+        recent_runs_summary,
+        researcher_steers,
+        cleanup_mode,
+        is_run_acknowledgement,
+        is_tutorial_active=is_tutorial_active,
+        test_problem_id=test_problem_id,
+        run_button_enabled=run_button_enabled,
+        run_disabled_reason=run_disabled_reason,
+        gate_status=gate_status,
+    )
     return ChatModelTurn(assistant_message=text, panel_patch=None)
+
+
+GOAL_TERM_BACKING_VALIDATION_SCHEMA: dict[str, Any] = {
+    "title": "BriefConsistencyValidation",
+    "type": "object",
+    "properties": {
+        "assumptions_to_add": {
+            "type": "array",
+            "description": (
+                "One entry per `brief.goal_terms` key that lacks explicit "
+                "backing in `brief.items[]`. Empty list when every goal-term "
+                "key already has a justifying item."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "goal_term_key": {
+                        "type": "string",
+                        "description": "Exact goal-term key (e.g. 'travel_time').",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "One sentence in the agent voice describing the "
+                            "inference. Format: 'Assumed <human-readable name> "
+                            "as <role> based on <reason from items[] context>. "
+                            "Confirm or remove.'"
+                        ),
+                    },
+                },
+                "required": ["goal_term_key", "text"],
+                "additionalProperties": False,
+            },
+        },
+        "updated_goal_summary": {
+            "type": "string",
+            "description": (
+                "Optional. Emit a fresh 1–2 sentence qualitative summary of the "
+                "current goal_terms + items state ONLY when the existing "
+                "`brief.goal_summary` is empty, vague, or stale relative to "
+                "what's currently committed. Omit (or send an empty string) "
+                "when the existing summary is already accurate. No numeric "
+                "weights, no algorithm params, no run-budget numbers — those "
+                "belong in `items[]`."
+            ),
+        },
+    },
+    "required": ["assumptions_to_add"],
+    "additionalProperties": False,
+}
+
+
+_GOAL_TERM_VALIDATOR_SYSTEM_INSTRUCTION = """\
+You are a definition-config consistency validator. Two responsibilities:
+
+## (1) Goal-term backing — `assumptions_to_add`
+
+For each key in the brief's `goal_terms` map, decide whether the brief's
+`items[]` list contains a row whose text *explicitly* justifies that key in
+plain English. If not, emit one `assumptions_to_add` entry making the
+agent's inference visible to the participant.
+
+**Backing checklist (what counts as explicit justification):**
+- For travel-time / route-duration / fuel keys → an item explicitly
+  mentioning travel time, route duration, fuel, mileage, etc.
+- For lateness / time-window / punctuality keys → an item explicitly
+  mentioning on-time, deadlines, time windows, lateness, etc.
+- For capacity / load keys → an item mentioning capacity, load, overload.
+- For workload-balance / fairness keys → an item mentioning balance,
+  fairness, equal distribution.
+- For worker-preference / driver-rule keys → an item describing a specific
+  driver-attached rule.
+- For algorithm / search-strategy fields → not your concern (you only judge
+  goal_terms).
+
+**NOT backing:**
+- A generic "user wants to optimize routing" item is NOT backing for any
+  specific goal-term key — too vague.
+- An "uploaded file(s)" item is never backing for anything.
+- A monitor / open-question / system row is not backing.
+- An item already authored by this validator (`id` starts with
+  `item-validator-`) IS backing — its presence means a prior turn already
+  surfaced the inference; don't re-emit.
+
+**Output discipline (assumptions_to_add):**
+- Emit ONE entry per unbacked key.
+- `text` is one sentence. Format: *"Assumed <human-readable name> as
+  <role> based on <reason>. Confirm or remove."*
+- If every key is backed, return `assumptions_to_add: []`.
+
+## (2) Goal summary — `updated_goal_summary`
+
+The brief's `goal_summary` should be a 1–2 sentence qualitative description
+of what the solver is currently being asked to optimize, based on
+`goal_terms` + the user-stated context in `items[]`. Decide whether the
+current `goal_summary` is accurate.
+
+- **Emit `updated_goal_summary`** when:
+  - the existing summary is empty, OR
+  - the existing summary is stale (doesn't reflect the current
+    `goal_terms`, e.g. user just picked travel time but summary still
+    says "TBD"), OR
+  - the existing summary is too vague to be useful.
+- **Omit `updated_goal_summary` (or send empty string)** when the existing
+  summary already captures the current state accurately. Idempotency: don't
+  rewrite a fine summary just to rephrase it.
+- **No numbers.** No weights, penalties, algorithm params, or run-budget
+  numbers in the summary — those belong in `items[]`.
+- **Format.** Plain qualitative prose. Example: *"Optimize driver routes to
+  minimize total travel time across all delivery zones."*
+
+## Output
+
+JSON only, matching the schema. No commentary.
+"""
+
+
+def validate_goal_term_backing(
+    brief: dict[str, Any] | None,
+    api_key: str | None,
+    model_name: str,
+    test_problem_id: str | None = None,
+) -> dict[str, Any]:
+    """Semantic validator covering two definition-config consistency
+    concerns:
+
+    1. ``assumptions_to_add`` — one ``{goal_term_key, text}`` per goal-term
+       key in ``brief.goal_terms`` that lacks explicit backing in
+       ``brief.items[]``.
+    2. ``updated_goal_summary`` — a fresh 1–2 sentence qualitative summary
+       when the existing ``brief.goal_summary`` is empty / stale / vague.
+       Empty string when the existing summary is fine.
+
+    Returns ``{"assumptions_to_add": [], "updated_goal_summary": ""}`` when
+    the brief has no goal terms to validate, no api_key is available, or
+    the call fails — caller treats those as no-ops.
+
+    This is a *separate* LLM round-trip from the chat turn — focused, small
+    input/output, and only fires when there's something to validate.
+    Replaces the per-port marker-substring grounding check that lived in
+    ``validate_problem_goal_terms`` before the marker tables were retired.
+    The structural anchor check (``filter_unanchored_new_goal_terms``) only
+    catches malformed cites; this catches loose ones where the LLM cited a
+    semantically-unrelated item just to satisfy the structural rule.
+    """
+    empty: dict[str, Any] = {"assumptions_to_add": [], "updated_goal_summary": ""}
+    if not api_key or not isinstance(api_key, str) or not api_key.strip():
+        return empty
+    if not isinstance(brief, dict):
+        return empty
+    goal_terms = brief.get("goal_terms")
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return empty
+    raw_items = brief.get("items") or []
+    items_for_prompt = [
+        {
+            "id": str(item.get("id") or ""),
+            "text": str(item.get("text") or ""),
+            "kind": str(item.get("kind") or ""),
+            "source": str(item.get("source") or ""),
+        }
+        for item in raw_items
+        if isinstance(item, dict)
+    ]
+    goal_terms_for_prompt = {
+        key: {
+            "weight": entry.get("weight"),
+            "type": entry.get("type"),
+        }
+        for key, entry in goal_terms.items()
+        if isinstance(key, str) and isinstance(entry, dict)
+    }
+
+    appendix = _study_benchmark_appendix(test_problem_id) or ""
+    appendix_clip = appendix[:2000] if appendix else ""
+    current_goal_summary = str(brief.get("goal_summary") or "")
+    user_prompt = (
+        "Brief items[]:\n"
+        + json.dumps(items_for_prompt, ensure_ascii=False)
+        + "\n\nBrief goal_terms:\n"
+        + json.dumps(goal_terms_for_prompt, ensure_ascii=False)
+        + "\n\nCurrent brief.goal_summary:\n"
+        + json.dumps(current_goal_summary, ensure_ascii=False)
+        + (
+            "\n\nReference — active benchmark vocabulary (for key-meaning lookup only):\n"
+            + appendix_clip
+            if appendix_clip
+            else ""
+        )
+    )
+
+    try:
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=_GOAL_TERM_VALIDATOR_SYSTEM_INSTRUCTION,
+            response_mime_type="application/json",
+            response_json_schema=GOAL_TERM_BACKING_VALIDATION_SCHEMA,
+        )
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=user_prompt,
+            config=config,
+        )
+    except Exception as exc:
+        log.warning("Goal-term backing validator call failed: %s", exc)
+        return empty
+
+    parsed = resp.parsed if isinstance(resp.parsed, dict) else None
+    if parsed is None:
+        raw = resp.text or ""
+        if not raw.strip():
+            return empty
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return empty
+    entries_raw = parsed.get("assumptions_to_add") if isinstance(parsed, dict) else None
+    out_entries: list[dict[str, str]] = []
+    for entry in entries_raw if isinstance(entries_raw, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("goal_term_key")
+        text = entry.get("text")
+        if not isinstance(key, str) or not isinstance(text, str):
+            continue
+        key = key.strip()
+        text = text.strip()
+        if not key or not text:
+            continue
+        if key not in goal_terms_for_prompt:
+            # Ignore stray keys the LLM invented — only validate what's actually
+            # in the brief.
+            continue
+        out_entries.append({"goal_term_key": key, "text": text})
+
+    summary_raw = parsed.get("updated_goal_summary") if isinstance(parsed, dict) else None
+    summary = str(summary_raw).strip() if isinstance(summary_raw, str) else ""
+    return {"assumptions_to_add": out_entries, "updated_goal_summary": summary}
 
 
 def classify_run_trigger_intent(
@@ -1885,12 +2355,6 @@ def generate_config_from_brief(
         return None
     client = genai.Client(api_key=api_key)
     brief_blob = json.dumps(brief or {}, ensure_ascii=False)
-    phase = resolve_workflow_phase(
-        brief,
-        workflow_mode=workflow_mode,
-        current_panel=current_panel,
-        recent_runs_summary=recent_runs_summary,
-    )
     user_prompt = (
         "Current problem brief JSON:\n"
         f"{brief_blob}\n\n"
@@ -1901,18 +2365,17 @@ def generate_config_from_brief(
     system_instruction = "\n\n".join(
         [
             _workflow_prompt(workflow_mode),
-            _phase_prompt(phase),
+            STUDY_CHAT_SEARCH_STRATEGY_ANCHORING,
             port.config_derive_system_prompt(),
         ]
     )
-    # Static per (model, workflow, phase, problem). Try explicit caching to cut input
+    # Static per (model, workflow, problem). Try explicit caching to cut input
     # tokens on the heavy gemini-pro derivation; if the SDK rejects (e.g. content below
     # the model's minimum), seamlessly fall back to inline system_instruction.
     cache_key = (
         "config_derive",
         model_name,
         workflow_mode,
-        phase,
         test_problem_id or "",
     )
     cached_name = _get_or_create_system_cache(

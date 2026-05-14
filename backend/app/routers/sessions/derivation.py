@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from copy import deepcopy
 from datetime import datetime, timezone
 from threading import Thread
 from typing import Any
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
+from app.schemas import ProblemBriefUpdateTurn
 from app.problem_brief import (
     cleanup_open_questions,
     coerce_problem_brief_for_workflow,
@@ -265,8 +267,20 @@ def _sanitize_run_ack_patch_payload(
     test_problem_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Keep run-ack brief edits compact: allow open-question curation plus durable config-slot rows.
-    Drop per-run/session bookkeeping rows to prevent Definition growth across runs.
+    Keep run-ack brief edits compact: allow open-question curation plus durable
+    config-slot rows. Drop per-run/session bookkeeping rows to prevent
+    Definition growth across runs.
+
+    Cite-chain exemption: any items[] row whose ``id`` appears as
+    ``evidence_item_ids`` on a ``goal_terms`` entry in this same patch is
+    kept regardless of slot/kind. Without this exemption, a post-run agent
+    commitment to two new goal terms (e.g. *"I've added a punctuality
+    penalty and a capacity penalty after the run"*) lands as
+    ``goal_terms`` entries cited against items the sanitizer would
+    otherwise drop — and the brief-side anchor check then drops the
+    goal-term keys too because their cites no longer resolve. The
+    exemption keeps the chain intact while still scrubbing pure
+    bookkeeping rows.
     """
     sanitized = dict(patch_payload)
     raw_items = sanitized.get("items")
@@ -274,11 +288,38 @@ def _sanitize_run_ack_patch_payload(
         sanitized["replace_editable_items"] = False
         return sanitized
 
+    # Collect cite ids referenced by patch.goal_terms — these items must
+    # survive the slot filter or the cited goal-term keys lose their
+    # anchor and get dropped downstream.
+    cited_ids: set[str] = set()
+    patch_goal_terms = sanitized.get("goal_terms")
+    if isinstance(patch_goal_terms, dict):
+        for entry in patch_goal_terms.values():
+            if not isinstance(entry, dict):
+                continue
+            evidence = entry.get("evidence_item_ids")
+            if not isinstance(evidence, list):
+                continue
+            for eid in evidence:
+                if isinstance(eid, str) and eid.strip():
+                    cited_ids.add(eid.strip())
+
     mode = str(workflow_mode or "").strip().lower()
     kept_items: list[dict[str, Any]] = []
     kept_agile_assumption_count = 0
     for raw in raw_items:
         if not isinstance(raw, dict):
+            continue
+        item_id = str(raw.get("id") or "").strip()
+        # Cite-chain exemption — preserve regardless of slot/kind/bookkeeping
+        # text so the goal-term entries citing this id keep their anchor. A
+        # cited row IS load-bearing for the commitment even when its rationale
+        # naturally references a run (e.g. "Added lateness_penalty after Run
+        # #1 showed time-window misses"). If the participant doesn't want the
+        # row, they remove it and the cascade-strip takes the goal term down
+        # too.
+        if item_id and item_id in cited_ids:
+            kept_items.append(raw)
             continue
         kind = str(raw.get("kind") or "").strip().lower()
         # On run-ack turns we normally keep only durable config-slot rows. Agile is allowed
@@ -430,6 +471,7 @@ def apply_brief_patch_with_cleanup(
     enable_auto_open_question_cleanup: bool = True,
     is_run_acknowledgement: bool = False,
     cleanup_mode: bool = False,
+    user_text: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
@@ -451,10 +493,27 @@ def apply_brief_patch_with_cleanup(
     # on the panel-derive side.
     proposed_goal_terms = merged.get("goal_terms") if isinstance(merged.get("goal_terms"), dict) else {}
     if proposed_goal_terms:
+        # Include the current user message as a virtual evidence item for
+        # embedding-based anchoring. The user's own words are the most direct
+        # justification for any goal term proposed this turn — e.g.
+        # "I want to minimize travel time" anchors `travel_time` even when
+        # the LLM forgets to emit a matching `items[]` row. The virtual item
+        # is anchor-only; it does NOT get saved into the brief.
+        anchor_items = list(merged.get("items") or [])
+        clean_user_text = (user_text or "").strip()
+        if clean_user_text:
+            anchor_items.append(
+                {
+                    "id": "__virtual_user_message__",
+                    "text": clean_user_text,
+                    "kind": "gathered",
+                    "source": "user",
+                }
+            )
         filtered, dropped = filter_unanchored_new_goal_terms(
             base_brief=base_problem_brief,
             proposed_goal_terms=proposed_goal_terms,
-            items=list(merged.get("items") or []),
+            items=anchor_items,
             workflow_mode=workflow_mode,
             api_key=api_key,
             test_problem_id=test_problem_id,
@@ -489,6 +548,10 @@ def apply_brief_patch_with_cleanup(
             is_run_acknowledgement=is_run_acknowledgement,
             test_problem_id=test_problem_id,
         )
+        consolidated = _validate_goal_term_backing(
+            consolidated, api_key, model_name, test_problem_id
+        )
+        consolidated = _enforce_session_monitors(consolidated, workflow_mode)
         return consolidated, {"removed_total": 0, **run_meta}
     cleaned, meta = apply_open_question_cleanup_pass(
         problem_brief=merged,
@@ -510,7 +573,235 @@ def apply_brief_patch_with_cleanup(
         is_run_acknowledgement=is_run_acknowledgement,
         test_problem_id=test_problem_id,
     )
+    consolidated = _validate_goal_term_backing(
+        consolidated, api_key, model_name, test_problem_id
+    )
+    consolidated = _enforce_session_monitors(consolidated, workflow_mode)
     return consolidated, {**meta, **run_meta}
+
+
+def _validate_goal_term_backing(
+    brief: dict[str, Any],
+    api_key: str | None,
+    model_name: str | None,
+    test_problem_id: str | None,
+) -> dict[str, Any]:
+    """Iteration-3 semantic validator: ensures every key in
+    ``brief.goal_terms`` has an explicit backing row in ``brief.items[]``.
+
+    Calls a focused, dedicated LLM (see ``validate_goal_term_backing`` in
+    ``llm.py``). For each unbacked key, appends a ``kind: assumption``
+    items[] row with stable id ``item-validator-{key}`` describing the
+    agent's inference. The participant sees the inference in the Definition
+    tab and can confirm / edit / remove (removal triggers the cascade-strip
+    that takes the goal term down with it).
+
+    Skips silently when there are no goal terms to validate, when no
+    api_key / model_name is available, or when the LLM call fails — drift
+    stays at zero in the latter case but a stale unbacked goal term may
+    persist until the next turn re-runs the validator.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    if not api_key or not model_name:
+        return brief
+    goal_terms = brief.get("goal_terms")
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return brief
+
+    try:
+        from app.services.llm import validate_goal_term_backing
+
+        result = validate_goal_term_backing(
+            brief,
+            api_key=api_key,
+            model_name=model_name,
+            test_problem_id=test_problem_id,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        log.warning("Goal-term backing validator failed: %s", exc)
+        return brief
+
+    entries = result.get("assumptions_to_add") if isinstance(result, dict) else []
+    fresh_summary = (
+        str(result.get("updated_goal_summary") or "").strip()
+        if isinstance(result, dict)
+        else ""
+    )
+    if not entries and not fresh_summary:
+        return brief
+
+    next_brief = deepcopy(brief)
+    items = list(next_brief.get("items") or [])
+    existing_ids = {str(i.get("id") or "") for i in items if isinstance(i, dict)}
+    appended = 0
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("goal_term_key") or "").strip()
+        text = str(entry.get("text") or "").strip()
+        if not key or not text:
+            continue
+        item_id = f"item-validator-{key}"
+        if item_id in existing_ids:
+            continue
+        items.append(
+            {
+                "id": item_id,
+                "text": text,
+                "kind": "assumption",
+                "source": "agent",
+            }
+        )
+        existing_ids.add(item_id)
+        appended += 1
+    if appended:
+        log.info("Goal-term backing validator added %d assumption row(s)", appended)
+        next_brief["items"] = items
+    if fresh_summary and fresh_summary != str(next_brief.get("goal_summary") or "").strip():
+        log.info("Goal-term backing validator refreshed goal_summary")
+        next_brief["goal_summary"] = fresh_summary
+    return next_brief
+
+
+# Stable ids for the three server-side monitor rows. Idempotent: re-emission
+# overwrites the same slot rather than duplicating.
+_MONITOR_OQ_UPLOAD_ID = "oq-monitor-upload"
+_MONITOR_OQ_GOAL_ID = "oq-monitor-goal"
+_MONITOR_OQ_ALGORITHM_ID = "oq-monitor-algorithm"
+_MONITOR_ITEM_ALGORITHM_ID = "item-monitor-algorithm-default"
+
+_MONITOR_OQ_UPLOAD_TEXT = (
+    "Please use the **Upload file(s)...** button in the chat footer to share "
+    "your data so we can set up a baseline run."
+)
+_MONITOR_OQ_GOAL_TEXT = (
+    "What's your primary optimization goal? For example, minimize total "
+    "travel time, meet customer time windows, balance driver workload, or "
+    "another priority."
+)
+_MONITOR_OQ_ALGORITHM_TEXT = (
+    "Which search strategy should we use? Common choices: genetic search "
+    "(GA), particle swarm (PSO), or simulated annealing (SA)."
+)
+_MONITOR_ITEM_ALGORITHM_TEXT = (
+    "Search strategy is set to genetic search (GA) as a starting point — "
+    "change anytime."
+)
+
+
+def _enforce_session_monitors(
+    brief: dict[str, Any], workflow_mode: str | None
+) -> dict[str, Any]:
+    """Server-side state machine: keep the three "what's still missing" rows
+    in lockstep with brief state. Three monitors, each idempotent via a stable
+    id — once satisfied, the matching row is dropped; once again missing, it's
+    re-inserted on the next turn.
+
+    1. **Upload** — warm AND no ``source: upload`` item → OQ asking for the
+       upload. Clears once the participant uploads.
+    2. **Goal term** — warm AND ``brief.goal_terms`` empty → OQ asking for
+       the primary objective. Both workflows; clears once any goal term is
+       committed.
+    3. **Search strategy** — warm AND no algorithm mention in brief items.
+       Agile / demo → ``kind: assumption`` row defaulting to GA. Waterfall →
+       OQ asking the participant to pick.
+
+    The check uses ``is_chat_cold_start`` to gate warmth — cold sessions get
+    no monitor rows, so a "hi" turn doesn't immediately surface three OQs.
+    """
+    from app.problem_brief import is_chat_cold_start
+    from app.services.goal_term_anchoring import algorithm_mentioned_in_brief
+
+    if not isinstance(brief, dict):
+        return brief
+    if is_chat_cold_start(brief):
+        return brief
+
+    workflow = str(workflow_mode or "").strip().lower()
+    is_agile_or_demo = workflow in {"agile", "demo"}
+
+    next_brief = deepcopy(brief)
+    items = list(next_brief.get("items") or [])
+    open_questions = list(next_brief.get("open_questions") or [])
+
+    def _has_oq(oq_id: str) -> bool:
+        return any(
+            isinstance(q, dict) and str(q.get("id") or "") == oq_id
+            for q in open_questions
+        )
+
+    def _has_item(item_id: str) -> bool:
+        return any(
+            isinstance(i, dict) and str(i.get("id") or "") == item_id
+            for i in items
+        )
+
+    def _drop_oq(oq_id: str) -> None:
+        nonlocal open_questions
+        open_questions = [
+            q for q in open_questions
+            if not (isinstance(q, dict) and str(q.get("id") or "") == oq_id)
+        ]
+
+    def _drop_item(item_id: str) -> None:
+        nonlocal items
+        items = [
+            i for i in items
+            if not (isinstance(i, dict) and str(i.get("id") or "") == item_id)
+        ]
+
+    def _append_oq(oq_id: str, text: str) -> None:
+        open_questions.append({
+            "id": oq_id,
+            "text": text,
+            "status": "open",
+            "answer_text": None,
+        })
+
+    # Monitor 1: upload
+    has_upload = any(
+        isinstance(i, dict) and str(i.get("source") or "").strip().lower() == "upload"
+        for i in items
+    )
+    if has_upload:
+        _drop_oq(_MONITOR_OQ_UPLOAD_ID)
+    elif not _has_oq(_MONITOR_OQ_UPLOAD_ID):
+        _append_oq(_MONITOR_OQ_UPLOAD_ID, _MONITOR_OQ_UPLOAD_TEXT)
+
+    # Monitor 2: goal term
+    goal_terms = next_brief.get("goal_terms")
+    has_goal = isinstance(goal_terms, dict) and bool(goal_terms)
+    if has_goal:
+        _drop_oq(_MONITOR_OQ_GOAL_ID)
+    elif not _has_oq(_MONITOR_OQ_GOAL_ID):
+        _append_oq(_MONITOR_OQ_GOAL_ID, _MONITOR_OQ_GOAL_TEXT)
+
+    # Monitor 3: search strategy
+    has_algorithm = algorithm_mentioned_in_brief(items, workflow_mode=workflow)
+    if is_agile_or_demo:
+        if has_algorithm:
+            _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
+        elif not _has_item(_MONITOR_ITEM_ALGORITHM_ID):
+            items.append({
+                "id": _MONITOR_ITEM_ALGORITHM_ID,
+                "text": _MONITOR_ITEM_ALGORITHM_TEXT,
+                "kind": "assumption",
+                "source": "agent",
+            })
+        # Drop any waterfall OQ that may be lingering from a workflow switch.
+        _drop_oq(_MONITOR_OQ_ALGORITHM_ID)
+    else:
+        if has_algorithm:
+            _drop_oq(_MONITOR_OQ_ALGORITHM_ID)
+        elif not _has_oq(_MONITOR_OQ_ALGORITHM_ID):
+            _append_oq(_MONITOR_OQ_ALGORITHM_ID, _MONITOR_OQ_ALGORITHM_TEXT)
+        # Drop any agile-mode assumption that may be lingering.
+        _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
+
+    next_brief["items"] = items
+    next_brief["open_questions"] = open_questions
+    return next_brief
 
 
 def _synthesize_goal_term_prose_items(
@@ -633,6 +924,34 @@ def persist_processing_failure(session_id: str, revision: int, detail: str) -> N
         db.commit()
 
 
+# Substring-only commit-phrase detector. Regex-free per project preference
+# ([[feedback_no_regex_for_nl]]). Used by the recovery path in
+# `_run_background_derivation` to spot a chat-turn that committed in the
+# visible reply but emitted an empty `problem_brief_patch`.
+_COMMIT_PHRASES: tuple[str, ...] = (
+    "changes i made",
+    "i've added",
+    "i've set",
+    "i'm using",
+    "i've configured",
+    "primary objective",
+    "as a baseline",
+    "default to",
+    "i've defaulted",
+    "i've enabled",
+)
+
+
+def _visible_reply_commits(visible_assistant_message: str | None) -> bool:
+    """True iff the visible reply uses commit phrasing — the marker that
+    tells the recovery path the brief patch can't legitimately be empty
+    on this turn."""
+    if not visible_assistant_message:
+        return False
+    text = visible_assistant_message.lower()
+    return any(phrase in text for phrase in _COMMIT_PHRASES)
+
+
 def _run_background_derivation(
     *,
     session_id: str,
@@ -657,6 +976,10 @@ def _run_background_derivation(
     visible_assistant_message: str | None = None,
     skip_brief_update_llm: bool = False,
     gate_status: dict[str, Any] | None = None,
+    chat_turn_brief_patch: dict[str, Any] | None = None,
+    chat_turn_replace_editable_items: bool = False,
+    chat_turn_replace_open_questions: bool = False,
+    chat_turn_cleanup_mode: bool = False,
 ) -> None:
     """Unified background pipeline for one chat turn.
 
@@ -685,7 +1008,45 @@ def _run_background_derivation(
     try:
         from app.services.llm import generate_problem_brief_update
         timeout_sec = get_settings().derivation_timeout_sec
-        if skip_brief_update_llm:
+        # Recovery: the chat-turn LLM is supposed to emit BOTH visible reply
+        # and a matching patch in one structured call, but it sometimes drops
+        # the patch even when its visible reply commits. Detect that
+        # condition (commit phrasing in the visible reply + missing /
+        # contentless patch) and fall back to the separate brief-update LLM
+        # to fill the gap. Cheaper than re-running the whole structured call,
+        # and only happens on suspicious turns — the common case stays a
+        # single round-trip.
+        commit_phrases_present = _visible_reply_commits(visible_assistant_message)
+        patch_has_content = isinstance(chat_turn_brief_patch, dict) and any(
+            chat_turn_brief_patch.get(k)
+            for k in ("items", "goal_terms", "open_questions", "goal_summary")
+        )
+        if chat_turn_brief_patch is not None and patch_has_content:
+            # The chat-turn LLM already produced a structured patch in the
+            # same call as the visible reply (unified-call architecture in
+            # generate_visible_chat_reply). Use it directly — no second LLM
+            # round-trip.
+            brief_turn = ProblemBriefUpdateTurn(
+                problem_brief_patch=chat_turn_brief_patch,
+                replace_editable_items=chat_turn_replace_editable_items,
+                replace_open_questions=chat_turn_replace_open_questions,
+                cleanup_mode=chat_turn_cleanup_mode,
+            )
+        elif (
+            chat_turn_brief_patch is not None
+            and not patch_has_content
+            and not commit_phrases_present
+        ):
+            # Chat-turn emitted an empty patch and visible reply didn't claim
+            # any change — this is the legitimate "no brief update needed"
+            # case. Honour it.
+            brief_turn = ProblemBriefUpdateTurn(
+                problem_brief_patch=None,
+                replace_editable_items=chat_turn_replace_editable_items,
+                replace_open_questions=chat_turn_replace_open_questions,
+                cleanup_mode=chat_turn_cleanup_mode,
+            )
+        elif skip_brief_update_llm:
             brief_turn = None  # Treated below as "no brief patch this turn".
         else:
             try:
@@ -736,6 +1097,37 @@ def _run_background_derivation(
         elif cleanup_requested:
             log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
 
+        # Deterministic safety net for agile algorithm commitments: when the
+        # visible reply named a search strategy (e.g. *"I've set GA as a
+        # starting point"*) but neither the chat-turn nor the brief-update
+        # LLM emitted the matching assumption row, synthesize one here so
+        # the panel-derive picks up `algorithm=<canonical>` and the run gate
+        # opens. Without this, the participant sees the agent confidently
+        # commit to GA but the Run button stays greyed out — the GA-bug
+        # symptom this safety net was added to address.
+        if str(workflow_mode or "").strip().lower() == "agile":
+            try:
+                from app.services.visible_reply_commitments import (
+                    extract_algorithm_commitment,
+                    inject_algorithm_assumption,
+                )
+
+                committed_algo = extract_algorithm_commitment(visible_assistant_message)
+                if committed_algo is not None:
+                    new_patch, did_inject = inject_algorithm_assumption(
+                        patch_payload, base_problem_brief, committed_algo
+                    )
+                    if did_inject:
+                        log.info(
+                            "Agile safety net injected algorithm=%s assumption row for session %s "
+                            "(visible reply committed but brief patch lacked the row)",
+                            committed_algo,
+                            session_id,
+                        )
+                        patch_payload = new_patch
+            except Exception:  # pragma: no cover — never block derivation on the safety net
+                log.exception("Algorithm-commitment safety-net injection failed for session %s", session_id)
+
         effective_problem_brief = base_problem_brief
         if patch_payload is not None:
             if is_run_acknowledgement:
@@ -769,6 +1161,7 @@ def _run_background_derivation(
                 is_run_acknowledgement=is_run_acknowledgement,
                 cleanup_mode=cleanup_requested
                 or bool(brief_turn is not None and brief_turn.cleanup_mode),
+                user_text=user_text,
             )
             if int(meta.get("removed_total", 0)) > 0:
                 log.info("Auto open-question cleanup removed %s question(s)", meta.get("removed_total"))

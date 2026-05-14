@@ -38,6 +38,8 @@ type ConfigPanelProps = {
   onRequestDefinitionCleanup: () => void | Promise<void>;
   onRequestOpenQuestionCleanup: () => void | Promise<void>;
   onSyncProblemConfig: () => void | Promise<void>;
+  onSyncProblemBrief: () => void | Promise<void>;
+  syncingProblemBrief?: boolean;
   onRecoverGoalTerms?: () => void | Promise<void>;
   onEnterConfigEdit?: () => void;
   onCancelConfigEdit?: () => void;
@@ -111,6 +113,8 @@ export function ConfigPanel({
   onRequestDefinitionCleanup,
   onRequestOpenQuestionCleanup,
   onSyncProblemConfig,
+  onSyncProblemBrief,
+  syncingProblemBrief = false,
   onRecoverGoalTerms,
   onEnterConfigEdit,
   onCancelConfigEdit,
@@ -301,6 +305,13 @@ export function ConfigPanel({
     Boolean(problemBrief) &&
     !backgroundProcessingPending &&
     !configSyncInFlight;
+  const briefSyncInFlight = syncingProblemBrief;
+  const canSyncToDef =
+    !busy &&
+    editMode === "none" &&
+    !sessionTerminated &&
+    !backgroundProcessingPending &&
+    !briefSyncInFlight;
 
   return (
     <section className={className}>
@@ -616,6 +627,8 @@ export function ConfigPanel({
                 </button>
               </>
             ) : (
+              <>
+                
               <div ref={configSnapshotMenuRef} style={{ position: "relative" }}>
                 <button
                   type="button"
@@ -668,6 +681,23 @@ export function ConfigPanel({
                   </div>
                 )}
               </div>
+
+              <button
+                  type="button"
+                  onClick={() => void onSyncProblemBrief()}
+                  disabled={!canSyncToDef}
+                  title="Mirror the saved Problem Config into the Definition (closes drift the other direction)."
+                >
+                  {briefSyncInFlight ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                      <span className="inline-spinner" aria-hidden="true" />
+                      Syncing...
+                    </span>
+                  ) : (
+                    "Sync to def."
+                  )}
+                </button>
+              </>
             )
           ) : null}
         </div>
