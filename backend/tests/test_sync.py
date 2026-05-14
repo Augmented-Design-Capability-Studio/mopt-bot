@@ -145,6 +145,74 @@ def test_panel_derive_keeps_goal_terms_present_in_brief():
     assert "travel_time" in merged.get("goal_terms", {})
 
 
+def test_sync_drops_stale_goal_term_order_after_brief_removes_keys(monkeypatch):
+    """Regression: a session whose current panel carries `goal_term_order` for
+    keys the brief no longer lists must not wedge in a "Retry sync" loop.
+
+    Repro: brief carries only `capacity_penalty`; current panel has
+    `goal_term_order=['travel_time','lateness_penalty','capacity_penalty']`
+    from an earlier turn. The unauthorized-key sweep drops travel_time /
+    lateness_penalty from `goal_terms`, leaving order pointing at missing keys
+    — which used to raise `goal_term_order_invalid` on every retry.
+    """
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {
+                        "travel_time": 1.0,
+                        "lateness_penalty": 50.0,
+                        "capacity_penalty": 5.0,
+                    },
+                    "goal_terms": {
+                        "travel_time": {"weight": 1.0, "type": "objective"},
+                        "lateness_penalty": {"weight": 50.0, "type": "soft"},
+                        "capacity_penalty": {"weight": 5.0, "type": "soft"},
+                    },
+                    "goal_term_order": ["travel_time", "lateness_penalty", "capacity_penalty"],
+                    "algorithm": "GA",
+                }
+            }
+        ),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+
+    def _fake_derive(self, _brief):
+        return {
+            "problem": {
+                "weights": {"capacity_penalty": 10.0},
+                "goal_terms": {"capacity_penalty": {"weight": 10.0, "type": "soft"}},
+            }
+        }
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
+
+    brief = {
+        "goal_summary": "Penalize over-capacity routes.",
+        "items": [
+            {"id": "u1", "text": "Penalize over-capacity routes.", "kind": "gathered", "source": "user"}
+        ],
+        "open_questions": [],
+        "goal_terms": {"capacity_penalty": {"weight": 10.0, "type": "soft"}},
+    }
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief=brief,
+        api_key=None,
+        model_name=None,
+        preserve_missing_managed_fields=True,
+    )
+
+    assert panel is not None
+    order = panel["problem"].get("goal_term_order", [])
+    assert "travel_time" not in order
+    assert "lateness_penalty" not in order
+
+
 def test_validate_problem_goal_terms_rejects_missing_type():
     """Structural validation: missing/invalid `type` enum still raises.
 

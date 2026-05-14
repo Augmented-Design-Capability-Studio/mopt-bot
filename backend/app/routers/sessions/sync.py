@@ -766,6 +766,22 @@ def sync_panel_from_problem_brief(
         for key in SEARCH_STRATEGY_PANEL_FIELDS:
             next_problem.pop(key, None)
 
+    # Drop stale `goal_term_order` entries whose keys were filtered out of
+    # `goal_terms` above (unauthorized/unanchored sweeps) or that were carried
+    # over from `current_problem` without being re-derived. Without this, the
+    # validator below wedges the session in an unrecoverable "Retry sync" loop
+    # — the participant has no UI surface to edit the order list.
+    order_raw = next_problem.get("goal_term_order")
+    if isinstance(order_raw, list):
+        present_keys = (
+            set(next_problem["goal_terms"].keys())
+            if isinstance(next_problem.get("goal_terms"), dict)
+            else set()
+        )
+        cleaned_order = [k for k in order_raw if isinstance(k, str) and k in present_keys]
+        if cleaned_order != order_raw:
+            next_problem["goal_term_order"] = cleaned_order
+
     # Structural errors only — raises GoalTermValidationError on shape / type / order bugs.
     validate_problem_goal_terms(problem=next_problem)
 
