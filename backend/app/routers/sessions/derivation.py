@@ -11,6 +11,7 @@ from threading import Thread
 from typing import Any
 
 from app.config import get_settings
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -1073,6 +1074,17 @@ def _visible_reply_commits(visible_assistant_message: str | None) -> bool:
     return any(phrase in text for phrase in _COMMIT_PHRASES)
 
 
+def _read_session_processing_revision(db: Session, session_id: str) -> int | None:
+    """Read the live ``processing_revision`` for a session, bypassing the
+    identity-map cache. Used by the BG-derivation race-protection checks: we
+    need the *committed* DB value (which a concurrent participant PATCH may
+    have just bumped), not the snapshot SQLAlchemy holds for our staged row.
+    """
+    return db.execute(
+        select(StudySession.processing_revision).where(StudySession.id == session_id)
+    ).scalar()
+
+
 def _run_background_derivation(
     *,
     session_id: str,
@@ -1134,6 +1146,17 @@ def _run_background_derivation(
     fresh OQ. Sequencing avoids that entirely.
     """
     try:
+        # Cancel-in-flight check. ``mark_processing_pending`` bumps
+        # ``processing_revision`` right before each BG launch, and the
+        # synchronous PATCH endpoints (def/config edits) bump it too. If the
+        # live DB value already exceeds ours, a newer turn or edit has
+        # landed — drop out before spending an LLM call whose result we
+        # would discard at the commit-time revision check anyway.
+        with SessionLocal() as _early_db:
+            current_revision = _read_session_processing_revision(_early_db, session_id)
+        if current_revision is not None and current_revision != revision:
+            return
+
         from app.services.llm import generate_problem_brief_update
         timeout_sec = get_settings().derivation_timeout_sec
         # Recovery: the chat-turn LLM is supposed to emit BOTH visible reply
@@ -1519,6 +1542,13 @@ def _run_background_derivation(
                 ) == json.dumps(normalize_problem_brief(base_problem_brief), sort_keys=True, default=str)
                 config_api_key = None if brief_unchanged else api_key
 
+                # Race-protect the panel write. ``sync_panel_from_problem_brief``
+                # makes a slow config LLM call internally; a concurrent
+                # participant PATCH during that window bumps the revision and
+                # already persisted a fresh panel, so committing our derived
+                # panel here would clobber it. Stage with ``commit=False``,
+                # re-read the live revision after the LLM call, and only
+                # commit on match — otherwise roll back the staged panel.
                 sync.sync_panel_from_problem_brief(
                     row,
                     db,
@@ -1528,7 +1558,14 @@ def _run_background_derivation(
                     workflow_mode=workflow_mode,
                     recent_runs_summary=recent_runs_summary,
                     preserve_missing_managed_fields=True,
+                    commit=False,
                 )
+                current_revision = _read_session_processing_revision(db, session_id)
+                if current_revision is not None and current_revision != revision:
+                    db.rollback()
+                    return
+                db.commit()
+                db.refresh(row)
 
             row = db.get(StudySession, session_id)
             if row is None or row.processing_revision != revision:

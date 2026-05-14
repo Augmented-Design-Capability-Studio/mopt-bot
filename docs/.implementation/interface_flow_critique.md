@@ -62,23 +62,7 @@ This also makes waterfall vs agile cleaner: waterfall gate becomes
 "every OQ predicate is satisfied" — no more "the LLM forgot to clear
 the OQ" failure mode.
 
-## 4. Race conditions on rapid edits
-
-Editing a definition row triggers a derivation call. If a user
-edits-saves-edits-saves within a few seconds (common when promoting
-several assumptions), derivation calls overlap. The codebase has
-`_run_background_derivation` + `launch_background_derivation`, but I
-didn't see explicit cancel-in-flight when a newer edit lands. Symptom:
-the *older* derivation's result wins because it returns later. Plan
-for:
-
-- Each derivation is tied to a `brief_revision`; on completion, if the
-  current revision is higher, drop the result.
-- Or, debounce edits at the router level (e.g. 300ms) and coalesce.
-
-This also covers the "undo last edit" case from spec §8.
-
-## 5. Sub-property bridge is N×M (will get worse)
+## 4. Sub-property bridge is N×M (will get worse)
 
 Today, VRPTW's `driver_preferences` is special-cased via the
 `worker_preference_companion_field` parameter through
@@ -105,7 +89,7 @@ panel, config panel, derivation, and the visible-reply checker all
 iterate the list generically. New problems add specs; the main backend
 doesn't change.
 
-## 6. Cold→warm transition is decided per-turn but not committed
+## 5. Cold→warm transition is decided per-turn but not committed
 
 Spec §1 implies classification each turn. Two failure modes:
 
@@ -117,7 +101,7 @@ Spec §1 implies classification each turn. Two failure modes:
   cool, thanks") shouldn't drop back to cold. Add a one-way latch:
   once warm, stay warm for the session unless the researcher resets.
 
-## 7. Post-run growth is unbounded
+## 6. Post-run growth is unbounded
 
 "After each run, add one or two assumptions or OQs." Over a 30-minute
 session with 6–10 runs, that's a 12–20 row drift. Today, pruning
@@ -130,7 +114,7 @@ but the *additive* side is unbounded. Consider:
 - Make this a structural constraint of the brief-update schema, not a
   prompt instruction.
 
-## 8. Researcher steer messages and validator intent detection
+## 7. Researcher steer messages and validator intent detection
 
 The validator keys off `visible_reply_intent.{asks_user_question,
 claims_brief_change}`. A researcher steer that says "please confirm
@@ -140,7 +124,7 @@ ask a question that was *researcher-initiated*. If the validator sees
 that's not really a bug. Tag steer turns so the validator knows the
 ask came from outside the participant flow.
 
-## 9. RAG retrieval is upstream of temperature classification
+## 8. RAG retrieval is upstream of temperature classification
 
 `search_reference_excerpts` is called every turn before the chat LLM,
 keyed on user text + problem id + temperature. Two concrete concerns:
@@ -166,7 +150,7 @@ keyed on user text + problem id + temperature. Two concrete concerns:
   cost is paid on the *next participant turn* or at startup. Document
   this expectation, or warm the cache on doc-file change.
 
-## 10. "Acknowledge what specifically changed" is a recurring trap
+## 9. "Acknowledge what specifically changed" is a recurring trap
 
 Spec §5 and §6 both require the chat to name the specific change after
 an edit. That requires the chat LLM to see a *diff* of the brief/config
@@ -178,7 +162,7 @@ current snapshot.
 
 ---
 
-If you want to prioritize: #5 (generic goal-term spec) is the change
+If you want to prioritize: #4 (generic goal-term spec) is the change
 that pays back the most going forward; everything else can be
 incremental. #1 (collapse stages / constrain at emission) is the
 high-ceiling change but the most invasive.
