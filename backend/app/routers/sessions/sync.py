@@ -364,6 +364,7 @@ def _merge_non_destructive_managed_fields(
     workflow_mode: str | None = None,
     api_key: str | None = None,
     test_problem_id: str | None = None,
+    embedding_model: str | None = None,
 ) -> dict:
     managed_keys = (
         "goal_terms",
@@ -489,6 +490,7 @@ def _merge_non_destructive_managed_fields(
                 workflow_mode=workflow_mode,
                 api_key=api_key,
                 test_problem_id=test_problem_id,
+                embedding_model=embedding_model,
             )
             if dropped:
                 log.warning(
@@ -735,6 +737,7 @@ def sync_panel_from_problem_brief(
             workflow_mode=workflow_mode or row.workflow_mode,
             api_key=api_key,
             test_problem_id=test_problem_id,
+            embedding_model=helpers.embedding_model_for(row),
         )
     next_problem.update(derived_problem)
     if seed_panel is None:

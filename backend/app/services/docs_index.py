@@ -2,7 +2,7 @@
 
 Two paths:
 1. **Embeddings (preferred)** — when a Gemini API key is available, sections are
-   embedded with `text-embedding-004` once per (repo, doc-content) and cached on
+   embedded with `gemini-embedding-001` once per (repo, doc-content) and cached on
    disk under ``backend/.cache/docs_embeddings/<sha>.json``. Queries embed once
    per call and rank by cosine similarity. Robust to paraphrases and
    vocabulary mismatch.
@@ -43,7 +43,7 @@ _DENYLIST = (
     "weight aliases",
 )
 
-_EMBEDDING_MODEL = "text-embedding-004"
+_EMBEDDING_MODEL = "gemini-embedding-001"
 _EMBEDDING_BATCH_SIZE = 64
 _EMBEDDING_MIN_COSINE = 0.55
 
@@ -236,7 +236,7 @@ def load_docs_index(repo_root: Path, test_problem_id: str | None, temperature: C
 # --- Embedding path ----------------------------------------------------------
 
 
-def _content_hash(sections: list[DocSection]) -> str:
+def _content_hash(sections: list[DocSection], model: str | None = None) -> str:
     h = hashlib.sha256()
     for sec in sections:
         h.update(sec.source.encode("utf-8"))
@@ -245,7 +245,7 @@ def _content_hash(sections: list[DocSection]) -> str:
         h.update(b"\x00")
         h.update(sec.body.encode("utf-8"))
         h.update(b"\x01")
-    h.update(_EMBEDDING_MODEL.encode("utf-8"))
+    h.update((model or _EMBEDDING_MODEL).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -308,10 +308,17 @@ def _embed_texts(
     api_key: str,
     texts: list[str],
     task_type: str,
+    model: str | None = None,
 ) -> list[tuple[float, ...]] | None:
-    """Embed a batch of texts via google-genai. Returns None on failure."""
+    """Embed a batch of texts via google-genai. Returns None on failure.
+
+    ``model`` overrides the module-level default when provided — sessions can
+    pick their own embedding model via the Assistant settings dialog. When
+    ``None``, falls back to ``_EMBEDDING_MODEL`` (the deployment default).
+    """
     if not texts:
         return []
+    embed_model = model or _EMBEDDING_MODEL
     try:
         from google import genai
         from google.genai import types as _types
@@ -328,7 +335,7 @@ def _embed_texts(
         for i in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
             batch = texts[i : i + _EMBEDDING_BATCH_SIZE]
             resp = client.models.embed_content(
-                model=_EMBEDDING_MODEL,
+                model=embed_model,
                 contents=batch,
                 config=_types.EmbedContentConfig(task_type=task_type),
             )
@@ -351,17 +358,23 @@ def _build_embedding_index(
     repo_root: Path,
     sections: list[DocSection],
     api_key: str,
+    embedding_model: str | None = None,
 ) -> EmbeddingDocsIndex | None:
     if not sections:
         return EmbeddingDocsIndex([])
-    digest = _content_hash(sections)
+    digest = _content_hash(sections, embedding_model)
     cache_path = _embedding_cache_dir(repo_root) / f"{digest}.json"
     cached = _read_embedding_cache(cache_path)
     if cached is not None and len(cached) == len(sections):
         return EmbeddingDocsIndex(cached)
 
     payloads = [f"{sec.heading_path}\n\n{sec.body}" for sec in sections]
-    vectors = _embed_texts(api_key=api_key, texts=payloads, task_type="RETRIEVAL_DOCUMENT")
+    vectors = _embed_texts(
+        api_key=api_key,
+        texts=payloads,
+        task_type="RETRIEVAL_DOCUMENT",
+        model=embedding_model,
+    )
     if vectors is None or len(vectors) != len(sections):
         return None
     embedded = [
@@ -378,9 +391,13 @@ def _load_embedding_index(
     test_problem_id: str | None,
     temperature: ContextTemperature,
     api_key: str,
+    embedding_model: str | None = None,
 ) -> EmbeddingDocsIndex | None:
     sections = _collect_sections(repo_root, test_problem_id, temperature)
-    cache_key = f"{repo_root.resolve()}::{test_problem_id or ''}::{temperature}::{_content_hash(sections)}"
+    cache_key = (
+        f"{repo_root.resolve()}::{test_problem_id or ''}::{temperature}::"
+        f"{_content_hash(sections, embedding_model)}"
+    )
     cached = _EMBEDDING_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -388,6 +405,7 @@ def _load_embedding_index(
         repo_root=repo_root,
         sections=sections,
         api_key=api_key,
+        embedding_model=embedding_model,
     )
     if index is None:
         return None
@@ -403,6 +421,7 @@ def search_reference_excerpts(
     temperature: ContextTemperature,
     max_items: int = 2,
     api_key: str | None = None,
+    embedding_model: str | None = None,
 ) -> list[str]:
     """Return up to ``max_items`` reference excerpts relevant to ``user_text``.
 
@@ -421,6 +440,7 @@ def search_reference_excerpts(
                 test_problem_id=test_problem_id,
                 temperature=temperature,
                 api_key=api_key,
+                embedding_model=embedding_model,
             )
         except Exception:
             log.exception("Embedding index load failed; falling back to TF-IDF")
@@ -430,6 +450,7 @@ def search_reference_excerpts(
                 api_key=api_key,
                 texts=[text],
                 task_type="RETRIEVAL_QUERY",
+                model=embedding_model,
             )
             if query_vec is not None and len(query_vec) == 1:
                 hits = embedding_index.search(query_vec[0], k=max_items)

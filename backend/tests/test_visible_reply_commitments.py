@@ -231,6 +231,7 @@ def test_speculative_gate_predicts_run_ready_after_ga_injection():
             patch,
             algorithm_commitment=None,
             problem_id="vrptw",
+            optimization_gate_engaged=True,
         )
         is False
     )
@@ -244,6 +245,7 @@ def test_speculative_gate_predicts_run_ready_after_ga_injection():
             patch,
             algorithm_commitment="GA",
             problem_id="vrptw",
+            optimization_gate_engaged=True,
         )
         is True
     )

@@ -163,14 +163,34 @@ def fail_processing_state(row: StudySession, detail: str, *, cancel_revision: bo
     touch_session(row)
 
 
-def maybe_mark_optimization_gate_engaged_from_brief(row: StudySession, brief: dict) -> bool:
-    """Set ``optimization_gate_engaged`` when the brief lists at least one open-question object."""
+def maybe_mark_optimization_gate_engaged_from_brief(
+    row: StudySession, brief: dict, panel: dict | None = None
+) -> bool:
+    """Set ``optimization_gate_engaged`` when the participant has demonstrably
+    engaged with the system: any open-question object in the brief, OR any
+    goal-term / algorithm value on the panel. One-way sticky.
+
+    Brief-only callers (legacy) can omit ``panel``. Production callers in
+    ``sync_optimization_allowed_after_participant_mutation`` pass both so the
+    gate honours panel-only flows (a participant who edits weights via the
+    config panel without chatting still counts as engaged).
+    """
     if row.optimization_gate_engaged:
         return False
     oq = brief.get("open_questions") or []
     if any(isinstance(q, dict) for q in oq):
         row.optimization_gate_engaged = True
         return True
+    if isinstance(panel, dict):
+        from app.optimization_gate import _goal_term_keys, _inner_problem_from_panel
+
+        inner = _inner_problem_from_panel(panel)
+        if inner and (
+            len(_goal_term_keys(inner)) > 0
+            or bool(str(inner.get("algorithm") or "").strip())
+        ):
+            row.optimization_gate_engaged = True
+            return True
     return False
 
 
@@ -190,7 +210,7 @@ def sync_optimization_allowed_after_participant_mutation(row: StudySession) -> b
     panel = panel_dict(row)
     brief = problem_brief_dict(row)
     changed = False
-    if maybe_mark_optimization_gate_engaged_from_brief(row, brief):
+    if maybe_mark_optimization_gate_engaged_from_brief(row, brief, panel):
         changed = True
     engaged = bool(getattr(row, "optimization_gate_engaged", False))
     problem_id = str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID)
@@ -254,6 +274,7 @@ def session_to_out(row: StudySession) -> SessionOut:
         tutorial_completed=bool(getattr(row, "tutorial_completed", False)),
         optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
         gemini_model=row.gemini_model or get_settings().default_gemini_model,
+        embedding_model=row.embedding_model or get_settings().default_embedding_model,
         gemini_key_configured=bool(row.gemini_key_encrypted),
         content_reset_revision=int(getattr(row, "content_reset_revision", 0) or 0),
     )
@@ -261,6 +282,15 @@ def session_to_out(row: StudySession) -> SessionOut:
 
 def run_number(row: OptimizationRun) -> int:
     return int(row.session_run_index or row.id)
+
+
+def embedding_model_for(row: StudySession | None) -> str:
+    """Resolve the embedding model for a session: row override → settings default."""
+    if row is not None:
+        chosen = getattr(row, "embedding_model", None)
+        if chosen and str(chosen).strip():
+            return str(chosen).strip()
+    return get_settings().default_embedding_model
 
 
 def run_to_out(row: OptimizationRun) -> RunOut:

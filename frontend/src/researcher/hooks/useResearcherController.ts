@@ -32,8 +32,9 @@ export function useResearcherController() {
   const [runs, setRuns] = useState<RunResult[]>([]);
   const [steerText, setSteerText] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
-  const { defaultModel: defaultGeminiModel } = useGeminiConfig();
+  const { defaultModel: defaultGeminiModel, defaultEmbeddingModel } = useGeminiConfig();
   const [geminiModel, setGeminiModel] = useState("");
+  const [embeddingModel, setEmbeddingModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -156,7 +157,8 @@ export function useResearcherController() {
   useEffect(() => {
     if (!detail) return;
     setGeminiModel(detail.gemini_model?.trim() || defaultGeminiModel);
-  }, [detail?.id, defaultGeminiModel]);
+    setEmbeddingModel(detail.embedding_model?.trim() || defaultEmbeddingModel);
+  }, [detail?.id, defaultGeminiModel, defaultEmbeddingModel]);
 
   function saveToken() {
     const trimmed = tokenInput.trim();
@@ -480,11 +482,12 @@ export function useResearcherController() {
     const ok = await patchSession({
       gemini_api_key: key,
       gemini_model: geminiModel.trim() || undefined,
+      embedding_model: embeddingModel.trim() || undefined,
     });
     if (ok) {
       setGeminiKey("");
       setPushKeySuccess(
-        "Key saved on the server. The participant app will show a check on the Model / API key chip after the next sync.",
+        "Key saved on the server. The participant app will show a check on the Assistant chip after the next sync.",
       );
     }
   }
@@ -535,6 +538,7 @@ export function useResearcherController() {
     steerText,
     geminiKey,
     geminiModel,
+    embeddingModel,
     busy,
     error,
     notice,
@@ -545,6 +549,7 @@ export function useResearcherController() {
     setSteerText,
     setGeminiKey,
     setGeminiModel,
+    setEmbeddingModel,
     setPushKeySuccess,
     setNotice,
     setError,

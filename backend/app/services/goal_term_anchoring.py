@@ -103,6 +103,7 @@ def _embedding_anchored(
     keys: list[tuple[str, dict[str, Any]]],
     brief_items: list[dict[str, Any]],
     api_key: str | None,
+    embedding_model: str | None = None,
 ) -> dict[str, bool]:
     """Best-effort embedding fallback. Returns a key→bool map.
 
@@ -129,12 +130,18 @@ def _embedding_anchored(
 
     queries = [_entry_anchor_text(key, entry) for key, entry in keys]
     item_vectors = _embed_texts(
-        api_key=api_key, texts=item_texts, task_type="RETRIEVAL_DOCUMENT"
+        api_key=api_key,
+        texts=item_texts,
+        task_type="RETRIEVAL_DOCUMENT",
+        model=embedding_model,
     )
     if item_vectors is None:
         return out
     query_vectors = _embed_texts(
-        api_key=api_key, texts=queries, task_type="RETRIEVAL_QUERY"
+        api_key=api_key,
+        texts=queries,
+        task_type="RETRIEVAL_QUERY",
+        model=embedding_model,
     )
     if query_vectors is None:
         return out
@@ -182,6 +189,7 @@ def filter_unanchored_new_goal_terms(
     workflow_mode: str | None,
     api_key: str | None = None,
     test_problem_id: str | None = None,
+    embedding_model: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Drop newly-introduced goal_term keys that have no evidence anchor.
 
@@ -239,6 +247,7 @@ def filter_unanchored_new_goal_terms(
         keys=needs_embedding,
         brief_items=items if isinstance(items, list) else [],
         api_key=api_key,
+        embedding_model=embedding_model,
     )
 
     filtered: dict[str, dict[str, Any]] = {}

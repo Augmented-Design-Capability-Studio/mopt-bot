@@ -12,9 +12,18 @@ import { fetchPublicConfig, type PublicConfig } from "@shared/api";
 export type GeminiConfig = {
   defaultModel: string;
   suggestions: string[];
+  defaultEmbeddingModel: string;
+  embeddingSuggestions: string[];
 };
 
 export const GEMINI_MODEL_DATALIST_ID = "mopt-gemini-model-suggestions";
+
+const _EMPTY_CONFIG: GeminiConfig = {
+  defaultModel: "",
+  suggestions: [],
+  defaultEmbeddingModel: "",
+  embeddingSuggestions: [],
+};
 
 // --- Module-level singleton cache ---
 let _cache: GeminiConfig | null = null;
@@ -24,7 +33,12 @@ function loadGeminiConfig(): Promise<GeminiConfig> {
   if (_cache) return Promise.resolve(_cache);
   if (!_promise) {
     _promise = fetchPublicConfig().then((c: PublicConfig) => {
-      _cache = { defaultModel: c.default_gemini_model, suggestions: c.gemini_model_suggestions };
+      _cache = {
+        defaultModel: c.default_gemini_model,
+        suggestions: c.gemini_model_suggestions,
+        defaultEmbeddingModel: c.default_embedding_model,
+        embeddingSuggestions: c.embedding_model_suggestions,
+      };
       return _cache;
     });
   }
@@ -33,7 +47,7 @@ function loadGeminiConfig(): Promise<GeminiConfig> {
 
 /** Returns Gemini config fetched from the server (shared singleton, fetched once). */
 export function useGeminiConfig(): GeminiConfig {
-  const [config, setConfig] = useState<GeminiConfig>(_cache ?? { defaultModel: "", suggestions: [] });
+  const [config, setConfig] = useState<GeminiConfig>(_cache ?? _EMPTY_CONFIG);
   useEffect(() => {
     if (_cache) return; // already resolved — state was initialized from cache above
     loadGeminiConfig().then(setConfig);

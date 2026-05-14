@@ -239,7 +239,7 @@ def speculative_intrinsic_gate_ready(
     brief_patch: dict[str, Any] | None,
     algorithm_commitment: str | None,
     problem_id: str | None,
-    optimization_gate_engaged: bool = False,
+    optimization_gate_engaged: bool = True,
 ) -> bool:
     """Predict whether ``intrinsic_optimization_ready`` would pass once
     ``brief_patch`` lands and the algorithm (if committed) is reflected on
@@ -252,6 +252,12 @@ def speculative_intrinsic_gate_ready(
     algorithm was committed and the panel doesn't already have one. We then
     run the existing gate function against (speculative_brief,
     speculative_panel) — no duplicated gate logic.
+
+    ``optimization_gate_engaged`` defaults to True because speculation
+    answers "what will the gate state be after this turn commits?" and a
+    user-visible turn flips the engagement flag at commit time. Callers
+    that want to model a non-engaging turn (e.g. a synthetic run-ack
+    before any visible chat) can pass False explicitly.
     """
     from copy import deepcopy
 

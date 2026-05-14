@@ -59,6 +59,7 @@ export function ClientApp() {
       showModelDialog={controller.showModelDialog}
       modelName={controller.modelName}
       modelKey={controller.modelKey}
+      embeddingModel={controller.embeddingModel}
       aiPending={controller.aiPending}
       fileRef={controller.fileRef}
       simulatedUploadChips={controller.simulatedUploadChips}
@@ -71,6 +72,7 @@ export function ClientApp() {
       onSetShowModelDialog={controller.setShowModelDialog}
       onModelNameChange={controller.setModelName}
       onModelKeyChange={controller.setModelKey}
+      onEmbeddingModelChange={controller.setEmbeddingModel}
       onLeaveSession={controller.leaveSession}
       onStartSession={controller.startSession}
       onSendChat={controller.sendChat}

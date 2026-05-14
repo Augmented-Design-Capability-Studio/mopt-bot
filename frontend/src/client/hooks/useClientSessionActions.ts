@@ -140,6 +140,7 @@ type UseParticipantSessionActionsArgs = {
   scheduleText: string;
   modelKey: string;
   modelName: string;
+  embeddingModel: string;
   problemPanelHydrationRef: MutableRefObject<ProblemPanelHydration>;
   setSession: (value: Session | null | ((prev: Session | null) => Session | null)) => void;
   setMessages: (value: Message[] | ((prev: Message[]) => Message[])) => void;
@@ -174,9 +175,26 @@ type SaveProblemBriefOptions = {
   chatNote?: string;
 };
 
+/** Typed discriminator for synthetic context messages the frontend posts.
+ *  Must match backend `ChatContextKind` (see backend/app/schemas.py). Setting
+ *  this lets the backend skip the legacy content-regex classifiers in
+ *  app.routers.sessions.intent and dispatch on the kind directly. */
+export type ChatContextKind =
+  | "run_started"
+  | "run_ack"
+  | "config_save"
+  | "definition_save"
+  | "config_restore"
+  | "definition_restore"
+  | "definition_cleanup"
+  | "open_question_answered"
+  | "explain_run"
+  | "simulated_upload";
+
 type PostContextMessageOptions = {
   skipHiddenBriefUpdate?: boolean;
   suppressOptimisticUserMessage?: boolean;
+  contextKind?: ChatContextKind;
 };
 
 export function useClientSessionActions({
@@ -193,6 +211,7 @@ export function useClientSessionActions({
   scheduleText,
   modelKey,
   modelName,
+  embeddingModel,
   problemPanelHydrationRef,
   setSession,
   setMessages,
@@ -274,6 +293,7 @@ export function useClientSessionActions({
             content,
             invoke_model: withModel,
             skip_hidden_brief_update: messageOptions?.skipHiddenBriefUpdate ?? false,
+            ...(messageOptions?.contextKind ? { context_kind: messageOptions.contextKind } : {}),
           }),
         });
         const response = normalizePostMessagesResponse(raw);
@@ -321,7 +341,9 @@ export function useClientSessionActions({
   );
 
   const requestDefinitionCleanup = useCallback(async () => {
-    await postContextMessage(DEFINITION_CLEANUP_CHAT_MESSAGE, invokeModel);
+    await postContextMessage(DEFINITION_CLEANUP_CHAT_MESSAGE, invokeModel, {
+      contextKind: "definition_cleanup",
+    });
   }, [invokeModel, postContextMessage]);
 
   const runOpenQuestionCleanupRequest = useCallback(async () => {
@@ -432,7 +454,9 @@ export function useClientSessionActions({
   const simulateUpload = useCallback(
     async (fileNames: string[]) => {
       if (!token || !sessionId) return;
-      await postContextMessage(buildSimulatedUploadMessage(fileNames), invokeModel);
+      await postContextMessage(buildSimulatedUploadMessage(fileNames), invokeModel, {
+        contextKind: "simulated_upload",
+      });
       const tutorialPatch = patchForTutorialEvent("files-uploaded", session);
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       try {
@@ -485,7 +509,7 @@ export function useClientSessionActions({
             `Detailed changes: ${detailedChanges}. ` +
             `Please acknowledge in 1-2 short sentences using user-friendly names, then update the brief rows for the affected settings while preserving any prior rationale.`,
           true,
-          { skipHiddenBriefUpdate: false },
+          { skipHiddenBriefUpdate: false, contextKind: "config_save" },
         );
       }
       void refetchSnapshots?.();
@@ -605,6 +629,7 @@ export function useClientSessionActions({
           : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
         void postContextMessage(chatMessage, true, {
           skipHiddenBriefUpdate: !options?.chatNote?.trim(),
+          contextKind: "definition_save",
         });
       }
       void refetchSnapshots?.();
@@ -699,6 +724,13 @@ export function useClientSessionActions({
         }
         if (invokeModel) {
           let chatMessage: string;
+          // "both" is a config restore that also touched the definition — the
+          // backend's interpret-only carve-out (config_restore, definition_
+          // restore) covers either kind, and we lean on config_restore for the
+          // combined case to match the existing semantic ("ack and explain
+          // impact on the solver"). Definition-only restores tag as
+          // definition_restore.
+          let restoreKind: ChatContextKind = "config_restore";
           if (scope === "both") {
             chatMessage = `I just restored both the problem definition and configuration from a snapshot (${timeStr}). Please acknowledge the restored gathered info, assumptions, and solver setup, and briefly explain the expected impact on the solver.`;
           } else if (scope === "definition") {
@@ -706,13 +738,17 @@ export function useClientSessionActions({
               ? " The matching solver configuration from that snapshot was NOT restored, so the current config may no longer line up with this definition — flag any likely mismatches."
               : "";
             chatMessage = `I just restored the problem definition from a snapshot (${timeStr}). Please acknowledge the restored gathered info and assumptions.${mismatchNote}`;
+            restoreKind = "definition_restore";
           } else {
             const mismatchNote = brief && typeof brief === "object"
               ? " The matching problem definition from that snapshot was NOT restored, so the current definition may no longer line up with this config — flag any likely mismatches."
               : "";
             chatMessage = `I just restored the problem configuration from a snapshot (${timeStr}). Please acknowledge the change and briefly explain the expected impact on the solver.${mismatchNote}`;
           }
-          await postContextMessage(chatMessage, true, { skipHiddenBriefUpdate: true });
+          await postContextMessage(chatMessage, true, {
+            skipHiddenBriefUpdate: true,
+            contextKind: restoreKind,
+          });
         }
       } catch (error) {
         setError(error instanceof Error ? error.message : "Restore failed");
@@ -890,7 +926,11 @@ export function useClientSessionActions({
     setOptimizing(true);
     setError(null);
     const startedRunNumber = maxCommittedRunNumber(runs) + 1;
-    void postContextMessage(`I started Run #${startedRunNumber}.`, false, { skipHiddenBriefUpdate: true, suppressOptimisticUserMessage: true });
+    void postContextMessage(`I started Run #${startedRunNumber}.`, false, {
+      skipHiddenBriefUpdate: true,
+      suppressOptimisticUserMessage: true,
+      contextKind: "run_started",
+    });
     setRuns((current) => {
       const base = current.filter((r) => !r.clientPending);
       const pending = makeOptimisticOptimizeRun(problem, base);
@@ -932,6 +972,7 @@ export function useClientSessionActions({
           {
             skipHiddenBriefUpdate: true,
             suppressOptimisticUserMessage: true,
+            contextKind: "run_ack",
           },
         );
       }
@@ -1070,6 +1111,7 @@ export function useClientSessionActions({
     await postContextMessage(
       `Please explain Run #${runNo} in plain language for me. Include: (1) strengths, (2) likely local-improvement opportunities they may notice, (3) why a metaheuristic can still return this solution under current trade-offs, and (4) one or two concrete next-run adjustments. Context: cost=${runCost}, violations=${violationSummary}.`,
       true,
+      { contextKind: "explain_run" },
     );
   }, [postContextMessage, session?.status, session?.test_problem_id, sessionId, token]);
 
@@ -1083,6 +1125,7 @@ export function useClientSessionActions({
         body: JSON.stringify({
           gemini_api_key: modelKey || undefined,
           gemini_model: modelName || undefined,
+          embedding_model: embeddingModel || undefined,
         }),
       });
       setSession({
@@ -1097,7 +1140,7 @@ export function useClientSessionActions({
     } finally {
       setBusy(false);
     }
-  }, [modelKey, modelName, sessionId, setBusy, setError, setModelKey, setSession, setShowModelDialog, syncSession, token]);
+  }, [embeddingModel, modelKey, modelName, sessionId, setBusy, setError, setModelKey, setSession, setShowModelDialog, syncSession, token]);
 
 
   const cancelOptimize = useCallback(async () => {

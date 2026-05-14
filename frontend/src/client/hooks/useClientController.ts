@@ -35,7 +35,7 @@ import {
 import { type ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import {
   computeCanRunOptimization,
-  intrinsicOptimizationReadyAgile,
+  intrinsicOptimizationReady,
 } from "../lib/optimizationGate";
 
 import { type EditMode, type RecentSessionRow } from "../lib/clientTypes";
@@ -49,7 +49,7 @@ import { useClientSessionSync } from "./useClientSessionSync";
 import { useGeminiConfig } from "@shared/geminiModelSuggestions";
 
 export function useClientController() {
-  const { defaultModel } = useGeminiConfig();
+  const { defaultModel, defaultEmbeddingModel } = useGeminiConfig();
   const [savedToken, setSavedToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? "");
   const [pendingUrlSessionId, setPendingUrlSessionId] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -87,6 +87,7 @@ export function useClientController() {
   const [modelKey, setModelKey] = useState("");
 
   const [modelName, setModelName] = useState("");
+  const [embeddingModel, setEmbeddingModel] = useState("");
   const [aiPending, setAiPending] = useState(false);
   const [recentRows, setRecentRows] = useState<RecentSessionRow[]>([]);
   const [recentBusy, setRecentBusy] = useState(false);
@@ -149,6 +150,7 @@ export function useClientController() {
     authed,
     lastMsgId,
     activeRun,
+    messages,
     optimizingRef,
     runs,
     session,
@@ -172,7 +174,9 @@ export function useClientController() {
     setError,
     setRecentRows,
     setModelName,
+    setEmbeddingModel,
     defaultModel,
+    defaultEmbeddingModel,
   });
 
   const lifecycle = useClientSessionLifecycle({
@@ -323,6 +327,7 @@ export function useClientController() {
     scheduleText,
     modelKey,
     modelName,
+    embeddingModel,
     problemPanelHydrationRef,
     setSession,
     setMessages,
@@ -369,10 +374,12 @@ export function useClientController() {
     if (processing.brief_status === "failed" || processing.config_status === "failed") return;
     if (editMode !== "none") return;
     if (!testProblemMeta) return;
-    if (!intrinsicOptimizationReadyAgile(
+    if (!intrinsicOptimizationReady(
+      session.workflow_mode,
       configText,
-      testProblemMeta.weight_display_keys,
-      testProblemMeta.worker_preference_key ?? null,
+      problemBrief,
+      session.optimization_gate_engaged ?? false,
+      testProblemMeta,
     )) return;
     if (!computeCanRunOptimization(session, configText, problemBrief, hasUploadedData, testProblemMeta)) return;
     const hasCommittedOptimize = runs.some((r) => !r.clientPending && r.run_type === "optimize");
@@ -520,6 +527,7 @@ export function useClientController() {
     showModelDialog,
     modelKey,
     modelName,
+    embeddingModel,
     aiPending,
     recentRows,
     recentBusy,
@@ -544,6 +552,7 @@ export function useClientController() {
     setShowModelDialog,
     setModelKey,
     setModelName,
+    setEmbeddingModel,
     login: lifecycle.login,
     refreshRecentSessionsList: lifecycle.refreshRecentSessionsList,
     resumePastSession,

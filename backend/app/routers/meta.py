@@ -53,4 +53,6 @@ def get_public_config():
     return {
         "default_gemini_model": s.default_gemini_model,
         "gemini_model_suggestions": s.gemini_model_suggestions_list,
+        "default_embedding_model": s.default_embedding_model,
+        "embedding_model_suggestions": s.embedding_model_suggestions_list,
     }

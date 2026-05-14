@@ -69,7 +69,8 @@ class KnapsackStudyPort:
             visualization_presets=["knapsack_selection"],
             primary_visualization="knapsack_selection",
             weight_display_keys=self.weight_display_keys(),
-            worker_preference_key=self.worker_preference_key(),
+            worker_preference_key=None,
+            gate_conditional_companions={},
         )
 
     def sanitize_panel_config(self, panel_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -158,9 +159,6 @@ class KnapsackStudyPort:
 
     def weight_display_keys(self) -> list[str]:
         return ["value_emphasis", "capacity_overflow", "selection_sparsity"]
-
-    def worker_preference_key(self) -> str | None:
-        return None
 
     def auto_anchored_goal_term_keys(self) -> frozenset[str]:
         return frozenset(self.weight_display_keys())

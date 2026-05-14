@@ -65,12 +65,14 @@ export function ResearcherApp() {
           steerText={researcher.steerText}
           geminiKey={researcher.geminiKey}
           geminiModel={researcher.geminiModel}
+          embeddingModel={researcher.embeddingModel}
           busy={researcher.busy}
           pushKeySuccess={researcher.pushKeySuccess}
           getOnlyActiveTerms={researcher.getOnlyActiveTerms}
           onSteerTextChange={researcher.setSteerText}
           onGeminiKeyChange={researcher.setGeminiKey}
           onGeminiModelChange={researcher.setGeminiModel}
+          onEmbeddingModelChange={researcher.setEmbeddingModel}
           onClearPushKeySuccess={() => researcher.setPushKeySuccess(null)}
           onPatchSession={researcher.patchSession}
           onSetOnlyActiveTerms={researcher.setOnlyActiveTerms}

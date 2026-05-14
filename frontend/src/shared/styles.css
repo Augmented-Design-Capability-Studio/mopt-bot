@@ -381,6 +381,15 @@ select:focus-visible {
   background: #eef6ef;
 }
 
+/* Dimmed state while the async-verification pipeline is still running. The
+   draft is visible right away (no waiting on the probe), but reduced opacity
+   and a muted border signal that the system is still settling the brief. */
+.bubble--verifying {
+  opacity: 0.55;
+  border-left-color: #b6b3aa;
+  transition: opacity 0.2s ease-out, border-left-color 0.2s ease-out;
+}
+
 .bubble-status--info {
   border-left-color: #4f6f90;
   background: #eef4fb;

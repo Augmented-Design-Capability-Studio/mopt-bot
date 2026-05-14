@@ -51,3 +51,24 @@ function sortCommittedMessagesFirst(messages: Message[]): Message[] {
     return 0;
   });
 }
+
+/** Replace an existing message in place (matched by id) with an updated copy
+ *  fetched from the server. Used when the async-verification pipeline rewrites
+ *  a message's content or clears its `verifying` flag — the standard
+ *  `after_id` poll won't see those changes, so we refetch the row directly
+ *  and merge it back in. Returns the same array reference when nothing
+ *  actually changed (content + meta deep-equal) so React skips a re-render. */
+export function mergeMessageUpdate(existing: Message[], updated: Message): Message[] {
+  const idx = existing.findIndex((m) => m.id === updated.id);
+  if (idx < 0) return existing;
+  const current = existing[idx]!;
+  if (
+    current.content === updated.content
+    && JSON.stringify(current.meta ?? null) === JSON.stringify(updated.meta ?? null)
+  ) {
+    return existing;
+  }
+  const next = existing.slice();
+  next[idx] = updated;
+  return next;
+}

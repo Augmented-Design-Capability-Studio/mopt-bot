@@ -15,11 +15,22 @@ _FIXED_CLEANUP_PHRASE = (
 )
 
 
-def classify_fixed_phrase_intents(content: str) -> tuple[bool, bool, bool] | None:
+def classify_fixed_phrase_intents(
+    content: str, context_kind: str | None = None
+) -> tuple[bool, bool, bool] | None:
     """Return (cleanup, clear, change) for messages whose text is a known
     button-posted phrase. Returns ``None`` for free-form user input so callers
     fall through to the LLM classifier.
+
+    Prefers the typed ``context_kind`` from ``MessageCreate`` when set; a
+    set kind that isn't a known fixed-phrase kind returns ``None`` (caller
+    falls through to LLM classification). Falls back to content matching only
+    when no kind is supplied.
     """
+    if context_kind is not None:
+        if context_kind == "definition_cleanup":
+            return (True, False, True)
+        return None
     text = (content or "").strip()
     if not text:
         return None
@@ -65,23 +76,44 @@ _CLEAR_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
-def is_definition_cleanup_request(content: str) -> bool:
+def is_definition_cleanup_request(
+    content: str, context_kind: str | None = None
+) -> bool:
+    if context_kind is not None:
+        return context_kind == "definition_cleanup"
     text = content.strip()
     if not text:
         return False
     return any(pattern.search(text) for pattern in _CLEANUP_INTENT_PATTERNS)
 
 
-def is_run_acknowledgement_message(content: str) -> bool:
-    """True if the message is the auto-posted run-complete context (e.g. 'Run #1 just completed...')."""
+def is_run_acknowledgement_message(
+    content: str, context_kind: str | None = None
+) -> bool:
+    """True if the message is the auto-posted run-complete context.
+
+    ``context_kind`` is the typed discriminator from ``MessageCreate``: when
+    set, it short-circuits the regex entirely so we no longer have to match
+    content strings the frontend happens to emit (and a turn tagged as
+    something else can't accidentally trigger the run-ack branch even if its
+    content looks run-ack-shaped). Regex stays as the backward-compatible
+    fallback for legacy callers (older sessions, ad-hoc programmatic posts,
+    server-side replays).
+    """
+    if context_kind is not None:
+        return context_kind == "run_ack"
     text = content.strip()
     if not text:
         return False
     return any(pattern.search(text) for pattern in _RUN_ACK_PATTERNS)
 
 
-def is_answered_open_question_message(content: str) -> bool:
+def is_answered_open_question_message(
+    content: str, context_kind: str | None = None
+) -> bool:
     """True if the message is from the Definition panel after the user saved an answer."""
+    if context_kind is not None:
+        return context_kind == "open_question_answered"
     text = content.strip()
     if not text:
         return False
@@ -128,15 +160,34 @@ def is_change_intent_fallback(content: str) -> bool:
     return not any(p.search(text) for p in _OBVIOUS_CONCEPT_QUESTION_PATTERNS)
 
 
-def is_interpret_only_context_message(content: str) -> bool:
+_INTERPRET_ONLY_CONTEXT_KINDS = frozenset(
+    {
+        # Run-completion turns and snapshot-restore turns are interpretation-
+        # only by design — their content is not a brief edit, just a synthetic
+        # context note asking the agent to react to a state change that
+        # already happened in the panel/brief through a different code path.
+        "run_ack",
+        "config_restore",
+        "definition_restore",
+    }
+)
+
+
+def is_interpret_only_context_message(
+    content: str, context_kind: str | None = None
+) -> bool:
     """True for synthetic context notes that should not trigger hidden brief/config derivation."""
+    if context_kind is not None:
+        return context_kind in _INTERPRET_ONLY_CONTEXT_KINDS
     text = content.strip()
     if not text:
         return False
     return any(pattern.search(text) for pattern in _INTERPRET_ONLY_CONTEXT_PATTERNS)
 
 
-def is_config_save_context_message(content: str) -> bool:
+def is_config_save_context_message(
+    content: str, context_kind: str | None = None
+) -> bool:
     """True for the synthetic 'I manually updated the problem configuration' turn.
 
     These turns DO run the hidden brief update — the prompt assembly uses this
@@ -144,6 +195,8 @@ def is_config_save_context_message(content: str) -> bool:
     affected brief rows naturally instead of leaving the deterministic mirror
     boilerplate in place.
     """
+    if context_kind is not None:
+        return context_kind == "config_save"
     text = content.strip()
     if not text:
         return False

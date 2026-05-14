@@ -55,12 +55,39 @@ class StudyProblemPort(Protocol):
         logic (same as demo mode).
         """
 
-    def worker_preference_key(self) -> str | None:
-        """Weight key whose UI block is shown conditionally on driver_preferences being non-empty.
+    def gate_conditional_companions(self) -> dict[str, str]:
+        """Map of goal-term key → companion panel field name.
 
-        Returns None if the problem has no such concept (e.g. knapsack).
-        VRPTW returns ``"worker_preference"``.
+        Each entry declares that the goal term carries a structured
+        companion (a top-level panel field — list, scalar, or whatever the
+        problem needs) whose presence is what makes the goal term
+        meaningful. The unified gate uses the map to decide which keys
+        contribute toward "at least one goal term present": a companion-
+        having key contributes iff its companion is present (per
+        ``companion_present`` below); its weight alone does **not** open
+        the gate. A non-companion key contributes iff its weight is set,
+        unchanged.
+
+        Default: ``{}`` (no coupled companions). VRPTW returns both
+        ``worker_preference`` (companion ``driver_preferences``, list)
+        and ``shift_limit`` (companion ``max_shift_hours``, scalar). The
+        gate handles arbitrary ``N`` without further changes.
         """
+        return {}
+
+    def companion_present(self, goal_term_key: str, value: Any) -> bool:
+        """Return True iff ``value`` (read from the panel's companion field
+        for ``goal_term_key``) counts as "defined" for the unified gate.
+
+        Default treats list-typed companions as present-iff-non-empty and
+        everything else as ``bool(value)``. Ports override per-key when
+        the "is defined" predicate needs domain knowledge (e.g. VRPTW's
+        ``shift_limit`` companion ``max_shift_hours`` requires ``> 0`` —
+        zero is not a meaningful shift cap).
+        """
+        if isinstance(value, list):
+            return len(value) > 0
+        return bool(value)
 
     def study_prompt_appendix(self) -> str | None:
         """Extra structured-prompt text for the study chat model (problem-specific)."""

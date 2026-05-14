@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
+from threading import Thread
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.auth import Principal, require_any_study_user, require_client, require_researcher
 from app.config import get_settings
 from app.crypto_util import encrypt_secret
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port, register_study_ports
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
@@ -229,24 +231,28 @@ def _run_gate_blocked_message(row: StudySession, brief_obj: dict[str, Any], has_
     mode = str(row.workflow_mode or "").strip().lower()
     if bool(row.optimization_runs_blocked_by_researcher):
         return "I can run optimization once the researcher re-enables runs for this session."
-    if mode in ("agile", "demo"):
-        if not has_uploaded_data:
-            return (
-                "I can start a run after you add a simulated upload using the **Upload file(s)...** "
-                "button in the chat footer (exact label)."
-            )
+    # Uniform across all modes: upload required.
+    if not has_uploaded_data:
         return (
-            "I can start a run once the configuration includes at least one objective weight "
-            "and a selected search algorithm."
+            "I can start a run after you add a simulated upload using the **Upload file(s)...** "
+            "button in the chat footer (exact label)."
         )
+    # Uniform across all modes: gate must have been engaged (first chat message
+    # OR a meaningful panel/definition edit).
+    if not bool(getattr(row, "optimization_gate_engaged", False)):
+        return (
+            "I can start a run after we engage — either send your first chat message or "
+            "save a change in the Problem Config panel."
+        )
+    # Waterfall-only: open questions must be resolved.
     if mode == "waterfall":
-        if not bool(getattr(row, "optimization_gate_engaged", False)):
-            return "I can start a run after we engage the optimization gate in chat."
         open_questions = brief_obj.get("open_questions") or []
         if any(isinstance(q, dict) and str(q.get("status") or "").strip().lower() == "open" for q in open_questions):
             return "I can start a run after all open questions in the Definition tab are answered."
-        return "I can start a run once run prerequisites are satisfied."
-    return "I can start a run once run prerequisites are satisfied."
+    return (
+        "I can start a run once the configuration includes at least one objective weight "
+        "(or its companion property, like driver preferences) and a selected search algorithm."
+    )
 
 
 def _resolve_new_session_test_problem_id(raw: str | None) -> str:
@@ -487,6 +493,8 @@ def patch_session(
         helpers.rewind_tutorial_tracking_from_step(row, row.tutorial_step_override)
     if body.gemini_model is not None:
         row.gemini_model = body.gemini_model
+    if body.embedding_model is not None:
+        row.embedding_model = body.embedding_model
     if body.gemini_api_key is not None:
         row.gemini_key_encrypted = encrypt_secret(body.gemini_api_key)
     helpers.settle_processing_state(row, cancel_revision=True)
@@ -613,6 +621,432 @@ def list_messages_researcher(
     return list(q.all())
 
 
+@router.get("/{session_id}/messages/{message_id}", response_model=MessageOut)
+def get_single_message(
+    session_id: str,
+    message_id: int,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_client),
+):
+    """Fetch a single message by id. Used by the frontend to refresh messages
+    whose ``meta.verifying`` flag is still set - the standard list endpoint's
+    ``after_id`` filter excludes already-seen ids, so verification updates that
+    rewrite content / clear flags need a direct refetch path."""
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.status == "deleted":
+        raise HTTPException(status_code=410, detail="Session removed")
+    msg = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.id == message_id,
+            ChatMessage.visible_to_participant.is_(True),
+        )
+        .first()
+    )
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return msg
+
+
+def _run_async_verification_pipeline(
+    *,
+    session_id: str,
+    revision: int,
+    assistant_message_id: int,
+    initial_text: str,
+    body_content: str,
+    brief_update_user_text: str,
+    workflow_mode: str,
+    api_key: str,
+    model_name: str,
+    history_lines: list[tuple[str, str]],
+    researcher_steers: list[str],
+    recent_runs_summary: list[dict[str, Any]],
+    current_problem_brief: dict[str, Any],
+    current_panel: dict[str, Any] | None,
+    cleanup_requested: bool,
+    clear_requested: bool,
+    change_intent: bool,
+    is_run_ack: bool,
+    is_answer_save: bool,
+    is_config_save: bool,
+    is_upload_context: bool,
+    is_tutorial_active: bool,
+    test_problem_id: str | None,
+    gate_status_for_chat: dict[str, Any] | None,
+    run_button_enabled_for_chat: bool | None,
+    run_disabled_reason_for_chat: str | None,
+    embedding_model: str | None,
+    assistant_invites_run_now: bool,
+    consolidated_claims_brief_change: bool,
+    consolidated_asks_user_question: bool,
+    fixed_intents: tuple[bool, bool, bool] | None,
+    skip_hidden_brief_update: bool,
+    skip_panel_derivation: bool,
+    optimization_gate_engaged: bool,
+) -> None:
+    """Background pipeline that runs the pre-release probe (and any retry),
+    updates the already-persisted assistant message, and then triggers the
+    standard BG derivation.
+
+    Post-response half of the async-verification UX: the chat POST persists
+    the draft with ``meta.verifying=true`` and ships the response, then this
+    function runs in a daemon thread to verify the draft and lift the
+    verifying flag (rewriting content if the retry changed it).
+    """
+    try:
+        from app.optimization_gate import (
+            gate_status as _gate_status_fn,
+            intrinsic_optimization_ready,
+        )
+        from app.services.visible_reply_commitments import extract_algorithm_commitment
+        from app.services.workflow_compliance import _briefs_differ_in_editable_state
+
+        text = initial_text
+        probe_retry_fired = False
+        probe_precomputed_patch: dict[str, Any] | None = None
+        probe_precomputed_replace_open_questions = False
+        probe_precomputed_replace_editable_items = False
+        probe_precomputed_cleanup_mode = False
+
+        local_cleanup_requested = cleanup_requested
+        local_clear_requested = clear_requested
+        local_change_intent = change_intent
+        local_brief_update_user_text = brief_update_user_text
+        local_assistant_invites_run_now = assistant_invites_run_now
+        local_consolidated_claims_brief_change = consolidated_claims_brief_change
+
+        def _spec_panel_with_algo(committed_algo):
+            panel = deepcopy(current_panel) if isinstance(current_panel, dict) else {}
+            if committed_algo:
+                inner = (
+                    panel.get("problem")
+                    if isinstance(panel.get("problem"), dict)
+                    else panel
+                )
+                if (
+                    isinstance(inner, dict)
+                    and not str(inner.get("algorithm") or "").strip()
+                ):
+                    inner["algorithm"] = committed_algo
+            return panel
+
+        def _check_gate(effective_brief, committed_algo):
+            spec_panel = _spec_panel_with_algo(committed_algo)
+            ready = intrinsic_optimization_ready(
+                workflow_mode,
+                spec_panel,
+                effective_brief,
+                optimization_gate_engaged=optimization_gate_engaged,
+                problem_id=str(test_problem_id or DEFAULT_PROBLEM_ID),
+            )
+            status_dict = _gate_status_fn(
+                workflow_mode,
+                spec_panel,
+                effective_brief,
+                optimization_gate_engaged=optimization_gate_engaged,
+                problem_id=str(test_problem_id or DEFAULT_PROBLEM_ID),
+            )
+            return bool(ready), status_dict
+
+        def _run_sync_brief(probe_user_text):
+            return derivation.compute_brief_after_user_turn(
+                user_text=probe_user_text,
+                history_lines=history_lines,
+                api_key=api_key,
+                model_name=model_name,
+                base_problem_brief=current_problem_brief,
+                base_panel=current_panel,
+                workflow_mode=workflow_mode,
+                recent_runs_summary=recent_runs_summary or None,
+                researcher_steers=researcher_steers or None,
+                is_tutorial_active=is_tutorial_active,
+                test_problem_id=test_problem_id,
+                visible_assistant_message=text,
+                gate_status=gate_status_for_chat,
+                embedding_model=embedding_model,
+            )
+
+        _probe_trigger_run_invite = bool(local_assistant_invites_run_now)
+        _probe_trigger_claim = bool(local_consolidated_claims_brief_change)
+
+        try:
+            _committed_algo = extract_algorithm_commitment(text)
+            _sync_result = _run_sync_brief(local_brief_update_user_text)
+            if _sync_result is None:
+                log.info(
+                    "Probe brief-update returned None for session %s; "
+                    "shipping original draft, background derivation will retry",
+                    session_id,
+                )
+            else:
+                _effective_brief, _patch_payload, _brief_turn = _sync_result
+                probe_precomputed_patch = _patch_payload
+                probe_precomputed_replace_open_questions = bool(
+                    _brief_turn.replace_open_questions
+                )
+                probe_precomputed_replace_editable_items = bool(
+                    _brief_turn.replace_editable_items
+                )
+                probe_precomputed_cleanup_mode = bool(_brief_turn.cleanup_mode)
+                _gate_ok, _gate_status_snap = _check_gate(
+                    _effective_brief, _committed_algo
+                )
+                _claim_unsupported = (
+                    _probe_trigger_claim
+                    and not _briefs_differ_in_editable_state(
+                        current_problem_brief or {}, _effective_brief or {}
+                    )
+                )
+                _needs_retry = (not _gate_ok) or _claim_unsupported
+                if _needs_retry:
+                    _missing = _gate_status_snap.get("missing") or []
+                    _missing_summary = ", ".join(str(m) for m in _missing) or "unknown"
+                    if not _gate_ok and _probe_trigger_run_invite and _probe_trigger_claim:
+                        _lead = (
+                            "Your previous draft invited the participant to click **Run "
+                            "optimization** AND claimed brief changes, but the post-commit "
+                            "gate check shows the button would still be DISABLED."
+                        )
+                    elif not _gate_ok and _probe_trigger_run_invite:
+                        _lead = (
+                            "Your previous draft invited the participant to click **Run "
+                            "optimization**, but the post-commit gate check shows the button "
+                            "would still be DISABLED."
+                        )
+                    elif not _gate_ok:
+                        _lead = (
+                            "Your previous draft claimed a brief change ('I added X' / "
+                            "'Changes I made: ...') but the post-commit gate check shows the "
+                            "run button would still be DISABLED - either the claim is "
+                            "unsupported or the matching structured edit "
+                            "(goal_terms / items / algorithm) is missing."
+                        )
+                    else:
+                        _lead = (
+                            "Your previous draft claimed a brief change ('I have added X' / "
+                            "'Changes I made: ...') but the synchronous brief-update produced "
+                            "NO delta in items / open_questions / goal_terms / summaries - "
+                            "so the participant would see the claim with no matching "
+                            "structural edit. This is invariant-breaking even when the "
+                            "run button is already enabled."
+                        )
+                    _audit_note = (
+                        f"{_lead}\n"
+                        f"Missing prerequisites (phase order): **{_missing_summary}**.\n"
+                        "Post-merge gate state (real brief produced by the synchronous "
+                        f"brief-update): {json.dumps(_gate_status_snap, ensure_ascii=False)}.\n"
+                        "On the retry: either (a) emit the structural commitments your reply "
+                        "promises (e.g. include goal_terms[<key>].weight or an items[] "
+                        "assumption row naming the specific addition) so the patch reflects "
+                        "the claim, or (b) rewrite the visible reply so it stops claiming a "
+                        "change / inviting a run it can't deliver."
+                    )
+                    log.info(
+                        "Pre-release probe rejected turn for session %s; retrying once. "
+                        "missing=%s committed_algo=%s trigger=%s reason=%s mode=%s is_run_ack=%s",
+                        session_id,
+                        _missing,
+                        _committed_algo,
+                        (
+                            "run_invite+claim"
+                            if _probe_trigger_run_invite and _probe_trigger_claim
+                            else "run_invite"
+                            if _probe_trigger_run_invite
+                            else "claim"
+                        ),
+                        "gate_closed" if not _gate_ok else "claim_unsupported",
+                        workflow_mode,
+                        is_run_ack,
+                    )
+                    from app.services.llm import (
+                        generate_consolidated_chat_turn as _retry_consolidated_fn,
+                    )
+
+                    retry_consolidated = _retry_consolidated_fn(
+                        body_content,
+                        history_lines,
+                        api_key,
+                        model_name,
+                        current_problem_brief,
+                        workflow_mode=workflow_mode,
+                        recent_runs_summary=recent_runs_summary or None,
+                        current_panel=current_panel,
+                        researcher_steers=researcher_steers or None,
+                        cleanup_mode=local_cleanup_requested,
+                        is_run_acknowledgement=is_run_ack,
+                        is_tutorial_active=is_tutorial_active,
+                        test_problem_id=test_problem_id,
+                        run_button_enabled=run_button_enabled_for_chat,
+                        run_disabled_reason=run_disabled_reason_for_chat,
+                        gate_status=gate_status_for_chat,
+                        commit_audit_note=_audit_note,
+                    )
+                    if retry_consolidated is not None:
+                        text = retry_consolidated.assistant_message
+                        local_assistant_invites_run_now = bool(
+                            retry_consolidated.is_run_invitation
+                        )
+                        local_consolidated_claims_brief_change = bool(
+                            getattr(retry_consolidated, "claims_brief_change", False)
+                        )
+                        if fixed_intents is None:
+                            local_cleanup_requested = bool(
+                                retry_consolidated.cleanup_intent
+                            )
+                            local_clear_requested = bool(retry_consolidated.clear_intent)
+                            local_change_intent = bool(
+                                retry_consolidated.is_change_intent
+                            )
+                        raw_change_clause = (
+                            retry_consolidated.change_clause or ""
+                        ).strip()
+                        raw_question_clause = (
+                            retry_consolidated.question_clause or ""
+                        ).strip()
+                        if raw_change_clause and raw_question_clause:
+                            local_brief_update_user_text = raw_change_clause
+                        else:
+                            local_brief_update_user_text = body_content
+                        _retry_committed_algo = extract_algorithm_commitment(text)
+                        _retry_sync = _run_sync_brief(local_brief_update_user_text)
+                        if _retry_sync is not None:
+                            (
+                                _retry_effective_brief,
+                                _retry_patch_payload,
+                                _retry_brief_turn,
+                            ) = _retry_sync
+                            probe_precomputed_patch = _retry_patch_payload
+                            probe_precomputed_replace_open_questions = bool(
+                                _retry_brief_turn.replace_open_questions
+                            )
+                            probe_precomputed_replace_editable_items = bool(
+                                _retry_brief_turn.replace_editable_items
+                            )
+                            probe_precomputed_cleanup_mode = bool(
+                                _retry_brief_turn.cleanup_mode
+                            )
+                            _retry_gate_ok, _ = _check_gate(
+                                _retry_effective_brief, _retry_committed_algo
+                            )
+                            _retry_claim_ok = (
+                                not local_consolidated_claims_brief_change
+                                or _briefs_differ_in_editable_state(
+                                    current_problem_brief or {},
+                                    _retry_effective_brief or {},
+                                )
+                            )
+                            probe_retry_fired = bool(_retry_gate_ok and _retry_claim_ok)
+                        else:
+                            log.info(
+                                "Probe retry brief-update returned None for session %s; "
+                                "not marking verified_after_retry",
+                                session_id,
+                            )
+                    else:
+                        log.info(
+                            "Pre-release probe retry returned None for session %s; "
+                            "using original draft and relying on layer-1 safety net",
+                            session_id,
+                        )
+        except Exception:
+            log.exception(
+                "Pre-release probe failed for session %s; using original draft", session_id
+            )
+
+        text = intent.sanitize_visible_assistant_reply(text)
+        derivation.update_message_after_verification(
+            message_id=assistant_message_id,
+            new_content=text if text != initial_text else None,
+            set_verified_after_retry=probe_retry_fired,
+        )
+
+        change_signal = (
+            local_change_intent
+            or local_cleanup_requested
+            or local_clear_requested
+            or is_run_ack
+        )
+        pipeline_blocked_by_caller = (
+            (skip_hidden_brief_update or skip_panel_derivation)
+            and not local_consolidated_claims_brief_change
+        )
+        if change_signal and not pipeline_blocked_by_caller:
+            skip_brief_llm = not change_signal
+            chat_turn_patch = (
+                dict(probe_precomputed_patch)
+                if probe_precomputed_patch is not None
+                else None
+            )
+            # Use launch_background_derivation (not _run_background_derivation
+            # directly) so existing test monkeypatches on the launcher still
+            # take effect. The extra thread spawn is cheap.
+            derivation.launch_background_derivation(
+                session_id=session_id,
+                revision=revision,
+                user_text=local_brief_update_user_text,
+                workflow_mode=workflow_mode,
+                api_key=api_key,
+                model_name=model_name,
+                history_lines=history_lines,
+                researcher_steers=researcher_steers,
+                recent_runs_summary=recent_runs_summary,
+                base_problem_brief=current_problem_brief,
+                base_panel=current_panel,
+                cleanup_requested=local_cleanup_requested,
+                clear_requested=local_clear_requested,
+                is_run_acknowledgement=is_run_ack,
+                is_answered_open_question=is_answer_save,
+                is_config_save=is_config_save,
+                is_upload_context=is_upload_context,
+                is_tutorial_active=is_tutorial_active,
+                test_problem_id=test_problem_id,
+                visible_assistant_message=text,
+                skip_brief_update_llm=skip_brief_llm,
+                gate_status=gate_status_for_chat,
+                chat_turn_brief_patch=chat_turn_patch,
+                chat_turn_replace_editable_items=probe_precomputed_replace_editable_items,
+                chat_turn_replace_open_questions=probe_precomputed_replace_open_questions,
+                chat_turn_cleanup_mode=probe_precomputed_cleanup_mode,
+                embedding_model=embedding_model,
+            )
+        else:
+            with SessionLocal() as db:
+                row = db.get(StudySession, session_id)
+                if row is not None and row.processing_revision == revision:
+                    helpers.settle_processing_state(row, cancel_revision=True)
+                    helpers.touch_session(row)
+                    db.commit()
+    except Exception:
+        log.exception(
+            "Async verification pipeline failed for session %s", session_id
+        )
+        try:
+            derivation.update_message_after_verification(
+                message_id=assistant_message_id,
+                new_content=None,
+                set_verified_after_retry=False,
+            )
+        except Exception:
+            log.exception(
+                "Failed to clear verifying flag after pipeline error for session %s",
+                session_id,
+            )
+
+
+def _launch_async_verification_pipeline(**kwargs):
+    thread = Thread(
+        target=_run_async_verification_pipeline,
+        kwargs=kwargs,
+        daemon=True,
+        name=f"session-verify-{kwargs['session_id']}",
+    )
+    thread.start()
+
+
 def _handle_post_participant_message(session_id: str, db: Session, body: MessageCreate) -> PostMessagesResponse:
     row = db.get(StudySession, session_id)
     if row is None:
@@ -621,7 +1055,12 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
         raise HTTPException(status_code=410, detail="Session ended")
 
     out: list[MessageOut] = []
-    is_run_ack = intent.is_run_acknowledgement_message(body.content)
+    # Typed context discriminator from the frontend (set on synthetic posts —
+    # run-ack, config-save, etc.). When present it short-circuits the legacy
+    # regex classifiers below; when absent we still fall back to content
+    # matching for older sessions / programmatic posts.
+    context_kind = body.context_kind
+    is_run_ack = intent.is_run_acknowledgement_message(body.content, context_kind)
     user_visible = not is_run_ack
     um = derivation.append_message(db, session_id, "user", body.content, user_visible)
     if user_visible:
@@ -673,8 +1112,12 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             current = helpers.panel_dict(row)
             current_problem_brief = helpers.problem_brief_dict(row)
             updated_panel = current
-            is_answer_save = intent.is_answered_open_question_message(body.content)
-            is_config_save = intent.is_config_save_context_message(body.content)
+            is_answer_save = intent.is_answered_open_question_message(
+                body.content, context_kind
+            )
+            is_config_save = intent.is_config_save_context_message(
+                body.content, context_kind
+            )
             # Set when the participant message is the synthetic "I'm uploading the
             # following file(s): …" line. The brief already grew a canonical
             # `item-gathered-upload` row in the upload-OQ block above; signaling
@@ -753,7 +1196,9 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             brief_update_user_text = body.content
 
             # Fast path: button-posted phrases skip the LLM intent classifier entirely.
-            fixed_intents = intent.classify_fixed_phrase_intents(body.content)
+            fixed_intents = intent.classify_fixed_phrase_intents(
+                body.content, context_kind
+            )
             if fixed_intents is not None:
                 cleanup_requested, clear_requested, change_intent = fixed_intents
 
@@ -806,12 +1251,17 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             confidence=float(consolidated.confidence),
                         )
                         assistant_invites_run_now = bool(consolidated.is_run_invitation)
-                        consolidated_claims_brief_change = bool(
-                            getattr(consolidated, "claims_brief_change", False)
-                        )
-                        consolidated_asks_user_question = bool(
-                            getattr(consolidated, "asks_user_question", False)
-                        )
+                    # Self-classified visible-reply intents are surfaced on
+                    # ALL turns (including run-ack) because the probe's
+                    # claim-without-delta trigger fires post-run too — that's
+                    # exactly where "I have added a lateness penalty…" with
+                    # no matching patch tends to show up.
+                    consolidated_claims_brief_change = bool(
+                        getattr(consolidated, "claims_brief_change", False)
+                    )
+                    consolidated_asks_user_question = bool(
+                        getattr(consolidated, "asks_user_question", False)
+                    )
                     # Clause split: if the model identified an edit-half within a
                     # mixed-intent turn, the brief-update pass uses that narrow
                     # text instead of the full message. The concept-question half
@@ -912,441 +1362,675 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             )
             except Exception:
                 log.exception("Participant turn pipeline failed for session %s", session_id)
-            # Layer 2: pre-release gate / compliance probe. If the visible reply
-            # either invites the participant to click **Run optimization** OR
-            # claims it has changed the brief, AND the deterministic
-            # speculative gate check shows the run button would still be
-            # DISABLED, re-call the consolidated chat turn once with a focused
-            # audit block injected. The agent then either fixes the structural
-            # gap (more likely once the gap is named explicitly) or softens
-            # the visible reply so it stops promising things the structured
-            # patch won't deliver.
-            #
-            # Triggers (any one fires the probe; closed gate confirms):
-            # - ``assistant_invites_run_now`` — reply invites a run.
-            # - ``consolidated_claims_brief_change`` — reply says "I added X" /
-            #   "Changes I made: …", which the user reads as a commitment.
-            #
-            # Only fires in agile mode for now — waterfall has its own gating
-            # semantics (open-questions phase). One retry budget; if the retry
-            # also fails, we proceed with the original reply and let the
-            # background derivation's safety net (layer 1) recover whatever it
-            # can deterministically.
-            try:
-                _probe_workflow = str(row.workflow_mode or "").strip().lower()
-                _probe_trigger_run_invite = bool(assistant_invites_run_now)
-                _probe_trigger_claim = bool(consolidated_claims_brief_change)
-                _probe_should_fire = (
-                    _probe_workflow == "agile"
-                    and not is_run_ack
-                    and not cleanup_requested
-                    and not clear_requested
-                    and (_probe_trigger_run_invite or _probe_trigger_claim)
-                    and text is not None
-                    and text.strip()
+            # Decide whether to run the pre-release probe asynchronously. The
+            # async path persists the assistant draft immediately (with
+            # ``meta.verifying=true``) so the participant sees the bubble right
+            # away in a dimmed state, then runs the probe + retry + BG derivation
+            # in a daemon thread. Eligibility: probe would fire AND the consolidated
+            # chat-turn succeeded (`turn is None`). The fallback path
+            # (`turn is not None`) keeps the synchronous probe to avoid moving
+            # the inline brief pipeline into a background thread.
+            _probe_will_fire = (
+                not cleanup_requested
+                and not clear_requested
+                and (
+                    bool(assistant_invites_run_now)
+                    or bool(consolidated_claims_brief_change)
                 )
-                if _probe_should_fire:
-                    from app.services.visible_reply_commitments import (
-                        extract_algorithm_commitment,
-                        inject_algorithm_assumption,
-                        speculative_intrinsic_gate_ready,
+                and text is not None
+                and text.strip()
+            )
+            async_verify_eligible = _probe_will_fire and turn is None
+            if async_verify_eligible:
+                text = intent.sanitize_visible_assistant_reply(text)
+                _verify_meta: dict[str, Any] = {"verifying": True}
+                if assistant_invites_run_now:
+                    _verify_meta["is_run_invitation"] = True
+                am = derivation.append_message(
+                    db, session_id, "assistant", text, True, meta=_verify_meta,
+                )
+                out.append(MessageOut.model_validate(am))
+                _launch_async_verification_pipeline(
+                    session_id=session_id,
+                    revision=int(row.processing_revision or 0),
+                    assistant_message_id=am.id,
+                    initial_text=text,
+                    body_content=body.content,
+                    brief_update_user_text=brief_update_user_text,
+                    workflow_mode=row.workflow_mode,
+                    api_key=key,
+                    model_name=model,
+                    history_lines=hist,
+                    researcher_steers=researcher_steers,
+                    recent_runs_summary=recent_runs_summary,
+                    current_problem_brief=current_problem_brief,
+                    current_panel=current,
+                    cleanup_requested=cleanup_requested,
+                    clear_requested=clear_requested,
+                    change_intent=change_intent,
+                    is_run_ack=is_run_ack,
+                    is_answer_save=is_answer_save,
+                    is_config_save=is_config_save,
+                    is_upload_context=is_upload_context,
+                    is_tutorial_active=is_tutorial_active,
+                    test_problem_id=row.test_problem_id,
+                    gate_status_for_chat=gate_status_for_chat,
+                    run_button_enabled_for_chat=run_button_enabled_for_chat,
+                    run_disabled_reason_for_chat=run_disabled_reason_for_chat,
+                    embedding_model=helpers.embedding_model_for(row),
+                    assistant_invites_run_now=assistant_invites_run_now,
+                    consolidated_claims_brief_change=consolidated_claims_brief_change,
+                    consolidated_asks_user_question=consolidated_asks_user_question,
+                    fixed_intents=fixed_intents,
+                    skip_hidden_brief_update=bool(body.skip_hidden_brief_update),
+                    skip_panel_derivation=bool(body.skip_panel_derivation),
+                    optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
+                )
+            if not async_verify_eligible:
+                # Layer 2: pre-release gate / compliance probe. If the visible reply
+                # either invites the participant to click **Run optimization** OR
+                # claims it has changed the brief, run the brief-update LLM
+                # SYNCHRONOUSLY, merge its patch, and check the *real* run gate
+                # against the resulting brief. If the gate would still be closed,
+                # re-call the consolidated chat turn once with a focused audit
+                # block injected — the agent then either fixes the structural gap
+                # (now named explicitly) or softens the visible reply so it stops
+                # promising things the brief patch won't deliver.
+                #
+                # Triggers (any one fires the probe; closed gate confirms):
+                # - ``assistant_invites_run_now`` — reply invites a run.
+                # - ``consolidated_claims_brief_change`` — reply says "I added X" /
+                #   "Changes I made: …", which the user reads as a commitment.
+                #
+                # Fires in all workflow modes. The post-merge gate check (against
+                # the real brief produced by the synchronous brief-update) is the
+                # confirmer — if the gate would still be closed (whatever the
+                # reason: missing goal_terms in agile, unanswered OQs in
+                # waterfall, etc.), then a run-invite or brief-change claim is
+                # premature and worth a one-shot retry. One retry budget; if the
+                # retry also fails, we proceed with the original reply and let
+                # the background derivation's safety net (layer 1) recover what
+                # it can deterministically.
+                #
+                # The synchronously-computed patch is stashed in
+                # ``probe_precomputed_patch`` and threaded into the background
+                # derivation so it doesn't redundantly call brief-update again.
+                probe_precomputed_patch: dict[str, Any] | None = None
+                probe_precomputed_replace_open_questions = False
+                probe_precomputed_replace_editable_items = False
+                probe_precomputed_cleanup_mode = False
+                try:
+                    _probe_trigger_run_invite = bool(assistant_invites_run_now)
+                    _probe_trigger_claim = bool(consolidated_claims_brief_change)
+                    # Run-ack turns are NOT excluded any more: the agent's run
+                    # analysis is exactly where it tends to over-promise ("I have
+                    # added a lateness penalty…"), and the gate is usually open at
+                    # that point so we rely on the second retry trigger
+                    # (claim-but-no-change) to catch the mismatch.
+                    _probe_should_fire = (
+                        not cleanup_requested
+                        and not clear_requested
+                        and (_probe_trigger_run_invite or _probe_trigger_claim)
+                        and text is not None
+                        and text.strip()
                     )
-
-                    _committed_algo = extract_algorithm_commitment(text)
-                    _existing_patch = (
-                        dict(turn.problem_brief_patch)
-                        if turn is not None and isinstance(turn.problem_brief_patch, dict)
-                        else None
-                    )
-                    _speculative_patch = _existing_patch
-                    if _committed_algo is not None:
-                        _speculative_patch, _ = inject_algorithm_assumption(
-                            _speculative_patch, current_problem_brief, _committed_algo
+                    if _probe_should_fire:
+                        from app.optimization_gate import (
+                            gate_status as _gate_status_fn,
+                            intrinsic_optimization_ready,
                         )
-                    _gate_ok = speculative_intrinsic_gate_ready(
-                        row.workflow_mode,
-                        current_problem_brief,
-                        current,
-                        _speculative_patch,
-                        _committed_algo,
-                        problem_id=str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID),
-                        optimization_gate_engaged=bool(getattr(row, "optimization_gate_engaged", False)),
-                    )
-                    if not _gate_ok:
-                        # Build a focused audit note explaining the gap. Reuse
-                        # the existing gate_status snapshot (recomputed against
-                        # the speculative state) so the message names the
-                        # missing pieces in phase order.
-                        from app.optimization_gate import gate_status as _gate_status_fn
                         from app.services.visible_reply_commitments import (
-                            speculative_brief_after_patch,
+                            extract_algorithm_commitment,
                         )
                         from copy import deepcopy as _deepcopy
 
-                        _spec_brief = speculative_brief_after_patch(
-                            current_problem_brief, _speculative_patch
-                        )
-                        _spec_panel = _deepcopy(current) if isinstance(current, dict) else {}
-                        if _committed_algo:
-                            _inner = (
-                                _spec_panel.get("problem")
-                                if isinstance(_spec_panel.get("problem"), dict)
-                                else _spec_panel
-                            )
-                            if isinstance(_inner, dict) and not str(_inner.get("algorithm") or "").strip():
-                                _inner["algorithm"] = _committed_algo
-                        _spec_gate = _gate_status_fn(
-                            row.workflow_mode,
-                            _spec_panel,
-                            _spec_brief,
-                            optimization_gate_engaged=bool(
-                                getattr(row, "optimization_gate_engaged", False)
-                            ),
-                            problem_id=str(
-                                getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
-                            ),
-                        )
-                        _missing = _spec_gate.get("missing") or []
-                        _missing_summary = ", ".join(str(m) for m in _missing) or "unknown"
-                        # The audit note's lead sentence varies by trigger so
-                        # the retry LLM can self-correct precisely: a run
-                        # invitation is a different commitment than a "I just
-                        # changed X" claim, even when both end up disabled by
-                        # the same missing prerequisite.
-                        if _probe_trigger_run_invite and _probe_trigger_claim:
-                            _lead = (
-                                "Your previous draft invited the participant to click **Run "
-                                "optimization** AND claimed brief changes, but the post-commit "
-                                "gate check shows the button would still be DISABLED."
-                            )
-                        elif _probe_trigger_run_invite:
-                            _lead = (
-                                "Your previous draft invited the participant to click **Run "
-                                "optimization**, but the post-commit gate check shows the button "
-                                "would still be DISABLED."
-                            )
-                        else:
-                            _lead = (
-                                "Your previous draft claimed a brief change ('I added X' / "
-                                "'Changes I made: …') but the post-commit gate check shows the "
-                                "run button would still be DISABLED — either the claim is "
-                                "unsupported or the matching structured edit "
-                                "(goal_terms / items / algorithm) is missing."
-                            )
-                        _audit_note = (
-                            f"{_lead}\n"
-                            f"Missing prerequisites (phase order): **{_missing_summary}**.\n"
-                            "Speculative gate state (after merging your draft's brief patch and "
-                            f"the committed algorithm, if any): {json.dumps(_spec_gate, ensure_ascii=False)}.\n"
-                            "On the retry: either (a) emit the structural commitments your reply "
-                            "promises (e.g. include goal_terms[<key>].weight or an algorithm "
-                            "assumption row) so the gate opens, or (b) rewrite the visible reply "
-                            "so it stops claiming a change / inviting a run it can't deliver."
-                        )
-                        log.info(
-                            "Pre-release probe rejected agile turn for session %s; retrying once. "
-                            "missing=%s committed_algo=%s trigger=%s",
-                            session_id,
-                            _missing,
-                            _committed_algo,
-                            (
-                                "run_invite+claim"
-                                if _probe_trigger_run_invite and _probe_trigger_claim
-                                else "run_invite"
-                                if _probe_trigger_run_invite
-                                else "claim"
-                            ),
-                        )
-                        from app.services.llm import (
-                            generate_consolidated_chat_turn as _retry_consolidated_fn,
-                        )
+                        def _spec_panel_with_algo(
+                            committed_algo: str | None,
+                        ) -> dict[str, Any]:
+                            panel = _deepcopy(current) if isinstance(current, dict) else {}
+                            if committed_algo:
+                                inner = (
+                                    panel.get("problem")
+                                    if isinstance(panel.get("problem"), dict)
+                                    else panel
+                                )
+                                if (
+                                    isinstance(inner, dict)
+                                    and not str(inner.get("algorithm") or "").strip()
+                                ):
+                                    inner["algorithm"] = committed_algo
+                            return panel
 
-                        retry_consolidated = _retry_consolidated_fn(
-                            body.content,
-                            hist,
-                            key,
-                            model,
-                            current_problem_brief,
-                            workflow_mode=row.workflow_mode,
-                            recent_runs_summary=recent_runs_summary or None,
-                            current_panel=current,
-                            researcher_steers=researcher_steers or None,
-                            cleanup_mode=cleanup_requested,
-                            is_run_acknowledgement=is_run_ack,
-                            is_tutorial_active=is_tutorial_active,
-                            test_problem_id=row.test_problem_id,
-                            run_button_enabled=run_button_enabled_for_chat,
-                            run_disabled_reason=run_disabled_reason_for_chat,
-                            gate_status=gate_status_for_chat,
-                            commit_audit_note=_audit_note,
-                        )
-                        probe_retry_fired = True
-                        if retry_consolidated is not None:
-                            text = retry_consolidated.assistant_message
-                            assistant_invites_run_now = bool(
-                                retry_consolidated.is_run_invitation
+                        def _check_gate(
+                            effective_brief: dict[str, Any] | None,
+                            committed_algo: str | None,
+                        ) -> tuple[bool, dict[str, Any]]:
+                            spec_panel = _spec_panel_with_algo(committed_algo)
+                            ready = intrinsic_optimization_ready(
+                                row.workflow_mode,
+                                spec_panel,
+                                effective_brief,
+                                optimization_gate_engaged=bool(
+                                    getattr(row, "optimization_gate_engaged", False)
+                                ),
+                                problem_id=str(
+                                    getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
+                                ),
                             )
-                            consolidated_claims_brief_change = bool(
-                                getattr(retry_consolidated, "claims_brief_change", False)
+                            status = _gate_status_fn(
+                                row.workflow_mode,
+                                spec_panel,
+                                effective_brief,
+                                optimization_gate_engaged=bool(
+                                    getattr(row, "optimization_gate_engaged", False)
+                                ),
+                                problem_id=str(
+                                    getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
+                                ),
                             )
-                            consolidated_asks_user_question = bool(
-                                getattr(retry_consolidated, "asks_user_question", False)
+                            return bool(ready), status
+
+                        def _run_sync_brief(probe_user_text: str):
+                            return derivation.compute_brief_after_user_turn(
+                                user_text=probe_user_text,
+                                history_lines=hist,
+                                api_key=key,
+                                model_name=model,
+                                base_problem_brief=current_problem_brief,
+                                base_panel=current,
+                                workflow_mode=row.workflow_mode,
+                                recent_runs_summary=recent_runs_summary or None,
+                                researcher_steers=researcher_steers or None,
+                                is_tutorial_active=is_tutorial_active,
+                                test_problem_id=row.test_problem_id,
+                                visible_assistant_message=text,
+                                gate_status=gate_status_for_chat,
+                                embedding_model=helpers.embedding_model_for(row),
                             )
-                            # The retry's intent flags supersede the original
-                            # turn's flags (clause split, change_intent) when
-                            # the retry produced a usable result.
-                            if fixed_intents is None:
-                                cleanup_requested = bool(
-                                    retry_consolidated.cleanup_intent
-                                )
-                                clear_requested = bool(retry_consolidated.clear_intent)
-                                change_intent = bool(
-                                    retry_consolidated.is_change_intent
-                                )
-                            raw_change_clause = (
-                                retry_consolidated.change_clause or ""
-                            ).strip()
-                            raw_question_clause = (
-                                retry_consolidated.question_clause or ""
-                            ).strip()
-                            if raw_change_clause and raw_question_clause:
-                                brief_update_user_text = raw_change_clause
-                            else:
-                                brief_update_user_text = body.content
-                        else:
+
+                        _committed_algo = extract_algorithm_commitment(text)
+                        _sync_result = _run_sync_brief(brief_update_user_text)
+                        if _sync_result is None:
+                            # Brief-update failed; fall through to current behaviour —
+                            # ship the original draft and let background derivation
+                            # try again. Don't block the reply on probe failure.
                             log.info(
-                                "Pre-release probe retry returned None for session %s; "
-                                "using original draft and relying on layer-1 safety net",
+                                "Probe brief-update returned None for session %s; "
+                                "shipping original draft, background derivation will retry",
                                 session_id,
                             )
-            except Exception:
-                log.exception(
-                    "Pre-release probe failed for session %s; using original draft", session_id
-                )
-            text = intent.sanitize_visible_assistant_reply(text)
-            # Both flags are surfaced through meta_json so the chat bubble can
-            # render the inline Run button (is_run_invitation) and a small
-            # "verified after re-check" indicator (verified_after_retry) when
-            # Layer 2 fired this turn. We only set meta when at least one flag
-            # is truthy to keep null bubbles cheap.
-            _meta_payload: dict[str, Any] = {}
-            if assistant_invites_run_now:
-                _meta_payload["is_run_invitation"] = True
-            if probe_retry_fired:
-                _meta_payload["verified_after_retry"] = True
-            assistant_meta = _meta_payload or None
-            am = derivation.append_message(
-                db, session_id, "assistant", text, True, meta=assistant_meta,
-            )
-            out.append(MessageOut.model_validate(am))
-            # Trigger gating: the brief-update + panel-derivation pipelines are the
-            # most expensive part of the per-turn cost.  If the user message was a
-            # concept question / clarification (change_intent=False) AND no
-            # cleanup / clear flag fired, skip both LLM calls.  Synthetic context
-            # messages (run-complete, etc.) and explicit `skip_*` flags also bypass.
-            change_signal = (
-                change_intent
-                or cleanup_requested
-                or clear_requested
-                or is_run_ack
-            )
-            pipeline_blocked_by_caller = (
-                body.skip_hidden_brief_update or body.skip_panel_derivation
-            )
-            should_run_brief_pipeline = (
-                change_signal
-                and not pipeline_blocked_by_caller
-            )
-            if turn and should_run_brief_pipeline and (
-                turn.problem_brief_patch is not None
-                or turn.replace_editable_items
-                or turn.replace_open_questions
-                or turn.cleanup_mode
-                or clear_requested
-            ):
-                try:
-                    patch_payload: dict[str, Any] | None = None
-                    if turn.problem_brief_patch:
-                        patch_payload = dict(turn.problem_brief_patch)
-                    elif clear_requested:
-                        patch_payload = {"items": [], "open_questions": []}
-                    elif cleanup_requested:
-                        log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
-
-                    if patch_payload is not None:
-                        if is_run_ack:
-                            patch_payload = derivation.sanitize_run_ack_patch_payload(
-                                patch_payload,
-                                workflow_mode=row.workflow_mode,
-                                test_problem_id=row.test_problem_id,
+                        else:
+                            _effective_brief, _patch_payload, _brief_turn = _sync_result
+                            probe_precomputed_patch = _patch_payload
+                            probe_precomputed_replace_open_questions = bool(
+                                _brief_turn.replace_open_questions
                             )
-                        if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
-                            patch_payload["replace_editable_items"] = True
-                        if clear_requested:
-                            patch_payload["replace_open_questions"] = True
-                        elif turn.replace_open_questions:
-                            patch_payload["replace_open_questions"] = True
-                        merged_brief, cleanup_meta = derivation.apply_brief_patch_with_cleanup(
-                            base_problem_brief=current_problem_brief,
-                            patch_payload=patch_payload,
-                            history_lines=hist,
-                            api_key=key,
+                            probe_precomputed_replace_editable_items = bool(
+                                _brief_turn.replace_editable_items
+                            )
+                            probe_precomputed_cleanup_mode = bool(_brief_turn.cleanup_mode)
+                            _gate_ok, _gate_status_snap = _check_gate(
+                                _effective_brief, _committed_algo
+                            )
+                            # Second trigger: the agent claimed a brief change but
+                            # the synchronous brief-update produced no delta in the
+                            # editable state. This catches the run-ack failure mode
+                            # ("I have added a lateness penalty…" with no
+                            # goal_terms entry produced) — the gate is already open
+                            # so ``_gate_ok`` alone misses it. Mirrors the
+                            # post-derivation compliance check, just one layer
+                            # earlier so we can retry instead of only logging.
+                            from app.services.workflow_compliance import (
+                                _briefs_differ_in_editable_state,
+                            )
+                            _claim_unsupported = (
+                                _probe_trigger_claim
+                                and not _briefs_differ_in_editable_state(
+                                    current_problem_brief or {}, _effective_brief or {}
+                                )
+                            )
+                            _needs_retry = (not _gate_ok) or _claim_unsupported
+                            if _needs_retry:
+                                _missing = _gate_status_snap.get("missing") or []
+                                _missing_summary = ", ".join(str(m) for m in _missing) or "unknown"
+                                # The audit note's lead sentence varies by trigger so
+                                # the retry LLM can self-correct precisely: a run
+                                # invitation is a different commitment than a "I
+                                # added X" claim, and a claim-without-delta needs a
+                                # different framing than a closed-gate failure.
+                                if not _gate_ok and _probe_trigger_run_invite and _probe_trigger_claim:
+                                    _lead = (
+                                        "Your previous draft invited the participant to click **Run "
+                                        "optimization** AND claimed brief changes, but the post-commit "
+                                        "gate check shows the button would still be DISABLED."
+                                    )
+                                elif not _gate_ok and _probe_trigger_run_invite:
+                                    _lead = (
+                                        "Your previous draft invited the participant to click **Run "
+                                        "optimization**, but the post-commit gate check shows the button "
+                                        "would still be DISABLED."
+                                    )
+                                elif not _gate_ok:
+                                    _lead = (
+                                        "Your previous draft claimed a brief change ('I added X' / "
+                                        "'Changes I made: …') but the post-commit gate check shows the "
+                                        "run button would still be DISABLED — either the claim is "
+                                        "unsupported or the matching structured edit "
+                                        "(goal_terms / items / algorithm) is missing."
+                                    )
+                                else:
+                                    # claim_unsupported path: gate stayed open, but
+                                    # the synchronous brief-update produced NO
+                                    # editable-state delta even though the visible
+                                    # reply explicitly claimed a change. This is
+                                    # the run-ack failure mode reported by users.
+                                    _lead = (
+                                        "Your previous draft claimed a brief change ('I have added X' / "
+                                        "'Changes I made: …') but the synchronous brief-update produced "
+                                        "NO delta in items / open_questions / goal_terms / summaries — "
+                                        "so the participant would see the claim with no matching "
+                                        "structural edit. This is invariant-breaking even when the "
+                                        "run button is already enabled."
+                                    )
+                                _audit_note = (
+                                    f"{_lead}\n"
+                                    f"Missing prerequisites (phase order): **{_missing_summary}**.\n"
+                                    "Post-merge gate state (real brief produced by the synchronous "
+                                    f"brief-update): {json.dumps(_gate_status_snap, ensure_ascii=False)}.\n"
+                                    "On the retry: either (a) emit the structural commitments your reply "
+                                    "promises (e.g. include goal_terms[<key>].weight or an items[] "
+                                    "assumption row naming the specific addition) so the patch reflects "
+                                    "the claim, or (b) rewrite the visible reply so it stops claiming a "
+                                    "change / inviting a run it can't deliver."
+                                )
+                                log.info(
+                                    "Pre-release probe rejected turn for session %s; retrying once. "
+                                    "missing=%s committed_algo=%s trigger=%s reason=%s mode=%s is_run_ack=%s",
+                                    session_id,
+                                    _missing,
+                                    _committed_algo,
+                                    (
+                                        "run_invite+claim"
+                                        if _probe_trigger_run_invite and _probe_trigger_claim
+                                        else "run_invite"
+                                        if _probe_trigger_run_invite
+                                        else "claim"
+                                    ),
+                                    "gate_closed" if not _gate_ok else "claim_unsupported",
+                                    row.workflow_mode,
+                                    is_run_ack,
+                                )
+                                from app.services.llm import (
+                                    generate_consolidated_chat_turn as _retry_consolidated_fn,
+                                )
+
+                                retry_consolidated = _retry_consolidated_fn(
+                                    body.content,
+                                    hist,
+                                    key,
+                                    model,
+                                    current_problem_brief,
+                                    workflow_mode=row.workflow_mode,
+                                    recent_runs_summary=recent_runs_summary or None,
+                                    current_panel=current,
+                                    researcher_steers=researcher_steers or None,
+                                    cleanup_mode=cleanup_requested,
+                                    is_run_acknowledgement=is_run_ack,
+                                    is_tutorial_active=is_tutorial_active,
+                                    test_problem_id=row.test_problem_id,
+                                    run_button_enabled=run_button_enabled_for_chat,
+                                    run_disabled_reason=run_disabled_reason_for_chat,
+                                    gate_status=gate_status_for_chat,
+                                    commit_audit_note=_audit_note,
+                                )
+                                if retry_consolidated is not None:
+                                    text = retry_consolidated.assistant_message
+                                    assistant_invites_run_now = bool(
+                                        retry_consolidated.is_run_invitation
+                                    )
+                                    consolidated_claims_brief_change = bool(
+                                        getattr(retry_consolidated, "claims_brief_change", False)
+                                    )
+                                    consolidated_asks_user_question = bool(
+                                        getattr(retry_consolidated, "asks_user_question", False)
+                                    )
+                                    # The retry's intent flags supersede the original
+                                    # turn's flags (clause split, change_intent) when
+                                    # the retry produced a usable result.
+                                    if fixed_intents is None:
+                                        cleanup_requested = bool(
+                                            retry_consolidated.cleanup_intent
+                                        )
+                                        clear_requested = bool(retry_consolidated.clear_intent)
+                                        change_intent = bool(
+                                            retry_consolidated.is_change_intent
+                                        )
+                                    raw_change_clause = (
+                                        retry_consolidated.change_clause or ""
+                                    ).strip()
+                                    raw_question_clause = (
+                                        retry_consolidated.question_clause or ""
+                                    ).strip()
+                                    if raw_change_clause and raw_question_clause:
+                                        brief_update_user_text = raw_change_clause
+                                    else:
+                                        brief_update_user_text = body.content
+                                    # Re-run synchronous brief-update against the
+                                    # retry's (possibly narrowed) text and re-check
+                                    # both invariants. ``probe_retry_fired``
+                                    # reflects real verification: True when the
+                                    # post-retry gate would open (gate_closed
+                                    # trigger) AND/OR when the retry now produces a
+                                    # real editable-state delta (claim_unsupported
+                                    # trigger). The retry's own
+                                    # ``claims_brief_change`` flag tells us which
+                                    # invariant still matters — if the retry
+                                    # downgraded the claim, no delta is required.
+                                    _retry_committed_algo = extract_algorithm_commitment(text)
+                                    _retry_sync = _run_sync_brief(brief_update_user_text)
+                                    if _retry_sync is not None:
+                                        (
+                                            _retry_effective_brief,
+                                            _retry_patch_payload,
+                                            _retry_brief_turn,
+                                        ) = _retry_sync
+                                        probe_precomputed_patch = _retry_patch_payload
+                                        probe_precomputed_replace_open_questions = bool(
+                                            _retry_brief_turn.replace_open_questions
+                                        )
+                                        probe_precomputed_replace_editable_items = bool(
+                                            _retry_brief_turn.replace_editable_items
+                                        )
+                                        probe_precomputed_cleanup_mode = bool(
+                                            _retry_brief_turn.cleanup_mode
+                                        )
+                                        _retry_gate_ok, _ = _check_gate(
+                                            _retry_effective_brief, _retry_committed_algo
+                                        )
+                                        _retry_claim_ok = (
+                                            not consolidated_claims_brief_change
+                                            or _briefs_differ_in_editable_state(
+                                                current_problem_brief or {},
+                                                _retry_effective_brief or {},
+                                            )
+                                        )
+                                        probe_retry_fired = bool(_retry_gate_ok and _retry_claim_ok)
+                                    else:
+                                        log.info(
+                                            "Probe retry brief-update returned None for session %s; "
+                                            "not marking verified_after_retry",
+                                            session_id,
+                                        )
+                                else:
+                                    log.info(
+                                        "Pre-release probe retry returned None for session %s; "
+                                        "using original draft and relying on layer-1 safety net",
+                                        session_id,
+                                    )
+                except Exception:
+                    log.exception(
+                        "Pre-release probe failed for session %s; using original draft", session_id
+                    )
+                text = intent.sanitize_visible_assistant_reply(text)
+                # Both flags are surfaced through meta_json so the chat bubble can
+                # render the inline Run button (is_run_invitation) and a small
+                # "verified after re-check" indicator (verified_after_retry) when
+                # Layer 2 fired this turn. We only set meta when at least one flag
+                # is truthy to keep null bubbles cheap.
+                _meta_payload: dict[str, Any] = {}
+                if assistant_invites_run_now:
+                    _meta_payload["is_run_invitation"] = True
+                if probe_retry_fired:
+                    _meta_payload["verified_after_retry"] = True
+                assistant_meta = _meta_payload or None
+                am = derivation.append_message(
+                    db, session_id, "assistant", text, True, meta=assistant_meta,
+                )
+                out.append(MessageOut.model_validate(am))
+                # Trigger gating: the brief-update + panel-derivation pipelines are the
+                # most expensive part of the per-turn cost.  If the user message was a
+                # concept question / clarification (change_intent=False) AND no
+                # cleanup / clear flag fired, skip both LLM calls.  Synthetic context
+                # messages (run-complete, etc.) and explicit `skip_*` flags also bypass.
+                change_signal = (
+                    change_intent
+                    or cleanup_requested
+                    or clear_requested
+                    or is_run_ack
+                )
+                # ``skip_hidden_brief_update`` / ``skip_panel_derivation`` are the
+                # frontend's "this is a synthetic context message, don't ghost-
+                # rewrite the brief" hint. We MUST override that hint when the
+                # consolidated turn's visible reply self-declares a brief change
+                # (e.g. agile post-run *"I've added a capacity penalty…"*) —
+                # otherwise the agent's own claim never lands and the panel stays
+                # blank, which is the run-ack regression the participant sees.
+                pipeline_blocked_by_caller = (
+                    (body.skip_hidden_brief_update or body.skip_panel_derivation)
+                    and not consolidated_claims_brief_change
+                )
+                should_run_brief_pipeline = (
+                    change_signal
+                    and not pipeline_blocked_by_caller
+                )
+                if turn and should_run_brief_pipeline and (
+                    turn.problem_brief_patch is not None
+                    or turn.replace_editable_items
+                    or turn.replace_open_questions
+                    or turn.cleanup_mode
+                    or clear_requested
+                ):
+                    try:
+                        patch_payload: dict[str, Any] | None = None
+                        if turn.problem_brief_patch:
+                            patch_payload = dict(turn.problem_brief_patch)
+                        elif clear_requested:
+                            patch_payload = {"items": [], "open_questions": []}
+                        elif cleanup_requested:
+                            log.warning("Cleanup requested but model returned no brief patch for session %s", session_id)
+
+                        if patch_payload is not None:
+                            if is_run_ack:
+                                patch_payload = derivation.sanitize_run_ack_patch_payload(
+                                    patch_payload,
+                                    workflow_mode=row.workflow_mode,
+                                    test_problem_id=row.test_problem_id,
+                                )
+                            if cleanup_requested or turn.cleanup_mode or turn.replace_editable_items:
+                                patch_payload["replace_editable_items"] = True
+                            if clear_requested:
+                                patch_payload["replace_open_questions"] = True
+                            elif turn.replace_open_questions:
+                                patch_payload["replace_open_questions"] = True
+                            merged_brief, cleanup_meta = derivation.apply_brief_patch_with_cleanup(
+                                base_problem_brief=current_problem_brief,
+                                patch_payload=patch_payload,
+                                history_lines=hist,
+                                api_key=key,
+                                model_name=model,
+                                workflow_mode=row.workflow_mode,
+                                current_panel=current,
+                                recent_runs_summary=recent_runs_summary,
+                                researcher_steers=researcher_steers,
+                                test_problem_id=row.test_problem_id,
+                                enable_auto_open_question_cleanup=True,
+                                is_run_acknowledgement=is_run_ack,
+                                cleanup_mode=cleanup_requested or bool(turn.cleanup_mode),
+                                user_text=body.content,
+                                embedding_model=helpers.embedding_model_for(row),
+                            )
+                            merged_brief = coerce_problem_brief_for_workflow(merged_brief, row.workflow_mode)
+                            if int(cleanup_meta.get("removed_total", 0)) > 0:
+                                log.info(
+                                    "Auto open-question cleanup removed %s question(s) for session %s",
+                                    cleanup_meta.get("removed_total"),
+                                    session_id,
+                                )
+                            if merged_brief != current_problem_brief:
+                                row = db.get(StudySession, session_id) or row
+                                row.problem_brief_json = json.dumps(merged_brief)
+                                updated_problem_brief = merged_brief
+                                helpers.touch_session(row)
+                                db.commit()
+                                db.refresh(row)
+                        effective_problem_brief = updated_problem_brief or current_problem_brief
+                        # Mirror the background-derivation short-circuit in derivation.py: if the
+                        # brief did not actually change after normalization, skip the gemini-pro
+                        # config-derivation call and let sync fall through to its deterministic
+                        # heuristic (passing api_key=None skips the LLM at sync.py:438).
+                        brief_unchanged = json.dumps(
+                            normalize_problem_brief(effective_problem_brief), sort_keys=True, default=str
+                        ) == json.dumps(
+                            normalize_problem_brief(current_problem_brief), sort_keys=True, default=str
+                        )
+                        config_api_key = None if brief_unchanged else key
+                        row = db.get(StudySession, session_id) or row
+                        updated_panel, _ = sync.sync_panel_from_problem_brief(
+                            row,
+                            db,
+                            effective_problem_brief,
+                            api_key=config_api_key,
                             model_name=model,
                             workflow_mode=row.workflow_mode,
-                            current_panel=current,
                             recent_runs_summary=recent_runs_summary,
-                            researcher_steers=researcher_steers,
-                            test_problem_id=row.test_problem_id,
-                            enable_auto_open_question_cleanup=True,
-                            is_run_acknowledgement=is_run_ack,
-                            cleanup_mode=cleanup_requested or bool(turn.cleanup_mode),
-                            user_text=body.content,
+                            preserve_missing_managed_fields=True,
                         )
-                        merged_brief = coerce_problem_brief_for_workflow(merged_brief, row.workflow_mode)
-                        if int(cleanup_meta.get("removed_total", 0)) > 0:
-                            log.info(
-                                "Auto open-question cleanup removed %s question(s) for session %s",
-                                cleanup_meta.get("removed_total"),
-                                session_id,
-                            )
-                        if merged_brief != current_problem_brief:
-                            row = db.get(StudySession, session_id) or row
-                            row.problem_brief_json = json.dumps(merged_brief)
-                            updated_problem_brief = merged_brief
-                            helpers.touch_session(row)
-                            db.commit()
-                            db.refresh(row)
-                    effective_problem_brief = updated_problem_brief or current_problem_brief
-                    # Mirror the background-derivation short-circuit in derivation.py: if the
-                    # brief did not actually change after normalization, skip the gemini-pro
-                    # config-derivation call and let sync fall through to its deterministic
-                    # heuristic (passing api_key=None skips the LLM at sync.py:438).
-                    brief_unchanged = json.dumps(
-                        normalize_problem_brief(effective_problem_brief), sort_keys=True, default=str
-                    ) == json.dumps(
-                        normalize_problem_brief(current_problem_brief), sort_keys=True, default=str
-                    )
-                    config_api_key = None if brief_unchanged else key
-                    row = db.get(StudySession, session_id) or row
-                    updated_panel, _ = sync.sync_panel_from_problem_brief(
-                        row,
-                        db,
-                        effective_problem_brief,
-                        api_key=config_api_key,
-                        model_name=model,
-                        workflow_mode=row.workflow_mode,
-                        recent_runs_summary=recent_runs_summary,
-                        preserve_missing_managed_fields=True,
-                    )
-                    row = db.get(StudySession, session_id) or row
-                    helpers.settle_processing_state(row, cancel_revision=True)
-                    helpers.touch_session(row)
-                    db.commit()
-                    db.refresh(row)
-                    proc_state = helpers.processing_state(row)
-                except sync.GoalTermValidationError as exc:
-                    log.exception("Inline brief/config sync goal-term validation failed for session %s", session_id)
-                    row = db.get(StudySession, session_id) or row
-                    helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
-                    db.commit()
-                    db.refresh(row)
-                    proc_state = helpers.processing_state(row)
-                    msg = derivation.append_message(
-                        db,
-                        session_id,
-                        "assistant",
-                        "I could not sync configuration because goal terms are inconsistent with the definition. "
-                        "Please review Definition items and retry sync.",
-                        True,
-                        kind="panel",
-                    )
-                    out.append(MessageOut.model_validate(msg))
-                except Exception:
-                    log.exception("Inline brief/config sync failed for session %s", session_id)
-                    row = db.get(StudySession, session_id) or row
-                    helpers.fail_processing_state(row, "Inline problem-config sync failed", cancel_revision=True)
-                    db.commit()
-                    db.refresh(row)
-                    proc_state = helpers.processing_state(row)
-            else:
-                # Unified background pipeline: always launches on real chat
-                # turns. The brief-update LLM call inside the pipeline is
-                # gated by `skip_brief_update_llm`, but coercion + OQ
-                # maintenance + sync always run. This sequencing replaces
-                # the earlier (parallel) split that had a race between BG
-                # derivation and standalone OQ maintenance.
-                #
-                # Skip the pipeline entirely only on caller-driven hard
-                # bypasses (skip_hidden_brief_update / skip_panel_derivation)
-                # or genuine synthetic context messages.
-                hard_skip_pipeline = (
-                    body.skip_hidden_brief_update
-                    or body.skip_panel_derivation
-                    or intent.is_interpret_only_context_message(body.content)
-                )
-                row = db.get(StudySession, session_id) or row
-                if hard_skip_pipeline:
-                    helpers.settle_processing_state(row, cancel_revision=True)
-                    helpers.touch_session(row)
-                    db.commit()
-                    db.refresh(row)
-                    proc_state = helpers.processing_state(row)
+                        row = db.get(StudySession, session_id) or row
+                        helpers.settle_processing_state(row, cancel_revision=True)
+                        helpers.touch_session(row)
+                        db.commit()
+                        db.refresh(row)
+                        proc_state = helpers.processing_state(row)
+                    except sync.GoalTermValidationError as exc:
+                        log.exception("Inline brief/config sync goal-term validation failed for session %s", session_id)
+                        row = db.get(StudySession, session_id) or row
+                        helpers.fail_processing_state(row, exc.processing_error_text(), cancel_revision=True)
+                        db.commit()
+                        db.refresh(row)
+                        proc_state = helpers.processing_state(row)
+                        msg = derivation.append_message(
+                            db,
+                            session_id,
+                            "assistant",
+                            "I could not sync configuration because goal terms are inconsistent with the definition. "
+                            "Please review Definition items and retry sync.",
+                            True,
+                            kind="panel",
+                        )
+                        out.append(MessageOut.model_validate(msg))
+                    except Exception:
+                        log.exception("Inline brief/config sync failed for session %s", session_id)
+                        row = db.get(StudySession, session_id) or row
+                        helpers.fail_processing_state(row, "Inline problem-config sync failed", cancel_revision=True)
+                        db.commit()
+                        db.refresh(row)
+                        proc_state = helpers.processing_state(row)
                 else:
-                    # Processing was already marked pending before the model call;
-                    # reuse the same revision so we don't double-increment.
-                    revision = int(row.processing_revision or 0)
-                    proc_state = helpers.processing_state(row)
-                    # When change_signal is False (concept questions, casual
-                    # chat, dismissals like "skip this for now"), skip the
-                    # brief-update LLM call to save the round-trip — but still
-                    # run OQ maintenance + coercion + sync inside the pipeline
-                    # so dismissals are honoured and gating stays correct.
-                    skip_brief_llm = not change_signal
-                    # Unified-call architecture: the chat-turn LLM already
-                    # produced a structured ``problem_brief_patch`` alongside
-                    # the visible reply. Pass it through so the background
-                    # pipeline can skip the redundant brief-update LLM call.
-                    chat_turn_patch = (
-                        dict(turn.problem_brief_patch)
-                        if turn is not None and isinstance(turn.problem_brief_patch, dict)
-                        else None
+                    # Unified background pipeline: always launches on real chat
+                    # turns. The brief-update LLM call inside the pipeline is
+                    # gated by `skip_brief_update_llm`, but coercion + OQ
+                    # maintenance + sync always run. This sequencing replaces
+                    # the earlier (parallel) split that had a race between BG
+                    # derivation and standalone OQ maintenance.
+                    #
+                    # Skip the pipeline entirely only on caller-driven hard
+                    # bypasses (skip_hidden_brief_update / skip_panel_derivation)
+                    # or genuine synthetic context messages — UNLESS the
+                    # consolidated turn's visible reply self-declares a brief
+                    # change. In that case the agent's own commitment is the
+                    # source of truth and MUST get persisted, even on a run-ack
+                    # context turn that would otherwise be classified
+                    # interpretation-only. Without this override the run-ack
+                    # regression returns: the agent says *"I've added X"* and the
+                    # panel stays blank because the synthetic-context bypass
+                    # threw the precomputed brief patch on the floor.
+                    hard_skip_pipeline = (
+                        (
+                            body.skip_hidden_brief_update
+                            or body.skip_panel_derivation
+                            or intent.is_interpret_only_context_message(
+                                body.content, context_kind
+                            )
+                        )
+                        and not consolidated_claims_brief_change
                     )
-                    derivation.launch_background_derivation(
-                        session_id=session_id,
-                        revision=revision,
-                        user_text=brief_update_user_text,
-                        workflow_mode=row.workflow_mode,
-                        api_key=key,
-                        model_name=model,
-                        history_lines=hist,
-                        researcher_steers=researcher_steers,
-                        recent_runs_summary=recent_runs_summary,
-                        base_problem_brief=current_problem_brief,
-                        base_panel=current,
-                        cleanup_requested=cleanup_requested,
-                        clear_requested=clear_requested,
-                        is_run_acknowledgement=is_run_ack,
-                        is_answered_open_question=is_answer_save,
-                        is_config_save=is_config_save,
-                        is_upload_context=is_upload_context,
-                        is_tutorial_active=is_tutorial_active,
-                        test_problem_id=row.test_problem_id,
-                        # Pass the visible reply so the hidden brief turn AND
-                        # the OQ maintenance step share the same chat context.
-                        visible_assistant_message=text,
-                        skip_brief_update_llm=skip_brief_llm,
-                        gate_status=gate_status_for_chat,
-                        chat_turn_brief_patch=chat_turn_patch,
-                        chat_turn_replace_editable_items=bool(
-                            turn is not None and turn.replace_editable_items
-                        ),
-                        chat_turn_replace_open_questions=bool(
-                            turn is not None and turn.replace_open_questions
-                        ),
-                        chat_turn_cleanup_mode=bool(
-                            turn is not None and turn.cleanup_mode
-                        ),
-                    )
+                    row = db.get(StudySession, session_id) or row
+                    if hard_skip_pipeline:
+                        helpers.settle_processing_state(row, cancel_revision=True)
+                        helpers.touch_session(row)
+                        db.commit()
+                        db.refresh(row)
+                        proc_state = helpers.processing_state(row)
+                    else:
+                        # Processing was already marked pending before the model call;
+                        # reuse the same revision so we don't double-increment.
+                        revision = int(row.processing_revision or 0)
+                        proc_state = helpers.processing_state(row)
+                        # When change_signal is False (concept questions, casual
+                        # chat, dismissals like "skip this for now"), skip the
+                        # brief-update LLM call to save the round-trip — but still
+                        # run OQ maintenance + coercion + sync inside the pipeline
+                        # so dismissals are honoured and gating stays correct.
+                        skip_brief_llm = not change_signal
+                        # Prefer the synchronously-computed patch from the
+                        # pre-release probe (if it fired); fall back to the
+                        # unified-call patch from ``turn`` (legacy path); else
+                        # background derivation runs its own brief-update.
+                        if probe_precomputed_patch is not None:
+                            chat_turn_patch = dict(probe_precomputed_patch)
+                            chat_turn_replace_editable_items = (
+                                probe_precomputed_replace_editable_items
+                            )
+                            chat_turn_replace_open_questions = (
+                                probe_precomputed_replace_open_questions
+                            )
+                            chat_turn_cleanup_mode = probe_precomputed_cleanup_mode
+                        else:
+                            chat_turn_patch = (
+                                dict(turn.problem_brief_patch)
+                                if turn is not None and isinstance(turn.problem_brief_patch, dict)
+                                else None
+                            )
+                            chat_turn_replace_editable_items = bool(
+                                turn is not None and turn.replace_editable_items
+                            )
+                            chat_turn_replace_open_questions = bool(
+                                turn is not None and turn.replace_open_questions
+                            )
+                            chat_turn_cleanup_mode = bool(
+                                turn is not None and turn.cleanup_mode
+                            )
+                        derivation.launch_background_derivation(
+                            session_id=session_id,
+                            revision=revision,
+                            user_text=brief_update_user_text,
+                            workflow_mode=row.workflow_mode,
+                            api_key=key,
+                            model_name=model,
+                            history_lines=hist,
+                            researcher_steers=researcher_steers,
+                            recent_runs_summary=recent_runs_summary,
+                            base_problem_brief=current_problem_brief,
+                            base_panel=current,
+                            cleanup_requested=cleanup_requested,
+                            clear_requested=clear_requested,
+                            is_run_acknowledgement=is_run_ack,
+                            is_answered_open_question=is_answer_save,
+                            is_config_save=is_config_save,
+                            is_upload_context=is_upload_context,
+                            is_tutorial_active=is_tutorial_active,
+                            test_problem_id=row.test_problem_id,
+                            # Pass the visible reply so the hidden brief turn AND
+                            # the OQ maintenance step share the same chat context.
+                            visible_assistant_message=text,
+                            skip_brief_update_llm=skip_brief_llm,
+                            gate_status=gate_status_for_chat,
+                            chat_turn_brief_patch=chat_turn_patch,
+                            chat_turn_replace_editable_items=chat_turn_replace_editable_items,
+                            chat_turn_replace_open_questions=chat_turn_replace_open_questions,
+                            chat_turn_cleanup_mode=chat_turn_cleanup_mode,
+                            embedding_model=helpers.embedding_model_for(row),
+                        )
 
             row = db.get(StudySession, session_id) or row
             panel_obj: dict[str, Any] | None = None
@@ -1471,7 +2155,12 @@ def researcher_simulate_participant_upload(
     return _handle_post_participant_message(
         session_id,
         db,
-        MessageCreate(content=content, invoke_model=b.invoke_model, skip_hidden_brief_update=False),
+        MessageCreate(
+            content=content,
+            invoke_model=b.invoke_model,
+            skip_hidden_brief_update=False,
+            context_kind="simulated_upload",
+        ),
     )
 
 
@@ -1841,6 +2530,8 @@ def patch_participant_model_settings(
         raise HTTPException(status_code=410, detail="Session ended")
     if body.gemini_model is not None:
         row.gemini_model = body.gemini_model
+    if body.embedding_model is not None:
+        row.embedding_model = body.embedding_model
     if body.gemini_api_key is not None:
         row.gemini_key_encrypted = encrypt_secret(body.gemini_api_key)
     helpers.settle_processing_state(row, cancel_revision=True)
@@ -2553,6 +3244,7 @@ def export_session(
             "tutorial_completed": bool(getattr(row, "tutorial_completed", False)),
             "optimization_gate_engaged": bool(getattr(row, "optimization_gate_engaged", False)),
             "gemini_model": row.gemini_model,
+            "embedding_model": row.embedding_model,
             "gemini_key_configured": bool(row.gemini_key_encrypted),
             "content_reset_revision": int(getattr(row, "content_reset_revision", 0) or 0),
         },

@@ -93,6 +93,11 @@ export function ChatSection({
       messages={
         <MessageBubbleList
           messages={messages}
+          getBubbleClassName={(message) =>
+            message.role !== "user" && message.meta?.verifying
+              ? "bubble--verifying"
+              : undefined
+          }
           renderMessageMarkdown={(message) =>
             parseFilenamesFromSimulatedUploadMessage(message.content) ? uploadDisplayText : message.content
           }

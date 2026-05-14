@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 
-import { apiFetch, type RunResult, type Session } from "@shared/api";
+import { apiFetch, type Message, type RunResult, type Session } from "@shared/api";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { resolveProblemPanelFromServer } from "../problemConfig/problemPanelHydration";
 import { type EditMode, type RecentSessionRow } from "../lib/clientTypes";
@@ -12,13 +12,18 @@ import {
   isSessionGoneError,
 } from "../lib/sessionGuards";
 import { readSessionHistory, removeSessionHistoryEntry } from "../lib/sessionHistory";
-import { mergeMessagesFromPoll } from "../chat/messageMerge";
+import { mergeMessageUpdate, mergeMessagesFromPoll } from "../chat/messageMerge";
 
 const MESSAGE_POLL_MS = 4000;
 const RUN_POLL_MS = 8000;
 const SESSION_POLL_MS = 15000;
 const EAGER_POLL_INTERVAL_MS = 2000;
 const EAGER_POLL_DURATION_MS = 10000;
+/** Refetch cadence for messages whose `meta.verifying` flag is still set.
+ *  The async-verification pipeline typically completes in well under 10s,
+ *  but the brief-update LLM call + a retry can push past that. 1.5s feels
+ *  responsive without hammering the API. */
+const VERIFYING_POLL_INTERVAL_MS = 1500;
 /** Session GET while definition/config derivation is pending (faster than SESSION_POLL_MS). */
 const PROCESSING_PENDING_SESSION_POLL_MS = 2500;
 const TUTORIAL_REFRESH_SIGNAL_KEY = "mopt_participant_tutorial_refresh";
@@ -34,6 +39,9 @@ type UseParticipantSessionSyncArgs = {
   authed: boolean;
   lastMsgId: number;
   activeRun: number;
+  /** Local message list — used to detect which assistant messages still carry
+   *  `meta.verifying=true` so we can poll those specific rows for updates. */
+  messages: Message[];
   /** When true, periodic run list sync is skipped (avoids ghost tabs during optimize). */
   optimizingRef: MutableRefObject<boolean>;
   runs: RunResult[];
@@ -58,8 +66,11 @@ type UseParticipantSessionSyncArgs = {
   setError: (value: string | null) => void;
   setRecentRows: (value: RecentSessionRow[]) => void;
   setModelName: (value: string) => void;
+  setEmbeddingModel: (value: string) => void;
   /** Default model from server config (.env MOPT_DEFAULT_GEMINI_MODEL); used when no session model is set. */
   defaultModel: string;
+  /** Default embedding model from server config (.env MOPT_DEFAULT_EMBEDDING_MODEL). */
+  defaultEmbeddingModel: string;
 };
 
 export function useClientSessionSync({
@@ -68,6 +79,7 @@ export function useClientSessionSync({
   authed,
   lastMsgId,
   activeRun,
+  messages,
   optimizingRef,
   runs,
   session,
@@ -91,7 +103,9 @@ export function useClientSessionSync({
   setError,
   setRecentRows,
   setModelName,
+  setEmbeddingModel,
   defaultModel,
+  defaultEmbeddingModel,
 }: UseParticipantSessionSyncArgs) {
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -328,6 +342,43 @@ export function useClientSessionSync({
     syncSession,
   ]);
 
+  // Refresh assistant messages whose `meta.verifying` flag is still set.
+  // The standard incremental message poll (`?after_id=`) won't see in-place
+  // updates because the id is already known. We poll each verifying message
+  // by id until the flag clears (or the message disappears).
+  const verifyingMessageIds = useMemo(
+    () => messages
+      .filter((m) => m.role !== "user" && m.meta?.verifying === true && m.id >= 0)
+      .map((m) => m.id),
+    [messages],
+  );
+  useEffect(() => {
+    if (!authed || !token || !sessionId) return;
+    if (verifyingMessageIds.length === 0) return;
+    const requestedSessionId = sessionId;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") return;
+      await Promise.all(
+        verifyingMessageIds.map(async (id) => {
+          try {
+            const updated = await apiFetch<Message>(
+              `/sessions/${requestedSessionId}/messages/${id}`,
+              token,
+            );
+            if (sessionIdRef.current !== requestedSessionId) return;
+            setMessages((current) => mergeMessageUpdate(current, updated));
+          } catch {
+            // Swallow — the message may have been deleted or the session is gone;
+            // the next poll cycle (or a session-gone error elsewhere) will handle it.
+          }
+        }),
+      );
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, VERIFYING_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [authed, sessionId, sessionIdRef, setMessages, token, verifyingMessageIds]);
+
   useEffect(() => {
     if (!authed) {
       setRecentRows(readSessionHistory().map((entry) => ({ id: entry.id, history: entry })));
@@ -348,9 +399,19 @@ export function useClientSessionSync({
       // Fall back to server's configured default (from .env) so the dialog
       // pre-selects the right model even when the session has no stored model.
       setModelName(model || defaultModel);
+      const embedding = session?.embedding_model?.trim();
+      setEmbeddingModel(embedding || defaultEmbeddingModel);
     }
     modelDialogWasOpenRef.current = showModelDialog;
-  }, [defaultModel, modelDialogWasOpenRef, session, setModelName, showModelDialog]);
+  }, [
+    defaultModel,
+    defaultEmbeddingModel,
+    modelDialogWasOpenRef,
+    session,
+    setModelName,
+    setEmbeddingModel,
+    showModelDialog,
+  ]);
 
   useEffect(() => {
     if (!authed) return;

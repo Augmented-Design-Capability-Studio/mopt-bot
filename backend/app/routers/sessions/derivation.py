@@ -472,6 +472,7 @@ def apply_brief_patch_with_cleanup(
     is_run_acknowledgement: bool = False,
     cleanup_mode: bool = False,
     user_text: str = "",
+    embedding_model: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
@@ -924,6 +925,126 @@ def persist_processing_failure(session_id: str, revision: int, detail: str) -> N
         db.commit()
 
 
+def compute_brief_after_user_turn(
+    *,
+    user_text: str,
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    base_problem_brief: dict[str, Any],
+    base_panel: dict[str, Any] | None,
+    workflow_mode: str,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    researcher_steers: list[str] | None = None,
+    is_tutorial_active: bool = False,
+    test_problem_id: str | None = None,
+    visible_assistant_message: str | None = None,
+    gate_status: dict[str, Any] | None = None,
+    embedding_model: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None, "ProblemBriefUpdateTurn"]:
+    """Synchronous probe variant of the brief-update pipeline.
+
+    Runs the brief-update LLM once and merges its patch with the base brief,
+    returning ``(merged_brief, panel_patch_or_None, brief_turn)`` **without**
+    persisting anything. Used by the pre-release probe in the router to
+    predict what the brief would look like after this turn commits, so the
+    router can decide whether the visible reply's claims line up with what
+    the structured patch actually delivered.
+
+    On any failure (LLM exception, parse error, merge error) the function
+    falls back to ``(base_problem_brief, None, empty_brief_turn)`` so the
+    probe can still proceed with a degraded prediction rather than crash.
+    """
+    from app.schemas import ProblemBriefUpdateTurn
+    from app.services.llm import generate_problem_brief_update
+
+    empty_turn = ProblemBriefUpdateTurn(problem_brief_patch=None)
+    try:
+        brief_turn = generate_problem_brief_update(
+            user_text=user_text,
+            history_lines=history_lines,
+            api_key=api_key,
+            model_name=model_name,
+            current_problem_brief=base_problem_brief,
+            workflow_mode=workflow_mode,
+            current_panel=base_panel,
+            recent_runs_summary=recent_runs_summary,
+            researcher_steers=researcher_steers,
+            cleanup_mode=False,
+            is_run_acknowledgement=False,
+            is_answered_open_question=False,
+            is_config_save=False,
+            is_upload_context=False,
+            is_tutorial_active=is_tutorial_active,
+            test_problem_id=test_problem_id,
+            visible_assistant_message=visible_assistant_message,
+            gate_status=gate_status,
+        )
+    except Exception:
+        log.exception("compute_brief_after_user_turn: brief-update LLM failed")
+        return (base_problem_brief, None, empty_turn)
+
+    if brief_turn is None or brief_turn.problem_brief_patch is None:
+        return (base_problem_brief, None, brief_turn or empty_turn)
+
+    try:
+        merged_brief, panel_patch = apply_brief_patch_with_cleanup(
+            base_problem_brief=base_problem_brief,
+            patch_payload=brief_turn.problem_brief_patch,
+            history_lines=history_lines,
+            api_key=api_key,
+            model_name=model_name,
+            workflow_mode=workflow_mode,
+            current_panel=base_panel,
+            recent_runs_summary=recent_runs_summary or [],
+            researcher_steers=researcher_steers or [],
+            test_problem_id=test_problem_id,
+            user_text=user_text,
+        )
+        return (merged_brief, panel_patch, brief_turn)
+    except Exception:
+        log.exception("compute_brief_after_user_turn: brief patch merge failed")
+        return (base_problem_brief, None, brief_turn)
+
+
+def update_message_after_verification(
+    *,
+    message_id: int,
+    new_content: str | None,
+    set_verified_after_retry: bool,
+) -> None:
+    """Lift the ``meta.verifying`` flag on the assistant draft after the
+    async verification pipeline finishes (or fails).
+
+    - ``new_content`` rewrites the message body when the retry produced a
+      different draft; pass ``None`` to leave the body untouched.
+    - ``set_verified_after_retry`` records that a retry path was taken so
+      researcher review can spot turns the probe touched.
+
+    Called from the verification pipeline; safe to invoke even when the
+    message row no longer exists (best-effort cleanup).
+    """
+    with SessionLocal() as db:
+        msg = db.get(ChatMessage, message_id)
+        if msg is None:
+            return
+        meta: dict[str, Any] = {}
+        if msg.meta_json:
+            try:
+                parsed = json.loads(msg.meta_json)
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except json.JSONDecodeError:
+                meta = {}
+        meta["verifying"] = False
+        if set_verified_after_retry:
+            meta["verified_after_retry"] = True
+        msg.meta_json = json.dumps(meta, ensure_ascii=False)
+        if new_content is not None:
+            msg.content = new_content
+        db.commit()
+
+
 # Substring-only commit-phrase detector. Regex-free per project preference
 # ([[feedback_no_regex_for_nl]]). Used by the recovery path in
 # `_run_background_derivation` to spot a chat-turn that committed in the
@@ -980,8 +1101,15 @@ def _run_background_derivation(
     chat_turn_replace_editable_items: bool = False,
     chat_turn_replace_open_questions: bool = False,
     chat_turn_cleanup_mode: bool = False,
+    embedding_model: str | None = None,
 ) -> None:
     """Unified background pipeline for one chat turn.
+
+    ``embedding_model`` is accepted for caller-API symmetry with the
+    verification pipeline (which threads the session's embedding model
+    through). Downstream LLM/embedding code reads the model from the
+    session row directly; the kwarg here is reserved for future per-call
+    overrides.
 
     Steps (all sequential — no parallel threads, so OQ maintenance and the
     brief-update merge cannot race):

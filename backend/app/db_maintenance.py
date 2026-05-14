@@ -26,6 +26,7 @@ def ensure_database_shape() -> None:
     _ensure_sessions_tutorial_tracking_columns()
     _ensure_sessions_optimization_gate_engaged_column()
     _ensure_sessions_content_reset_revision_column()
+    _ensure_sessions_embedding_model_column()
     _backfill_optimization_gate_engaged()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
@@ -218,6 +219,18 @@ def _ensure_sessions_content_reset_revision_column() -> None:
             text("ALTER TABLE sessions ADD COLUMN content_reset_revision INTEGER NOT NULL DEFAULT 0")
         )
     log.info("Added sessions.content_reset_revision column")
+
+
+def _ensure_sessions_embedding_model_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "embedding_model" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN embedding_model VARCHAR(128)"))
+    log.info("Added sessions.embedding_model column")
 
 
 def _ensure_sessions_optimization_gate_engaged_column() -> None:

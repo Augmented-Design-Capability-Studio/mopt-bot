@@ -30,12 +30,18 @@ class Settings(BaseSettings):
     derivation_timeout_sec: float = 45.0
     default_gemini_model: str = "gemini-3.1-flash-lite-preview"
     gemini_model_suggestions: str = "gemini-3.1-flash-lite-preview,gemini-3-flash-preview"
+    default_embedding_model: str = "gemini-embedding-001"
+    embedding_model_suggestions: str = "gemini-embedding-001"
     # Comma-separated extra directories (repo-relative or absolute): mopt_manifest.toml and/or register_ports.py
     problem_paths: str = ""
 
     @property
     def gemini_model_suggestions_list(self) -> list[str]:
         return [m.strip() for m in self.gemini_model_suggestions.split(",") if m.strip()]
+
+    @property
+    def embedding_model_suggestions_list(self) -> list[str]:
+        return [m.strip() for m in self.embedding_model_suggestions.split(",") if m.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

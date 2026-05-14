@@ -136,7 +136,12 @@
       "Bash(sort -t: -k2 -n)",
       "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_gate_aware_chat_turn.py -x -q)",
       "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/test_visible_reply_commitments.py backend/tests/test_llm_schema.py backend/tests/test_problem_brief.py backend/tests/test_sessions.py backend/tests/test_optimization_gate.py backend/tests/test_sync.py -q)",
-      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/ -q -x --ignore=backend/tests/test_live_gemini.py)"
+      "Bash(../mopt-bot/venv/Scripts/python.exe -m pytest backend/tests/ -q -x --ignore=backend/tests/test_live_gemini.py)",
+      "Bash(/c/Users/whyhowie/git-repo/mopt-bot/.venv/Scripts/python.exe *)",
+      "Bash(awk 'NR==1371 || NR==1715 || NR==1730 || NR==1975 || NR==1976' \"C:/Users/whyhowie/git-repo/mopt-bot/backend/app/routers/sessions/router.py\")",
+      "PowerShell(Get-Content *)",
+      "Bash(./.venv/Scripts/python.exe -c \"from app.routers.sessions import derivation; print\\('import OK'\\)\")",
+      "Bash(awk 'NR==1369 || NR==1370 || NR==1371' \"C:/Users/whyhowie/git-repo/mopt-bot/backend/app/routers/sessions/router.py\")"
     ]
   }
 }

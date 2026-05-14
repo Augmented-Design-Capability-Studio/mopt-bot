@@ -26,12 +26,14 @@ type ResearcherDetailProps = {
   steerText: string;
   geminiKey: string;
   geminiModel: string;
+  embeddingModel: string;
   busy: boolean;
   pushKeySuccess: string | null;
   getOnlyActiveTerms: (panel: Session["panel_config"]) => boolean;
   onSteerTextChange: (value: string) => void;
   onGeminiKeyChange: (value: string) => void;
   onGeminiModelChange: (value: string) => void;
+  onEmbeddingModelChange: (value: string) => void;
   onClearPushKeySuccess: () => void;
   onPatchSession: (patch: Record<string, unknown>) => Promise<boolean>;
   onSetOnlyActiveTerms: (enabled: boolean) => void | Promise<void>;
@@ -59,12 +61,14 @@ export function ResearcherDetail({
   steerText,
   geminiKey,
   geminiModel,
+  embeddingModel,
   busy,
   pushKeySuccess,
   getOnlyActiveTerms,
   onSteerTextChange,
   onGeminiKeyChange,
   onGeminiModelChange,
+  onEmbeddingModelChange,
   onClearPushKeySuccess,
   onPatchSession,
   onSetOnlyActiveTerms,
@@ -456,9 +460,10 @@ export function ResearcherDetail({
 
           <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center" }}>
             <StatusChip
-              label="Participant model / API key"
+              label="Assistant"
               status={detail.gemini_key_configured ? "ok" : "warn"}
               icon={detail.gemini_key_configured ? "✓" : "⚠"}
+              detail={detail.gemini_key_configured ? "configured" : "missing"}
               title={
                 detail.gemini_key_configured
                   ? "The participant session already has a stored API key"
@@ -517,6 +522,7 @@ export function ResearcherDetail({
             configured={detail.gemini_key_configured}
             geminiKey={geminiKey}
             geminiModel={geminiModel}
+            embeddingModel={embeddingModel}
             busy={busy}
             pushKeySuccess={pushKeySuccess}
             onGeminiKeyChange={(value) => {
@@ -524,6 +530,7 @@ export function ResearcherDetail({
               onClearPushKeySuccess();
             }}
             onGeminiModelChange={onGeminiModelChange}
+            onEmbeddingModelChange={onEmbeddingModelChange}
             onClose={() => setShowModelDialog(false)}
             onPush={onPushGeminiKey}
           />

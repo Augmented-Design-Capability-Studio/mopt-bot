@@ -40,7 +40,8 @@ class TemplateProblemPort:
             visualization_presets=[],   # TODO: list preset ids (must match frontend viz tabs)
             primary_visualization=None, # TODO: default visualization tab id, or None
             weight_display_keys=self.weight_display_keys(),
-            worker_preference_key=self.worker_preference_key(),
+            worker_preference_key=None,
+            gate_conditional_companions={},
         )
 
     # ------------------------------------------------------------------ #
@@ -148,10 +149,14 @@ class TemplateProblemPort:
         # parametric keys that should not independently satisfy the gate.
         return ["obj_a", "obj_b"]
 
-    def worker_preference_key(self) -> str | None:
-        # TODO: return the weight key whose UI block is conditional on a
-        # worker-preference list being non-empty, or None if not applicable.
-        return None
+    # ------------------------------------------------------------------ #
+    # Gate-conditional companions                                          #
+    # ------------------------------------------------------------------ #
+    # The default ``gate_conditional_companions()`` from the protocol
+    # returns ``{}``; override only if a goal term has a structured
+    # companion panel field (top-level list) that should open the gate
+    # alongside the term's own weight. Example (VRPTW): the
+    # ``worker_preference`` goal term's companion is ``driver_preferences``.
 
     def visualization_capabilities(self) -> list[str]:
         # TODO: describe what participants see after each run.

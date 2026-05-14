@@ -88,6 +88,8 @@ export async function fetchTestProblemsMeta(): Promise<TestProblemMeta[]> {
 export type PublicConfig = {
   default_gemini_model: string;
   gemini_model_suggestions: string[];
+  default_embedding_model: string;
+  embedding_model_suggestions: string[];
 };
 
 /** Fetch server-driven UI config (no auth required). Falls back gracefully. */
@@ -100,10 +102,17 @@ export async function fetchPublicConfig(): Promise<PublicConfig> {
     return {
       default_gemini_model: typeof data.default_gemini_model === "string" ? data.default_gemini_model : "",
       gemini_model_suggestions: Array.isArray(data.gemini_model_suggestions) ? data.gemini_model_suggestions : [],
+      default_embedding_model: typeof data.default_embedding_model === "string" ? data.default_embedding_model : "",
+      embedding_model_suggestions: Array.isArray(data.embedding_model_suggestions) ? data.embedding_model_suggestions : [],
     };
   } catch {
     // Fallback: return empty so UI stays functional even if backend is unreachable
-    return { default_gemini_model: "", gemini_model_suggestions: [] };
+    return {
+      default_gemini_model: "",
+      gemini_model_suggestions: [],
+      default_embedding_model: "",
+      embedding_model_suggestions: [],
+    };
   }
 }
 
@@ -141,10 +150,15 @@ export type TestProblemMeta = {
   extension_ui: string;
   visualization_presets: string[];
   primary_visualization: string | null;
-  /** Ordered weight keys that count toward the agile gate. Empty = any-weight fallback. */
+  /** Ordered weight keys that count toward the gate. Empty = any-weight fallback. */
   weight_display_keys: string[];
-  /** Weight key whose block is conditional on driver_preferences (null = no such concept). */
+  /** Singular legacy: weight key whose extras-panel block is conditional on a companion field. */
   worker_preference_key: string | null;
+  /** Map of goal-term key → companion panel field name. A goal term whose key is here
+   * contributes to the gate iff its companion field is "present" (non-empty list / positive
+   * number / non-empty string). The companion's presence makes the goal term meaningful;
+   * a weight on a companion-required term alone does NOT open the gate. */
+  gate_conditional_companions: Record<string, string>;
 };
 
 export const TUTORIAL_STEP_IDS = [
@@ -211,6 +225,7 @@ export type Session = {
   /** Waterfall: true after first participant chat or once the brief lists open questions (cold start gate). */
   optimization_gate_engaged?: boolean;
   gemini_model: string | null;
+  embedding_model: string | null;
   gemini_key_configured: boolean;
   /** Incremented on researcher reset; client may reload when this increases. */
   content_reset_revision?: number;
@@ -281,6 +296,11 @@ export type MessageMeta = {
    *  badge on the chat bubble so participants can see when the system intervened
    *  to keep the visible reply consistent with the structural state. */
   verified_after_retry?: boolean;
+  /** Set immediately after the chat-turn returns, cleared when the async
+   *  verification pipeline (probe + maybe retry) finishes. While true the chat
+   *  bubble renders dimmed so participants see the draft right away but
+   *  understand the system is still settling. */
+  verifying?: boolean;
 };
 
 export type Message = {

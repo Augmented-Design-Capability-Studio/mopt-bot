@@ -68,6 +68,7 @@ type ClientShellProps = {
   showModelDialog: boolean;
   modelName: string;
   modelKey: string;
+  embeddingModel: string;
   aiPending: boolean;
   fileRef: RefObject<HTMLInputElement>;
   simulatedUploadChips: string[];
@@ -80,6 +81,7 @@ type ClientShellProps = {
   onSetShowModelDialog: (open: boolean) => void;
   onModelNameChange: (value: string) => void;
   onModelKeyChange: (value: string) => void;
+  onEmbeddingModelChange: (value: string) => void;
   onLeaveSession: () => void;
   onStartSession: () => void | Promise<void>;
   onSendChat: () => void | Promise<void>;
@@ -145,6 +147,7 @@ export function ClientShell({
   showModelDialog,
   modelName,
   modelKey,
+  embeddingModel,
   aiPending,
   fileRef,
   simulatedUploadChips,
@@ -157,6 +160,7 @@ export function ClientShell({
   onSetShowModelDialog,
   onModelNameChange,
   onModelKeyChange,
+  onEmbeddingModelChange,
   onLeaveSession,
   onStartSession,
   onSendChat,
@@ -205,6 +209,8 @@ export function ClientShell({
   const chatAttentionKey = shouldNudgeChat ? `${sessionId}:new-session-chat-focus` : undefined;
   const modelKeyStatus = session == null ? "neutral" : session.gemini_key_configured ? "ok" : "warn";
   const modelKeyIcon = modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
+  const modelKeyDetail =
+    modelKeyStatus === "ok" ? "configured" : modelKeyStatus === "warn" ? "missing" : "loading";
   const backgroundBriefPending = session?.processing?.brief_status === "pending";
   const backgroundConfigPending = session?.processing?.config_status === "pending";
   const backgroundProcessingPending = backgroundBriefPending || backgroundConfigPending;
@@ -523,14 +529,15 @@ export function ClientShell({
         </span>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
           <StatusChip
-            label="Assistant settings"
+            label="Assistant"
             status={modelKeyStatus}
             icon={modelKeyIcon}
+            detail={modelKeyDetail}
             title={
               modelKeyStatus === "ok"
-                ? "Assistant key is set for this session"
+                ? "Assistant API key is set for this session"
                 : modelKeyStatus === "warn"
-                  ? "No assistant key on this session - add one or ask the researcher"
+                  ? "No assistant API key on this session — add one or ask the researcher"
                   : "Session loading"
             }
             onClick={() => onSetShowModelDialog(true)}
@@ -677,10 +684,12 @@ export function ClientShell({
         open={showModelDialog}
         modelName={modelName}
         modelKey={modelKey}
+        embeddingModel={embeddingModel}
         busy={busy}
         sessionTerminated={sessionTerminated}
         onModelNameChange={onModelNameChange}
         onModelKeyChange={onModelKeyChange}
+        onEmbeddingModelChange={onEmbeddingModelChange}
         onClose={onCloseModelDialog}
         onSave={onSaveModelSettings}
       />

@@ -58,6 +58,7 @@ class StudySession(Base):
     tutorial_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     optimization_gate_engaged: Mapped[bool] = mapped_column(Boolean, default=False)
     gemini_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gemini_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     test_problem_id: Mapped[str] = mapped_column(String(64), default=DEFAULT_PROBLEM_ID)
     # Incremented on researcher reset so participant UIs can hard-reload and drop stale state.

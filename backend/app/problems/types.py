@@ -27,8 +27,14 @@ class TestProblemMeta:
     # Ordered weight keys used for the agile gate check (subset/superset of weight_definitions).
     # If empty, the gate falls back to problem-agnostic any-weight logic.
     weight_display_keys: list[str] = field(default_factory=list)
-    # The weight key whose display is conditional on driver_preferences being non-empty (None = no such key).
+    # Singular legacy convenience field — kept for back-compat with frontend
+    # extras panels that need to know which weight key has the worker-pref UI.
+    # When more than one companion-required goal term exists,
+    # ``gate_conditional_companions`` is the authoritative map.
     worker_preference_key: str | None = None
+    # Map of goal-term key → companion panel-field name. Mirrors the port's
+    # ``gate_conditional_companions()``; consumed by the frontend gate.
+    gate_conditional_companions: dict[str, str] = field(default_factory=dict)
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -43,4 +49,5 @@ class TestProblemMeta:
             "primary_visualization": self.primary_visualization,
             "weight_display_keys": list(self.weight_display_keys),
             "worker_preference_key": self.worker_preference_key,
+            "gate_conditional_companions": dict(self.gate_conditional_companions),
         }

@@ -38,6 +38,7 @@ class VrptwStudyPort:
             primary_visualization="fleet_gantt",
             weight_display_keys=meta_weight_display_keys(),
             worker_preference_key=meta_worker_preference_key(),
+            gate_conditional_companions=self.gate_conditional_companions(),
         )
 
     def sanitize_panel_config(self, panel_config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -65,8 +66,24 @@ class VrptwStudyPort:
     def weight_display_keys(self) -> list[str]:
         return meta_weight_display_keys()
 
-    def worker_preference_key(self) -> str | None:
-        return meta_worker_preference_key()
+    def gate_conditional_companions(self) -> dict[str, str]:
+        return {
+            meta_worker_preference_key(): "driver_preferences",
+            "shift_limit": "max_shift_hours",
+        }
+
+    def companion_present(self, goal_term_key: str, value: Any) -> bool:
+        # max_shift_hours must be a positive number — zero is not a meaningful cap.
+        if goal_term_key == "shift_limit":
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value > 0
+            )
+        # driver_preferences and any future list companion: present iff non-empty.
+        if isinstance(value, list):
+            return len(value) > 0
+        return bool(value)
 
     def visualization_capabilities(self) -> list[str]:
         return [

@@ -53,6 +53,7 @@ class SessionPatch(BaseModel):
     participant_tutorial_enabled: bool | None = None
     tutorial_step_override: TutorialStepIdLiteral | None = None
     gemini_model: str | None = None
+    embedding_model: str | None = None
     gemini_api_key: str | None = None
 
 
@@ -125,6 +126,7 @@ class SessionOut(BaseModel):
     tutorial_completed: bool = False
     optimization_gate_engaged: bool = False
     gemini_model: str | None
+    embedding_model: str | None
     gemini_key_configured: bool = False
     content_reset_revision: int = 0
     brief_panel_drift: list[dict[str, Any]] = Field(default_factory=list)
@@ -132,6 +134,20 @@ class SessionOut(BaseModel):
     @field_serializer("created_at", "updated_at")
     def _serialize_datetimes(self, value: datetime) -> str:
         return serialize_utc_datetime(value)
+
+
+ChatContextKind = Literal[
+    "run_started",
+    "run_ack",
+    "config_save",
+    "definition_save",
+    "config_restore",
+    "definition_restore",
+    "definition_cleanup",
+    "open_question_answered",
+    "explain_run",
+    "simulated_upload",
+]
 
 
 class MessageCreate(BaseModel):
@@ -143,6 +159,13 @@ class MessageCreate(BaseModel):
     # intent classifier when the message is a concept question / clarification
     # that doesn't intend any panel change).
     skip_panel_derivation: bool = False
+    # Typed discriminator for synthetic context messages the frontend posts
+    # (run-ack, config-save, definition-restore, …). When set, takes precedence
+    # over the legacy content-regex classifiers in
+    # ``app.routers.sessions.intent`` so we no longer have to match strings
+    # like "Run #N just completed". ``None`` (the default) preserves the
+    # regex-fallback behaviour for ad-hoc / programmatic posts.
+    context_kind: ChatContextKind | None = None
 
 
 class ResearcherSimulateParticipantUploadBody(BaseModel):
@@ -409,6 +432,7 @@ class RunOut(BaseModel):
 class ModelSettingsBody(BaseModel):
     gemini_api_key: str | None = None
     gemini_model: str | None = None
+    embedding_model: str | None = None
 
 
 class ParticipantPanelUpdate(BaseModel):
