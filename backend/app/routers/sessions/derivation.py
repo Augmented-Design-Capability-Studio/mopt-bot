@@ -806,6 +806,18 @@ _MONITOR_ITEM_ALGORITHM_TEXT = (
     "change anytime."
 )
 
+# Monitor topic_tag → canonical monitor OQ id. The maintain LLM emits
+# ``topic_tag`` on any new OQ that asks about a monitor-managed topic
+# (see ``OpenQuestionMaintenanceItem``); the server uses this map to
+# suppress those duplicates when the canonical monitor OQ is already
+# active. Structured-output enforcement — no NL keyword matching
+# ([[feedback_no_regex_for_nl]]).
+_MONITOR_TOPIC_TAG_TO_OQ_ID: dict[str, str] = {
+    "upload": _MONITOR_OQ_UPLOAD_ID,
+    "primary_goal": _MONITOR_OQ_GOAL_ID,
+    "search_strategy": _MONITOR_OQ_ALGORITHM_ID,
+}
+
 
 def _enforce_session_monitors(
     brief: dict[str, Any], workflow_mode: str | None
@@ -1545,6 +1557,69 @@ def _run_background_derivation(
                         from app.problem_brief import merge_problem_brief_patch
 
                         new_oqs = maintain_result.get("open_questions") or []
+                        # Deterministic monitor-topic dedup. The maintain
+                        # LLM sets ``topic_tag`` on any new OQ that asks
+                        # about a server-managed monitor topic (see
+                        # ``OpenQuestionMaintenanceItem``); when the
+                        # corresponding monitor OQ is going to be active
+                        # (state is still missing), drop the LLM's
+                        # tagged duplicate — the monitor OQ is canonical.
+                        # Existing OQs with an echoed id pass through
+                        # untouched. Structured-output enforcement, no
+                        # NL keyword matching.
+                        if new_oqs:
+                            current_brief_for_topic_check = effective_problem_brief
+                            monitor_active = {
+                                "upload": not any(
+                                    isinstance(i, dict)
+                                    and str(i.get("source") or "").strip().lower() == "upload"
+                                    for i in (current_brief_for_topic_check.get("items") or [])
+                                ),
+                                "primary_goal": not bool(
+                                    current_brief_for_topic_check.get("goal_terms")
+                                    if isinstance(
+                                        current_brief_for_topic_check.get("goal_terms"),
+                                        dict,
+                                    )
+                                    else {}
+                                ),
+                                # search_strategy monitor: waterfall-only OQ
+                                # path. Agile/demo handle algorithm via an
+                                # items[] assumption, not an OQ — any
+                                # LLM-tagged search_strategy OQ in agile
+                                # is always redundant.
+                                "search_strategy": (
+                                    str(workflow_mode or "").strip().lower()
+                                    == "waterfall"
+                                ),
+                            }
+                            filtered_new_oqs: list[dict[str, Any]] = []
+                            for oq in new_oqs:
+                                if not isinstance(oq, dict):
+                                    continue
+                                tag = oq.get("topic_tag")
+                                has_id = bool(str(oq.get("id") or "").strip())
+                                if (
+                                    not has_id
+                                    and isinstance(tag, str)
+                                    and tag in _MONITOR_TOPIC_TAG_TO_OQ_ID
+                                    and monitor_active.get(tag, False)
+                                ):
+                                    log.info(
+                                        "Suppressing LLM-emitted OQ tagged "
+                                        "topic_tag=%s — monitor %s is canonical",
+                                        tag,
+                                        _MONITOR_TOPIC_TAG_TO_OQ_ID[tag],
+                                    )
+                                    continue
+                                # Strip the topic_tag — it was a routing
+                                # hint to the server, not a persisted field
+                                # on the brief.
+                                cleaned = {
+                                    k: v for k, v in oq.items() if k != "topic_tag"
+                                }
+                                filtered_new_oqs.append(cleaned)
+                            new_oqs = filtered_new_oqs
                         effective_problem_brief = merge_problem_brief_patch(
                             effective_problem_brief,
                             {

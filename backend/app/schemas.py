@@ -354,10 +354,19 @@ class OpenQuestionClassifierTurn(BaseModel):
 
 class OpenQuestionMaintenanceItem(BaseModel):
     """One entry in the maintenance pass output. ``id`` is echoed for kept /
-    rephrased OQs; omitted (caller assigns) for newly-added ones."""
+    rephrased OQs; omitted (caller assigns) for newly-added ones.
+
+    ``topic_tag`` lets the LLM declare which server-managed monitor topic
+    this OQ falls under (if any). The server uses the tag to dedup against
+    the canonical monitor OQ: a NEW LLM-emitted OQ tagged ``"primary_goal"``
+    is suppressed when ``oq-monitor-goal`` is already in the brief. This
+    replaces the prior keyword-substring approach with structured output
+    (``[[feedback_no_regex_for_nl]]`` — no NL keyword matching).
+    """
 
     id: str | None = None
     text: str
+    topic_tag: Literal["primary_goal", "upload", "search_strategy"] | None = None
 
 
 class AssumptionMaintenanceItem(BaseModel):

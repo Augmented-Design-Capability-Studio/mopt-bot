@@ -410,6 +410,25 @@ OQ_MAINTAIN_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "id": {"type": "string"},
                     "text": {"type": "string"},
+                    "topic_tag": {
+                        "type": "string",
+                        "enum": ["primary_goal", "upload", "search_strategy"],
+                        "description": (
+                            "Optional. Set when this OQ asks about a "
+                            "server-managed monitor topic so the server "
+                            "can dedup against the canonical monitor OQ:\n"
+                            "- `primary_goal`: asking the user to pick a "
+                            "primary optimization goal (travel time, time "
+                            "windows, workload balance, etc.).\n"
+                            "- `upload`: asking the user to upload data "
+                            "files.\n"
+                            "- `search_strategy`: asking the user to pick "
+                            "a search method (GA / PSO / SA / etc.).\n"
+                            "When in doubt OR when none of the above fits, "
+                            "omit the field — the OQ will be treated as a "
+                            "free-form clarification, never deduplicated."
+                        ),
+                    },
                 },
                 "required": ["text"],
             },
@@ -1613,6 +1632,11 @@ def maintain_definition_state(
         {
             "text": item.text.strip(),
             **({"id": item.id.strip()} if item.id and item.id.strip() else {}),
+            **(
+                {"topic_tag": item.topic_tag}
+                if getattr(item, "topic_tag", None)
+                else {}
+            ),
         }
         for item in turn.open_questions
         if item.text and item.text.strip()

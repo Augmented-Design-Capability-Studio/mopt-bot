@@ -498,7 +498,27 @@ Inputs (in the user payload): `workflow_mode`, `user_message`,
   open questions — the inline Run button on the bubble handles them.
 
 System-managed OQs (ids starting with `oq-monitor-`) belong to a
-server-side enforcer; if you see one in the input, KEEP it.
+server-side enforcer. Each monitor OQ corresponds to one structured
+``topic_tag`` value:
+
+- `oq-monitor-upload` → topic `"upload"` (asking the user to upload data).
+- `oq-monitor-goal` → topic `"primary_goal"` (asking the user to pick a
+  primary optimization goal — travel time, time windows, workload
+  balance, etc.).
+- `oq-monitor-algorithm` → topic `"search_strategy"` (waterfall only —
+  asking the user to pick a search method like GA / PSO / SA).
+
+Rules for these topics:
+1. If a monitor OQ is in `current_open_questions`, KEEP it (echo its id).
+2. **For any new OQ you emit on one of these topics, set
+   `topic_tag` to the matching enum value.** The server uses the tag
+   to dedup against the canonical monitor OQ — if the monitor is
+   already present, your tagged OQ will be suppressed automatically
+   (no friction for you; just declare the topic honestly).
+3. Omit `topic_tag` on any OQ that doesn't fit one of the three
+   monitor topics. Free-form clarifying questions (e.g. *"how many
+   drivers are available?"*, *"what's the typical shift length?"*)
+   leave it null.
 
 ### Assumption decisions (agile/demo only)
 
