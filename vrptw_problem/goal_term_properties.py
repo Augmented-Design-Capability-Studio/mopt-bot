@@ -22,6 +22,23 @@ _DRIVER_PREF_CONDITIONS: frozenset[str] = frozenset(
 _DRIVER_PREF_AGGREGATIONS: frozenset[str] = frozenset({"per_stop", "once_per_route"})
 _DRIVER_PREF_ORDER_PRIORITIES: frozenset[str] = frozenset({"express", "standard"})
 
+# Closed enum for the search-strategy algorithm carrier. Aliases that the LLM
+# might emit (case / abbreviation variations) are folded onto canonical names
+# rather than rejected so a confidently-named algorithm doesn't get dropped.
+_ALGORITHM_CANONICAL: dict[str, str] = {
+    "ga": "GA",
+    "genetic": "GA",
+    "genetic_algorithm": "GA",
+    "pso": "PSO",
+    "particle_swarm": "PSO",
+    "sa": "SA",
+    "simulated_annealing": "SA",
+    "swarmsa": "SwarmSA",
+    "swarm_sa": "SwarmSA",
+    "acor": "ACOR",
+}
+_ALGORITHM_VALID: frozenset[str] = frozenset({"GA", "PSO", "SA", "SwarmSA", "ACOR"})
+
 
 def _normalize_driver_preference_rule(raw: Any) -> dict[str, Any] | None:
     """Tolerant per-rule validator.
@@ -114,4 +131,16 @@ def normalize_goal_term_property(
         ):
             return (False, None)
         return (True, float(prop_val))
+    if prop_key == "algorithm":
+        if not isinstance(prop_val, str):
+            return (False, None)
+        raw = prop_val.strip()
+        if not raw:
+            return (False, None)
+        if raw in _ALGORITHM_VALID:
+            return (True, raw)
+        canonical = _ALGORITHM_CANONICAL.get(raw.lower().replace("-", "_"))
+        if canonical is None:
+            return (False, None)
+        return (True, canonical)
     return None

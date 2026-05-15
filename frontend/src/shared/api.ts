@@ -296,11 +296,55 @@ export type MessageMeta = {
    *  badge on the chat bubble so participants can see when the system intervened
    *  to keep the visible reply consistent with the structural state. */
   verified_after_retry?: boolean;
+  /** Set when the S5 LLM retry for a config-save turn didn't reach
+   *  brief↔panel parity and the runner deterministically re-mirrored the
+   *  brief from the panel as a fallback. Surfaced as a quiet inline notice
+   *  on the bubble so the participant knows the definition was auto-aligned. */
+  brief_panel_fallback_applied?: boolean;
   /** Set immediately after the chat-turn returns, cleared when the async
    *  verification pipeline (probe + maybe retry) finishes. While true the chat
    *  bubble renders dimmed so participants see the draft right away but
    *  understand the system is still settling. */
   verifying?: boolean;
+  /** Pipeline status checklist payload. Attached to assistant messages
+   *  produced by the main-turn pipeline. The frontend renders this as a
+   *  spinning checklist below the bubble; each stage transitions
+   *  pending → in_progress → success/skipped/failed and (on second failure)
+   *  → paused. See backend/app/services/pipeline_status.py for the writer. */
+  pipeline?: PipelineStatusMeta;
+};
+
+/** Stage row in the per-message pipeline status checklist. */
+export type PipelineStageMeta = {
+  name:
+    | "drafting"
+    | "verifying_brief"
+    | "applying"
+    | "deriving_config"
+    | "verifying_config";
+  state: "pending" | "in_progress" | "success" | "failed" | "skipped" | "paused";
+  label?: string;
+  substages?: string[];
+  issues?: PipelineIssueMeta[];
+  retried?: boolean;
+};
+
+/** Plain-English issue surfaced by S2 (brief) or S5 (panel) verification. */
+export type PipelineIssueMeta = {
+  category: string;
+  severity?: "error" | "warn";
+  subject?: string;
+  message: string;
+};
+
+/** Per-message pipeline-status payload (see ``app.schemas.PipelineStatus``). */
+export type PipelineStatusMeta = {
+  flavor: "chat" | "brief_edit_ack" | "config_edit_ack" | "run_ack";
+  stages: PipelineStageMeta[];
+  paused_stage?: string | null;
+  /** LLM-emitted plain-English follow-up shown next to the action row on a
+   *  paused pipeline. */
+  inline_followup?: string;
 };
 
 export type Message = {
@@ -550,6 +594,32 @@ export async function fetchSnapshots(sessionId: string, token: string): Promise<
 /** Bookmark current server brief+panel as a snapshot (no PATCH, no chat). */
 export async function createSessionSnapshotBookmark(sessionId: string, token: string): Promise<SnapshotSummary> {
   return apiFetch<SnapshotSummary>(`/sessions/${sessionId}/snapshots`, token, { method: "POST" });
+}
+
+/** Resume a paused Pipeline run from its paused stage. */
+export async function retryPipeline(
+  sessionId: string,
+  messageId: number,
+  token: string,
+): Promise<{ ok: boolean; resumed_from?: string }> {
+  return apiFetch<{ ok: boolean; resumed_from?: string }>(
+    `/sessions/${sessionId}/messages/${messageId}/pipeline/retry`,
+    token,
+    { method: "POST" },
+  );
+}
+
+/** Discard a paused pipeline's in-flight derivation and restore pre-turn state. */
+export async function revertPipeline(
+  sessionId: string,
+  messageId: number,
+  token: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(
+    `/sessions/${sessionId}/messages/${messageId}/pipeline/revert`,
+    token,
+    { method: "POST" },
+  );
 }
 
 export async function fetchSessionsForParticipant(

@@ -175,6 +175,6 @@ Chat logs are the primary data artifact. API keys and participant identifiers mu
 
 ## 7. Tests
 
-The non-live suite is fully offline. `backend/tests/conftest.py` autouse-stubs the Gemini classifier helpers (`classify_definition_intents`, `classify_chat_temperature`, `classify_assistant_run_invitation`) and the background-thread helpers (`generate_problem_brief_update`, `generate_config_from_brief`) using each function's production fallback path. Individual tests can `monkeypatch.setattr` over those defaults.
+The non-live suite is fully offline. `backend/tests/conftest.py` autouse-stubs the Gemini helpers (`generate_main_turn`, `generate_config_from_brief`, `classify_chat_temperature`) to return `None` so the chat pipeline pauses cleanly instead of hitting the network. Individual tests `monkeypatch.setattr` over those defaults when they need specific outputs.
 
 `backend/tests/test_live_gemini.py` (marker `live_gemini`) calls the real Gemini API. It auto-skips without a key. Setup: drop the key into `backend/.secrets/gemini_api_key` (file, gitignored) **or** export `GEMINI_API_KEY`. The first failure for an auth/connection reason auto-blocks the rest of that session's live tests to save quota. **A `live_gemini` failure can be a missing/invalid/expired key — verify the key before assuming a product regression.** See `backend/.secrets/README.md`.

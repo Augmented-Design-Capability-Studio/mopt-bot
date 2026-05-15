@@ -463,7 +463,7 @@ STUDY_CHAT_RUN_ACK_DEMO = """
 
 
 # ---------------------------------------------------------------------------
-# Open-question maintenance — used by maintain_open_questions().
+# Open-question maintenance — used by the main-turn LLM().
 # Single focused call per chat turn that owns the OQ list end-to-end:
 # adds, drops, keeps, rephrases. Replaces ad-hoc add/prune signals.
 # ---------------------------------------------------------------------------

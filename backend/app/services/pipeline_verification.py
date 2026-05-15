@@ -1,0 +1,598 @@
+"""Pipeline verification helpers (S2 + S5).
+
+Deterministic checks that run on every chat turn:
+
+- **S2 brief verification** (after the main-turn LLM):
+  - Schema/shape sanity
+  - Claim-vs-delta consistency (reply commits "I added X" but patch missing X)
+  - Algorithm-commit consistency (reply names GA but structured carrier empty)
+  - Workflow invariants (waterfall no-assumption-rows, run-ack contract)
+  - Port companion checks (delegate to ``StudyProblemPort.verify_brief_companion``)
+  - Goal-term anchoring (existing service)
+
+- **S5 panel verification** (after config-derivation LLM):
+  - Bidirectional goal-term key mapping (brief ↔ panel)
+  - Algorithm carrier consistency (brief.goal_terms.search_strategy ↔ panel.problem.algorithm)
+  - Per-port companion mirrors (e.g. VRPTW driver_preferences list)
+
+Output shape (``list[PipelineIssue]``) is shared with the LLM-retry feedback
+block and the participant-facing status bubble. Plain-English ``message``
+is the single source of truth for what's surfaced to either consumer.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any, Iterable
+
+from app.problems.registry import get_study_port
+from app.schemas import PipelineIssue
+from app.services.goal_term_anchoring import (
+    evidence_kinds_for_workflow,
+    is_goal_term_anchored,
+)
+
+log = logging.getLogger(__name__)
+
+
+# Closed vocabulary of recognised search-strategy algorithm names. Used by the
+# claim-side detection that pairs reply phrasing ("I'll use GA") with the
+# structured carrier (goal_terms.search_strategy.properties.algorithm).
+_ALGORITHM_TOKENS: dict[str, str] = {
+    "ga": "GA",
+    "genetic": "GA",
+    "genetic algorithm": "GA",
+    "genetic-algorithm": "GA",
+    "pso": "PSO",
+    "particle swarm": "PSO",
+    "particle-swarm": "PSO",
+    "sa": "SA",
+    "simulated annealing": "SA",
+    "simulated-annealing": "SA",
+    "swarmsa": "SwarmSA",
+    "swarm sa": "SwarmSA",
+    "acor": "ACOR",
+}
+
+_ALGO_BOUNDARY_RE = re.compile(r"\b([a-z][a-z\s\-]*?)\b", re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _empty_dict(value: Any) -> bool:
+    return not isinstance(value, dict) or not value
+
+
+def _patch_is_empty(patch: dict[str, Any] | None) -> bool:
+    """A patch is "empty" if it has no content fields that would mutate
+    the brief. Schema-defined fields that don't carry edits (``replace_*``
+    flags, ``topic_engaged_next``) don't count.
+    """
+    if not isinstance(patch, dict):
+        return True
+    mutating_keys = ("items", "goal_terms", "open_questions", "goal_summary", "unmodeled_requests")
+    for k in mutating_keys:
+        v = patch.get(k)
+        if isinstance(v, dict) and v:
+            return False
+        if isinstance(v, list) and v:
+            return False
+        if isinstance(v, str) and v.strip():
+            return False
+    return True
+
+
+def _detect_algorithm_commitment(text: str | None) -> str | None:
+    """Detect a reply phrasing that COMMITS to a specific algorithm.
+
+    Returns the canonical algorithm name if the reply contains a commitment
+    like "I've set GA", "let's use particle swarm", "going with PSO". Returns
+    None otherwise. Conservative — only matches lowercased tokens adjacent to
+    commitment verbs to avoid false positives like "what does GA mean?".
+
+    This is intentionally minimal: the LLM is supposed to populate
+    ``goal_terms.search_strategy.properties.algorithm`` directly. This
+    detector exists only to verify the LLM didn't drop the carrier
+    when the visible reply committed.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    lowered = text.lower()
+    # Cheap commitment-verb gate. If none of these appear near an algorithm
+    # token, we treat the reply as descriptive ("GA is a genetic algorithm")
+    # rather than a commitment.
+    commitment_markers = (
+        "use ",
+        "using ",
+        "set ",
+        "setting ",
+        "switch ",
+        "switching ",
+        "pick ",
+        "picked ",
+        "go with ",
+        "going with ",
+        "start with ",
+        "starting with ",
+        "will be ",
+        "as a starting",
+        "default ",
+        "i've set ",
+        "i'll use ",
+        "let's use ",
+        "select ",
+        "selecting ",
+    )
+    has_marker = any(marker in lowered for marker in commitment_markers)
+    if not has_marker:
+        return None
+    # Find longest-match algorithm token.
+    best: str | None = None
+    best_len = 0
+    for token, canonical in _ALGORITHM_TOKENS.items():
+        if token in lowered and len(token) > best_len:
+            # Word-boundary check for short tokens to avoid "ga" matching "garbage".
+            if len(token) <= 4:
+                # Use boundary regex for the short tokens.
+                if not re.search(rf"\b{re.escape(token)}\b", lowered):
+                    continue
+            best = canonical
+            best_len = len(token)
+    return best
+
+
+def _carrier_algorithm(brief: dict[str, Any]) -> str | None:
+    """Read ``goal_terms.search_strategy.properties.algorithm`` from a brief."""
+    if not isinstance(brief, dict):
+        return None
+    gt = brief.get("goal_terms")
+    if not isinstance(gt, dict):
+        return None
+    entry = gt.get("search_strategy")
+    if not isinstance(entry, dict):
+        return None
+    props = entry.get("properties")
+    if not isinstance(props, dict):
+        return None
+    val = props.get("algorithm")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# S2 — brief verification
+# ---------------------------------------------------------------------------
+
+
+def verify_brief_consistency(
+    *,
+    merged_brief: dict[str, Any],
+    base_brief: dict[str, Any] | None,
+    patch: dict[str, Any] | None,
+    visible_reply: str,
+    workflow_mode: str,
+    test_problem_id: str | None = None,
+    is_change_intent: bool = True,
+    is_run_acknowledgement: bool = False,
+) -> list[PipelineIssue]:
+    """Run deterministic S2 checks against the freshly-merged brief.
+
+    ``merged_brief`` is the brief AFTER the V2 LLM patch was applied
+    (so anchor checks see the new goal_terms and items). ``patch`` is the
+    raw patch the LLM emitted (used for claim/delta consistency).
+
+    Returns an empty list on success. On any issue, ``message`` carries
+    plain-English text for both the LLM retry block and the participant
+    status bubble.
+    """
+    issues: list[PipelineIssue] = []
+    mode = str(workflow_mode or "").strip().lower()
+
+    # ---- Schema sanity (patch shape) ----
+    if patch is not None and not isinstance(patch, dict):
+        issues.append(
+            PipelineIssue(
+                category="schema_invalid",
+                severity="error",
+                subject="problem_brief_patch",
+                message="The brief patch wasn't a JSON object — re-emit as `{ items, goal_terms, open_questions, ... }`.",
+            )
+        )
+        return issues  # Bail out — nothing else makes sense if the shape is broken.
+
+    # ---- Claim ↔ delta consistency ----
+    claims_change = _reply_claims_change(visible_reply)
+    patch_empty = _patch_is_empty(patch)
+    if is_change_intent and claims_change and patch_empty:
+        issues.append(
+            PipelineIssue(
+                category="claim_without_delta",
+                severity="error",
+                subject="problem_brief_patch",
+                message=(
+                    "Your reply commits to a change (e.g. \"I've added…\", \"updated…\") "
+                    "but `problem_brief_patch` carries no items, goal_terms, or open_questions "
+                    "to back the claim. Add the structural delta that matches what you said."
+                ),
+            )
+        )
+
+    # ---- Algorithm carrier consistency ----
+    committed_algo = _detect_algorithm_commitment(visible_reply)
+    carrier_algo = _carrier_algorithm(merged_brief)
+    if committed_algo is not None and carrier_algo is None:
+        issues.append(
+            PipelineIssue(
+                category="algorithm_committed_missing_carrier",
+                severity="error",
+                subject="goal_terms.search_strategy.properties.algorithm",
+                message=(
+                    f"Your reply commits to {committed_algo} but the structured carrier "
+                    f"`goal_terms.search_strategy.properties.algorithm` is empty. Set the "
+                    f"carrier to `{committed_algo}` so the panel-derive step picks it up."
+                ),
+            )
+        )
+    elif (
+        carrier_algo is not None
+        and committed_algo is None
+        and not _carrier_was_preexisting(base_brief, carrier_algo)
+    ):
+        # The LLM emitted a fresh algorithm carrier but the visible reply
+        # doesn't surface that choice. Warn only — sometimes a structured
+        # default ride-along is intentional (run-ack restating).
+        issues.append(
+            PipelineIssue(
+                category="algorithm_carrier_without_commit",
+                severity="warn",
+                subject="goal_terms.search_strategy.properties.algorithm",
+                message=(
+                    f"You set the algorithm carrier to `{carrier_algo}` without "
+                    f"mentioning it in the visible reply. Either tell the participant or "
+                    f"omit the carrier change."
+                ),
+            )
+        )
+
+    # ---- Workflow invariants ----
+    if mode == "waterfall":
+        # Waterfall has no assumption rows.
+        items = merged_brief.get("items") if isinstance(merged_brief.get("items"), list) else []
+        bad_assumption_ids = [
+            str(it.get("id") or "")
+            for it in items
+            if isinstance(it, dict)
+            and str(it.get("kind") or "").strip().lower() == "assumption"
+        ]
+        if bad_assumption_ids:
+            issues.append(
+                PipelineIssue(
+                    category="workflow_invariant_violation",
+                    severity="error",
+                    subject="items",
+                    message=(
+                        "Waterfall mode does not use assumption rows — convert these to "
+                        "open questions or gathered facts: "
+                        + ", ".join(bid for bid in bad_assumption_ids if bid)
+                    ),
+                )
+            )
+
+    # ---- Run-acknowledgement invariants ----
+    if is_run_acknowledgement:
+        new_items = _new_items(base_brief, merged_brief)
+        new_oqs = _new_open_questions(base_brief, merged_brief)
+        if mode == "agile":
+            has_new_assumption = any(
+                isinstance(it, dict)
+                and str(it.get("kind") or "").strip().lower() == "assumption"
+                for it in new_items
+            )
+            if not has_new_assumption:
+                issues.append(
+                    PipelineIssue(
+                        category="runack_invariant_violation",
+                        severity="error",
+                        subject="items",
+                        message=(
+                            "Agile run acknowledgements must add at least one "
+                            "`kind: \"assumption\"` row summarizing what the run revealed "
+                            "or what to try next."
+                        ),
+                    )
+                )
+        elif mode == "waterfall":
+            if not new_oqs:
+                issues.append(
+                    PipelineIssue(
+                        category="runack_invariant_violation",
+                        severity="error",
+                        subject="open_questions",
+                        message=(
+                            "Waterfall run acknowledgements must add at least one "
+                            "open question to drive the next iteration."
+                        ),
+                    )
+                )
+        # Demo mode intentionally has no run-ack invariant: ``coerce_problem_brief_for_workflow``
+        # drops assumption rows in demo, so requiring one would just create extra
+        # retry pressure for an artifact the merge will immediately discard.
+
+    # ---- Goal-term anchoring ----
+    issues.extend(
+        _check_goal_term_anchoring(
+            merged_brief=merged_brief,
+            base_brief=base_brief,
+            workflow_mode=workflow_mode,
+            test_problem_id=test_problem_id,
+        )
+    )
+
+    # ---- Port companion check ----
+    try:
+        port = get_study_port(test_problem_id)
+        port_issues = port.verify_brief_companion(merged_brief, visible_reply=visible_reply)
+    except Exception:  # pragma: no cover — defensive
+        log.exception("Port companion verification raised; treating as no-op")
+        port_issues = []
+    for raw in port_issues or []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            issues.append(PipelineIssue.model_validate(raw))
+        except Exception:  # pragma: no cover — defensive
+            log.warning("Skipping malformed port-issue: %r", raw)
+
+    return issues
+
+
+def _reply_claims_change(text: str | None) -> bool:
+    """Detect commit-language in the visible reply.
+
+    Used by S2 to decide whether to require a non-empty patch. Conservative:
+    favours false positives (treating "I've considered…" as a claim) only
+    where the language is unambiguous. The LLM gets the issue in plain
+    English and can either soften the reply or add the missing delta.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    lowered = text.lower()
+    commit_phrases = (
+        "i've added",
+        "i've removed",
+        "i've updated",
+        "i've set",
+        "i've changed",
+        "i've bumped",
+        "i've increased",
+        "i've decreased",
+        "i've locked",
+        "i've turned",
+        "i added",
+        "i removed",
+        "i updated",
+        "i set",
+        "i changed",
+        "i bumped",
+        "i increased",
+        "i decreased",
+        "i've made the following change",
+        "changes i made",
+        "here's what i did",
+        "added the",
+        "removed the",
+        "switched to",
+    )
+    return any(p in lowered for p in commit_phrases)
+
+
+def _carrier_was_preexisting(base_brief: dict[str, Any] | None, algo: str) -> bool:
+    if not isinstance(base_brief, dict):
+        return False
+    base_algo = _carrier_algorithm(base_brief)
+    return base_algo == algo
+
+
+def _new_items(
+    base_brief: dict[str, Any] | None,
+    merged_brief: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    base_ids = {
+        str(it.get("id") or "")
+        for it in (base_brief.get("items") if isinstance(base_brief, dict) else None) or []
+        if isinstance(it, dict)
+    }
+    out: list[dict[str, Any]] = []
+    for it in (merged_brief.get("items") if isinstance(merged_brief, dict) else None) or []:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("id") or "") not in base_ids:
+            out.append(it)
+    return out
+
+
+def _new_open_questions(
+    base_brief: dict[str, Any] | None,
+    merged_brief: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    base_ids = {
+        str(q.get("id") or "")
+        for q in (base_brief.get("open_questions") if isinstance(base_brief, dict) else None) or []
+        if isinstance(q, dict)
+    }
+    out: list[dict[str, Any]] = []
+    for q in (merged_brief.get("open_questions") if isinstance(merged_brief, dict) else None) or []:
+        if not isinstance(q, dict):
+            continue
+        if str(q.get("id") or "") not in base_ids:
+            out.append(q)
+    return out
+
+
+def _check_goal_term_anchoring(
+    *,
+    merged_brief: dict[str, Any],
+    base_brief: dict[str, Any] | None,
+    workflow_mode: str,
+    test_problem_id: str | None,
+) -> list[PipelineIssue]:
+    """Flag newly-added goal_term keys that lack any valid anchor.
+
+    Mirrors the production anchoring filter but emits warnings instead of
+    dropping the keys — verification's job is to surface; the merge layer
+    still hard-drops unanchored adds as a defence-in-depth.
+    """
+    issues: list[PipelineIssue] = []
+    goal_terms = merged_brief.get("goal_terms") if isinstance(merged_brief.get("goal_terms"), dict) else {}
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return issues
+    base_keys: set[str] = set()
+    if isinstance(base_brief, dict) and isinstance(base_brief.get("goal_terms"), dict):
+        base_keys = {k for k in base_brief["goal_terms"].keys() if isinstance(k, str)}
+    try:
+        port = get_study_port(test_problem_id) if test_problem_id is not None else None
+        auto_anchored = port.auto_anchored_goal_term_keys() if port else frozenset()
+    except Exception:  # pragma: no cover — defensive
+        port = None
+        auto_anchored = frozenset()
+    kinds = evidence_kinds_for_workflow(workflow_mode)
+    items = merged_brief.get("items") if isinstance(merged_brief.get("items"), list) else []
+    valid_ids = {
+        str(it.get("id") or "")
+        for it in items
+        if isinstance(it, dict)
+        and str(it.get("kind") or "").strip().lower() in kinds
+        and str(it.get("id") or "").strip()
+    }
+    for key, entry in goal_terms.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        if key in base_keys or key in auto_anchored:
+            continue
+        if not is_goal_term_anchored(key=key, entry=entry, valid_item_ids=valid_ids, port=port):
+            issues.append(
+                PipelineIssue(
+                    category="unanchored_goal_term",
+                    severity="error",
+                    subject=f"goal_terms.{key}",
+                    message=(
+                        f"The new goal-term `{key}` has no evidence anchor in the brief. "
+                        f"Either cite an items[] id under `evidence_item_ids`, populate "
+                        f"the structured `properties` carrier, or omit the goal term."
+                    ),
+                )
+            )
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# S5 — panel verification
+# ---------------------------------------------------------------------------
+
+
+_DRIFT_KIND_TO_CATEGORY: dict[str, str] = {
+    "missing_in_panel": "brief_panel_mismatch",
+    "missing_in_brief": "brief_panel_mismatch",
+    "value_mismatch": "brief_panel_mismatch",
+    "mirror_mismatch": "port_companion",
+    "algorithm_mismatch": "brief_panel_algorithm_mismatch",
+}
+
+
+def verify_panel_consistency(
+    *,
+    brief: dict[str, Any],
+    panel: dict[str, Any] | None,
+    workflow_mode: str,
+    test_problem_id: str | None = None,
+) -> list[PipelineIssue]:
+    """Run deterministic S5 checks against the derived panel.
+
+    Schema sanity is handled here (panel shape, inner.problem present); the
+    actual brief↔panel drift detection delegates to
+    ``sync.compute_brief_panel_drift`` so the researcher diagnostic panel and
+    the pipeline S5 stage share a single source of truth. Drift entries are
+    converted to ``PipelineIssue`` via ``_DRIFT_KIND_TO_CATEGORY``.
+    """
+    from app.routers.sessions.sync import _drift_message, compute_brief_panel_drift
+
+    issues: list[PipelineIssue] = []
+    if not isinstance(panel, dict):
+        issues.append(
+            PipelineIssue(
+                category="schema_invalid",
+                severity="error",
+                subject="panel",
+                message="Panel was empty or malformed; expected `{ problem: {...} }`.",
+            )
+        )
+        return issues
+    inner = panel.get("problem")
+    if not isinstance(inner, dict):
+        issues.append(
+            PipelineIssue(
+                category="schema_invalid",
+                severity="error",
+                subject="panel.problem",
+                message="Panel is missing the inner `problem` object.",
+            )
+        )
+        return issues
+
+    drift = compute_brief_panel_drift(brief, panel, test_problem_id=test_problem_id)
+    for entry in drift:
+        kind = entry.get("kind") or ""
+        key = entry.get("key") or ""
+        category = _DRIFT_KIND_TO_CATEGORY.get(kind, "brief_panel_mismatch")
+        if kind == "algorithm_mismatch":
+            subject = "algorithm"
+        elif kind == "mirror_mismatch":
+            subject = f"panel.{entry.get('detail') or key}"
+        else:
+            subject = f"goal_terms.{key}"
+        issues.append(
+            PipelineIssue(
+                category=category,
+                severity="error",
+                subject=subject,
+                message=_drift_message(entry),
+            )
+        )
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# Categorization helpers for the status-bubble sub-rows
+# ---------------------------------------------------------------------------
+
+
+def categorize_panel_issues(issues: Iterable[PipelineIssue]) -> dict[str, list[PipelineIssue]]:
+    """Split S5 issues into 'goal_terms' vs 'algorithm' sub-rows."""
+    out: dict[str, list[PipelineIssue]] = {"goal_terms": [], "algorithm": [], "other": []}
+    for issue in issues:
+        if issue.category == "brief_panel_algorithm_mismatch":
+            out["algorithm"].append(issue)
+        elif issue.category in ("brief_panel_mismatch", "port_companion"):
+            out["goal_terms"].append(issue)
+        else:
+            out["other"].append(issue)
+    return out
+
+
+def issues_to_audit_payload(issues: Iterable[PipelineIssue]) -> list[dict[str, Any]]:
+    """Convert PipelineIssue list to the dict shape ``generate_main_turn``
+    expects under ``verification_issues``."""
+    return [
+        {
+            "category": i.category,
+            "severity": i.severity,
+            "subject": i.subject,
+            "message": i.message,
+        }
+        for i in issues
+    ]

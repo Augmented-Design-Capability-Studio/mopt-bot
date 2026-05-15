@@ -72,13 +72,17 @@ _DRIVER_PREFERENCE_SCHEMA: dict[str, Any] = {
 
 # Per-VRPTW shape for `goal_terms[key].properties` — driver-preference rules
 # attach to the worker_preference term; max_shift_hours attaches to the
-# shift_limit term. Each problem owns its own properties schema; the shared
-# `goal_terms_schema` factory just slots ours in.
+# shift_limit term; algorithm attaches to the search_strategy term. Each
+# problem owns its own properties schema; the shared `goal_terms_schema`
+# factory just slots ours in.
 VRPTW_GOAL_TERM_PROPERTIES_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": (
         "VRPTW per-goal-term metadata. `driver_preferences` belongs under "
-        "`worker_preference`; `max_shift_hours` under `shift_limit`."
+        "`worker_preference`; `max_shift_hours` under `shift_limit`; "
+        "`algorithm` under `search_strategy` (typed enum carrier so the "
+        "panel-derive step reads a structured value rather than scanning "
+        "items[] prose for algorithm names)."
     ),
     "properties": {
         "driver_preferences": {
@@ -86,6 +90,17 @@ VRPTW_GOAL_TERM_PROPERTIES_SCHEMA: dict[str, Any] = {
             "items": _DRIVER_PREFERENCE_SCHEMA,
         },
         "max_shift_hours": {"type": "number", "minimum": 0},
+        "algorithm": {
+            "type": "string",
+            "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR"],
+            "description": (
+                "Search-strategy carrier. Populate when the visible reply or "
+                "user message commits to a specific algorithm (agile-mode "
+                "starting default, user-named choice, or post-result switch). "
+                "The panel-derive step uses this directly — no algorithm-name "
+                "extraction from items[] prose."
+            ),
+        },
     },
     "additionalProperties": False,
 }

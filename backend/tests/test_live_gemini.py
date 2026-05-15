@@ -70,13 +70,13 @@ def test_default_flash_model_responds(gemini_api_key: str) -> None:
 
 
 @pytest.mark.live_gemini
-def test_generate_chat_turn_smoke(gemini_api_key: str) -> None:
-    """Production code path smoke: ``generate_chat_turn`` end-to-end."""
-    from app.services.llm import generate_chat_turn
+def test_generate_main_turn_smoke(gemini_api_key: str) -> None:
+    """Production code path smoke: ``generate_main_turn`` end-to-end."""
+    from app.services.llm import generate_main_turn
 
     model = get_settings().default_gemini_model
     try:
-        turn = generate_chat_turn(
+        turn = generate_main_turn(
             user_text="Hello.",
             history_lines=[],
             api_key=gemini_api_key,
@@ -89,50 +89,35 @@ def test_generate_chat_turn_smoke(gemini_api_key: str) -> None:
     except genai_errors.ClientError as exc:
         if _is_auth_failure(exc):
             pytest.fail(
-                "Gemini rejected the supplied key while exercising generate_chat_turn — "
+                "Gemini rejected the supplied key while exercising generate_main_turn — "
                 f"the key is reachable but unauthorized. {_short_repr(exc)}",
                 pytrace=False,
             )
         raise
+    assert turn is not None, "generate_main_turn returned None (LLM/parse failure)."
     assert turn.assistant_message and turn.assistant_message.strip(), (
-        "generate_chat_turn returned an empty assistant_message; "
-        f"full turn: {turn!r}"
+        f"generate_main_turn returned an empty assistant_message; full turn: {turn!r}"
     )
 
 
 @pytest.mark.live_gemini
-def test_brief_update_emits_structured_driver_preference_for_alice_zone_d(
+def test_main_turn_emits_structured_driver_preference_for_alice_zone_d(
     gemini_api_key: str,
 ) -> None:
     """End-to-end: when the user names a worker-specific preference rule,
-    the brief-update LLM must emit it under the structured contract path —
+    the main-turn LLM must emit it under the structured contract path —
     `goal_terms.worker_preference.properties.driver_preferences` — instead
-    of writing prose. This is the regression check for the original bug
-    where the parent worker_preference weight appeared but the children did not.
+    of writing prose.
     """
-    from app.services.llm import generate_problem_brief_update
+    from app.services.llm import generate_main_turn
 
     model = get_settings().default_gemini_model
-    # Brief is warm — by the time a user names a worker-specific preference,
-    # they've typically answered scope questions first. Cold-start sessions
-    # skip the VRPTW appendix (which carries the contract), so this test
-    # supplies a minimal warm brief.
     warm_brief = {
         "goal_summary": "Schedule fleet routes within shift limits.",
         "run_summary": "",
         "items": [
-            {
-                "id": "item-gathered-1",
-                "text": "Fleet size: 5 drivers.",
-                "kind": "gathered",
-                "source": "user",
-            },
-            {
-                "id": "item-gathered-2",
-                "text": "Total orders: 30.",
-                "kind": "gathered",
-                "source": "user",
-            },
+            {"id": "item-gathered-1", "text": "Fleet size: 5 drivers.", "kind": "gathered", "source": "user"},
+            {"id": "item-gathered-2", "text": "Total orders: 30.", "kind": "gathered", "source": "user"},
         ],
         "open_questions": [],
         "goal_terms": {},
@@ -140,7 +125,7 @@ def test_brief_update_emits_structured_driver_preference_for_alice_zone_d(
         "backend_template": "routing_time_windows",
     }
     try:
-        turn = generate_problem_brief_update(
+        turn = generate_main_turn(
             user_text="Alice doesn't like Zone D in this scenario.",
             history_lines=[
                 ("user", "I have a fleet of 5 drivers and 30 orders to schedule."),
@@ -152,33 +137,26 @@ def test_brief_update_emits_structured_driver_preference_for_alice_zone_d(
             workflow_mode="agile",
             current_panel=None,
             test_problem_id="vrptw",
-            visible_assistant_message=(
-                "Adding a soft preference for Alice to avoid Zone D deliveries."
-            ),
         )
     except genai_errors.ClientError as exc:
         if _is_auth_failure(exc):
             pytest.fail(
-                "Gemini rejected the supplied key — check the key. "
-                f"{_short_repr(exc)}",
+                f"Gemini rejected the supplied key — check the key. {_short_repr(exc)}",
                 pytrace=False,
             )
         raise
 
-    assert turn is not None, "Brief-update structured call returned None (LLM/parse failure)."
+    assert turn is not None, "Main-turn structured call returned None."
     patch = turn.problem_brief_patch
     assert isinstance(patch, dict), f"Expected a non-null patch; got: {turn!r}"
     goal_terms = patch.get("goal_terms")
     assert isinstance(goal_terms, dict) and "worker_preference" in goal_terms, (
-        "Brief-update LLM must emit goal_terms.worker_preference for "
-        "Alice/Zone D rules. Full patch: "
-        f"{patch!r}"
+        f"Main-turn LLM must emit goal_terms.worker_preference. Full patch: {patch!r}"
     )
     wp = goal_terms["worker_preference"]
     rules = wp.get("properties", {}).get("driver_preferences", [])
     assert rules, (
-        "Expected non-empty driver_preferences under worker_preference.properties. "
-        f"goal_terms entry: {wp!r}"
+        f"Expected non-empty driver_preferences under worker_preference.properties. Entry: {wp!r}"
     )
     rule = rules[0]
     assert rule.get("vehicle_idx") == 0, f"Expected Alice (vehicle_idx=0); got: {rule!r}"

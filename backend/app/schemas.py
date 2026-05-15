@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from app.problems.registry import DEFAULT_PROBLEM_ID
 
@@ -194,10 +194,15 @@ class MessageOut(BaseModel):
     def _serialize_created_at(self, value: datetime) -> str:
         return serialize_utc_datetime(value)
 
+    @model_validator(mode="before")
     @classmethod
-    def model_validate(cls, obj: Any, **kwargs: Any) -> "MessageOut":  # type: ignore[override]
+    def _decode_meta_json(cls, obj: Any) -> Any:
         # Decode meta_json (stored as a Text column on ChatMessage) into the
-        # `meta` dict the API exposes. Kept tolerant: a malformed string just
+        # `meta` dict the API exposes. Runs in `mode="before"` so FastAPI's
+        # response_model serialization picks it up — overriding the
+        # `model_validate` classmethod alone is NOT enough because FastAPI
+        # goes through pydantic-core's schema validators directly, bypassing
+        # classmethod overrides. Kept tolerant: a malformed string just
         # becomes None so a single bad row never breaks the chat list.
         if hasattr(obj, "meta_json") and not isinstance(obj, dict):
             raw = getattr(obj, "meta_json", None)
@@ -208,7 +213,7 @@ class MessageOut(BaseModel):
                     parsed = decoded if isinstance(decoded, dict) else None
                 except json.JSONDecodeError:
                     parsed = None
-            data = {
+            return {
                 "id": obj.id,
                 "created_at": obj.created_at,
                 "role": obj.role,
@@ -217,92 +222,7 @@ class MessageOut(BaseModel):
                 "kind": obj.kind,
                 "meta": parsed,
             }
-            return super().model_validate(data, **kwargs)
-        return super().model_validate(obj, **kwargs)
-
-
-class ChatModelTurn(BaseModel):
-    """Structured Gemini reply for chat-to-brief updates."""
-
-    assistant_message: str = Field(..., max_length=32000)
-    # Back-compat field: kept optional for old callers/tests, but chat agent should not emit it.
-    panel_patch: dict[str, Any] | None = None
-    problem_brief_patch: dict[str, Any] | None = None
-    # Cleanup-mode controls: when true, backend replaces existing editable content.
-    replace_editable_items: bool = False
-    replace_open_questions: bool = False
-    cleanup_mode: bool = False
-
-
-class RunTriggerIntentTurn(BaseModel):
-    """Structured intent classification for chat-triggered optimization runs."""
-
-    should_trigger_run: bool = False
-    intent_type: Literal["none", "affirm_invite", "direct_request"] = "none"
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    rationale: str = ""
-
-
-class ConsolidatedChatTurn(BaseModel):
-    """One structured Gemini call returning visible reply + intent flags.
-
-    Replaces the per-turn fan-out of (visible_reply, definition_intents,
-    run_trigger_intent, run_invitation_classification) with a single
-    structured response. Brief and config derivation still happen separately
-    in the background to preserve the chat-fast-path latency model.
-    """
-
-    assistant_message: str = Field(..., max_length=32000)
-    # Intent flags driving the brief/panel pipelines and the cleanup/clear paths.
-    cleanup_intent: bool = False
-    clear_intent: bool = False
-    # Conservative default True so missing fields don't silently drop a real edit.
-    is_change_intent: bool = True
-    # Run-trigger intent.
-    should_trigger_run: bool = False
-    intent_type: Literal["none", "affirm_invite", "direct_request"] = "none"
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    # Whether the assistant_message itself solicits the participant to run now.
-    # Used downstream to decide whether an `affirm_invite` from the user (the
-    # next turn) should auto-fire a run.
-    is_run_invitation: bool = False
-    # Self-classified rhetorical intent of the visible reply, used by the
-    # pre-release probe to detect "I added X" claims with no matching patch.
-    # Mirrors the brief-update LLM's `visible_reply_intent` so the probe can
-    # see it before persistence (rather than only after derivation).
-    claims_brief_change: bool = False
-    asks_user_question: bool = False
-    # Clause split for mixed-intent turns ("Yes, change X. Also, what is Y?").
-    # `change_clause` is fed into the hidden brief-update LLM as the canonical
-    # user_text for that pass — keeps the brief pipeline narrowly scoped to the
-    # user's actual edit ask. `question_clause` carries the concept-question half
-    # for downstream observability (currently logged; the visible reply already
-    # answered it). Both null means a pure single-intent turn.
-    change_clause: str | None = None
-    question_clause: str | None = None
-
-
-class VisibleReplyIntent(BaseModel):
-    """LLM-reported classification of the visible chat reply for this turn.
-
-    The brief-update LLM sees both the visible reply and the workflow context,
-    so we have it self-classify the rhetorical intent and reuse the result
-    downstream (e.g. workflow-compliance checks) — instead of running a regex
-    over natural-language text, which is unreliable.
-    """
-
-    claims_brief_change: bool = False
-    asks_user_question: bool = False
-
-
-class ProblemBriefUpdateTurn(BaseModel):
-    """Structured hidden Gemini reply for brief extraction/update only."""
-
-    problem_brief_patch: dict[str, Any] | None = None
-    replace_editable_items: bool = False
-    replace_open_questions: bool = False
-    cleanup_mode: bool = False
-    visible_reply_intent: VisibleReplyIntent | None = None
+        return obj
 
 
 class OpenQuestionClassifierInput(BaseModel):
@@ -352,23 +272,6 @@ class OpenQuestionClassifierTurn(BaseModel):
     classifications: list[OpenQuestionClassification] = Field(default_factory=list)
 
 
-class OpenQuestionMaintenanceItem(BaseModel):
-    """One entry in the maintenance pass output. ``id`` is echoed for kept /
-    rephrased OQs; omitted (caller assigns) for newly-added ones.
-
-    ``topic_tag`` lets the LLM declare which server-managed monitor topic
-    this OQ falls under (if any). The server uses the tag to dedup against
-    the canonical monitor OQ: a NEW LLM-emitted OQ tagged ``"primary_goal"``
-    is suppressed when ``oq-monitor-goal`` is already in the brief. This
-    replaces the prior keyword-substring approach with structured output
-    (``[[feedback_no_regex_for_nl]]`` — no NL keyword matching).
-    """
-
-    id: str | None = None
-    text: str
-    topic_tag: Literal["primary_goal", "upload", "search_strategy"] | None = None
-
-
 class AssumptionMaintenanceItem(BaseModel):
     """One assumption-row decision returned by the maintenance pass.
 
@@ -391,30 +294,158 @@ class AssumptionMaintenanceItem(BaseModel):
     rephrased_text: str | None = None
 
 
-class OpenQuestionMaintenanceTurn(BaseModel):
-    """Output of the dedicated definition-maintenance LLM pass.
+# ============================================================================
+# Chat-pipeline schemas
+# ============================================================================
 
-    Carries the FULL updated list of open questions for this turn — the
-    caller replaces the brief's open_questions with this list (preserving
-    answered state for ids that round-trip).
 
-    For agile/demo turns it also carries ``assumption_actions``: per-row
-    decisions on each existing ``kind: "assumption"`` row (keep / rephrase
-    / drop / promote_to_gathered). Waterfall ignores this field because
-    waterfall briefs never store assumption rows.
+class PipelineIssue(BaseModel):
+    """One verification issue surfaced by S2 (brief) or S5 (panel) checks.
 
-    Name kept as ``OpenQuestionMaintenanceTurn`` for backwards
-    compatibility with earlier callers; the alias
-    ``DefinitionMaintenanceTurn`` is the preferred name going forward.
+    Same shape feeds three consumers:
+    1. LLM retry feedback (the issue list is appended to the prompt as an
+       audit block so the model can fix specific items rather than redo
+       the whole turn).
+    2. Frontend status bubble (issues are spelled out in plain English so
+       participants understand what failed).
+    3. Server logs (workflow-compliance telemetry).
+
+    ``category`` is the typed bucket; ``message`` is the plain-English line
+    that surfaces to both the LLM and the participant.
     """
 
-    open_questions: list[OpenQuestionMaintenanceItem] = Field(default_factory=list)
+    category: Literal[
+        "schema_invalid",
+        "claim_without_delta",
+        "delta_without_claim",
+        "unanchored_goal_term",
+        "algorithm_committed_missing_carrier",
+        "algorithm_carrier_without_commit",
+        "workflow_invariant_violation",
+        "runack_invariant_violation",
+        "port_companion",
+        "brief_panel_mismatch",
+        "brief_panel_algorithm_mismatch",
+    ]
+    severity: Literal["error", "warn"] = "error"
+    subject: str = ""
+    message: str = ""
+
+
+class PipelineStageName(BaseModel):
+    """Enumerated stage identifier used by the per-message pipeline status."""
+
+    name: Literal[
+        "drafting",
+        "verifying_brief",
+        "applying",
+        "deriving_config",
+        "verifying_config",
+        "complete",
+        "skipped",
+    ]
+
+
+PipelineStageState = Literal["pending", "in_progress", "success", "failed", "skipped", "paused"]
+
+
+class PipelineStage(BaseModel):
+    """One row in the status checklist attached to an assistant message."""
+
+    name: Literal[
+        "drafting",
+        "verifying_brief",
+        "applying",
+        "deriving_config",
+        "verifying_config",
+    ]
+    state: PipelineStageState = "pending"
+    # Plain-English label rendered by the frontend ("Drafting reply",
+    # "Verifying intent & definition", "Deriving config", etc.). The frontend
+    # owns the canonical mapping but accepts overrides on a per-stage basis
+    # (e.g. config-edit flavor wants "Verifying brief ↔ config").
+    label: str | None = None
+    # Sub-rows surfaced inside this stage (currently only deriving_config /
+    # verifying_config: ["goal terms", "algorithm"]).
+    substages: list[str] | None = None
+    # Issues attached to this stage when state=="failed" or "paused".
+    issues: list[PipelineIssue] = Field(default_factory=list)
+    # Set true once we've already burned the single allotted retry.
+    retried: bool = False
+
+
+class PipelineStatus(BaseModel):
+    """Per-message snapshot of pipeline progress.
+
+    Attached to the assistant message's ``meta.pipeline`` field. The
+    frontend renders it as a checklist below the message bubble; it
+    updates as the backend mutates stages. State machine:
+
+    - Stage begins ``pending``, transitions to ``in_progress``, then either
+      ``success`` (or ``skipped``) or ``failed``.
+    - On first ``failed``: backend bumps ``retried=True`` and re-runs the
+      stage; the row briefly returns to ``in_progress``.
+    - On second ``failed``: stage transitions to ``paused`` and the
+      pipeline halts. Frontend shows the issue list + Retry / Revert /
+      Keep-chatting action row.
+
+    ``flavor`` distinguishes the trigger so the frontend can choose the
+    right canonical labels (chat / brief-edit / config-edit / run-ack).
+    """
+
+    flavor: Literal[
+        "chat",
+        "brief_edit_ack",
+        "config_edit_ack",
+        "run_ack",
+    ] = "chat"
+    stages: list[PipelineStage] = Field(default_factory=list)
+    # When set, the pipeline is paused on this stage's name. Frontend uses
+    # this to decide whether to render the action row.
+    paused_stage: str | None = None
+
+
+class ChatTurnResponse(BaseModel):
+    """Main-turn LLM response (single structured Gemini call per turn).
+
+    Produces the visible reply, intent flags, brief patch, and per-row
+    assumption decisions (agile/demo only — waterfall LLMs leave
+    ``assumption_actions`` empty and the merge ignores it on waterfall
+    turns). The pipeline runner verifies the response and may retry
+    with an issues-feedback block once before pausing.
+    """
+
+    # --- Visible reply -------------------------------------------------------
+    assistant_message: str = Field(..., max_length=32000)
+    # Plain-English follow-up shown on pipeline pause (frontend appends it as
+    # an inline note next to the action row). LLM emits when the user's
+    # message would land an irreversibly mismatched commitment. Optional.
+    inline_followup: str | None = Field(default=None, max_length=2000)
+
+    # --- Intent flags --------------------------------------------------------
+    is_change_intent: bool = True
+    cleanup_intent: bool = False
+    clear_intent: bool = False
+    should_trigger_run: bool = False
+    intent_type: Literal["none", "affirm_invite", "direct_request"] = "none"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    is_run_invitation: bool = False
+    change_clause: str | None = None
+    question_clause: str | None = None
+
+    # --- Brief patch ---------------------------------------------------------
+    problem_brief_patch: dict[str, Any] | None = None
+    replace_editable_items: bool = False
+    replace_open_questions: bool = False
+    cleanup_mode: bool = False
+
+    # --- Maintenance (agile/demo only) --------------------------------------
+    # The maintenance fields are optional inputs to the merge: the patch
+    # carries items[] and open_questions[] directly, and the LLM expresses
+    # OQ lifecycle by including the full new OQ list when ``replace_open_questions``
+    # is true. The dedicated assumption_actions list is for agile/demo since
+    # assumption row identity (id) needs structured routing.
     assumption_actions: list[AssumptionMaintenanceItem] = Field(default_factory=list)
-
-
-# Preferred name (alias of OpenQuestionMaintenanceTurn). Use this in new
-# code; the older name is retained so existing imports continue to work.
-DefinitionMaintenanceTurn = OpenQuestionMaintenanceTurn
 
 
 class PostMessagesResponse(BaseModel):

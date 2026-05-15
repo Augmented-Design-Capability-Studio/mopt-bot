@@ -385,10 +385,209 @@ select:focus-visible {
    draft is visible right away (no waiting on the probe), but reduced opacity
    and a muted border signal that the system is still settling the brief. */
 .bubble--verifying {
-  opacity: 0.55;
+  position: relative;
+  opacity: 0.7;
   border-left-color: #b6b3aa;
   transition: opacity 0.2s ease-out, border-left-color 0.2s ease-out;
+  overflow: hidden;
 }
+
+/* Moving glow sweep across the bubble while it's still verifying — reuses
+   the shimmer keyframes from .chat-pending-ai::after so the in-flight chat
+   message and the post-POST bubble share the same animation vocabulary. */
+.bubble--verifying::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 20%, rgba(95, 129, 104, 0.18) 50%, transparent 80%);
+  transform: translateX(-120%);
+  animation: chat-pending-shimmer 1.8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bubble--verifying > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Animated typing dots — drop-in replacement for the literal
+   "Drafting a reply…" placeholder text while S1 is still running. */
+.bubble-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.1rem;
+  min-height: 1.1rem;
+}
+
+.bubble-typing-dots__dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #5f8168;
+  opacity: 0.35;
+  animation: bubble-typing-dot 1.2s ease-in-out infinite;
+}
+
+.bubble-typing-dots__dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.bubble-typing-dots__dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes bubble-typing-dot {
+  0%, 60%, 100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* ---- Pipeline status checklist (per-message) ---------------------- */
+.pipeline-status {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed #c8c5bd;
+  border-radius: 6px;
+  background: #fbf9f5;
+  font-size: 0.85rem;
+}
+.pipeline-status__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.pipeline-stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  line-height: 1.35;
+}
+.pipeline-stage__indicator {
+  flex: 0 0 1.15em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  color: #777267;
+}
+.pipeline-stage__spinner {
+  width: 0.85em;
+  height: 0.85em;
+  border-width: 2px;
+}
+.pipeline-stage__body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.pipeline-stage__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.pipeline-stage__label {
+  font-weight: 500;
+}
+.pipeline-stage--pending .pipeline-stage__label,
+.pipeline-stage--skipped .pipeline-stage__label {
+  color: #8a8579;
+}
+.pipeline-stage--in_progress .pipeline-stage__indicator { color: #4f6f90; }
+.pipeline-stage--success .pipeline-stage__indicator { color: #5f8168; }
+.pipeline-stage--failed .pipeline-stage__indicator,
+.pipeline-stage--paused .pipeline-stage__indicator { color: #a14d39; }
+.pipeline-stage__retried { font-size: 0.75em; color: #8b5c2a; }
+.pipeline-stage__substages {
+  list-style: none;
+  margin: 0.1rem 0 0;
+  padding: 0;
+  display: flex;
+  gap: 0.65rem;
+  font-size: 0.78rem;
+  color: #6f6a5d;
+}
+.pipeline-stage__substage::before { content: "↳ "; color: #b1ab9d; }
+.pipeline-stage__issues {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.pipeline-issue {
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.pipeline-issue--error { background: #f8ebe6; color: #6b3320; }
+.pipeline-issue--warn { background: #fdf3e0; color: #7a541a; }
+.pipeline-status__followup {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 4px;
+  background: #f3f0ea;
+  color: #4d473b;
+  font-size: 0.85rem;
+}
+.pipeline-status__toggle {
+  margin-top: 0.4rem;
+  padding: 0.15rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: #5e6a52;
+  font-size: 0.78rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 3px;
+}
+.pipeline-status__toggle:hover {
+  color: #2a2a2a;
+  background: #f2efe8;
+}
+.pipeline-status__toggle-caret {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+.pipeline-status__actions {
+  margin-top: 0.55rem;
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.pipeline-status__btn {
+  padding: 0.3rem 0.65rem;
+  border: 1px solid #c8c5bd;
+  border-radius: 4px;
+  background: #fff;
+  color: #2a2a2a;
+  font-size: 0.83rem;
+  cursor: pointer;
+}
+.pipeline-status__btn:hover:not(:disabled) { background: #f2efe8; }
+.pipeline-status__btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.pipeline-status__btn--primary {
+  background: #2f4d6d;
+  color: #fff;
+  border-color: #243c57;
+}
+.pipeline-status__btn--primary:hover:not(:disabled) { background: #243c57; }
+.pipeline-status__btn--ghost { background: transparent; }
 
 .bubble-status--info {
   border-left-color: #4f6f90;
@@ -589,7 +788,9 @@ select:focus-visible {
   }
 
   .chat-pending-ai::after,
-  .bubble-agentic {
+  .bubble-agentic,
+  .bubble--verifying::after,
+  .bubble-typing-dots__dot {
     animation: none;
   }
 }
@@ -672,6 +873,10 @@ select:focus-visible {
 .chat-bubble-verified span {
   font-style: normal;
   font-weight: 700;
+}
+
+.chat-bubble-verified--fallback {
+  color: #8a6d2a;
 }
 
 .chat-upload-chip {

@@ -250,30 +250,86 @@ class VrptwStudyPort:
         from vrptw_problem.brief_seed import synthesize_driver_preference_items
         return synthesize_driver_preference_items(goal_terms)
 
-    def safety_net_fill_structured_carriers(
+    def verify_brief_companion(
         self,
         brief: dict[str, Any],
         *,
-        api_key: str | None,
-        model_name: str | None,
-        user_text: str,
-        visible_reply: str | None,
-    ) -> dict[str, Any]:
-        """VRPTW-specific safety net: re-extract ``driver_preferences`` from
-        prose when ``worker_preference`` landed in ``goal_terms`` but the
-        structured carrier didn't on the same turn. See
-        :mod:`vrptw_problem.driver_pref_safety_net` for the full rationale
-        and the focused-extractor implementation."""
-        from vrptw_problem.driver_pref_safety_net import (
-            fill_driver_preferences_carrier,
-        )
-        return fill_driver_preferences_carrier(
-            brief,
-            api_key=api_key,
-            model_name=model_name,
-            user_text=user_text,
-            visible_reply=visible_reply,
-        )
+        visible_reply: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Port-level structural checks for VRPTW briefs (S2 verification).
+
+        Catches the structured/prose mismatches that the prior safety-net
+        LLM was patching after the fact:
+
+        - ``worker_preference`` is in ``goal_terms`` but
+          ``properties.driver_preferences`` is empty/missing AND there are
+          no synthesized prose rows referencing driver preferences.
+        - ``shift_limit`` is in ``goal_terms`` but
+          ``properties.max_shift_hours`` is missing or non-positive.
+        - A driver-preference prose row exists in ``items[]`` but the
+          structured rule list is empty.
+
+        Returns issue dicts in the standardized verification shape.
+        """
+        out: list[dict[str, Any]] = []
+        if not isinstance(brief, dict):
+            return out
+        goal_terms = brief.get("goal_terms") if isinstance(brief.get("goal_terms"), dict) else {}
+        items = brief.get("items") if isinstance(brief.get("items"), list) else []
+
+        wp_entry = goal_terms.get("worker_preference") if isinstance(goal_terms, dict) else None
+        if isinstance(wp_entry, dict):
+            props = wp_entry.get("properties") if isinstance(wp_entry.get("properties"), dict) else {}
+            rules = props.get("driver_preferences") if isinstance(props, dict) else None
+            has_rules = isinstance(rules, list) and len(rules) > 0
+            has_prose_rule = any(
+                isinstance(it, dict)
+                and str(it.get("id") or "").startswith("config-driver-pref-")
+                for it in items
+            )
+            if not has_rules:
+                out.append(
+                    {
+                        "category": "port_companion",
+                        "severity": "error" if has_prose_rule else "warn",
+                        "subject": "worker_preference.driver_preferences",
+                        "message": (
+                            "The brief commits a `worker_preference` goal term but the structured "
+                            "`properties.driver_preferences` rule list is empty — populate it with "
+                            "explicit vehicle/condition/penalty rules."
+                            if has_prose_rule
+                            else
+                            "The `worker_preference` goal term is present without any structured "
+                            "rules; the panel will have nothing to read. Either remove the goal "
+                            "term or add at least one rule under `properties.driver_preferences`."
+                        ),
+                    }
+                )
+
+        sl_entry = goal_terms.get("shift_limit") if isinstance(goal_terms, dict) else None
+        if isinstance(sl_entry, dict):
+            props = sl_entry.get("properties") if isinstance(sl_entry.get("properties"), dict) else {}
+            cap = props.get("max_shift_hours") if isinstance(props, dict) else None
+            if (
+                cap is None
+                or isinstance(cap, bool)
+                or not isinstance(cap, (int, float))
+                or cap <= 0
+            ):
+                out.append(
+                    {
+                        "category": "port_companion",
+                        "severity": "error",
+                        "subject": "shift_limit.max_shift_hours",
+                        "message": (
+                            "The brief commits a `shift_limit` goal term but the structured "
+                            "`properties.max_shift_hours` value is missing or non-positive. Set "
+                            "it to the maximum shift length in hours."
+                        ),
+                    }
+                )
+
+        return out
 
     def mediocre_participant_starter_config(self) -> dict:
         from copy import deepcopy

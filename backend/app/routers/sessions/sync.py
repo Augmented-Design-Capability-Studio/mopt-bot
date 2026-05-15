@@ -166,6 +166,67 @@ def _apply_weight_overrides_to_goal_terms(problem: dict[str, Any], overrides: di
             entry["weight"] = float(value)
 
 
+# Carrier-only goal-term keys: their values live at top-level panel fields
+# (e.g. ``search_strategy.properties.algorithm`` → ``panel.problem.algorithm``)
+# rather than at ``panel.goal_terms.<key>``. Excluded from the bidirectional
+# key-set check so a session with an algorithm choice doesn't show up as
+# brief↔panel drift on every config-derive turn. Genuine value drift on the
+# carrier surfaces via ``kind="algorithm_mismatch"`` instead.
+CARRIER_ONLY_GOAL_TERM_KEYS: frozenset[str] = frozenset({"search_strategy"})
+
+
+def _drift_message(entry: dict[str, Any]) -> str:
+    """Plain-English message for a drift entry. Used as the issue message in
+    pipeline verification AND as the LLM retry-feedback line so both sites
+    speak the same language."""
+    kind = entry.get("kind")
+    key = entry.get("key") or ""
+    if kind == "missing_in_panel":
+        return (
+            f"`{key}` is in the brief but not on the panel — re-derive so the "
+            f"panel includes a weight + type entry for it."
+        )
+    if kind == "missing_in_brief":
+        return (
+            f"`{key}` is on the panel but not in the brief — drop the panel entry "
+            f"or add a brief items[] row that anchors it."
+        )
+    if kind == "value_mismatch":
+        field = entry.get("detail") or "field"
+        brief_val = entry.get("brief_value")
+        panel_val = entry.get("panel_value")
+        return (
+            f"`{key}.{field}` differs between brief ({brief_val!r}) and panel "
+            f"({panel_val!r}). Align them to a single value."
+        )
+    if kind == "mirror_mismatch":
+        field = entry.get("detail") or "mirror"
+        return (
+            f"Panel `{field}` doesn't match brief "
+            f"`goal_terms.{key}.properties.{field}` — mirror the brief value into the panel."
+        )
+    if kind == "algorithm_mismatch":
+        brief_val = entry.get("brief_value")
+        panel_val = entry.get("panel_value")
+        if brief_val and panel_val and brief_val != panel_val:
+            return (
+                f"Brief specifies algorithm `{brief_val}` but panel has `{panel_val}`. "
+                f"Set the panel's `algorithm` to `{brief_val}`."
+            )
+        if brief_val and not panel_val:
+            return (
+                f"Brief specifies algorithm `{brief_val}` but panel `algorithm` is empty. "
+                f"Set it to `{brief_val}`."
+            )
+        if panel_val and not brief_val:
+            return (
+                f"Panel has algorithm `{panel_val}` but the brief carrier "
+                f"`goal_terms.search_strategy.properties.algorithm` is empty. "
+                f"Set the carrier to `{panel_val}`."
+            )
+    return f"Brief ↔ panel drift on `{key}`."
+
+
 def _drift_entry(
     *,
     kind: str,
@@ -229,8 +290,17 @@ def compute_brief_panel_drift(
         if isinstance(panel_problem, dict) and isinstance(panel_problem.get("goal_terms"), dict)
         else {}
     )
-    brief_keys = {k for k in brief_goal_terms.keys() if isinstance(k, str)}
-    panel_keys = {k for k in panel_goal_terms.keys() if isinstance(k, str)}
+    # Carrier-only goal-term keys are excluded from the bidirectional key
+    # check; their values live at top-level panel fields. Algorithm carrier
+    # drift surfaces below via the dedicated `algorithm_mismatch` kind.
+    brief_keys = {
+        k for k in brief_goal_terms.keys()
+        if isinstance(k, str) and k not in CARRIER_ONLY_GOAL_TERM_KEYS
+    }
+    panel_keys = {
+        k for k in panel_goal_terms.keys()
+        if isinstance(k, str) and k not in CARRIER_ONLY_GOAL_TERM_KEYS
+    }
     for key in sorted(brief_keys - panel_keys):
         drift.append(_drift_entry(kind="missing_in_panel", key=key))
     for key in sorted(panel_keys - brief_keys):
@@ -266,6 +336,46 @@ def compute_brief_panel_drift(
                     detail=field,
                 )
             )
+
+    # Algorithm carrier drift: the brief carries the chosen algorithm at
+    # ``goal_terms.search_strategy.properties.algorithm``; the panel carries
+    # it at ``panel.problem.algorithm``. Surface mismatches as a structured
+    # entry so the same retry/feedback flow can target it.
+    brief_algo: str | None = None
+    ss_entry = brief_goal_terms.get("search_strategy") if isinstance(brief_goal_terms.get("search_strategy"), dict) else None
+    if isinstance(ss_entry, dict):
+        props = ss_entry.get("properties") if isinstance(ss_entry.get("properties"), dict) else None
+        if isinstance(props, dict):
+            raw = props.get("algorithm")
+            if isinstance(raw, str) and raw.strip():
+                brief_algo = raw.strip()
+    panel_algo: str | None = None
+    if isinstance(panel_problem, dict):
+        raw_panel = panel_problem.get("algorithm")
+        if isinstance(raw_panel, str) and raw_panel.strip():
+            panel_algo = raw_panel.strip()
+    if brief_algo and panel_algo and brief_algo != panel_algo:
+        drift.append(
+            _drift_entry(
+                kind="algorithm_mismatch",
+                key="search_strategy",
+                brief_value=brief_algo,
+                panel_value=panel_algo,
+                detail="algorithm",
+            )
+        )
+    elif brief_algo and not panel_algo:
+        drift.append(
+            _drift_entry(
+                kind="algorithm_mismatch",
+                key="search_strategy",
+                brief_value=brief_algo,
+                panel_value=None,
+                detail="algorithm",
+            )
+        )
+    # Note: panel_algo without brief_algo is NOT flagged — the panel's default
+    # algorithm (e.g. GA) is a valid starting state before any brief mention.
 
     # Mirror-field drift: properties the active port mirrors to top-level
     # panel fields. The two stores must agree row-for-row.

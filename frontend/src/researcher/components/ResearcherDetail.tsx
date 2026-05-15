@@ -12,6 +12,7 @@ import {
 import { ChatPanel } from "@shared/chat/ChatPanel";
 import { parseServerDate } from "@shared/dateTime";
 import { MessageBubbleList } from "@shared/chat/MessageBubbleList";
+import { PipelineStatusChecklist } from "@shared/chat/PipelineStatusChecklist";
 import { BackendConnectionControl } from "@shared/status/BackendConnectionControl";
 import { StatusChip } from "@shared/status/StatusChip";
 
@@ -503,6 +504,13 @@ export function ResearcherDetail({
                         : ""}
                     </strong>
                   )}
+                  renderSupplemental={(message) => {
+                    // Researchers see the same Pipeline status checklist
+                    // as participants (read-only — no Retry/Revert handlers).
+                    const pipeline = message.meta?.pipeline;
+                    if (!pipeline || message.role === "user") return null;
+                    return <PipelineStatusChecklist status={pipeline} />;
+                  }}
                 />
               }
               composer={{

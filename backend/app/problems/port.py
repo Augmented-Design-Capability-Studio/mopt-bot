@@ -319,36 +319,27 @@ class StudyProblemPort(Protocol):
         """
         return []
 
-    def safety_net_fill_structured_carriers(
+    def verify_brief_companion(
         self,
         brief: dict[str, Any],
         *,
-        api_key: str | None,
-        model_name: str | None,
-        user_text: str,
-        visible_reply: str | None,
-    ) -> dict[str, Any]:
-        """Optional safety-net pass that fills in structured-carrier fields
-        on ``goal_terms[*].properties`` when the brief-update LLM committed
-        the goal term but forgot the structured carrier on the same turn.
+        visible_reply: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Port-specific structural verification for the merged brief.
 
-        Ports own this entirely — the main brief pipeline calls it after
-        patch merge and synth, and merges back whatever the port returns.
-        Implementations typically:
+        Returns a list of issue dicts shaped like
+        ``{"category": "port_companion", "severity": "error"|"warn",
+        "subject": str, "message": str}``. Empty list means the brief
+        passes port-level invariants.
 
-        1. Detect a missing/empty structured carrier paired with prose
-           that names extractable specifics (e.g. VRPTW: ``worker_preference``
-           in ``goal_terms`` but empty ``properties.driver_preferences``,
-           paired with items[] prose naming a worker + condition keyword).
-        2. Fire a focused LLM call with port-specific vocabulary, prompt
-           and schema to re-extract the structured data.
-        3. Inject the extracted carrier into a copy of the brief and
-           return it.
-
-        Default returns ``brief`` unchanged. Ports without structured-
-        carrier regressions don't override.
+        Verification (S2) calls this AFTER the deterministic
+        cross-port checks (claim/delta consistency, anchoring, algorithm
+        carrier, workflow invariants) so port hooks see the already-merged
+        brief and only flag domain-specific concerns. Default returns
+        ``[]`` — VRPTW overrides to flag prose driver-pref rows that lack
+        a structured rule object (and vice versa), and similar cases.
         """
-        return brief
+        return []
 
     def mediocre_participant_starter_config(self) -> dict:
         """Return a deliberately sparse panel config for new study sessions.

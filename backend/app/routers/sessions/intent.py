@@ -40,14 +40,6 @@ def classify_fixed_phrase_intents(
         return (True, False, True)
     return None
 
-_CLEANUP_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bclean\s*up\b", re.IGNORECASE),
-    re.compile(r"\bconsolidat(?:e|ion)\b", re.IGNORECASE),
-    re.compile(r"\bdeduplicat(?:e|ion)\b", re.IGNORECASE),
-    re.compile(r"\breorgan(?:ize|ise|ization|isation)\b", re.IGNORECASE),
-    re.compile(r"\b(remove|delete|drop)\b.{0,80}\b(assumption|gathered|definition|item|fact)\b", re.IGNORECASE),
-    re.compile(r"\bmerge\b.{0,60}\b(gathered|assumption)\b", re.IGNORECASE),
-)
 _RUN_ACK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"Run\s*#\d+.*just completed", re.IGNORECASE),
     re.compile(r"Run\s*#\d+.*finished", re.IGNORECASE),
@@ -57,34 +49,11 @@ _ANSWERED_OPEN_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bI answered an open question\b", re.IGNORECASE),
 )
 _INTERPRET_ONLY_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Run-completion turns are interpretation-only by design (the run output is
-    # not a brief edit). Config-save turns USED to be in this list, but they
-    # now run the hidden brief update so the LLM can refresh affected brief
-    # rows in natural language and preserve any prior rationale.
     re.compile(r"\bRun\s*#\d+.*just completed\b", re.IGNORECASE),
 )
-
-
 _CONFIG_SAVE_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bI manually updated the problem configuration\b", re.IGNORECASE),
 )
-_CLEAR_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bclear\b.{0,40}\b(definition|brief|gathered|assumption|open question|everything|all)\b", re.IGNORECASE),
-    re.compile(r"\breset\b.{0,40}\b(definition|brief|everything|all)\b", re.IGNORECASE),
-    re.compile(r"\brestart\b", re.IGNORECASE),
-    re.compile(r"\bfresh slate\b", re.IGNORECASE),
-)
-
-
-def is_definition_cleanup_request(
-    content: str, context_kind: str | None = None
-) -> bool:
-    if context_kind is not None:
-        return context_kind == "definition_cleanup"
-    text = content.strip()
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in _CLEANUP_INTENT_PATTERNS)
 
 
 def is_run_acknowledgement_message(
@@ -118,46 +87,6 @@ def is_answered_open_question_message(
     if not text:
         return False
     return any(pattern.search(text) for pattern in _ANSWERED_OPEN_QUESTION_PATTERNS)
-
-
-def is_definition_clear_request(content: str) -> bool:
-    text = content.strip()
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in _CLEAR_INTENT_PATTERNS)
-
-
-# Conservative regex fallback for the LLM-based change-intent classifier in
-# `classify_definition_intents`.  Only returns False for messages that are
-# unambiguously concept-questions / casual chat (no edit verb, no constraint
-# language, no obvious goal-term mention); everything else stays True so the
-# brief+panel pipelines run.  When the LLM is available it overrides this.
-_OBVIOUS_CONCEPT_QUESTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"^\s*(?:what|why|how|when|who|where|which)\s+(?:is|are|does|do|did)\b.{0,200}\?\s*$", re.IGNORECASE),
-    re.compile(r"^\s*(?:can\s+you\s+)?(?:explain|describe|define|clarify)\b.{0,200}\?\s*$", re.IGNORECASE),
-    re.compile(r"^\s*(?:thanks|thank you|thx|got it|cool|ok|okay|noted)\b.{0,40}$", re.IGNORECASE),
-)
-_CHANGE_INTENT_KEYWORDS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b(?:add|remove|delete|drop|change|set|update|increase|decrease|raise|lower|switch|use)\b", re.IGNORECASE),
-    re.compile(r"\b(?:weight|penalty|priority|constraint|hard|soft|limit|cap|maximum|minimum|target)\b", re.IGNORECASE),
-    re.compile(r"\b(?:algorithm|epochs?|iterations?|population|swarm)\b", re.IGNORECASE),
-)
-
-
-def is_change_intent_fallback(content: str) -> bool:
-    """Conservative regex fallback used when the LLM intent classifier is unavailable.
-
-    Returns True by default — better to redundantly run the brief/panel pipelines
-    than to silently drop a real edit.  Only returns False when the message
-    matches a clear concept-question/casual-chat shape AND contains no edit-verb
-    or constraint-language keywords.
-    """
-    text = content.strip()
-    if not text:
-        return False
-    if any(p.search(text) for p in _CHANGE_INTENT_KEYWORDS):
-        return True
-    return not any(p.search(text) for p in _OBVIOUS_CONCEPT_QUESTION_PATTERNS)
 
 
 _INTERPRET_ONLY_CONTEXT_KINDS = frozenset(
@@ -201,6 +130,36 @@ def is_config_save_context_message(
     if not text:
         return False
     return any(pattern.search(text) for pattern in _CONFIG_SAVE_CONTEXT_PATTERNS)
+
+
+_BRIEF_EDIT_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\bi\s+just\s+manually\s+updated\s+the\s+problem\s+definition\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bproblem\s+definition\s+saved\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def is_brief_edit_context_message(
+    content: str, context_kind: str | None = None
+) -> bool:
+    """True for the synthetic 'I just manually updated the problem definition' turn.
+
+    The chat pipeline routes these through ``run_chat_pipeline`` with
+    ``is_brief_edit_ack=True`` so the main-turn LLM produces an
+    acknowledgement + any implied maintenance updates rather than
+    fighting with the user's typed edit.
+    """
+    if context_kind is not None:
+        return context_kind == "brief_edit_ack"
+    text = content.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _BRIEF_EDIT_CONTEXT_PATTERNS)
 
 
 _ASSISTANT_RUN_INVITATION_PATTERNS: tuple[re.Pattern[str], ...] = (

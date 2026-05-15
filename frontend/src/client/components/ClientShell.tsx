@@ -214,7 +214,13 @@ export function ClientShell({
   const backgroundBriefPending = session?.processing?.brief_status === "pending";
   const backgroundConfigPending = session?.processing?.config_status === "pending";
   const backgroundProcessingPending = backgroundBriefPending || backgroundConfigPending;
-  const chatPending = aiPending || backgroundProcessingPending || optimizing;
+  // The per-message pipeline checklist (rendered under the placeholder bubble
+  // while `meta.verifying=true`) now owns the "definition + config are being
+  // updated" signal — so we no longer show the legacy global
+  // "Updating definition and configuration..." bubble for that state.
+  // ``chatPending`` still includes ``aiPending`` (pre-POST roundtrip) and
+  // ``optimizing`` (run in progress); those have no inline placeholder.
+  const chatPending = aiPending || optimizing;
   // Detect the post-run analysis window so we can swap the generic
   // "Thinking..." label for one that names what's actually happening (the
   // visualization is being prepared and the agent is composing its run-ack
@@ -258,9 +264,7 @@ export function ClientShell({
         ? aiVerifying
           ? "Verifying changes..."
           : "Thinking..."
-        : backgroundProcessingPending
-          ? "Updating definition and configuration..."
-          : "Working...";
+        : "Working...";
   const backgroundProcessingError = session?.processing?.processing_error ?? null;
   const backgroundProcessingErrorMessage = formatProcessingError(backgroundProcessingError);
   // Chat-bubble Run button: mirrors the panel Run button's gate so an

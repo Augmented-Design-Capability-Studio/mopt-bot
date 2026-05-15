@@ -2,13 +2,11 @@
 
 Two responsibilities:
 
-1. **Default-stub the Gemini classifier helpers.** Production code calls
-   ``classify_definition_intents`` and ``classify_chat_temperature`` ahead of
-   the mocked ``generate_chat_turn`` whenever a test posts a message with
-   ``invoke_model=True`` and a non-empty (mocked) decrypted key. Without a
-   default stub, every such test silently dispatches a real Gemini request
-   that 401s and falls back. This file installs deterministic stubs for all
-   tests; individual tests can still override.
+1. **Default-stub the Gemini helpers.** Tests that exercise the chat
+   pipeline default to a no-network stub: ``generate_main_turn`` and
+   ``generate_config_from_brief`` both return ``None`` so the pipeline
+   pauses cleanly instead of dispatching a real Gemini request. Tests
+   that need specific outputs override these per-test.
 
 2. **Live-Gemini key plumbing** for ``backend/tests/test_live_gemini.py``.
    Provides the ``gemini_api_key`` fixture, registers the ``live_gemini``
@@ -52,51 +50,23 @@ def _ensure_test_database_schema() -> None:
 def _stub_gemini_helpers(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
     """Stub Gemini helpers so non-live tests never touch the network.
 
-    Defaults mirror the production fallback path each helper uses when its
-    own ``except`` branch trips, so test outcomes are equivalent to the
-    "no API key configured" runtime — without the ~1s round-trip and the
-    misleading ``API_KEY_INVALID`` warning in the test log.
+    Default stubs keep the chat pipeline working without an API key. Tests
+    that want to drive specific main-turn outputs can override
+    ``app.services.llm.generate_main_turn`` per-test.
 
     Live tests (marked ``live_gemini``) opt out so they can hit the real API.
-    Individual tests can still ``monkeypatch.setattr`` over these defaults.
     """
     if request.node.get_closest_marker(_LIVE_MARKER) is not None:
         yield
         return
 
     from app.services import llm as _llm
-    from app.routers.sessions import intent as _intent
 
-    # Mirror production fallbacks (regex-based intent detection, deterministic
-    # heuristic temperature) so tests that depend on those paths still work.
-    monkeypatch.setattr(
-        _llm,
-        "classify_definition_intents",
-        lambda content, *_a, **_k: (
-            _intent.is_definition_cleanup_request(content),
-            _intent.is_definition_clear_request(content),
-            _intent.is_change_intent_fallback(content),
-        ),
-    )
     monkeypatch.setattr(_llm, "classify_chat_temperature", lambda *a, **k: "warm")
-    monkeypatch.setattr(_llm, "classify_assistant_run_invitation", lambda *a, **k: False)
-    # The consolidated chat-turn helper returns None on failure, which makes
-    # the router fall back to the multi-call path (already stubbed above).
-    # Forcing None here keeps tests on the same fallback path they used pre-
-    # consolidation, so existing chat-handler tests don't need to learn the
-    # new structured-output mock shape.
-    monkeypatch.setattr(_llm, "generate_consolidated_chat_turn", lambda *a, **k: None)
-    # Hidden brief/config derivation. ``generate_problem_brief_update`` now
-    # distinguishes "successful no-op" (empty turn) from "failure" (None) so
-    # the background derivation can surface processing_error on the failure
-    # path. Tests that don't set up a real Gemini stub want the no-op path —
-    # i.e. the LLM "decided" there was nothing to patch — so they don't see
-    # a spurious processing_error. Return an empty turn here.
-    from app.schemas import ProblemBriefUpdateTurn as _EmptyBriefTurn
-
-    monkeypatch.setattr(
-        _llm, "generate_problem_brief_update", lambda *a, **k: _EmptyBriefTurn()
-    )
+    # generate_main_turn drives the entire chat pipeline. Default to None so
+    # the runner's "transient transport/parse failure" path settles with a
+    # paused stage — tests that exercise specific outputs override per-test.
+    monkeypatch.setattr(_llm, "generate_main_turn", lambda *a, **k: None)
     monkeypatch.setattr(_llm, "generate_config_from_brief", lambda *a, **k: None)
     yield
 

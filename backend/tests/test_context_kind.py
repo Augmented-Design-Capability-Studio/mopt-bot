@@ -131,14 +131,8 @@ def test_answered_open_question_regex_fallback():
 
 
 # ---------------------------------------------------------------------------
-# is_definition_cleanup_request / classify_fixed_phrase_intents
+# classify_fixed_phrase_intents
 # ---------------------------------------------------------------------------
-
-
-def test_definition_cleanup_typed_kind():
-    assert intent.is_definition_cleanup_request(
-        "anything", context_kind="definition_cleanup"
-    )
 
 
 def test_classify_fixed_phrase_intents_typed_kind_short_circuits_content():
