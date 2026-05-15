@@ -45,6 +45,21 @@ class StudyProblemPort(Protocol):
     def weight_item_labels(self) -> dict[str, str]:
         """Human labels for problem_brief / panel sync (goal term keys)."""
 
+    def goal_term_rationales(self) -> dict[str, str]:
+        """Short rationale phrases per goal-term key, used by the
+        synthesizer that renders ``config-weight-<key>`` brief rows.
+
+        Each entry maps a weight key to a short clause like
+        ``"to minimize total driving minutes"`` or ``"to discourage
+        overloading vehicles"``. The rationale is appended to the
+        synthesized text so participants see WHY the term exists, not
+        just its name + type + weight. Keys without a rationale fall
+        back to the bare "X is a <role> term (weight N)." format.
+
+        Default returns ``{}``. Ports populate per-key.
+        """
+        return {}
+
     def weight_display_keys(self) -> list[str]:
         """Ordered weight keys used for the agile-mode gate check and config-panel display order.
 
@@ -303,6 +318,37 @@ class StudyProblemPort(Protocol):
         contribute no extra prose rows.
         """
         return []
+
+    def safety_net_fill_structured_carriers(
+        self,
+        brief: dict[str, Any],
+        *,
+        api_key: str | None,
+        model_name: str | None,
+        user_text: str,
+        visible_reply: str | None,
+    ) -> dict[str, Any]:
+        """Optional safety-net pass that fills in structured-carrier fields
+        on ``goal_terms[*].properties`` when the brief-update LLM committed
+        the goal term but forgot the structured carrier on the same turn.
+
+        Ports own this entirely — the main brief pipeline calls it after
+        patch merge and synth, and merges back whatever the port returns.
+        Implementations typically:
+
+        1. Detect a missing/empty structured carrier paired with prose
+           that names extractable specifics (e.g. VRPTW: ``worker_preference``
+           in ``goal_terms`` but empty ``properties.driver_preferences``,
+           paired with items[] prose naming a worker + condition keyword).
+        2. Fire a focused LLM call with port-specific vocabulary, prompt
+           and schema to re-extract the structured data.
+        3. Inject the extracted carrier into a copy of the brief and
+           return it.
+
+        Default returns ``brief`` unchanged. Ports without structured-
+        carrier regressions don't override.
+        """
+        return brief
 
     def mediocre_participant_starter_config(self) -> dict:
         """Return a deliberately sparse panel config for new study sessions.

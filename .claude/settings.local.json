@@ -142,7 +142,10 @@
       "PowerShell(Get-Content *)",
       "Bash(./.venv/Scripts/python.exe -c \"from app.routers.sessions import derivation; print\\('import OK'\\)\")",
       "Bash(awk 'NR==1369 || NR==1370 || NR==1371' \"C:/Users/whyhowie/git-repo/mopt-bot/backend/app/routers/sessions/router.py\")",
-      "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests/test_sync.py backend/tests/test_sessions.py backend/tests/test_gate_aware_chat_turn.py 2>&1 | Select-Object -Last 20)"
+      "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests/test_sync.py backend/tests/test_sessions.py backend/tests/test_gate_aware_chat_turn.py 2>&1 | Select-Object -Last 20)",
+      "Bash(backend/../venv/Scripts/python.exe -m pytest vrptw_problem/tests --tb=short -q)",
+      "Bash(awk 'NR>=1620 && NR<=1640' app/problem_brief.py)",
+      "Bash(awk -F: '$1 >= 1500 && $1 <= 1750')"
     ]
   }
 }

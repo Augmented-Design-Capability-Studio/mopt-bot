@@ -313,6 +313,23 @@ class OpenQuestionClassifierInput(BaseModel):
     answer_text: str
 
 
+class OpenQuestionGoalTermProposal(BaseModel):
+    """The benchmark goal-term key endorsed by an answered OQ.
+
+    Emitted by the OQ classifier when the participant's answer concretely
+    endorses introducing (or confirming) a benchmark goal-term concept that
+    isn't yet in ``brief.goal_terms`` — e.g. answering "yes" to *"Should I
+    add workload balance as a priority?"* must seed the ``workload_balance``
+    key so the brief→panel sync can attach a weight. Without this signal,
+    the answer only lands as a gathered items[] row and the panel-derive
+    LLM (which is told **not** to invent goal-term keys from prose) leaves
+    the panel unchanged — exactly the regression that motivated this field.
+    """
+
+    key: str
+    type: Literal["objective", "soft", "hard", "custom"] = "soft"
+
+
 class OpenQuestionClassification(BaseModel):
     """Classifier output for one OQ answer.
 
@@ -326,6 +343,7 @@ class OpenQuestionClassification(BaseModel):
     rephrased_text: str | None = None
     assumption_text: str | None = None
     new_question_text: str | None = None
+    goal_term_proposal: OpenQuestionGoalTermProposal | None = None
 
 
 class OpenQuestionClassifierTurn(BaseModel):

@@ -474,6 +474,7 @@ def apply_brief_patch_with_cleanup(
     cleanup_mode: bool = False,
     user_text: str = "",
     embedding_model: str | None = None,
+    visible_reply: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Shared patch-merge pipeline used by definition cleanup and OQ cleanup-triggered flows.
@@ -550,6 +551,18 @@ def apply_brief_patch_with_cleanup(
             is_run_acknowledgement=is_run_acknowledgement,
             test_problem_id=test_problem_id,
         )
+        consolidated = _port_safety_net_fill_structured_carriers(
+            consolidated,
+            api_key=api_key,
+            model_name=model_name,
+            test_problem_id=test_problem_id,
+            user_text=user_text,
+            visible_reply=visible_reply,
+        )
+        # Re-synthesize prose rows in case the safety net added structured
+        # data — ports render synthesized prose from goal_terms, and the
+        # reconciler keeps only the latest version per slot.
+        consolidated = _synthesize_goal_term_prose_items(consolidated, test_problem_id)
         consolidated = _validate_goal_term_backing(
             consolidated, api_key, model_name, test_problem_id
         )
@@ -582,6 +595,77 @@ def apply_brief_patch_with_cleanup(
     return consolidated, {**meta, **run_meta}
 
 
+def _port_safety_net_fill_structured_carriers(
+    brief: dict[str, Any],
+    *,
+    api_key: str | None,
+    model_name: str | None,
+    test_problem_id: str | None,
+    user_text: str,
+    visible_reply: str | None,
+) -> dict[str, Any]:
+    """Delegate to the active port's structured-carrier safety net.
+
+    Problem-agnostic orchestration only: the main backend doesn't know what
+    "structured carriers" each port has. Per-port implementations live in
+    ``StudyProblemPort.safety_net_fill_structured_carriers`` (default
+    no-op) — see e.g. ``vrptw_problem.driver_pref_safety_net`` for VRPTW's
+    ``worker_preference -> driver_preferences`` recovery.
+
+    Wrapped here so a misbehaving port can never crash the BG pipeline.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id)
+    except Exception:  # pragma: no cover — defensive
+        return brief
+    try:
+        return port.safety_net_fill_structured_carriers(
+            brief,
+            api_key=api_key,
+            model_name=model_name,
+            user_text=user_text,
+            visible_reply=visible_reply,
+        )
+    except Exception:  # pragma: no cover — never block derivation on the safety net
+        log.exception(
+            "Structured-carrier safety net raised for port %s",
+            getattr(port, "id", None),
+        )
+        return brief
+
+
+# Markers of the old "Assumed X as Y based on Z. Confirm or remove." template.
+# When a validator row's text matches either marker, it was authored before the
+# format change to declarative gathered-info phrasing — drop it so the
+# validator re-emits fresh text on this turn (or leaves the key unbacked if
+# real prose now covers it).
+_VALIDATOR_LEGACY_TEXT_PREFIXES: tuple[str, ...] = (
+    "assumed ",
+    "i assumed ",
+)
+_VALIDATOR_LEGACY_TEXT_SUFFIXES: tuple[str, ...] = (
+    "confirm or remove.",
+    "confirm or remove",
+    "please confirm.",
+    "please confirm",
+)
+
+
+def _is_legacy_validator_text(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    if any(lowered.startswith(p) for p in _VALIDATOR_LEGACY_TEXT_PREFIXES):
+        return True
+    if any(lowered.endswith(s) for s in _VALIDATOR_LEGACY_TEXT_SUFFIXES):
+        return True
+    return False
+
+
 def _validate_goal_term_backing(
     brief: dict[str, Any],
     api_key: str | None,
@@ -611,11 +695,42 @@ def _validate_goal_term_backing(
     if not isinstance(goal_terms, dict) or not goal_terms:
         return brief
 
+    # Drop legacy-format validator rows ("Assumed X as Y. Confirm or remove.")
+    # before the LLM sees the brief — they read like backing under the new
+    # prompt rules, which would keep the stale wording on the panel forever.
+    # The LLM then re-emits the key with the new declarative phrasing (or
+    # skips when real user prose now covers it).
+    items_for_llm = list(brief.get("items") or [])
+    legacy_ids_to_strip: set[str] = set()
+    for item in items_for_llm:
+        if not isinstance(item, dict):
+            continue
+        iid = str(item.get("id") or "")
+        if not iid.startswith("item-validator-"):
+            continue
+        if _is_legacy_validator_text(item.get("text") or ""):
+            legacy_ids_to_strip.add(iid)
+    if legacy_ids_to_strip:
+        log.info(
+            "Goal-term backing validator stripping %d legacy-format validator row(s) "
+            "so the LLM re-emits with the declarative gathered-info phrasing: %s",
+            len(legacy_ids_to_strip),
+            sorted(legacy_ids_to_strip),
+        )
+        cleaned_brief = dict(brief)
+        cleaned_brief["items"] = [
+            item
+            for item in items_for_llm
+            if not (isinstance(item, dict) and str(item.get("id") or "") in legacy_ids_to_strip)
+        ]
+    else:
+        cleaned_brief = brief
+
     try:
         from app.services.llm import validate_goal_term_backing
 
         result = validate_goal_term_backing(
-            brief,
+            cleaned_brief,
             api_key=api_key,
             model_name=model_name,
             test_problem_id=test_problem_id,
@@ -630,10 +745,10 @@ def _validate_goal_term_backing(
         if isinstance(result, dict)
         else ""
     )
-    if not entries and not fresh_summary:
+    if not entries and not fresh_summary and not legacy_ids_to_strip:
         return brief
 
-    next_brief = deepcopy(brief)
+    next_brief = deepcopy(cleaned_brief)
     items = list(next_brief.get("items") or [])
     existing_ids = {str(i.get("id") or "") for i in items if isinstance(i, dict)}
     appended = 0
@@ -1001,6 +1116,7 @@ def compute_brief_after_user_turn(
             researcher_steers=researcher_steers or [],
             test_problem_id=test_problem_id,
             user_text=user_text,
+            visible_reply=visible_assistant_message,
         )
         return (merged_brief, panel_patch, brief_turn)
     except Exception:
@@ -1313,6 +1429,7 @@ def _run_background_derivation(
                 cleanup_mode=cleanup_requested
                 or bool(brief_turn is not None and brief_turn.cleanup_mode),
                 user_text=user_text,
+                visible_reply=visible_assistant_message,
             )
             if int(meta.get("removed_total", 0)) > 0:
                 log.info("Auto open-question cleanup removed %s question(s)", meta.get("removed_total"))
@@ -1328,6 +1445,18 @@ def _run_background_derivation(
         # demo: drop assumptions). Idempotent on already-coerced briefs, so
         # safe to run on the no-patch path too.
         effective_problem_brief = coerce_problem_brief_for_workflow(
+            effective_problem_brief, workflow_mode
+        )
+
+        # Re-enforce session monitors on EVERY turn (not just patch turns).
+        # ``apply_brief_patch_with_cleanup`` already runs them when there is
+        # a patch, but a concept-question / casual-chat turn that emits no
+        # patch would otherwise skip the upload / goal / algorithm refresh
+        # entirely — leaving the participant without the "still missing"
+        # OQs they need. The monitors are idempotent (stable ids; drop-or-
+        # re-insert is a no-op when state hasn't changed), so the extra
+        # call on patch turns has no visible effect.
+        effective_problem_brief = _enforce_session_monitors(
             effective_problem_brief, workflow_mode
         )
 
@@ -1441,6 +1570,21 @@ def _run_background_derivation(
                         # Re-coerce in case maintenance left an assumption
                         # implication (it shouldn't — this is defensive).
                         effective_problem_brief = coerce_problem_brief_for_workflow(
+                            effective_problem_brief, workflow_mode
+                        )
+
+                        # Re-fire session monitors AFTER the maintain pass
+                        # rewrote ``open_questions`` with
+                        # ``replace_open_questions=true``. The maintain LLM
+                        # doesn't know that ids like ``oq-monitor-upload``
+                        # are system-managed and will drop them as
+                        # "already addressed" the moment the visible reply
+                        # mentions uploading or a goal term. Monitor
+                        # enforcement is idempotent (stable ids) so this
+                        # call restores any monitor OQ the maintain pass
+                        # silently dropped, leaving genuine OQ
+                        # adds/drops/rephrases the LLM made intact.
+                        effective_problem_brief = _enforce_session_monitors(
                             effective_problem_brief, workflow_mode
                         )
             except Exception:  # pragma: no cover — never block derivation

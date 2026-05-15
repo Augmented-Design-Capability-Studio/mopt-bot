@@ -500,18 +500,21 @@ def _merge_non_destructive_managed_fields(
                 merged_goal_terms = filtered
         merged["goal_terms"] = merged_goal_terms
 
-    # Brief-as-source-of-truth (strict subset). The panel-derive LLM can
-    # translate ``brief.goal_terms`` into a panel, but it cannot *propose* new
-    # goal-term keys — neither from prose in ``brief.items[]`` nor from a
-    # ``current_panel.goal_terms`` carry-over. The brief-update model owns
-    # that proposal; once brief.goal_terms drops a key, it must drop from the
-    # panel too. Allowing ``current_goal_terms`` here was leaky: a key that
-    # slipped onto the panel via one turn's LLM proposal would survive every
-    # subsequent turn under ``preserve_missing_managed_fields=True``, even
-    # though the brief never carried it. Legitimate participant panel edits
-    # (e.g. weight bumps) already mirror back to the brief through the panel
-    # PATCH handler, so the brief is always at least as inclusive as the
-    # panel for any user-driven mutation.
+    # Brief-as-source-of-truth (strict subset + fill-missing). The panel-
+    # derive LLM can translate ``brief.goal_terms`` into a panel, but it
+    # cannot *propose* new goal-term keys — neither from prose in
+    # ``brief.items[]`` nor from a ``current_panel.goal_terms`` carry-over.
+    # The brief-update model owns that proposal; once brief.goal_terms drops
+    # a key, it must drop from the panel too.
+    #
+    # **Two-way enforcement:** the brief is authoritative in BOTH directions
+    # — panel keys not in brief get dropped (strict subset), AND brief keys
+    # the LLM derivation omitted get filled in deterministically. The fill
+    # path matters because the LLM occasionally drops a brief.goal_terms key
+    # under prompt bloat (observed with ``workload_balance``: brief has the
+    # key with a valid ``evidence_item_ids`` cite, but the derived panel
+    # comes back missing it, leaving a permanent "Brief ↔ Problem Config
+    # drift" banner that no "Sync to config" click can clear).
     if problem_brief is not None:
         merged_goal_terms_final = _goal_terms_from_problem(merged)
         brief_goal_terms_raw = (
@@ -532,13 +535,45 @@ def _merge_non_destructive_managed_fields(
             )
             for k in unauthorized:
                 merged_goal_terms_final.pop(k, None)
-            merged["goal_terms"] = merged_goal_terms_final
             # Keep the legacy `weights` map in lockstep so the downstream
             # `_rebuild_goal_terms_metadata` (study_bridge) can't resurrect the
             # dropped keys from a stale weights projection.
             if isinstance(merged.get("weights"), dict):
                 for k in unauthorized:
                     merged["weights"].pop(k, None)
+        # Fill brief keys the LLM derivation forgot. We trust the brief: the
+        # entry already passed the brief-side anchor check during the chat
+        # turn that introduced the key, and the panel anchor filter above
+        # would have dropped it from ``merged_goal_terms`` had it failed
+        # there. Strip ``evidence_item_ids`` since that's brief-side
+        # bookkeeping; the panel sanitizer doesn't expect it.
+        missing_from_panel = [
+            k for k in allowed_keys if k not in merged_goal_terms_final
+        ]
+        if missing_from_panel and isinstance(brief_goal_terms_raw, dict):
+            for key in missing_from_panel:
+                src_entry = brief_goal_terms_raw.get(key)
+                if not isinstance(src_entry, dict):
+                    continue
+                copied = deepcopy(src_entry)
+                copied.pop("evidence_item_ids", None)
+                merged_goal_terms_final[key] = copied
+                # Mirror into the legacy weights map when the entry has a
+                # numeric weight, so ``_rebuild_goal_terms_metadata`` and
+                # other weights-projection consumers see it.
+                weight_val = copied.get("weight")
+                if isinstance(weight_val, (int, float)) and not isinstance(weight_val, bool):
+                    weights_map = merged.get("weights")
+                    if not isinstance(weights_map, dict):
+                        weights_map = {}
+                        merged["weights"] = weights_map
+                    weights_map[key] = float(weight_val)
+            log.info(
+                "Panel-derive filled brief.goal_terms keys the LLM omitted: %s",
+                missing_from_panel,
+            )
+        if unauthorized or missing_from_panel:
+            merged["goal_terms"] = merged_goal_terms_final
 
     current_weights = _weights_from_problem(current_problem)
     derived_weights = _weights_from_problem(merged)

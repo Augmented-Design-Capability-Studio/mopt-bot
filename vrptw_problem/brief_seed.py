@@ -307,22 +307,35 @@ _DRIVER_NAMES_BY_INDEX: dict[int, str] = {
 _ZONE_LETTERS_BY_INDEX: dict[int, str] = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
 
 
-def _format_penalty_suffix(penalty: Any) -> str:
+def _format_penalty_value(penalty: Any) -> str:
+    """Render the penalty value as a bare number (or ``"unset"`` when
+    malformed). Caller composes the surrounding parenthesised clause so the
+    driver-pref row format matches the unified
+    ``"<Subject> (<role>, <metric N>) <rationale>."`` shape used by
+    ``_weight_item_text``."""
     if isinstance(penalty, bool) or not isinstance(penalty, (int, float)):
-        return ""
+        return "unset"
     if float(penalty).is_integer():
-        return f" (penalty {int(penalty)})"
-    return f" (penalty {float(penalty)})"
+        return str(int(penalty))
+    return str(float(penalty))
 
 
 def _format_driver_preference_rule(rule: dict[str, Any]) -> tuple[str, str] | None:
-    """Render one rule into (stable_id_suffix, prose_text). None if malformed."""
+    """Render one rule into (stable_id_suffix, prose_text). None if malformed.
+
+    Format matches the unified ``"<Subject> (worker_preference subproperty,
+    penalty N) <rationale>."`` shape so synthesized driver-pref rows read
+    in the same voice as the top-level ``config-weight-<key>`` rows. The
+    ``"worker_preference subproperty"`` tag is the system-readable signal
+    that the rule belongs to the parent goal-term's properties carrier.
+    """
     vid = rule.get("vehicle_idx")
     if not isinstance(vid, int) or vid not in _DRIVER_NAMES_BY_INDEX:
         return None
     driver = _DRIVER_NAMES_BY_INDEX[vid]
     cond = str(rule.get("condition") or "").strip().lower()
-    penalty_suffix = _format_penalty_suffix(rule.get("penalty"))
+    penalty_value = _format_penalty_value(rule.get("penalty"))
+    role = "worker_preference subproperty"
     if cond == "avoid_zone":
         zone = rule.get("zone")
         if not isinstance(zone, int) or zone not in _ZONE_LETTERS_BY_INDEX:
@@ -330,7 +343,7 @@ def _format_driver_preference_rule(rule: dict[str, Any]) -> tuple[str, str] | No
         zone_letter = _ZONE_LETTERS_BY_INDEX[zone]
         return (
             f"{vid}-zone-{zone_letter}",
-            f"{driver} avoids deliveries in Zone {zone_letter} as a soft preference{penalty_suffix}.",
+            f"{driver} ({role}, penalty {penalty_value}) to skip Zone {zone_letter} deliveries when possible.",
         )
     if cond == "order_priority":
         priority = str(rule.get("order_priority") or "").strip().lower()
@@ -338,7 +351,7 @@ def _format_driver_preference_rule(rule: dict[str, Any]) -> tuple[str, str] | No
             return None
         return (
             f"{vid}-order-{priority}",
-            f"{driver} avoids {priority}-priority orders as a soft preference{penalty_suffix}.",
+            f"{driver} ({role}, penalty {penalty_value}) to skip {priority}-priority orders when possible.",
         )
     if cond == "shift_over_limit":
         limit_minutes = rule.get("limit_minutes")
@@ -348,7 +361,7 @@ def _format_driver_preference_rule(rule: dict[str, Any]) -> tuple[str, str] | No
         hours_str = f"{hours:.1f}".rstrip("0").rstrip(".")
         return (
             f"{vid}-shift-{int(limit_minutes)}",
-            f"{driver}'s shift is capped at {hours_str}h as a soft preference{penalty_suffix}.",
+            f"{driver} ({role}, penalty {penalty_value}) to cap shifts at {hours_str}h.",
         )
     return None
 

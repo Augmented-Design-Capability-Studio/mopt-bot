@@ -1442,13 +1442,33 @@ def _config_item(item_id: str, text: str) -> dict[str, Any]:
     }
 
 
-def _weight_item_text(label: str, value: float, constraint_type: str | None) -> str:
+def _weight_item_text(
+    label: str,
+    value: float,
+    constraint_type: str | None,
+    rationale: str | None = None,
+) -> str:
+    """Render the synthesized ``config-weight-<key>`` row text.
+
+    Format: ``"<Label> (<role>, weight N) <rationale>."``. When the port
+    didn't supply a rationale phrase, fall back to the bare
+    ``"<Label> is a <role> term (weight N)."`` form so the brief still
+    carries the key fact even on ports that haven't populated
+    ``goal_term_rationales``.
+    """
     ctype = (constraint_type or "").strip().lower()
     if ctype in ("hard", "soft"):
-        return f"{label} is a {ctype} constraint term (weight {value})."
+        role = f"{ctype} constraint"
+    elif ctype == "custom":
+        role = "custom locked"
+    else:
+        role = "primary objective"
+    rationale_clause = (rationale or "").strip()
+    if rationale_clause:
+        return f"{label} ({role}, weight {value}) {rationale_clause}."
     if ctype == "custom":
         return f"{label} uses a custom locked value (weight {value})."
-    return f"{label} is a primary objective term (weight {value})."
+    return f"{label} is a {role} term (weight {value})."
 
 
 def _problem_brief_item_slot(
@@ -1518,6 +1538,14 @@ def _slot_from_item_id(item_id: str) -> str | None:
         return f"weight:{item_id.removeprefix('config-weight-')}"
     if item_id.startswith("config-algorithm-param-"):
         return f"algorithm_param:{item_id.removeprefix('config-algorithm-param-')}"
+    # Goal-term validator rows surface the agent's inference for a
+    # ``goal_terms`` key that lacks a backing items[] row. They share the
+    # same slot as ``config-weight-{key}`` so the reconciler keeps only the
+    # later (more specific) one when both exist. Once the panel-sync
+    # synthesises ``config-weight-{key}`` with concrete weight + type, the
+    # vague validator row is redundant and gets dropped.
+    if item_id.startswith("item-validator-"):
+        return f"weight:{item_id.removeprefix('item-validator-')}"
     return None
 
 
@@ -1629,7 +1657,14 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
 
     from app.problems.registry import get_study_port
 
-    weight_labels = get_study_port(test_problem_id).weight_item_labels()
+    port = get_study_port(test_problem_id)
+    weight_labels = port.weight_item_labels()
+    try:
+        weight_rationales = port.goal_term_rationales()
+        if not isinstance(weight_rationales, dict):
+            weight_rationales = {}
+    except Exception:  # pragma: no cover — defensive
+        weight_rationales = {}
     items: list[dict[str, Any]] = []
 
     algorithm = str(problem.get("algorithm") or "").strip()
@@ -1654,10 +1689,16 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
             value = weights[key]
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             ctype = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
+            rationale = weight_rationales.get(str(key)) if isinstance(weight_rationales, dict) else None
             items.append(
                 _config_item(
                     f"config-weight-{key}",
-                    _weight_item_text(label, float(value), str(ctype) if isinstance(ctype, str) else None),
+                    _weight_item_text(
+                        label,
+                        float(value),
+                        str(ctype) if isinstance(ctype, str) else None,
+                        rationale=str(rationale).strip() if isinstance(rationale, str) else None,
+                    ),
                 )
             )
 

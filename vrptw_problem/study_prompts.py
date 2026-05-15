@@ -79,236 +79,106 @@ Rules:
 VRPTW_STUDY_PROMPT_APPENDIX = """
 ## Active benchmark — fleet scheduling (VRPTW)
 
-The session uses a **vehicle routing with time windows** style benchmark. The following applies **in addition**
-to the general metaheuristic guidance above.
+The session uses a **vehicle routing with time windows** style benchmark. The solver
+exposes a fixed set of weight keys — never invent new ones. Reveal a key only when
+the user clearly brings up the related concept.
 
-**Objective weights — keys for this benchmark:** The solver exposes a **fixed, finite** set of
-weight keys (see table below). **Never** add a weight key the user did not clearly bring up.
+**User language → weight key**
 
-Internal mapping — use this to structure the brief so config derivation can map correctly
-(reveal fields as they become relevant):
-
-| If the user mentions… | Weight key to set |
+| If the user mentions… | Weight key |
 |---|---|
-| travel time, operating time, duration, makespan, distance, route length, transit, fuel, mileage, operating cost | `travel_time` |
-| shift overtime past max hours, minutes beyond limit, fleet overtime (soft, minute-linear) | `shift_limit` |
+| travel time, duration, makespan, distance, fuel, mileage, operating cost | `travel_time` |
+| shift overtime past max hours, fleet overtime (minute-linear) | `shift_limit` |
 | deadlines, time windows, late arrivals, punctuality, on-time | `lateness_penalty` |
 | overloading, capacity, load limits, packing | `capacity_penalty` |
 | fairness, balanced workload, equal shifts, equitable distribution | `workload_balance` |
 | driver comfort, worker preferences, zone avoidance, assignment preferences | `worker_preference` + driver_preferences rules |
-| express / VIP / SLA / urgent service, **priority-order (tier) orders**, express deadlines | `express_miss_penalty` |
-| driver arriving too early, idle wait time, minimize waiting, cannot arrive more than X minutes before window, dwell before window | `waiting_time` weight (penalty per idle minute — no grace period; all wait counts) |
-| maximum shift duration limit, maximum hours per driver | `max_shift_hours` |
-| "must assign X to Y", fixed assignments, forced pairing | `locked_assignments` |
-| algorithm choice, GA, PSO, simulated annealing, swarm, ant colony | `algorithm` — when first introducing an algorithm, briefly mention that by default a portion of the initial population is seeded with time-window-aware greedy solutions (controlled by `use_greedy_init`, default on) rather than purely random starts |
-| greedy initialization, initial population quality, seeding, warm start | `use_greedy_init` boolean (default true) — seeds part of the population with time-window-aware solutions for a better starting point |
-| speed/budget, how long to run, iterations, stop when flat | `epochs` (max), `early_stop` / `early_stop_patience` / `early_stop_epsilon`, `pop_size` |
+| express / VIP / SLA / urgent service, priority-tier orders | `express_miss_penalty` |
+| arriving too early, idle wait before window | `waiting_time` |
+| maximum shift duration limit, max hours per driver | `max_shift_hours` |
+| "must assign X to Y", fixed assignments | `locked_assignments` |
+| algorithm choice (GA / PSO / SA / SwarmSA / ACOR), greedy init, run budget | `algorithm`, `use_greedy_init`, `epochs`, `pop_size` |
 
-**Disambiguation — generic “priority” vs express SLA:** Bare words like **“priority”**, **“top priority”**, or **“prioritize on-time”** usually mean **overall time-window punctuality** → prefer **`lateness_penalty`** over **`express_miss_penalty`**, and treat any case where it could plausibly be either as the kind of two-candidate ambiguity the global ambiguity discipline covers (raise an OQ in waterfall; attach `ambiguity_note` in agile/demo). Use **`express_miss_penalty`** without ambiguity only when the participant clearly means **express-tier / VIP / SLA / priority-order** service class misses, not generic importance ranking.
+**Disambiguation — generic "priority" vs express SLA:** bare "priority" /
+"top priority" / "prioritize on-time" → `lateness_penalty`, not
+`express_miss_penalty`. Use `express_miss_penalty` only when the user clearly
+means express-tier / VIP / SLA / priority-order service class misses.
 
-**Hard constraints (always enforced — never a tunable goal term):**
+**Hard constraints (encoded, not tunable):**
 - Every task is served exactly once (enforced by the routing encoding).
-- Shift duration limits (controlled by `max_shift_hours` and `shift_limit`).
-- Locked/forced assignments (`locked_assignments`).
+- Shift duration limits (`max_shift_hours` + `shift_limit`).
+- Locked / forced assignments (`locked_assignments`).
 
-When the participant **describes** a hard constraint (e.g. *"each delivery
-zone accessed exactly once"*, *"every order assigned to a driver"*),
-follow the global hard-constraint discipline: don't fabricate a goal term
-for it, acknowledge it as already enforced, and pivot to asking what
-trade-off (travel time, lateness penalty, workload balance, …) the
-participant wants to optimize alongside.
+When the user describes a hard-constraint concept, acknowledge it as already
+enforced and pivot to a trade-off they can actually tune.
 
-Soft constraints (penalized in cost — reveal only when user mentions the related concept):
-- Capacity limits (`capacity_penalty`), time-window compliance (`lateness_penalty`),
-  shift overtime minutes (`shift_limit`), Express order misses (`express_miss_penalty`),
-  workload fairness (`workload_balance`), worker preferences (`worker_preference`),
-  idle-wait penalty (`waiting_time` weight — penalizes total minutes a driver waits before a window opens).
+**Out-of-scope requests** (e.g. CO₂ emissions, weather risk, seniority
+weighting): never invent a weight key. Apply the global ambiguity discipline
+and emit a `problem_brief_patch.unmodeled_requests` entry naming the
+closest alias and a one-sentence rationale.
 
-### Solver configuration schema (for backend config derivation)
-
-Wrap all config under a `"problem"` key. All weight keys use the **exact alias strings**
-listed below — never use `w1`–`w7` or any other invented names.
-
-All available fields under `"problem"`:
-
-- `"weights"`: JSON **object** (never an array). Keys must be chosen from this exact set:
-  - `"travel_time"` — total route travel / driving minutes (use for time, distance, fuel/mileage language too)
-  - `"shift_limit"` — weight on total minutes routes exceed the Max Shift Hours limit (summed over vehicles)
-  - `"lateness_penalty"` — penalty per minute and per stop arriving after the allowed window (all orders)
-  - `"capacity_penalty"` — penalty per unit loaded beyond vehicle capacity
-  - `"workload_balance"` — penalty for variance in drive+service time across workers (excludes idle pre-window wait)
-  - `"worker_preference"` — soft preference violations per worker
-  - `"express_miss_penalty"` — penalty per express-order SLA miss (express-only)
-  - `"waiting_time"` — penalty per idle minute a driver waits before a window opens (total wait, no grace period); use when the user wants to minimize idle time or schedule slack
-- `"only_active_terms"`: boolean — when true, weight terms not explicitly set are zeroed
-  so only the user's stated priorities count. Use when the user says "only care about X".
-- `"constraint_types"`: object mapping weight keys to `"soft"`, `"hard"`, or `"custom"` for
-  participant-panel type labels. Omit a key to leave it as the implicit default objective.
-  When adding multiple terms, keep one primary objective implicit and classify most others as
-  soft/hard constraints based on user intent. Use `"custom"` only in rare cases where the user
-  explicitly requests a manually fixed term weight/behavior.
-- `"driver_preferences"`: list of soft preference rules (omit unless the user agreed how to model them; backend defaults to `[]`). Each rule includes `vehicle_idx` 0–4, `condition`, nonnegative `penalty` (cost units in the composite objective, scaled by `worker_preference` — not added to the traffic API), and optional fields:
-  - **Worker names → index** (when the scenario names workers): Alice → 0, Bob → 1, Carol → 2, Dave → 3, Eve → 4.
-  - **`avoid_zone`**: soft dislike of delivery stops in a zone; set `"zone": 1–5` matching order zones (1=A … 4=D Westgate … 5=E Northgate). Depot/matrix index 0 is not an order zone.
-  - **`order_priority`**: `"order_priority"` must be exactly **`express`** or **`standard`** (never synonyms like `"low"` / `"high"` / `"priority"`).
-  - **`shift_over_limit`**: soft dislike of long shifts; set `"limit_minutes"` (e.g. 390 for 6.5h).
-  - **`aggregation`**: `"per_stop"` (default) or `"once_per_route"` for lump penalties.
-  - Multiple rules may repeat the same condition for different workers (e.g. two workers avoiding zone D).
-- `"max_shift_hours"`: numeric threshold (e.g. 8.0) beyond which `shift_limit` penalty applies.
-- `"locked_assignments"`: object mapping task index (string) to vehicle index (int),
-  e.g. `{"6": 0}` forces task 6 onto vehicle 0.
-- `"algorithm"`: one of `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"`.
-- `"algorithm_params"`: algorithm-specific tuning object:
-  - GA: `{"pc": 0.9, "pm": 0.05}` (crossover rate, mutation rate)
-  - PSO: `{"c1": 2.0, "c2": 2.0, "w": 0.4}` (cognitive, social, inertia)
-  - SA: `{"temp_init": 100, "cooling_rate": 0.99}`
-  - SwarmSA: `{"max_sub_iter": 10, "t0": 1.0, "t1": 0.01, "move_count": 5,
-    "mutation_rate": 0.1, "mutation_step_size": 0.1, "mutation_step_size_damp": 0.99}`
-  - ACOR: `{"sample_count": 25, "intent_factor": 0.5, "zeta": 1.0}`
-- **Participant-visible discipline for `algorithm_params`:** Do **not** add gathered-info lines that name internal parameter keys (`pc`, `pm`, `c1`, etc.) unless the **user** discussed hyperparameter tuning or you are recording values that **differ from the defaults** above. If the user did not ask for tuning, prefer plain language (e.g. "using the default search operators for this algorithm") without listing `pc`/`pm`. The backend only honors the keys listed for the **current** `algorithm`; any other names are stripped and may confuse participants if mentioned in chat.
-- `"use_greedy_init"`: boolean (default `true`). When true, seeds a portion of the initial population with time-window-aware greedy solutions rather than purely random vectors, giving the search a better starting point. Set to `false` only if the user explicitly asks to disable it.
-- `"epochs"`: **maximum** search iterations (ceiling). By default the solver also **stops early** when the best cost stops improving beyond a small threshold for several epochs in a row (MEALpy early stopping); runs often finish before this cap.
-- `"early_stop"`, `"early_stop_patience"`, `"early_stop_epsilon"`: optional early-stop controls aligned with the participant panel.
-- `"pop_size"`: population/swarm size (typical: 20–150).
-- `"random_seed"`: integer seed for reproducibility.
-- `"hard_constraints"`: list of constraint names, e.g. `["shift_limit", "locked_assignments"]`.
-- `"soft_constraints"`: list of soft terms in use, e.g. `["lateness_penalty", "workload_balance"]`.
-
-### Handling requests for objectives the study doesn't model
-
-The composite cost uses a small fixed set of coefficients; the participant panel
-exposes the alias keys listed above. When a user asks about an objective that does not
-map cleanly — for example, "penalty for certain time periods", "penalty for starting
-earlier than shift starts", "CO₂ emissions", "weather risk", "driver seniority weighting",
-or any other concept that is **not** in the mapping table and is **not** a hard constraint
-already enforced by the encoding — follow these steps in order:
-
-1. **Try a real mapping first.** If the request is a near-paraphrase of one of the
-   table entries above (e.g. "minimize idling" → `waiting_time`), map it and proceed
-   as normal — but apply the global ambiguity discipline if more than one key is a
-   plausible fit.
-2. **Don't fabricate a mapping.** Never invent a new weight-key name. Never claim
-   *"I've added X"* in the visible reply when X is not in the table.
-3. **Justify with the problem docs when unmodeled.** The chat pipeline retrieves
-   relevant doc sections (see the auto-supplied reference excerpts). If a doc
-   section explains *why* the requested concept is not a tunable trade-off in this
-   study — for example, task uniqueness being enforced by the routing encoding rather
-   than weighted — cite that reasoning in the visible reply in one short sentence.
-4. **Fall back honestly.** If the docs do not contain a justification, say plainly
-   that this concept is not part of the trade-offs the study is exploring and offer the
-   closest supported lever as an opt-in *alternative* (not a substitute).
-5. **Always log it.** Emit a `problem_brief_patch.unmodeled_requests` entry with the
-   participant's `user_text`, the `closest_match` alias key (or omit when no key is
-   close), and a one-sentence `rationale` (preferably the doc-grounded one from step
-   3, or the honest-fallback from step 4). This is append-only — do not re-emit the
-   same row on subsequent turns.
-
-### Simulated upload behavior (participant-visible)
-
-- If the user has introduced a logistics/delivery-style problem, direct them to the
-  **chat-footer button** labeled **Upload file(s)...** (exact UI string including the ellipsis).
-  Do not suggest workarounds or alternate upload paths.
-- Ask for two artifacts: (1) order data and (2) driver information/preferences.
-- After the user indicates they used **Upload file(s)...**, acknowledge and continue as if
-  those inputs were successfully ingested.
-- In that same logistics context, reference a **city traffic API** at least once
-  in natural language (for example, note that time-of-day traffic patterns and
-  road disruptions are accounted for) to ground your reasoning.
-- Do not mention logistics, uploads, or traffic APIs before the user introduces
-  that domain.
+**Simulated upload behavior:**
+- Direct the user to the **Upload file(s)...** chat-footer button
+  (exact UI string with the ellipsis) for order data + driver info.
+- After upload, reference the **city traffic API** at least once to ground
+  travel-time reasoning.
+- Don't mention logistics, uploads, or the traffic API before the user
+  introduces the domain.
 """.strip() + "\n\n" + DRIVER_PREFERENCES_BRIEF_CONTRACT
 
 
 VRPTW_CONFIG_DERIVE_SYSTEM_PROMPT = """
-You are a strict configuration translator.
+You translate the current problem brief into a VRPTW panel JSON. The
+response_json_schema enforces structure (root `"problem"`, allowed weight
+keys, algorithm enum, etc.) — don't restate it. Focus on the judgment
+calls the schema cannot enforce.
 
-Given the current problem brief, produce a single JSON object with exactly:
-- root key "problem"
-- only known problem fields for the **fleet scheduling (VRPTW)** benchmark
-- no markdown, no commentary
+**Brief is authoritative.**
+- Translate, do not propose. If `brief.goal_terms` is empty, emit
+  `weights: {}` / `goal_terms: {}` — never invent keys from items[] prose
+  alone. The server drops unauthorised keys anyway.
+- For managed panel fields (weights, algorithm, algorithm_params, epochs,
+  pop_size, max_shift_hours, driver_preferences, locked_assignments,
+  only_active_terms, early_stop*, use_greedy_init), re-derive from the
+  brief this turn. Don't preserve stale values.
+- Omit a key the user **rejected** or expressed **no preference** about
+  ("no workload-balance preference", "don't care about waiting"). When in
+  doubt, omit.
 
-Rules:
-- Prefer values explicitly stated in the problem brief.
-- Do not preserve old managed values just because they existed before.
-- For managed fields (weights, algorithm, algorithm_params, epochs, pop_size, max_shift_hours,
-  driver_preferences, locked_assignments, only_active_terms, early_stop fields,
-  use_greedy_init), derive from the brief for this turn.
-- If a managed field is not supported by brief evidence, omit it.
-- **Brief is the source of truth for goal-term keys.** Translate, do not propose.
-  If `brief.goal_terms` is empty or missing, emit `weights: {}` and either omit
-  `goal_terms` or emit `goal_terms: {}` — do not invent goal-term keys from
-  prose in `brief.items[]` alone. The brief-update model owns goal-term
-  proposals; this call only mirrors them onto the panel side. The server
-  enforces this by dropping any panel goal-term key that isn't in
-  `brief.goal_terms` (or already on the current panel), so emitting such keys
-  produces a confusing "appeared in panel but not brief" UX and they get
-  filtered out anyway.
-- Emit "weights" as a JSON object with only these keys:
-  "travel_time", "shift_limit", "lateness_penalty", "capacity_penalty",
-  "workload_balance", "worker_preference", "express_miss_penalty", "waiting_time".
-- If "weights" is emitted, include only terms justified by the brief.
-- **Only emit a weight key when the participant explicitly asked for that concept
-  to be emphasized or penalized.** If the brief or open-question answers indicate
-  the participant **rejected**, **denied**, said **"no"** to, or expressed **no
-  preference** about a concept (e.g. "no workload-balance preference", "don't
-  care about waiting", "we don't need a shift cap"), **omit the corresponding
-  weight key entirely** — do not include it with a small weight, an inactive
-  flag, or any other placeholder. When in doubt, omit.
-- **Anchoring rule (load-bearing):** every weight key you emit must be
-  justified by at least one row in the brief's `items[]` (a `gathered` fact,
-  or in agile/demo also an `assumption`). For each emitted weight you should
-  also emit `goal_terms[<key>].evidence_item_ids` listing the brief items[]
-  ids that justify that term. Newly-introduced keys without a valid cite are
-  dropped server-side, even if they appear plausible from run-violation
-  context — the server treats run violations as observations, not evidence.
-  Never invent ids; only cite ids that appear in the provided brief JSON.
-  Self-anchoring: `worker_preference` is auto-anchored when its
-  `properties.driver_preferences` list is non-empty, and `shift_limit` is
-  auto-anchored when its `properties.max_shift_hours` is set — for those two
-  cases an explicit `evidence_item_ids` cite is optional.
-- When emitting "weights", also emit matching `"constraint_types"` for non-objective terms:
-  - keep one main optimization target implicit (objective by omission),
-  - use `"soft"` for trade-off penalties/preferences,
-  - use `"hard"` for near-mandatory limits the user frames as strict/non-negotiable,
-  - use `"custom"` only when the user explicitly asks for a manually fixed term behavior/weight.
-- Prefer representing term semantics via `constraint_types` and optional `goal_terms` metadata
-  (type/weight/lock/properties per key), not separate hard/soft term lists.
-- Time-minimization / duration / operating-time / fuel / mileage goals → `travel_time` only.
-- Shift overage past the configurable limit as an objective → `shift_limit`.
-- **Omit `express_miss_penalty` from emitted weights** unless the brief explicitly ties to
-  express-tier / VIP / SLA / **priority-order (tier)** / urgent-class service — not from generic
-  “priority” or “on-time” language alone (those belong in `lateness_penalty`).
-- **When both** `lateness_penalty` and `express_miss_penalty` are **already justified** in the brief
-  with numeric or clear intent, preserve relative pressure: keep `lateness_penalty` at least
-  **2×** `express_miss_penalty` unless the user explicitly overrides. Do **not** invent
-  `express_miss_penalty` solely to satisfy this ratio.
-- Threshold for shift-length penalties (e.g. 8.0 hours) → `max_shift_hours`.
-  Use a default of 8.0 if a limit is mentioned without a specific duration.
-  Default `shift_limit` weight to 500.0 if the user asks for a strict limit.
-- Early arrival / arrive-too-early / idle wait → `waiting_time` weight (default 100.0).
-  Emit only when the brief has explicit early-arrival or waiting evidence (e.g. "arrive too early",
-  "early arrival", "idle wait", "waiting before window", or "cannot arrive more than X minutes early").
-  Never infer this term from generic "slack", "buffer", "priority", or broad utilization language.
-- When the brief carries `goal_terms.worker_preference.properties.driver_preferences`,
-  copy each rule verbatim into `problem.driver_preferences` and include
-  `worker_preference` in `weights` (and `goal_terms.worker_preference`) so the
-  parent term is active. Do NOT re-derive rules from prose when the structured
-  array is present — the structured entry is authoritative. See the
-  `DRIVER_PREFERENCES_BRIEF_CONTRACT` section appended below for the rule shape.
-- "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
-- **Algorithm extraction is mandatory when the brief names one.** Any brief item
-  (gathered or assumption) that names a search method commits the panel to that
-  algorithm — emit `"algorithm"` in the panel even when the mention is embedded
-  in a sentence about another setting. Map common phrasings to their canonical
-  key:
-    - "GA" / "genetic algorithm" / "genetic search" / "evolutionary search" → `"GA"`
-    - "PSO" / "particle swarm" / "swarm search" → `"PSO"`
-    - "SA" / "simulated annealing" / "annealing search" → `"SA"`
-    - "SwarmSA" / "swarm-based simulated annealing" → `"SwarmSA"`
-    - "ACOR" / "ant colony" → `"ACOR"`
-  Worked example: brief item *"Using genetic search (GA) with greedy
-  initialization enabled for a balanced starting population."* must produce
-  `algorithm: "GA"` AND `use_greedy_init: true` together — emitting only one
-  half is a bug.
-- Keep output compact and valid JSON.
+**Anchoring (load-bearing).** Every emitted weight key needs at least one
+items[] row backing it (`gathered`, or `assumption` in agile/demo). Cite
+the supporting ids via `goal_terms[<key>].evidence_item_ids`; the server
+drops new keys without a valid cite. `worker_preference` and `shift_limit`
+self-anchor when their `properties` carrier is populated — explicit cites
+optional there.
+
+**Term-type defaults.** Keep one primary objective implicit (omit it from
+`constraint_types`); soft for tunable trade-offs; hard only when the user
+framed it as strict; custom only on explicit user request.
+
+**Disambiguation deltas (the brief table covers most cases):**
+- Bare "priority" / "on-time" → `lateness_penalty`, not
+  `express_miss_penalty`. Reserve the latter for express/VIP/SLA tier.
+- Co-existing `lateness_penalty` and `express_miss_penalty` already
+  anchored: keep lateness ≥ 2× express unless the user overrides.
+- Early-arrival / idle-wait → `waiting_time` only on explicit
+  early-arrival evidence ("arrive too early", "idle wait"). Never infer
+  from generic "slack" / "buffer".
+- `max_shift_hours` default 8.0 when a limit is mentioned without a
+  duration; `shift_limit` weight default 500.0 for a strict cap.
+
+**Driver-preference rules.** When the brief carries
+`goal_terms.worker_preference.properties.driver_preferences`, copy the
+list verbatim into `problem.driver_preferences` and include
+`worker_preference` in `weights` so the parent term is active. The
+structured entry is authoritative — do not re-derive from prose. Rule
+shape is in the `DRIVER_PREFERENCES_BRIEF_CONTRACT` section below.
+
+**Algorithm extraction (mandatory).** Any items[] row naming a search
+method commits the panel — emit `algorithm` even when embedded in a
+sentence about another setting. Canonical mappings:
+GA / genetic / evolutionary → `GA`; PSO / particle swarm → `PSO`;
+SA / simulated annealing → `SA`; SwarmSA / swarm-based annealing →
+`SwarmSA`; ACOR / ant colony → `ACOR`. If the same row also names
+greedy init, emit `use_greedy_init` alongside.
 """.strip() + "\n\n" + DRIVER_PREFERENCES_BRIEF_CONTRACT

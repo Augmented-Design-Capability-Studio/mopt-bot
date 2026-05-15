@@ -32,6 +32,16 @@ This includes — and is not limited to:
   extend it).
 - Tests that exercise problem-specific paths → live in `*_problem/tests/`.
   `backend/tests/` is for backend-pipeline coverage that uses neutral fixtures.
+- LLM-based safety nets / extractors that re-fill problem-specific structured
+  carriers (e.g. detect missing `driver_preferences` and re-extract rules from
+  prose) → entire LLM call lives in the port package (prompt, schema,
+  vocabulary, validation, the `genai.Client` invocation), surfaced via a port
+  hook like `safety_net_fill_structured_carriers(brief, *, api_key, model_name,
+  user_text, visible_reply)`. The main backend only orchestrates: call the
+  hook, merge the returned brief, log on exceptions. Concrete example:
+  `vrptw_problem/driver_pref_safety_net.py` owns the VRPTW worker-name → idx
+  table, zone-letter → int mapping, and condition enums; `derivation.py`
+  invokes it via `_port_safety_net_fill_structured_carriers`.
 
 **Why:** the study runs multiple problems (VRPTW primary, knapsack toy, future
 modules from the template). Bleeding problem-specific code into the main

@@ -459,6 +459,27 @@ OQ_CLASSIFIER_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                     "rephrased_text": {"type": "string"},
                     "assumption_text": {"type": "string"},
                     "new_question_text": {"type": "string"},
+                    "goal_term_proposal": {
+                        "type": "object",
+                        "description": (
+                            "Optional. When the answer concretely endorses a "
+                            "benchmark goal-term concept (per the per-problem "
+                            "vocabulary in the system prompt), emit the matching "
+                            "canonical key plus its constraint type so the brief "
+                            "→ panel sync can attach a weight. Omit when the "
+                            "answer is not a goal-term endorsement (e.g. setting "
+                            "an algorithm, a numeric threshold, or a free-text "
+                            "constraint description)."
+                        ),
+                        "properties": {
+                            "key": {"type": "string"},
+                            "type": {
+                                "type": "string",
+                                "enum": ["objective", "soft", "hard", "custom"],
+                            },
+                        },
+                        "required": ["key", "type"],
+                    },
                 },
                 "required": ["question_id", "bucket"],
             },
@@ -1188,13 +1209,6 @@ def _build_brief_update_system_instruction(
         parts.append(json.dumps(current_panel, indent=2, ensure_ascii=False))
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
-        if workflow_mode not in ("agile", "demo"):
-            parts.append(
-                "**Waterfall — hidden brief after run:** merge-append **`problem_brief_patch.open_questions`** "
-                "(omit `replace_open_questions` or set it false unless you intentionally replace the entire list). "
-                "Add or refine **one or two** questions when there is something left to clarify; skip if the "
-                "specification is already adequately covered."
-            )
     if is_answered_open_question:
         parts.append(
             "Answer-save context: Record the resolved Q&A as a gathered fact (kind gathered), "
@@ -1952,10 +1966,16 @@ GOAL_TERM_BACKING_VALIDATION_SCHEMA: dict[str, Any] = {
                     "text": {
                         "type": "string",
                         "description": (
-                            "One sentence in the agent voice describing the "
-                            "inference. Format: 'Assumed <human-readable name> "
-                            "as <role> based on <reason from items[] context>. "
-                            "Confirm or remove.'"
+                            "One short declarative sentence that reads like a "
+                            "gathered-info statement of fact — the term is "
+                            "already wired into the panel, so participants "
+                            "should see what it does, not be asked to confirm "
+                            "it. Format: '<Human-readable name> is treated as "
+                            "<role> to <one-clause rationale>.' Do NOT prefix "
+                            "with 'Assumed' or 'I assumed', and do NOT append "
+                            "'Confirm or remove.' / 'Please confirm.' — the "
+                            "participant edits or removes the row directly in "
+                            "the Definition tab when they disagree."
                         ),
                     },
                 },
@@ -2015,8 +2035,27 @@ agent's inference visible to the participant.
 
 **Output discipline (assumptions_to_add):**
 - Emit ONE entry per unbacked key.
-- `text` is one sentence. Format: *"Assumed <human-readable name> as
-  <role> based on <reason>. Confirm or remove."*
+- `text` is one short declarative sentence that reads like a gathered-info
+  fact — these terms are already active in the panel, so participants
+  should see *what the term is doing*, not be invited to ratify it.
+  Template: *"<Human-readable name> is treated as <role> to <short
+  rationale tied to the user's stated context>."* Examples:
+    - *"Lateness penalty is treated as a soft constraint to keep deliveries
+      within their time windows."*
+    - *"Capacity penalty is treated as a soft constraint to discourage
+      overloading vehicles."*
+    - *"Travel time is treated as the primary objective to minimise total
+      driving minutes."*
+- **Never** prefix the text with "Assumed", "I assumed", "Assume", or
+  similar — that framing reads as tentative and contradicts the fact
+  that the panel already derives from this row.
+- **Never** append "Confirm or remove", "Please confirm", "Adjust as
+  needed", or any similar call-to-action. The participant edits / removes
+  the row directly in the Definition tab when they disagree; the text
+  itself should not invite confirmation.
+- Keep it short — one clause about what the term is, one clause about
+  why. No weights, no algorithm params, no benchmark name (the rationale
+  comes from the participant's own context, not "benchmark defaults").
 - If every key is backed, return `assumptions_to_add: []`.
 
 ## (2) Goal summary — `updated_goal_summary`

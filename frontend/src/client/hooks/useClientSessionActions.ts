@@ -22,7 +22,7 @@ import { patchForTutorialEvent, type ParticipantTutorialPatch } from "../../tuto
 
 import { mergeMessagesFromPost } from "../chat/messageMerge";
 import { computeCanRunOptimization } from "../lib/optimizationGate";
-import { configChangeDetailedSummary, configChangeSummary } from "../problemConfig/configSummary";
+import { configChangeDetailedSummary } from "../problemConfig/configSummary";
 import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
 import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
@@ -481,7 +481,6 @@ export function useClientSessionActions({
       return;
     }
     const previousPanel = session?.panel_config ?? null;
-    const changedKeys = configChangeSummary(previousPanel, parsed);
     const detailedChanges = configChangeDetailedSummary(previousPanel, parsed);
     const acknowledgement = "";
     setBusy(true);
@@ -498,15 +497,16 @@ export function useClientSessionActions({
       setProblemBrief(cloneProblemBrief(nextSession.problem_brief));
       const tutorialPatch = patchForTutorialEvent("config-saved", nextSession);
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
-      if (invokeModel) {
+      if (invokeModel && detailedChanges !== "no settings changed") {
         // Run the hidden brief update so the LLM can refresh affected brief
         // rows in natural language (preserving prior rationale, noting that
         // the participant adjusted the value themselves). The backend
         // detects this context message and injects the rationale-preservation
-        // prompt fragment.
+        // prompt fragment. Skip the post entirely on no-op saves so the
+        // chat doesn't accumulate "you changed nothing" turns when the
+        // participant clicks Save without editing anything.
         void postContextMessage(
-          `I manually updated the problem configuration. Changed settings: ${changedKeys}. ` +
-            `Detailed changes: ${detailedChanges}. ` +
+          `I manually updated the problem configuration: ${detailedChanges}. ` +
             `Please acknowledge in 1-2 short sentences using user-friendly names, then update the brief rows for the affected settings while preserving any prior rationale.`,
           true,
           { skipHiddenBriefUpdate: false, contextKind: "config_save" },

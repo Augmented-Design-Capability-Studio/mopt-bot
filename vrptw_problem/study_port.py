@@ -63,6 +63,21 @@ class VrptwStudyPort:
     def weight_item_labels(self) -> dict[str, str]:
         return meta_weight_item_labels()
 
+    def goal_term_rationales(self) -> dict[str, str]:
+        # One-clause rationales the synthesizer tacks onto each
+        # ``config-weight-<key>`` row so participants see WHY a term is
+        # active, not just its name + type + weight.
+        return {
+            "travel_time": "to minimize total driving minutes across all routes",
+            "shift_limit": "to discourage shifts that exceed the configured max-hours cap",
+            "lateness_penalty": "to keep deliveries within their time windows",
+            "capacity_penalty": "to discourage overloading vehicles past their capacity",
+            "workload_balance": "to distribute drive + service time fairly across drivers",
+            "worker_preference": "to honour per-driver preference rules",
+            "express_miss_penalty": "to prioritise express / VIP / SLA orders on time",
+            "waiting_time": "to reduce driver idle time before time windows open",
+        }
+
     def weight_display_keys(self) -> list[str]:
         return meta_weight_display_keys()
 
@@ -234,6 +249,31 @@ class VrptwStudyPort:
     ) -> list[dict[str, Any]]:
         from vrptw_problem.brief_seed import synthesize_driver_preference_items
         return synthesize_driver_preference_items(goal_terms)
+
+    def safety_net_fill_structured_carriers(
+        self,
+        brief: dict[str, Any],
+        *,
+        api_key: str | None,
+        model_name: str | None,
+        user_text: str,
+        visible_reply: str | None,
+    ) -> dict[str, Any]:
+        """VRPTW-specific safety net: re-extract ``driver_preferences`` from
+        prose when ``worker_preference`` landed in ``goal_terms`` but the
+        structured carrier didn't on the same turn. See
+        :mod:`vrptw_problem.driver_pref_safety_net` for the full rationale
+        and the focused-extractor implementation."""
+        from vrptw_problem.driver_pref_safety_net import (
+            fill_driver_preferences_carrier,
+        )
+        return fill_driver_preferences_carrier(
+            brief,
+            api_key=api_key,
+            model_name=model_name,
+            user_text=user_text,
+            visible_reply=visible_reply,
+        )
 
     def mediocre_participant_starter_config(self) -> dict:
         from copy import deepcopy

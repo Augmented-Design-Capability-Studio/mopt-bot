@@ -34,6 +34,7 @@ enforces only apply to agile.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -45,7 +46,147 @@ from app.algorithm_catalog import (
 log = logging.getLogger(__name__)
 
 
+def build_probe_retry_audit_note(
+    *,
+    trigger_run_invite: bool,
+    trigger_claim: bool,
+    gate_ok: bool,
+    missing: list[Any],
+    gate_status_snap: dict[str, Any] | None = None,
+) -> str:
+    """Compact audit note for the pre-release probe retry. The earlier
+    long-form prose was prompt bloat — the LLM only needs (1) the trigger
+    that caused the retry, (2) the failure signal, and (3) the
+    name-list of missing prerequisites. The 'fix' clause is a one-liner
+    pointing at the two valid recoveries (emit the missing commitment, or
+    soften the reply).
+
+    Marker words ("DISABLED", "claimed a brief change", "NO delta") are
+    preserved because existing tests anchor on them and the LLM
+    consistently picks up on them as failure cues.
+    """
+    if trigger_run_invite and trigger_claim:
+        trigger = "run_invite+claim"
+    elif trigger_run_invite:
+        trigger = "run_invite"
+    else:
+        trigger = "claim"
+    missing_summary = ", ".join(str(m) for m in (missing or [])) or "unknown"
+    if not gate_ok:
+        if trigger_run_invite and trigger_claim:
+            head = (
+                "You invited a run AND claimed a brief change, but the run "
+                "button would still be DISABLED."
+            )
+        elif trigger_run_invite:
+            head = (
+                "You invited a run, but the run button would still be DISABLED."
+            )
+        else:
+            head = (
+                "You claimed a brief change, but the run button would still "
+                "be DISABLED — the structured commitment (goal_terms / items "
+                "/ algorithm) is missing or unsupported."
+            )
+    else:
+        # claim_unsupported: gate is open but the brief shows no delta.
+        head = (
+            "You claimed a brief change ('I added X' / 'Changes I made: …') "
+            "but the brief-update produced NO delta in items / "
+            "open_questions / goal_terms — invariant-breaking even though "
+            "the run button is already open."
+        )
+    lines = [
+        head,
+        f"trigger={trigger}; missing=[{missing_summary}]",
+    ]
+    if gate_status_snap:
+        lines.append(
+            f"post-merge gate snapshot: {json.dumps(gate_status_snap, ensure_ascii=False)}"
+        )
+    lines.append(
+        "Fix on retry: either (a) emit the missing structured commitment in "
+        "problem_brief_patch, or (b) rewrite the visible reply so it stops "
+        "promising what the patch can't deliver."
+    )
+    return "\n".join(lines)
+
+
 _SHORT_ALIASES = frozenset({"ga", "sa", "pso", "acor"})
+
+
+# Substring phrases (lower-case) that mark an agent reply as inviting the
+# participant to start a run NOW. Used as a safety net when the chat-turn LLM
+# fails to set ``is_run_invitation=true`` despite phrasing the reply as a
+# permission-to-run ask — the participant then sees the bubble without an
+# inline Run button.
+#
+# **Strict-invite vocabulary only.** Each phrase here must be unambiguously
+# imperative or interrogative ("shall I…?", "ready to run?", "say the word
+# and I'll…"). Phrases that double as conditional / descriptive language
+# ("once you hit Run optimization", "after you press Run", "you can hit
+# Run later") were excluded after a regression where the safety net flipped
+# the flag on a future-tense status update — the test
+# ``test_layer2_probe_retries_on_claims_brief_change_without_run_invite``
+# anchors the boundary.
+#
+# Permission-to-run is explicitly **not** an open question — it's an invite
+# the participant can accept by clicking the inline button or sending an
+# affirmative reply. The maintain pass is instructed to ignore these phrases
+# when deciding whether to add an OQ.
+_RUN_INVITATION_PHRASES: tuple[str, ...] = (
+    # Interrogative invites — clearly soliciting permission this turn.
+    "ready to run?",
+    "ready to optimize?",
+    "ready for another run?",
+    "ready for a run?",
+    "shall we run",
+    "shall i run",
+    "shall i start the run",
+    "shall i start optimizing",
+    "shall i kick off",
+    "should i run",
+    "should i start the run",
+    "should i kick off",
+    "want me to run",
+    "want me to start the run",
+    "want me to start optimizing",
+    "want me to kick off",
+    "want to run another",
+    "want to run again",
+    # Imperative invites — directing the participant to act this turn.
+    "let's run",
+    "let's kick off",
+    "run when you're ready",
+    "run when you are ready",
+    "run the next iteration when you're ready",
+    "run the next iteration when you are ready",
+    "let me know when you're ready to run",
+    "let me know when you want to run",
+    "say the word and i'll run",
+    "say the word and i'll kick off",
+    "give me the go-ahead",
+    "give me the green light",
+    "permission to run?",
+)
+
+
+def visible_reply_invites_run(text: str | None) -> bool:
+    """True iff the reply contains a clear run-invitation phrase. Substring-
+    based per the project's no-regex-for-NL preference. Used as a deterministic
+    safety net when the chat-turn LLM forgets to set
+    ``is_run_invitation=true``.
+
+    The vocabulary is intentionally strict: only imperative / interrogative
+    invites that read as a direct ask this turn. Descriptive or conditional
+    mentions ("once you hit Run optimization") don't qualify — that's the
+    LLM's call. False positives on those would cause the pre-release probe
+    to switch its retry audit lead to the wrong trigger framing.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _RUN_INVITATION_PHRASES)
 
 
 def extract_algorithm_commitment(text: str | None) -> str | None:

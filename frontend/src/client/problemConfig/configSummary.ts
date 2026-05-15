@@ -1,3 +1,23 @@
+/** Stable JSON stringify: emits object keys in alphabetical order recursively
+ *  so two objects with the same content but different key-insertion order
+ *  compare equal. Used by both the high-level and detailed change summaries
+ *  to avoid false-positive "changed" reports caused by backend normalization
+ *  re-keying the dict (e.g. ``{weight, type, rank}`` vs ``{type, weight,
+ *  rank}``). */
+function stableJSON(value: unknown): string {
+  return JSON.stringify(value, (_, v) => {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        sorted[k] = (v as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return v;
+  });
+}
+
+
 export function configChangeSummary(
   before: Record<string, unknown> | null,
   after: Record<string, unknown>,
@@ -16,9 +36,17 @@ export function configChangeSummary(
   const allKeys = new Set([...Object.keys(beforeProblem), ...Object.keys(afterProblem)]);
 
   for (const key of allKeys) {
-    const previous = JSON.stringify(normalizeProblemFieldForSummary(key, beforeProblem[key]));
-    const next = JSON.stringify(normalizeProblemFieldForSummary(key, afterProblem[key]));
+    const previous = stableJSON(normalizeProblemFieldForSummary(key, beforeProblem[key]));
+    const next = stableJSON(normalizeProblemFieldForSummary(key, afterProblem[key]));
     if (previous !== next) changed.push(key);
+  }
+
+  // ``goal_term_order`` is a derived view of ``goal_terms`` — if both changed
+  // (typical when a term is added/removed/reordered), reporting both is
+  // redundant. Drop the order entry when the underlying terms changed.
+  if (changed.includes("goal_terms") && changed.includes("goal_term_order")) {
+    const i = changed.indexOf("goal_term_order");
+    if (i >= 0) changed.splice(i, 1);
   }
 
   return changed.length === 0 ? "no settings changed" : changed.map(toParticipantLabel).join(", ");
@@ -61,7 +89,7 @@ export function configChangeDetailedSummary(
         lines.push(`added goal term ${key} (${formatGoalTerm(next)})`);
       } else if (prev != null && next == null) {
         lines.push(`removed goal term ${key}`);
-      } else if (prev != null && next != null && JSON.stringify(prev) !== JSON.stringify(next)) {
+      } else if (prev != null && next != null && stableJSON(prev) !== stableJSON(next)) {
         lines.push(`goal term ${key}: ${formatGoalTerm(prev)} → ${formatGoalTerm(next)}`);
       }
     }

@@ -197,6 +197,23 @@ def _route_oq_answers_through_classifier(
                     "source": "user",
                 }
             )
+            # Goal-term endorsement: seed brief.goal_terms so the brief →
+            # panel sync attaches a weight. The panel-derive prompt is
+            # explicitly forbidden from inventing keys from prose
+            # (`do not invent goal-term keys from prose in brief.items[]
+            # alone`), so without this bridge, answering an OQ like
+            # *"Should I add workload balance as a priority?"* would land
+            # the gathered items[] row but leave the panel unchanged.
+            proposal = getattr(c, "goal_term_proposal", None)
+            if proposal is not None and isinstance(proposal.key, str):
+                key = proposal.key.strip()
+                if key:
+                    goal_terms = incoming_brief.get("goal_terms")
+                    if not isinstance(goal_terms, dict):
+                        goal_terms = {}
+                    if key not in goal_terms:
+                        goal_terms[key] = {"type": proposal.type}
+                        incoming_brief["goal_terms"] = goal_terms
             continue
 
         # Mode mismatch (e.g. classifier emitted assumption for waterfall) — leave the OQ
@@ -804,60 +821,22 @@ def _run_async_verification_pipeline(
                 _needs_retry = (not _gate_ok) or _claim_unsupported
                 if _needs_retry:
                     _missing = _gate_status_snap.get("missing") or []
-                    _missing_summary = ", ".join(str(m) for m in _missing) or "unknown"
-                    if not _gate_ok and _probe_trigger_run_invite and _probe_trigger_claim:
-                        _lead = (
-                            "Your previous draft invited the participant to click **Run "
-                            "optimization** AND claimed brief changes, but the post-commit "
-                            "gate check shows the button would still be DISABLED."
-                        )
-                    elif not _gate_ok and _probe_trigger_run_invite:
-                        _lead = (
-                            "Your previous draft invited the participant to click **Run "
-                            "optimization**, but the post-commit gate check shows the button "
-                            "would still be DISABLED."
-                        )
-                    elif not _gate_ok:
-                        _lead = (
-                            "Your previous draft claimed a brief change ('I added X' / "
-                            "'Changes I made: ...') but the post-commit gate check shows the "
-                            "run button would still be DISABLED - either the claim is "
-                            "unsupported or the matching structured edit "
-                            "(goal_terms / items / algorithm) is missing."
-                        )
-                    else:
-                        _lead = (
-                            "Your previous draft claimed a brief change ('I have added X' / "
-                            "'Changes I made: ...') but the synchronous brief-update produced "
-                            "NO delta in items / open_questions / goal_terms / summaries - "
-                            "so the participant would see the claim with no matching "
-                            "structural edit. This is invariant-breaking even when the "
-                            "run button is already enabled."
-                        )
-                    _audit_note = (
-                        f"{_lead}\n"
-                        f"Missing prerequisites (phase order): **{_missing_summary}**.\n"
-                        "Post-merge gate state (real brief produced by the synchronous "
-                        f"brief-update): {json.dumps(_gate_status_snap, ensure_ascii=False)}.\n"
-                        "On the retry: either (a) emit the structural commitments your reply "
-                        "promises (e.g. include goal_terms[<key>].weight or an items[] "
-                        "assumption row naming the specific addition) so the patch reflects "
-                        "the claim, or (b) rewrite the visible reply so it stops claiming a "
-                        "change / inviting a run it can't deliver."
+                    from app.services.visible_reply_commitments import (
+                        build_probe_retry_audit_note,
+                    )
+                    _audit_note = build_probe_retry_audit_note(
+                        trigger_run_invite=_probe_trigger_run_invite,
+                        trigger_claim=_probe_trigger_claim,
+                        gate_ok=_gate_ok,
+                        missing=_missing,
+                        gate_status_snap=_gate_status_snap,
                     )
                     log.info(
                         "Pre-release probe rejected turn for session %s; retrying once. "
-                        "missing=%s committed_algo=%s trigger=%s reason=%s mode=%s is_run_ack=%s",
+                        "missing=%s committed_algo=%s reason=%s mode=%s is_run_ack=%s",
                         session_id,
                         _missing,
                         _committed_algo,
-                        (
-                            "run_invite+claim"
-                            if _probe_trigger_run_invite and _probe_trigger_claim
-                            else "run_invite"
-                            if _probe_trigger_run_invite
-                            else "claim"
-                        ),
                         "gate_closed" if not _gate_ok else "claim_unsupported",
                         workflow_mode,
                         is_run_ack,
@@ -1251,6 +1230,26 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             confidence=float(consolidated.confidence),
                         )
                         assistant_invites_run_now = bool(consolidated.is_run_invitation)
+                        # Deterministic safety net: when the LLM's flag is
+                        # False but the reply text obviously invites a run
+                        # ("click Run optimization", "ready to run?", "shall
+                        # I kick off the optimization?"), override to True
+                        # so the participant sees the inline Run button on
+                        # the bubble. Permission-to-run phrasing is
+                        # specifically NOT an open question; see the
+                        # vocabulary in ``visible_reply_commitments``.
+                        if not assistant_invites_run_now:
+                            from app.services.visible_reply_commitments import (
+                                visible_reply_invites_run,
+                            )
+                            if visible_reply_invites_run(text):
+                                log.info(
+                                    "Run-invitation safety net flipped is_run_invitation "
+                                    "True for session %s (LLM emitted False but reply "
+                                    "phrasing invites a run)",
+                                    session_id,
+                                )
+                                assistant_invites_run_now = True
                     # Self-classified visible-reply intents are surfaced on
                     # ALL turns (including run-ack) because the probe's
                     # claim-without-delta trigger fires post-run too — that's
@@ -1592,70 +1591,22 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                             _needs_retry = (not _gate_ok) or _claim_unsupported
                             if _needs_retry:
                                 _missing = _gate_status_snap.get("missing") or []
-                                _missing_summary = ", ".join(str(m) for m in _missing) or "unknown"
-                                # The audit note's lead sentence varies by trigger so
-                                # the retry LLM can self-correct precisely: a run
-                                # invitation is a different commitment than a "I
-                                # added X" claim, and a claim-without-delta needs a
-                                # different framing than a closed-gate failure.
-                                if not _gate_ok and _probe_trigger_run_invite and _probe_trigger_claim:
-                                    _lead = (
-                                        "Your previous draft invited the participant to click **Run "
-                                        "optimization** AND claimed brief changes, but the post-commit "
-                                        "gate check shows the button would still be DISABLED."
-                                    )
-                                elif not _gate_ok and _probe_trigger_run_invite:
-                                    _lead = (
-                                        "Your previous draft invited the participant to click **Run "
-                                        "optimization**, but the post-commit gate check shows the button "
-                                        "would still be DISABLED."
-                                    )
-                                elif not _gate_ok:
-                                    _lead = (
-                                        "Your previous draft claimed a brief change ('I added X' / "
-                                        "'Changes I made: …') but the post-commit gate check shows the "
-                                        "run button would still be DISABLED — either the claim is "
-                                        "unsupported or the matching structured edit "
-                                        "(goal_terms / items / algorithm) is missing."
-                                    )
-                                else:
-                                    # claim_unsupported path: gate stayed open, but
-                                    # the synchronous brief-update produced NO
-                                    # editable-state delta even though the visible
-                                    # reply explicitly claimed a change. This is
-                                    # the run-ack failure mode reported by users.
-                                    _lead = (
-                                        "Your previous draft claimed a brief change ('I have added X' / "
-                                        "'Changes I made: …') but the synchronous brief-update produced "
-                                        "NO delta in items / open_questions / goal_terms / summaries — "
-                                        "so the participant would see the claim with no matching "
-                                        "structural edit. This is invariant-breaking even when the "
-                                        "run button is already enabled."
-                                    )
-                                _audit_note = (
-                                    f"{_lead}\n"
-                                    f"Missing prerequisites (phase order): **{_missing_summary}**.\n"
-                                    "Post-merge gate state (real brief produced by the synchronous "
-                                    f"brief-update): {json.dumps(_gate_status_snap, ensure_ascii=False)}.\n"
-                                    "On the retry: either (a) emit the structural commitments your reply "
-                                    "promises (e.g. include goal_terms[<key>].weight or an items[] "
-                                    "assumption row naming the specific addition) so the patch reflects "
-                                    "the claim, or (b) rewrite the visible reply so it stops claiming a "
-                                    "change / inviting a run it can't deliver."
+                                from app.services.visible_reply_commitments import (
+                                    build_probe_retry_audit_note,
+                                )
+                                _audit_note = build_probe_retry_audit_note(
+                                    trigger_run_invite=_probe_trigger_run_invite,
+                                    trigger_claim=_probe_trigger_claim,
+                                    gate_ok=_gate_ok,
+                                    missing=_missing,
+                                    gate_status_snap=_gate_status_snap,
                                 )
                                 log.info(
                                     "Pre-release probe rejected turn for session %s; retrying once. "
-                                    "missing=%s committed_algo=%s trigger=%s reason=%s mode=%s is_run_ack=%s",
+                                    "missing=%s committed_algo=%s reason=%s mode=%s is_run_ack=%s",
                                     session_id,
                                     _missing,
                                     _committed_algo,
-                                    (
-                                        "run_invite+claim"
-                                        if _probe_trigger_run_invite and _probe_trigger_claim
-                                        else "run_invite"
-                                        if _probe_trigger_run_invite
-                                        else "claim"
-                                    ),
                                     "gate_closed" if not _gate_ok else "claim_unsupported",
                                     row.workflow_mode,
                                     is_run_ack,
@@ -1858,6 +1809,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                                 cleanup_mode=cleanup_requested or bool(turn.cleanup_mode),
                                 user_text=body.content,
                                 embedding_model=helpers.embedding_model_for(row),
+                                visible_reply=text,
                             )
                             merged_brief = coerce_problem_brief_for_workflow(merged_brief, row.workflow_mode)
                             if int(cleanup_meta.get("removed_total", 0)) > 0:
