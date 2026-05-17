@@ -120,6 +120,16 @@ type ClientShellProps = {
   onCloseModelDialog: () => void;
   onSaveModelSettings: () => void | Promise<void>;
   onSetParticipantTutorialState?: (patch: ParticipantTutorialPatch) => void | Promise<void>;
+  /** Pipeline action handlers (Retry / Revert / Keep chatting) — surfaced
+   *  on the assistant bubble when the chat pipeline pauses on retry
+   *  failure. See ``PipelineStatusChecklist`` for the action row UI. */
+  onPipelineRetry?: (messageId: number) => void | Promise<void>;
+  onPipelineRevert?: (messageId: number) => void | Promise<void>;
+  onPipelineKeepChatting?: (messageId: number) => void;
+  pipelineActionBusyMessageId?: number | null;
+  /** Bumped when the participant clicks "Keep chatting", composed with the
+   *  session-start nudge key so the chat textarea refocuses on either. */
+  keepChattingAttentionKey?: string;
 };
 
 export function ClientShell({
@@ -199,6 +209,11 @@ export function ClientShell({
   onCloseModelDialog,
   onSaveModelSettings,
   onSetParticipantTutorialState,
+  onPipelineRetry,
+  onPipelineRevert,
+  onPipelineKeepChatting,
+  pipelineActionBusyMessageId,
+  keepChattingAttentionKey,
 }: ClientShellProps) {
   const panelClass = (name: EditMode) => (editMode !== "none" && editMode !== name ? "panel panel-locked" : "panel");
 
@@ -206,7 +221,18 @@ export function ClientShell({
   const chatLocked = sessionTerminated;
   const chatFirstMode = !chatLocked && editMode === "none" && messages.length === 0;
   const shouldNudgeChat = chatFirstMode && !showModelDialog;
-  const chatAttentionKey = shouldNudgeChat ? `${sessionId}:new-session-chat-focus` : undefined;
+  // The attention key drives a chat-textarea focus pulse via ChatPanel's
+  // effect (re-fires whenever the key value changes). We compose both
+  // triggers — session-start nudge AND keep-chatting bump — into one string
+  // so a change in EITHER refocuses the composer. Composing rather than
+  // preferring one means the session-start nudge still fires on a fresh
+  // session even when keepChattingAttentionKey carries a stale value from
+  // a previous session.
+  const chatAttentionParts = [
+    shouldNudgeChat ? `nudge:${sessionId}` : "",
+    keepChattingAttentionKey ?? "",
+  ].filter(Boolean);
+  const chatAttentionKey = chatAttentionParts.length > 0 ? chatAttentionParts.join("|") : undefined;
   const modelKeyStatus = session == null ? "neutral" : session.gemini_key_configured ? "ok" : "warn";
   const modelKeyIcon = modelKeyStatus === "ok" ? "✓" : modelKeyStatus === "warn" ? "⚠" : "○";
   const modelKeyDetail =
@@ -588,6 +614,10 @@ export function ClientShell({
             onRunOptimize={onRunOptimize}
             runReady={chatRunReady}
             runDisabledHint={chatRunDisabledHint}
+            onPipelineRetry={onPipelineRetry}
+            onPipelineRevert={onPipelineRevert}
+            onPipelineKeepChatting={onPipelineKeepChatting}
+            pipelineActionBusyMessageId={pipelineActionBusyMessageId}
           />
         </section>
 

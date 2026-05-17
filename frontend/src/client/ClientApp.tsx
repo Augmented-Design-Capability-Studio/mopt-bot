@@ -111,6 +111,11 @@ export function ClientApp() {
       onCloseModelDialog={controller.closeModelDialog}
       onSaveModelSettings={controller.saveModelSettings}
       onSetParticipantTutorialState={controller.setParticipantTutorialState}
+      onPipelineRetry={controller.onPipelineRetry}
+      onPipelineRevert={controller.onPipelineRevert}
+      onPipelineKeepChatting={controller.onPipelineKeepChatting}
+      pipelineActionBusyMessageId={controller.pipelineActionBusyMessageId}
+      keepChattingAttentionKey={controller.keepChattingAttentionKey}
     />
   );
 }

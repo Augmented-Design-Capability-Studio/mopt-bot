@@ -159,7 +159,7 @@ export function ChatSection({
                 <div className="chat-bubble-run">
                   <button
                     type="button"
-                    className="chat-bubble-run__button"
+                    className="btn-primary chat-bubble-run__button"
                     disabled={!runReady}
                     title={runReady ? undefined : runDisabledHint}
                     onClick={() => void onRunOptimize?.()}

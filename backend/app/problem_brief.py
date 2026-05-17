@@ -362,6 +362,27 @@ def _normalize_question_answer_text(raw: Any) -> str | None:
     return text or None
 
 
+_VALID_QUESTION_TOPIC_TAGS: frozenset[str] = frozenset(
+    {"upload", "primary_goal", "search_strategy"}
+)
+
+
+def _normalize_question_topic_tag(raw: Any) -> str | None:
+    """Preserve a valid ``topic_tag`` enum value through the normalizer.
+
+    ``topic_tag`` is a one-shot routing hint emitted by the main-turn LLM so
+    the server can dedup OQs that overlap with a monitor-managed topic.
+    Without this preservation, the value silently fell out of the normalized
+    dict before ``_enforce_session_monitors`` could read it — which meant
+    LLM-tagged duplicates still slipped through (see session 9d77's
+    ``oq-primary-goal`` vs ``oq-monitor-goal``).
+    """
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    return value if value in _VALID_QUESTION_TOPIC_TAGS else None
+
+
 def _normalize_question(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         text = str(raw.get("text") or "").strip()
@@ -372,7 +393,16 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
             answer_text = None
-        return {"id": question_id, "text": text, "status": status, "answer_text": answer_text}
+        out: dict[str, Any] = {
+            "id": question_id,
+            "text": text,
+            "status": status,
+            "answer_text": answer_text,
+        }
+        tag = _normalize_question_topic_tag(raw.get("topic_tag"))
+        if tag is not None:
+            out["topic_tag"] = tag
+        return out
     if raw is None:
         return None
     text = str(raw).strip()
@@ -464,25 +494,28 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
         fragments = _split_question_text(normalized["text"])
         if not fragments:
             continue
+        topic_tag = normalized.get("topic_tag")
         if len(fragments) == 1:
-            out.append(
-                {
-                    "id": normalized["id"],
-                    "text": fragments[0],
-                    "status": normalized.get("status", "open"),
-                    "answer_text": normalized.get("answer_text"),
-                }
-            )
+            row: dict[str, Any] = {
+                "id": normalized["id"],
+                "text": fragments[0],
+                "status": normalized.get("status", "open"),
+                "answer_text": normalized.get("answer_text"),
+            }
+            if topic_tag:
+                row["topic_tag"] = topic_tag
+            out.append(row)
             continue
         for idx, fragment in enumerate(fragments, start=1):
-            out.append(
-                {
-                    "id": f"{normalized['id']}-{idx}",
-                    "text": fragment,
-                    "status": normalized.get("status", "open"),
-                    "answer_text": normalized.get("answer_text"),
-                }
-            )
+            row = {
+                "id": f"{normalized['id']}-{idx}",
+                "text": fragment,
+                "status": normalized.get("status", "open"),
+                "answer_text": normalized.get("answer_text"),
+            }
+            if topic_tag:
+                row["topic_tag"] = topic_tag
+            out.append(row)
     return out
 
 
@@ -1029,6 +1062,65 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
     }
 
 
+_GOAL_SUMMARY_PREFIXES: tuple[str, ...] = (
+    "goal:",
+    "objective:",
+    "primary goal:",
+    "primary objective:",
+)
+
+
+def _strip_goal_prefix(text: Any) -> str | None:
+    """If ``text`` begins with one of the recognised goal-summary prefixes
+    (``Goal:``, ``Objective:``, etc., case-insensitive), return the stripped
+    remainder. Otherwise return None.
+
+    The LLM occasionally emits items[] rows like ``"Goal: minimize total
+    travel time"`` instead of populating ``goal_summary`` directly — this
+    helper is the deterministic fallback that re-routes them. The match is
+    structural (literal heading prefix), not NL classification.
+    """
+    if not isinstance(text, str):
+        return None
+    lowered = text.lstrip().lower()
+    for prefix in _GOAL_SUMMARY_PREFIXES:
+        if lowered.startswith(prefix):
+            # Slice off the original-case version: count the prefix's
+            # whitespace-stripped offset, then drop ``len(prefix)`` chars.
+            offset = len(text) - len(text.lstrip())
+            return text[offset + len(prefix):].lstrip()
+    return None
+
+
+def _promote_goal_prefixed_items(
+    items: list[dict[str, Any]],
+    current_goal_summary: str,
+) -> tuple[list[dict[str, Any]], str]:
+    """Pull ``Goal:``-prefixed item text into ``goal_summary``.
+
+    For each item whose text begins with a recognised goal-summary prefix:
+    - If ``goal_summary`` is empty, set it to the stripped text and drop the
+      item (the item is redundant — it was the goal summary mislabeled as a row).
+    - Otherwise, keep the item with the prefix stripped so its text reads as
+      a normal definition row instead of a duplicate heading.
+    """
+    out_items: list[dict[str, Any]] = []
+    goal_summary = current_goal_summary
+    for item in items:
+        if not isinstance(item, dict):
+            out_items.append(item)
+            continue
+        stripped = _strip_goal_prefix(item.get("text"))
+        if stripped is None:
+            out_items.append(item)
+            continue
+        if not goal_summary:
+            goal_summary = stripped
+            continue  # drop the item — it's been promoted
+        out_items.append({**item, "text": stripped})
+    return out_items, goal_summary
+
+
 def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     base = default_problem_brief()
     if not isinstance(raw, dict):
@@ -1048,6 +1140,16 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
             continue
         normalized_items.append(item)
     normalized_items = _reconcile_problem_brief_items(normalized_items)
+    # Re-route ``Goal:`` / ``Objective:`` prefixed items into ``goal_summary``
+    # before we run the rest of the normalization, so downstream readers see
+    # the brief in its canonical shape (one field for the goal, items[] for
+    # everything else).
+    normalized_items, goal_summary = _promote_goal_prefixed_items(
+        normalized_items, goal_summary
+    )
+    # The promote step may have emitted goal_summary text that wasn't run
+    # through the sanitizer yet (numeric annotations, etc.). Sanitize again.
+    goal_summary = _sanitize_goal_summary(goal_summary)
     questions = _coerce_question_list(raw.get("open_questions"))
     promoted_items, questions = _promote_answered_open_questions_to_gathered(normalized_items, questions)
     promoted_items = _reconcile_problem_brief_items(promoted_items)
@@ -1091,11 +1193,12 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     if "goal_summary" in patch:
         raw_goal = patch.get("goal_summary") or ""
         sanitized_goal = _sanitize_goal_summary(raw_goal)
-        # Only overwrite when we have a usable sanitized value, OR the model
-        # explicitly cleared it (raw was empty/whitespace). If the model wrote a
-        # non-empty summary that the sanitizer couldn't keep anything from, retain
-        # the prior summary instead of silently wiping it.
-        if sanitized_goal or not str(raw_goal).strip():
+        # Only overwrite when we have a usable sanitized value. Empty /
+        # whitespace patches are no-ops so a turn that omits or blanks the
+        # field can't silently wipe a populated summary — observed when the
+        # LLM forgets goal_summary on a config-only turn and the participant
+        # is left with a Definition that no longer explains the goal.
+        if sanitized_goal:
             merged["goal_summary"] = sanitized_goal
     if "run_summary" in patch:
         merged["run_summary"] = _sanitize_run_summary(patch.get("run_summary") or "")
@@ -1184,13 +1287,33 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
                 existing_unmodeled.append(normalized_entry)
         merged["unmodeled_requests"] = existing_unmodeled
 
+    # Sticky rows that must survive `replace_editable_items: true`. Currently
+    # just the canonical upload marker — its presence in items[] is the only
+    # signal `_enforce_session_monitors` uses to suppress the upload OQ, so a
+    # wholesale-replace patch that omits the marker would resurrect the OQ on
+    # the next monitor pass even after the participant has uploaded.
+    sticky_items = [
+        deepcopy(item)
+        for item in (merged.get("items") or [])
+        if isinstance(item, dict) and _is_upload_marker_item(item)
+    ]
+
+    def _append_missing_sticky(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not sticky_items:
+            return items
+        present_ids = {str(item.get("id") or "") for item in items if isinstance(item, dict)}
+        for sticky in sticky_items:
+            if str(sticky.get("id") or "") not in present_ids:
+                items.append(sticky)
+        return items
+
     if replace_editable_items and "items" not in patch:
-        merged["items"] = []
+        merged["items"] = _append_missing_sticky([])
         return normalize_problem_brief(merged)
     if "items" in patch and isinstance(patch.get("items"), list):
         incoming_items = [item for raw in patch["items"] if (item := _normalize_item(raw)) is not None]
         if replace_editable_items:
-            merged["items"] = list(incoming_items)
+            merged["items"] = _append_missing_sticky(list(incoming_items))
             return normalize_problem_brief(merged)
         existing_items = [deepcopy(item) for item in merged["items"] if isinstance(item, dict)]
         result_items: list[dict[str, Any]] = []
@@ -1465,10 +1588,100 @@ def _weight_item_text(
         role = "primary objective"
     rationale_clause = (rationale or "").strip()
     if rationale_clause:
-        return f"{label} ({role}, weight {value}) {rationale_clause}."
+        return f"{label} ({role}, weight {value}) — {rationale_clause}."
     if ctype == "custom":
         return f"{label} uses a custom locked value (weight {value})."
     return f"{label} is a {role} term (weight {value})."
+
+
+def _goal_term_rationale_for_synthesis(
+    goal_term_entry: Any,
+    port_fallback: str | None,
+) -> str | None:
+    """Pick the rationale clause for a synthesized goal-term row.
+
+    Preference order:
+    1. ``goal_terms[key].ambiguity_note.chosen_rationale`` — LLM-emitted,
+       user-specific reasoning for why this term was added / picked.
+    2. ``port.goal_term_rationales()[key]`` — generic per-key fallback so
+       every term still reads as a complete sentence even when the LLM
+       didn't supply specific reasoning.
+    """
+    if isinstance(goal_term_entry, dict):
+        note = goal_term_entry.get("ambiguity_note")
+        if isinstance(note, dict):
+            chosen = note.get("chosen_rationale")
+            if isinstance(chosen, str) and chosen.strip():
+                return chosen.strip()
+    if isinstance(port_fallback, str) and port_fallback.strip():
+        return port_fallback.strip()
+    return None
+
+
+def synthesize_canonical_goal_term_items(
+    brief: dict[str, Any],
+    test_problem_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build canonical ``config-weight-<key>`` items[] rows from the brief's
+    ``goal_terms`` map.
+
+    Every entry in ``brief.goal_terms`` produces one row whose text follows
+    ``{Label} ({type}, weight N) — {reasoning}.`` — natural language that
+    surfaces all three pieces the brief spec requires (reasoning, type,
+    weight). The reasoning comes from ``ambiguity_note.chosen_rationale``
+    when the LLM supplied one, otherwise from the active port's generic
+    ``goal_term_rationales`` mapping.
+
+    Caller is responsible for merging these into ``brief.items`` and letting
+    the slot reconciler drop the previous-turn copies (``config-weight-<key>``
+    items share a slot with their freshly-synthesized siblings).
+    """
+    if not isinstance(brief, dict):
+        return []
+    goal_terms = brief.get("goal_terms")
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return []
+
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id)
+        labels = port.weight_item_labels() or {}
+        try:
+            rationales = port.goal_term_rationales() or {}
+        except Exception:  # pragma: no cover — defensive
+            rationales = {}
+    except Exception:  # pragma: no cover — defensive
+        labels, rationales = {}, {}
+
+    out: list[dict[str, Any]] = []
+    for key, entry in goal_terms.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        # ``search_strategy`` is a carrier-only goal term (its value lives at
+        # ``panel.problem.algorithm`` and the brief already records the choice
+        # via the search-strategy items[] row). Skip it here — synthesizing a
+        # ``config-weight-search_strategy`` row would surface a misleading
+        # "(primary objective, weight 1.0)" line for a non-weight term.
+        if key == "search_strategy":
+            continue
+        if not isinstance(entry, dict):
+            continue
+        weight = entry.get("weight")
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool):
+            continue
+        ctype = entry.get("type") if isinstance(entry.get("type"), str) else None
+        label = labels.get(key) or key.replace("_", " ").capitalize()
+        rationale = _goal_term_rationale_for_synthesis(entry, rationales.get(key))
+        out.append(
+            {
+                "id": f"config-weight-{key}",
+                "text": _weight_item_text(label, float(weight), ctype, rationale=rationale),
+                "kind": "gathered",
+                "source": "agent",
+            }
+        )
+    return out
 
 
 def _problem_brief_item_slot(

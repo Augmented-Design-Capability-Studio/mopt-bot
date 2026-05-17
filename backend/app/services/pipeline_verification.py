@@ -23,7 +23,6 @@ is the single source of truth for what's surfaced to either consumer.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Iterable
 
 from app.problems.registry import get_study_port
@@ -34,28 +33,6 @@ from app.services.goal_term_anchoring import (
 )
 
 log = logging.getLogger(__name__)
-
-
-# Closed vocabulary of recognised search-strategy algorithm names. Used by the
-# claim-side detection that pairs reply phrasing ("I'll use GA") with the
-# structured carrier (goal_terms.search_strategy.properties.algorithm).
-_ALGORITHM_TOKENS: dict[str, str] = {
-    "ga": "GA",
-    "genetic": "GA",
-    "genetic algorithm": "GA",
-    "genetic-algorithm": "GA",
-    "pso": "PSO",
-    "particle swarm": "PSO",
-    "particle-swarm": "PSO",
-    "sa": "SA",
-    "simulated annealing": "SA",
-    "simulated-annealing": "SA",
-    "swarmsa": "SwarmSA",
-    "swarm sa": "SwarmSA",
-    "acor": "ACOR",
-}
-
-_ALGO_BOUNDARY_RE = re.compile(r"\b([a-z][a-z\s\-]*?)\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -84,84 +61,6 @@ def _patch_is_empty(patch: dict[str, Any] | None) -> bool:
         if isinstance(v, str) and v.strip():
             return False
     return True
-
-
-def _detect_algorithm_commitment(text: str | None) -> str | None:
-    """Detect a reply phrasing that COMMITS to a specific algorithm.
-
-    Returns the canonical algorithm name if the reply contains a commitment
-    like "I've set GA", "let's use particle swarm", "going with PSO". Returns
-    None otherwise. Conservative — only matches lowercased tokens adjacent to
-    commitment verbs to avoid false positives like "what does GA mean?".
-
-    This is intentionally minimal: the LLM is supposed to populate
-    ``goal_terms.search_strategy.properties.algorithm`` directly. This
-    detector exists only to verify the LLM didn't drop the carrier
-    when the visible reply committed.
-    """
-    if not text or not isinstance(text, str):
-        return None
-    lowered = text.lower()
-    # Cheap commitment-verb gate. If none of these appear near an algorithm
-    # token, we treat the reply as descriptive ("GA is a genetic algorithm")
-    # rather than a commitment.
-    commitment_markers = (
-        "use ",
-        "using ",
-        "set ",
-        "setting ",
-        "switch ",
-        "switching ",
-        "pick ",
-        "picked ",
-        "go with ",
-        "going with ",
-        "start with ",
-        "starting with ",
-        "will be ",
-        "as a starting",
-        "default ",
-        "i've set ",
-        "i'll use ",
-        "let's use ",
-        "select ",
-        "selecting ",
-    )
-    has_marker = any(marker in lowered for marker in commitment_markers)
-    if not has_marker:
-        return None
-    # Find longest-match algorithm token.
-    best: str | None = None
-    best_len = 0
-    for token, canonical in _ALGORITHM_TOKENS.items():
-        if token in lowered and len(token) > best_len:
-            # Word-boundary check for short tokens to avoid "ga" matching "garbage".
-            if len(token) <= 4:
-                # Use boundary regex for the short tokens.
-                if not re.search(rf"\b{re.escape(token)}\b", lowered):
-                    continue
-            best = canonical
-            best_len = len(token)
-    return best
-
-
-def _carrier_algorithm(brief: dict[str, Any]) -> str | None:
-    """Read ``goal_terms.search_strategy.properties.algorithm`` from a brief."""
-    if not isinstance(brief, dict):
-        return None
-    gt = brief.get("goal_terms")
-    if not isinstance(gt, dict):
-        return None
-    entry = gt.get("search_strategy")
-    if not isinstance(entry, dict):
-        return None
-    props = entry.get("properties")
-    if not isinstance(props, dict):
-        return None
-    val = props.get("algorithm")
-    if isinstance(val, str) and val.strip():
-        return val.strip()
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -223,41 +122,13 @@ def verify_brief_consistency(
         )
 
     # ---- Algorithm carrier consistency ----
-    committed_algo = _detect_algorithm_commitment(visible_reply)
-    carrier_algo = _carrier_algorithm(merged_brief)
-    if committed_algo is not None and carrier_algo is None:
-        issues.append(
-            PipelineIssue(
-                category="algorithm_committed_missing_carrier",
-                severity="error",
-                subject="goal_terms.search_strategy.properties.algorithm",
-                message=(
-                    f"Your reply commits to {committed_algo} but the structured carrier "
-                    f"`goal_terms.search_strategy.properties.algorithm` is empty. Set the "
-                    f"carrier to `{committed_algo}` so the panel-derive step picks it up."
-                ),
-            )
-        )
-    elif (
-        carrier_algo is not None
-        and committed_algo is None
-        and not _carrier_was_preexisting(base_brief, carrier_algo)
-    ):
-        # The LLM emitted a fresh algorithm carrier but the visible reply
-        # doesn't surface that choice. Warn only — sometimes a structured
-        # default ride-along is intentional (run-ack restating).
-        issues.append(
-            PipelineIssue(
-                category="algorithm_carrier_without_commit",
-                severity="warn",
-                subject="goal_terms.search_strategy.properties.algorithm",
-                message=(
-                    f"You set the algorithm carrier to `{carrier_algo}` without "
-                    f"mentioning it in the visible reply. Either tell the participant or "
-                    f"omit the carrier change."
-                ),
-            )
-        )
+    # Removed: the previous NL-substring detector ("uses GA" / "let's try PSO")
+    # produced false positives on question phrasings like "would you prefer
+    # GA, PSO, or SA?" — flagging the OQ as a commitment. The structured
+    # carrier ``goal_terms.search_strategy.properties.algorithm`` is the
+    # single source of truth for algorithm choice; S5 verifies it against the
+    # panel structurally (see ``verify_panel_consistency``). Trust the
+    # carrier; don't grep the visible reply.
 
     # ---- Workflow invariants ----
     if mode == "waterfall":
@@ -389,13 +260,6 @@ def _reply_claims_change(text: str | None) -> bool:
         "switched to",
     )
     return any(p in lowered for p in commit_phrases)
-
-
-def _carrier_was_preexisting(base_brief: dict[str, Any] | None, algo: str) -> bool:
-    if not isinstance(base_brief, dict):
-        return False
-    base_algo = _carrier_algorithm(base_brief)
-    return base_algo == algo
 
 
 def _new_items(

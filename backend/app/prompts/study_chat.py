@@ -742,17 +742,34 @@ unchanged) or send a deliberate full list with
 ``replace_open_questions=true`` — including to drop moot questions, or
 ``open_questions: []`` only to clear them all intentionally.
 
-**One goal term per row.** Each soft objective term and each
-constraint-handling term (capacity-style penalties, deadline /
-express-SLA penalties, shift hard limits, etc.) must be its own
-``gathered`` row with weight or penalty detail. Never merge multiple
-terms into a single comma-separated line, a bundled "Constraint
-handling:" sentence, or an "Active objectives:" list — split into
-separate rows, including on cleanup snapshots.
+**Goal terms are structured, not prose.** When committing or retuning a
+goal term (objective / soft / hard / custom), put the weight, type, and
+reasoning into ``goal_terms[<key>]``:
+- ``weight``: numeric emphasis.
+- ``type``: ``objective`` / ``soft`` / ``hard`` / ``custom``.
+- ``ambiguity_note.chosen_rationale``: one short sentence on why this
+  term — surfaces as the user-facing reasoning clause on the canonical
+  Definition row. Required on any newly-introduced term so the row reads
+  as a complete natural-language statement. (For unambiguous mappings you
+  may omit ``considered_alternatives``; the rationale alone is enough.)
 
-**Overlap vs bundling.** Remove redundant facts or rephrase one fact
-more clearly. Never merge multiple distinct goal terms into a single
-row to "save space".
+The server synthesizes a single canonical ``config-weight-<key>`` items[]
+row from each ``goal_terms`` entry — *"{Label} ({type}, weight N) —
+{reasoning}."* — so you do **not** need to emit a parallel anchor row for
+the term yourself. ``evidence_item_ids`` still cites supporting context
+items (uploads, user-quoted constraints) but never a goal-term anchor row.
+
+**No "Goal:" / "Objective:" prefixed items.** The goal summary belongs in
+``goal_summary`` (the dedicated field at the top of the brief), not as an
+items[] row. Never start an items[] text with ``Goal:``, ``Objective:``,
+``Primary goal:``, or similar headings — the server will strip the prefix
+and re-route the content to ``goal_summary`` if it leaks through, which
+is wasted ceremony.
+
+**Other items[] rows are natural language.** Gathered facts and
+assumptions that are NOT goal terms (data context, scale, entities,
+operational caveats, etc.) stay as free-form natural-language statements.
+Keep one fact per row, no bundled comma-lists.
 
 **Incremental vs cleanup.** "At most one new objective or constraint
 per turn" applies to **incremental** updates. A holistic cleanup
@@ -1343,6 +1360,47 @@ settings that changed (often with old → new values). For this turn:
 # "<question> — Uploaded file(s) received: …" + "Files uploaded: …" pair the
 # user reported. The model should still capture *what the upload reveals*
 # (entities, constraints, scale, fields) as new gathered/assumption rows.
+STUDY_CHAT_ANSWERED_OQ_CONTEXT = """
+## Answered-open-question context
+
+The participant clicked Save in the Definition panel after editing one or
+more OQ answer fields. For each OQ whose `answer_text` is now non-empty in
+the brief snapshot, decide which bucket the text falls into and act
+accordingly.
+
+- **Substantive answer** — the text gives a concrete decision, value, or
+  constraint that resolves the question (e.g. *"go with GA"*, *"weight
+  10"*, *"yes, cap at 8 hours"*, *"balance workload across drivers"*).
+  Promote the Q+A into a `gathered` items[] row (agile/demo) or refresh
+  the OQ with a concrete answer-record (waterfall). Standard
+  close-the-question flow. Set `replace_open_questions=true` only when
+  your full list consolidates the change.
+
+- **Counter-question / clarification request** — the text asks for an
+  explanation instead of answering (e.g. *"can you explain X?"*, *"what
+  does Y mean?"*, *"what would each choice change?"*). Do NOT promote it
+  into a gathered row. Instead:
+    1. In `assistant_message`, give a short, concrete explanation of the
+       concept the participant asked about. Quote the OQ's original
+       options if relevant so the participant can pick after reading.
+    2. **Re-open the OQ**: emit the same OQ in
+       `problem_brief_patch.open_questions` with the original `text`,
+       `status: "open"`, and `answer_text: null`. Set
+       `replace_open_questions=true` if you're sending the full list.
+    3. Do NOT add a NEW OQ on this turn — the existing one is still
+       waiting on a real answer.
+
+When multiple OQs were edited in one save, handle each independently —
+some can promote, some can re-open in the same turn.
+
+You decide which bucket the text falls into by reading it — no keyword
+rule. A trailing "?" with interrogative framing usually means
+counter-question; a declarative or imperative phrase usually means
+answer. When the text is ambiguous, prefer the counter-question branch:
+explaining is safer than mis-promoting a half-answer into the brief.
+""".strip()
+
+
 STUDY_CHAT_UPLOAD_CONTEXT_GUIDANCE = """
 ## Upload context (this turn carries an `Upload file(s)…` message)
 

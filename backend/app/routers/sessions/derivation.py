@@ -316,6 +316,15 @@ def apply_brief_patch_with_cleanup(
             merged = dict(merged)
             merged["goal_terms"] = filtered
 
+    # Canonical goal-term rows: synthesize a ``config-weight-<key>`` items[]
+    # row for every surviving goal_terms key, with text in the canonical
+    # ``{Label} ({type}, weight N) — {reasoning}.`` form. Runs AFTER the
+    # anchor filter so we never synthesize rows for keys the filter just
+    # dropped. Re-normalisation inside the helper triggers the slot
+    # reconciler, which drops any LLM-authored row that collides with the
+    # synthesized one.
+    merged = _synthesize_canonical_weight_items(merged, test_problem_id)
+
     consolidated, run_meta = consolidate_run_summary(
         merged,
         recent_runs_summary=recent_runs_summary,
@@ -472,9 +481,95 @@ def _enforce_session_monitors(
         # Drop any agile-mode assumption that may be lingering.
         _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
 
+    # ---- Tag-based dedup ----
+    # The main-turn LLM may emit its own OQ asking about one of the three
+    # monitor-managed topics (e.g. "What is your primary goal?"). When that
+    # happens, the bubble would otherwise show TWO OQs covering the same
+    # ground — the LLM's plus the canonical monitor's. We dedup structurally
+    # via the OQ's ``topic_tag`` enum: any non-monitor OQ tagged with an
+    # active monitor's topic gets dropped in favour of the canonical monitor
+    # OQ (which has a stable id and a well-worded prompt).
+    #
+    # The tag is also stripped from any surviving OQ before persistence — it's
+    # a one-shot routing hint, not brief state, so future turns don't have to
+    # re-emit it just to preserve it.
+    active_monitor_oq_ids: set[str] = set()
+    if not has_upload:
+        active_monitor_oq_ids.add(_MONITOR_OQ_UPLOAD_ID)
+    if not has_goal:
+        active_monitor_oq_ids.add(_MONITOR_OQ_GOAL_ID)
+    if not is_agile_or_demo and not has_algorithm:
+        active_monitor_oq_ids.add(_MONITOR_OQ_ALGORITHM_ID)
+    tag_to_active_monitor_id = {
+        tag: oq_id
+        for tag, oq_id in _MONITOR_TOPIC_TAG_TO_OQ_ID.items()
+        if oq_id in active_monitor_oq_ids
+    }
+    deduped_open_questions: list[dict[str, Any]] = []
+    for q in open_questions:
+        if not isinstance(q, dict):
+            deduped_open_questions.append(q)
+            continue
+        q_id = str(q.get("id") or "")
+        tag = q.get("topic_tag")
+        is_monitor_oq = q_id in _MONITOR_TOPIC_TAG_TO_OQ_ID.values()
+        if (
+            not is_monitor_oq
+            and isinstance(tag, str)
+            and tag in tag_to_active_monitor_id
+        ):
+            # Suppress in favour of the active canonical monitor OQ.
+            continue
+        if "topic_tag" in q:
+            q = {k: v for k, v in q.items() if k != "topic_tag"}
+        deduped_open_questions.append(q)
+    open_questions = deduped_open_questions
+
     next_brief["items"] = items
     next_brief["open_questions"] = open_questions
     return next_brief
+
+
+def _synthesize_canonical_weight_items(
+    brief: dict[str, Any], test_problem_id: str | None
+) -> dict[str, Any]:
+    """Refresh canonical ``config-weight-<key>`` rows from ``brief.goal_terms``.
+
+    Every goal-term key gets exactly one row whose text follows
+    ``{Label} ({type}, weight N) — {reasoning}.`` so the Definition surfaces
+    the three pieces the spec requires (reasoning, type, weight) for every
+    gathered/assumption row that describes a goal term. Previously this
+    synthesis only fired on panel→brief sync — the forward path
+    (LLM patch → brief) left users with whatever free-text item the LLM
+    chose to emit, often missing weight + type.
+
+    Drop-and-replace by id prefix: any existing ``config-weight-<key>``
+    row is removed before the freshly-computed set is appended, so a key
+    whose weight/type/rationale changed this turn surfaces the new values.
+    """
+    from app.problem_brief import (
+        normalize_problem_brief,
+        synthesize_canonical_goal_term_items,
+    )
+
+    if not isinstance(brief, dict):
+        return brief
+    extras = synthesize_canonical_goal_term_items(brief, test_problem_id)
+    if not extras:
+        return brief
+    next_brief = dict(brief)
+    base_items = list(brief.get("items") or [])
+    kept_items = [
+        item
+        for item in base_items
+        if not (
+            isinstance(item, dict)
+            and str(item.get("id") or "").startswith("config-weight-")
+        )
+    ]
+    kept_items.extend(extras)
+    next_brief["items"] = kept_items
+    return normalize_problem_brief(next_brief)
 
 
 def _synthesize_goal_term_prose_items(

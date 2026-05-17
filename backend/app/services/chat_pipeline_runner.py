@@ -170,22 +170,21 @@ def resume_pipeline_from_pause(
     if not paused:
         raise KeyError("not_paused")
 
-    # Clear the paused state and flip the stage back to in_progress so
-    # the UI shows the retry attempt. The runner's loop reads the meta
-    # directly and resumes from `paused`.
+    # Rebuild the runner context BEFORE flipping the stage. Earlier this
+    # function flipped paused → in_progress first, so any exception during
+    # rebuild (e.g. a bad column reference, missing api key) left the stage
+    # stuck in in_progress with no thread running — the UI hung forever.
+    # Build first, commit second: atomic resume.
+    context = _rebuild_runner_context(session_id=session_id, message_id=message_id)
+    if context is None:
+        raise KeyError("missing_context")
+    context["resume_from"] = paused
+
     pipeline_status.update_stage(
         message_id=message_id,
         stage_name=paused,  # type: ignore[arg-type]
         state="in_progress",
     )
-
-    # The runner re-reads context from the message + session state.
-    # We don't have access to the original user_text / history here,
-    # so we re-derive from the DB.
-    context = _rebuild_runner_context(session_id=session_id, message_id=message_id)
-    if context is None:
-        raise KeyError("missing_context")
-    context["resume_from"] = paused
     thread = Thread(
         target=_run_chat_pipeline_thread,
         kwargs=context,
@@ -486,6 +485,20 @@ def _run_chat_pipeline_thread(
 
         pipeline_status.settle_pipeline(message_id=message_id)
         _settle_session_state(session_id, revision)
+    except _PipelinePaused as paused_exc:
+        # Internal control-flow sentinel raised by a stage helper after it
+        # has ALREADY written its own structured `paused` state + issues to
+        # the pipeline meta (see ``_run_verify_brief_stage`` etc.). The
+        # orchestrator must not overwrite that with the generic
+        # "drafting=paused / internal error" branch below — the
+        # already-persisted paused state IS the correct UI state. Just exit
+        # cleanly; the action row will render off the existing meta.
+        log.info(
+            "Chat pipeline paused at stage %s for session %s message %s",
+            getattr(paused_exc, "args", ("unknown",))[0] if paused_exc.args else "unknown",
+            session_id,
+            message_id,
+        )
     except Exception:
         log.exception("Chat pipeline thread crashed for session %s message %s", session_id, message_id)
         # If the placeholder is still on the message (S1 didn't even start),
@@ -681,6 +694,18 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
     flavor = (
         pipeline.get("flavor") if isinstance(pipeline, dict) else None
     ) or "chat"
+    # Decrypt the Gemini key here (the original chat-turn path decrypts in
+    # router._handle_post_participant_message before launching the runner;
+    # the resume path bypasses that, so do it explicitly).
+    # Earlier this referenced ``row.gemini_api_key_encrypted`` which doesn't
+    # exist on the model — every Retry click 500'd on AttributeError.
+    from app.crypto_util import decrypt_secret
+
+    try:
+        api_key = decrypt_secret(row.gemini_key_encrypted) or ""
+    except Exception:
+        log.exception("Failed to decrypt gemini key during pipeline resume")
+        api_key = ""
     return dict(
         session_id=session_id,
         revision=int(row.processing_revision or 0),
@@ -688,7 +713,7 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
         flavor=flavor,
         user_text=user_text,
         workflow_mode=str(row.workflow_mode or "waterfall"),
-        api_key=str(row.gemini_api_key_encrypted or ""),  # decrypt happens upstream
+        api_key=api_key,
         model_name=str(row.gemini_model or ""),
         history_lines=[],
         researcher_steers=None,
@@ -1100,27 +1125,52 @@ def _run_verify_config_stage(
             model_name=model_name,
             recent_runs_summary=recent_runs_summary,
         )
-        if derived is not None:
+        if derived is None:
+            # Retry-derive blew up (validator error, LLM timeout, etc.). Without
+            # this terminal-state update the `deriving_config` row stayed in
+            # `in_progress` forever — the bubble showed a spinner with no
+            # retry affordance even though `paused_stage` was set below.
             pipeline_status.update_stage(
-                message_id=message_id, stage_name="deriving_config", state="success"
+                message_id=message_id,
+                stage_name="deriving_config",
+                state="paused",
+                issues=[
+                    {
+                        "category": "schema_invalid",
+                        "severity": "error",
+                        "subject": "panel",
+                        "message": (
+                            "Couldn't re-derive the panel from the brief. "
+                            "Click Retry to try again."
+                        ),
+                    }
+                ],
+                bump_retried=True,
             )
-            with SessionLocal() as db:
-                row = db.get(StudySession, session_id)
-                panel = helpers.panel_dict(row) if row else None
-            issues2 = pipeline_verification.verify_panel_consistency(
-                brief=brief,
-                panel=panel,
-                workflow_mode=workflow_mode,
-                test_problem_id=test_problem_id,
+            pipeline_status.fail_pipeline(
+                message_id=message_id, paused_stage="deriving_config"
             )
-            if not issues2:
-                pipeline_status.update_stage(
-                    message_id=message_id,
-                    stage_name="verifying_config",
-                    state="success",
-                )
-                return
-            issues = issues2
+            return
+        pipeline_status.update_stage(
+            message_id=message_id, stage_name="deriving_config", state="success"
+        )
+        with SessionLocal() as db:
+            row = db.get(StudySession, session_id)
+            panel = helpers.panel_dict(row) if row else None
+        issues2 = pipeline_verification.verify_panel_consistency(
+            brief=brief,
+            panel=panel,
+            workflow_mode=workflow_mode,
+            test_problem_id=test_problem_id,
+        )
+        if not issues2:
+            pipeline_status.update_stage(
+                message_id=message_id,
+                stage_name="verifying_config",
+                state="success",
+            )
+            return
+        issues = issues2
     else:
         # Config-save origin: panel is ground truth; align the brief.
         next_brief, next_issues, fallback_applied = _retry_brief_from_panel(

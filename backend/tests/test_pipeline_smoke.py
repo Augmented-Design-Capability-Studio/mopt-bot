@@ -3,23 +3,11 @@
 import pytest
 
 from app.services.pipeline_verification import (
-    _detect_algorithm_commitment,
     categorize_panel_issues,
     issues_to_audit_payload,
     verify_brief_consistency,
     verify_panel_consistency,
 )
-
-
-def test_algorithm_detector_commitment():
-    assert _detect_algorithm_commitment("I've set GA as the starting algorithm.") == "GA"
-    assert _detect_algorithm_commitment("Let's use PSO for this run.") == "PSO"
-    assert _detect_algorithm_commitment("Starting with simulated annealing.") == "SA"
-
-
-def test_algorithm_detector_description_not_commit():
-    assert _detect_algorithm_commitment("GA is a population-based search method.") is None
-    assert _detect_algorithm_commitment("How does PSO work?") is None
 
 
 def test_claim_without_delta():
@@ -109,21 +97,6 @@ def test_waterfall_no_assumption_invariant():
         workflow_mode="waterfall",
     )
     assert any(i.category == "workflow_invariant_violation" for i in issues)
-
-
-def test_algorithm_commit_missing_carrier():
-    issues = verify_brief_consistency(
-        merged_brief={
-            "items": [],
-            "goal_terms": {},
-            "open_questions": [],
-        },
-        base_brief={"items": [], "goal_terms": {}, "open_questions": []},
-        patch={},
-        visible_reply="I've set GA as the starting algorithm.",
-        workflow_mode="agile",
-    )
-    assert any(i.category == "algorithm_committed_missing_carrier" for i in issues)
 
 
 def test_panel_algorithm_mismatch():

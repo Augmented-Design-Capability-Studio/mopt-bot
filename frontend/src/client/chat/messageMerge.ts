@@ -15,7 +15,12 @@ export function mergeMessagesFromPoll(existing: Message[], incoming: Message[]):
     return true;
   });
 
-  return toAdd.length ? [...existing, ...toAdd] : existing;
+  // Re-sort by id so a late-arriving poll row (e.g. the "Run #N finished" line
+  // appended inside /runs) lands in chronological order rather than at the
+  // tail. Otherwise, when a concurrent POST /messages (run_ack) has already
+  // pushed its higher-id placeholder into local state, this poll would render
+  // "Run #N finished" *after* the run-summary bubble that analyzes it.
+  return toAdd.length ? sortCommittedMessagesFirst([...existing, ...toAdd]) : existing;
 }
 
 export function mergeMessagesFromPost(existing: Message[], incoming: Message[]): Message[] {

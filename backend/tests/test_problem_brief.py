@@ -67,10 +67,10 @@ def test_merge_keeps_prior_goal_summary_when_patch_sanitizes_to_empty():
     assert merged["goal_summary"] == base["goal_summary"]
 
 
-def test_merge_clears_goal_summary_when_patch_explicitly_empty():
+def test_merge_preserves_goal_summary_when_patch_empty():
     base = normalize_problem_brief(_minimal_brief_payload(goal_summary="Old goal."))
     merged = merge_problem_brief_patch(base, {"goal_summary": ""})
-    assert merged["goal_summary"] == ""
+    assert merged["goal_summary"] == "Old goal."
 
 
 def test_cleanup_open_questions_deduplicates_without_inferred_pruning():

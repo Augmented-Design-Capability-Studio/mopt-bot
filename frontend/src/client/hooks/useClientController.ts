@@ -89,6 +89,12 @@ export function useClientController() {
   const [modelName, setModelName] = useState("");
   const [embeddingModel, setEmbeddingModel] = useState("");
   const [aiPending, setAiPending] = useState(false);
+  // Message id currently mid-flight on a pipeline action (Retry / Revert).
+  // Drives the action row's "Retrying..." label + disabled state.
+  const [pipelineActionBusyMessageId, setPipelineActionBusyMessageId] = useState<number | null>(null);
+  // Bumped when "Keep chatting" is clicked. Combined with the session-start
+  // nudge key so the chat textarea refocuses on either trigger.
+  const [keepChattingAttentionKey, setKeepChattingAttentionKey] = useState<string>("");
   const [recentRows, setRecentRows] = useState<RecentSessionRow[]>([]);
   const [recentBusy, setRecentBusy] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
@@ -347,6 +353,8 @@ export function useClientController() {
     setShowModelDialog,
     setModelKey,
     setAiPending,
+    setPipelineActionBusyMessageId,
+    setKeepChattingAttentionKey,
     setClientOps,
     runs,
     activeRun,
@@ -595,5 +603,10 @@ export function useClientController() {
     snapshotsLoading,
     canLoadFromLastRun,
     canLoadFromSnapshot,
+    pipelineActionBusyMessageId,
+    keepChattingAttentionKey,
+    onPipelineRetry: actions.pipelineRetry,
+    onPipelineRevert: actions.pipelineRevert,
+    onPipelineKeepChatting: actions.pipelineKeepChatting,
   };
 }

@@ -582,11 +582,13 @@ select:focus-visible {
 .pipeline-status__btn:hover:not(:disabled) { background: #f2efe8; }
 .pipeline-status__btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .pipeline-status__btn--primary {
-  background: #2f4d6d;
-  color: #fff;
-  border-color: #243c57;
+  /* Match the viz Run-optimization button (.btn-primary) so primary actions
+     across the app share one accent: light blue-grey fill, near-black text. */
+  background: #dde7ef;
+  color: #1b2934;
+  border-color: #5e7386;
 }
-.pipeline-status__btn--primary:hover:not(:disabled) { background: #243c57; }
+.pipeline-status__btn--primary:hover:not(:disabled) { background: #cfdae3; }
 .pipeline-status__btn--ghost { background: transparent; }
 
 .bubble-status--info {

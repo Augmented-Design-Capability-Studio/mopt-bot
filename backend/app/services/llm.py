@@ -197,6 +197,18 @@ _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
     "properties": {
         "id": {"type": "string"},
         "text": {"type": "string"},
+        "topic_tag": {
+            "type": "string",
+            "enum": ["upload", "primary_goal", "search_strategy"],
+            "description": (
+                "Optional. Set when this OQ asks about one of the three "
+                "server-managed monitor topics. The server uses the tag to "
+                "dedup against the canonical monitor OQ (oq-monitor-upload / "
+                "oq-monitor-goal / oq-monitor-algorithm) so the participant "
+                "never sees two OQs asking the same thing. Omit (or leave "
+                "null) on any free-form clarifying question."
+            ),
+        },
     },
     "required": ["id", "text"],
 }
@@ -1024,14 +1036,9 @@ def generate_main_turn(
 
         parts.append(STUDY_CHAT_UPLOAD_CONTEXT_GUIDANCE)
     if is_answered_open_question:
-        parts.append(
-            "## Answered-open-question context\n\n"
-            "The participant just answered an open question. Promote the "
-            "Q+A into a `gathered` items[] row (agile/demo) or refresh the "
-            "OQ with a concrete answer-record (waterfall). Set "
-            "`replace_open_questions=true` only if your full list "
-            "consolidates the change."
-        )
+        from app.prompts.study_chat import STUDY_CHAT_ANSWERED_OQ_CONTEXT
+
+        parts.append(STUDY_CHAT_ANSWERED_OQ_CONTEXT)
     if verification_issues:
         # Issue feedback block — appended on retry so the LLM can target
         # the specific issues the verifier flagged. Plain-English to match

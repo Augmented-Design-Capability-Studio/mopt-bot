@@ -20,7 +20,7 @@ import {
 import { parseServerDate } from "@shared/dateTime";
 import { patchForTutorialEvent, type ParticipantTutorialPatch } from "../../tutorial/events";
 
-import { mergeMessagesFromPost } from "../chat/messageMerge";
+import { mergeMessageUpdate, mergeMessagesFromPost } from "../chat/messageMerge";
 import { computeCanRunOptimization } from "../lib/optimizationGate";
 import { configChangeDetailedSummary } from "../problemConfig/configSummary";
 import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
@@ -160,6 +160,14 @@ type UseParticipantSessionActionsArgs = {
   setShowModelDialog: (value: boolean) => void;
   setModelKey: (value: string) => void;
   setAiPending: (value: boolean) => void;
+  /** Message id whose pipeline action button is currently mid-flight (Retry /
+   *  Revert). Drives the "Retrying..." label + disabled state on the action
+   *  row. Null when idle. */
+  setPipelineActionBusyMessageId: (value: number | null) => void;
+  /** Bumped when "Keep chatting" is clicked, so the chat textarea refocuses
+   *  via the existing ``chatAttentionKey`` mechanism. The composer-side hook
+   *  treats a value change as a focus trigger regardless of the value itself. */
+  setKeepChattingAttentionKey: (value: string) => void;
   setClientOps: (value: ClientOpsState | ((prev: ClientOpsState) => ClientOpsState)) => void;
   runs: RunResult[];
   activeRun: number;
@@ -231,6 +239,8 @@ export function useClientSessionActions({
   setShowModelDialog,
   setModelKey,
   setAiPending,
+  setPipelineActionBusyMessageId,
+  setKeepChattingAttentionKey,
   setClientOps,
   runs,
   activeRun,
@@ -627,9 +637,18 @@ export function useClientSessionActions({
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()
           : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
+        // When at least one OQ flipped from open → answered in this save, take
+        // the OQ-answered branch on the backend instead of the generic
+        // definition-save branch. The OQ flow injects a dedicated prompt
+        // block that distinguishes substantive answers from counter-questions
+        // (e.g. "what does this mean?") so the agent explains instead of
+        // mis-promoting the counter-question into a gathered row.
+        const contextKind = flippedOqIds.length > 0
+          ? "open_question_answered"
+          : "definition_save";
         void postContextMessage(chatMessage, true, {
           skipHiddenBriefUpdate: !options?.chatNote?.trim(),
-          contextKind: "definition_save",
+          contextKind,
         });
       }
       void refetchSnapshots?.();
@@ -1143,6 +1162,80 @@ export function useClientSessionActions({
   }, [embeddingModel, modelKey, modelName, sessionId, setBusy, setError, setModelKey, setSession, setShowModelDialog, syncSession, token]);
 
 
+  // ---------------------------------------------------------------------
+  // Pipeline action handlers (Retry / Revert / Keep chatting)
+  // ---------------------------------------------------------------------
+  // The pipeline pauses (via ``pipeline_status.fail_pipeline``) when a stage's
+  // retry leg still leaves drift the runner can't resolve. The corresponding
+  // bubble shows the three action buttons; each handler below fires when the
+  // participant clicks one. ``Retry`` and ``Revert`` POST to the existing
+  // ``/pipeline/{retry,revert}`` endpoints (router.py:2021/2051). ``Keep
+  // chatting`` is purely a UI affordance — it refocuses the chat textarea
+  // so the participant can type a fresh message, which naturally supersedes
+  // the paused pipeline via the next ``processing_revision`` bump.
+  const refreshSingleMessage = useCallback(
+    async (messageId: number) => {
+      try {
+        const updated = await apiFetch<Message>(
+          `/sessions/${sessionId}/messages/${messageId}`,
+          token,
+        );
+        setMessages((current) => mergeMessageUpdate(current, updated));
+      } catch {
+        // Best-effort refresh — the verifying-message poll will catch any
+        // state we miss on the next tick.
+      }
+    },
+    [sessionId, setMessages, token],
+  );
+
+  const pipelineRetry = useCallback(
+    async (messageId: number) => {
+      if (!token || !sessionId) return;
+      setPipelineActionBusyMessageId(messageId);
+      try {
+        await apiFetch(`/sessions/${sessionId}/messages/${messageId}/pipeline/retry`, token, {
+          method: "POST",
+        });
+        await refreshSingleMessage(messageId);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Retry failed");
+      } finally {
+        setPipelineActionBusyMessageId(null);
+      }
+    },
+    [refreshSingleMessage, sessionId, setError, setPipelineActionBusyMessageId, token],
+  );
+
+  const pipelineRevert = useCallback(
+    async (messageId: number) => {
+      if (!token || !sessionId) return;
+      setPipelineActionBusyMessageId(messageId);
+      try {
+        await apiFetch(`/sessions/${sessionId}/messages/${messageId}/pipeline/revert`, token, {
+          method: "POST",
+        });
+        await refreshSingleMessage(messageId);
+        await syncSession();
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Revert failed");
+      } finally {
+        setPipelineActionBusyMessageId(null);
+      }
+    },
+    [refreshSingleMessage, sessionId, setError, setPipelineActionBusyMessageId, syncSession, token],
+  );
+
+  const pipelineKeepChatting = useCallback(
+    (_messageId: number) => {
+      // No network call — the buttons stay visible until the participant
+      // sends a fresh message (which bumps processing_revision) or clicks
+      // Retry/Revert. Just trigger a focus on the chat composer.
+      setKeepChattingAttentionKey(`keep-chatting:${Date.now()}`);
+    },
+    [setKeepChattingAttentionKey],
+  );
+
   const cancelOptimize = useCallback(async () => {
     if (!token || !sessionId) return;
     setError(null);
@@ -1180,5 +1273,8 @@ export function useClientSessionActions({
     saveModelSettings,
     closeModelDialog,
     setParticipantTutorialState,
+    pipelineRetry,
+    pipelineRevert,
+    pipelineKeepChatting,
   };
 }
