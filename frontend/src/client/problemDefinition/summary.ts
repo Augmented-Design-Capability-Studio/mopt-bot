@@ -50,58 +50,137 @@ export function isProblemBriefDirtyAfterClean(baseline: ProblemBrief, current: P
   return JSON.stringify(cleanProblemBriefForCompare(baseline)) !== JSON.stringify(cleanProblemBriefForCompare(current));
 }
 
-function countKindDelta(
+/** Direction-aware delta for one items[] kind: distinguishes added /
+ *  removed / edited rows so the synthetic chat note can say
+ *  *"1 fact removed"* instead of the ambiguous *"1 fact"*. */
+type KindDelta = { added: number; removed: number; edited: number };
+
+function kindDelta(
   prev: ProblemBriefItem[],
   next: ProblemBriefItem[],
   kind: ProblemBriefItem["kind"],
-): number {
+): KindDelta {
   const prevOfKind = prev.filter((item) => item.kind === kind);
   const nextOfKind = next.filter((item) => item.kind === kind);
   const prevById = new Map(prevOfKind.map((item) => [item.id, item] as const));
-  const sizeDelta = Math.abs(nextOfKind.length - prevOfKind.length);
-  const changedRows = nextOfKind.filter((item) => {
+  const nextById = new Map(nextOfKind.map((item) => [item.id, item] as const));
+  let added = 0;
+  let edited = 0;
+  for (const item of nextOfKind) {
     const before = prevById.get(item.id);
-    return (
-      before == null ||
+    if (before == null) {
+      added += 1;
+      continue;
+    }
+    if (
       before.text !== item.text ||
       before.kind !== item.kind ||
       before.source !== item.source
-    );
-  }).length;
-  return sizeDelta + changedRows;
+    ) {
+      edited += 1;
+    }
+  }
+  const removed = prevOfKind.filter((item) => !nextById.has(item.id)).length;
+  return { added, removed, edited };
 }
 
-function countQuestionDelta(
+/** Direction-aware OQ delta. ``answered`` counts OQs whose status flipped
+ *  from open → answered this save (the participant typed something).
+ *  ``edited`` covers text-only tweaks on existing OQs. */
+type QuestionDelta = {
+  added: number;
+  removed: number;
+  edited: number;
+  answered: number;
+};
+
+function questionDelta(
   prev: ProblemBriefQuestion[],
   next: ProblemBriefQuestion[],
-): number {
+): QuestionDelta {
   const prevById = new Map(prev.map((question) => [question.id, question] as const));
-  const sizeDelta = Math.abs(next.length - prev.length);
-  const changedRows = next.filter((question) => {
+  const nextById = new Map(next.map((question) => [question.id, question] as const));
+  let added = 0;
+  let edited = 0;
+  let answered = 0;
+  for (const question of next) {
     const before = prevById.get(question.id);
-    return (
-      before == null ||
+    if (before == null) {
+      added += 1;
+      continue;
+    }
+    const wasAnswered = before.status === "answered";
+    const nowAnswered = question.status === "answered" && (question.answer_text ?? "").trim().length > 0;
+    if (!wasAnswered && nowAnswered) {
+      answered += 1;
+      continue;
+    }
+    if (
       before.text !== question.text ||
       before.status !== question.status ||
       (before.answer_text ?? "") !== (question.answer_text ?? "")
-    );
-  }).length;
-  return sizeDelta + changedRows;
+    ) {
+      edited += 1;
+    }
+  }
+  const removed = prev.filter((question) => !nextById.has(question.id)).length;
+  return { added, removed, edited, answered };
 }
 
-export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemBrief): string {
-  const factDelta = countKindDelta(previous.items, next.items, "gathered");
-  const assumptionDelta = countKindDelta(previous.items, next.items, "assumption");
-  const questionDelta = countQuestionDelta(previous.open_questions, next.open_questions);
-  const goalChanged = previous.goal_summary.trim() !== next.goal_summary.trim();
-  const runSummaryChanged = previous.run_summary.trim() !== next.run_summary.trim();
+export type BriefChangeDelta = {
+  facts: KindDelta;
+  assumptions: KindDelta;
+  questions: QuestionDelta;
+  goalSummaryChanged: boolean;
+  runSummaryChanged: boolean;
+};
 
-  const parts: string[] = [];
-  if (factDelta) parts.push(`${factDelta} fact${factDelta > 1 ? "s" : ""}`);
-  if (assumptionDelta) parts.push(`${assumptionDelta} assumption${assumptionDelta > 1 ? "s" : ""}`);
-  if (questionDelta) parts.push(`${questionDelta} open question${questionDelta > 1 ? "s" : ""}`);
-  if (goalChanged) parts.push("goal summary");
-  if (runSummaryChanged) parts.push("run summary");
+export function computeBriefChangeDelta(
+  previous: ProblemBrief,
+  next: ProblemBrief,
+): BriefChangeDelta {
+  return {
+    facts: kindDelta(previous.items, next.items, "gathered"),
+    assumptions: kindDelta(previous.items, next.items, "assumption"),
+    questions: questionDelta(previous.open_questions, next.open_questions),
+    goalSummaryChanged: previous.goal_summary.trim() !== next.goal_summary.trim(),
+    runSummaryChanged: previous.run_summary.trim() !== next.run_summary.trim(),
+  };
+}
+
+function pluralize(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatKindParts(delta: KindDelta, singular: string, plural: string): string[] {
+  const out: string[] = [];
+  if (delta.added) out.push(`${pluralize(delta.added, singular, plural)} added`);
+  if (delta.removed) out.push(`${pluralize(delta.removed, singular, plural)} removed`);
+  if (delta.edited) out.push(`${pluralize(delta.edited, singular, plural)} edited`);
+  return out;
+}
+
+function formatQuestionParts(delta: QuestionDelta): string[] {
+  const out: string[] = [];
+  if (delta.added) out.push(`${pluralize(delta.added, "open question", "open questions")} added`);
+  if (delta.removed) out.push(`${pluralize(delta.removed, "open question", "open questions")} removed`);
+  if (delta.edited) out.push(`${pluralize(delta.edited, "open question", "open questions")} edited`);
+  // `answered` counts are not surfaced here — the OQ-answered branch of
+  // the chat note shows the literal quotes instead, which is richer.
+  return out;
+}
+
+/** Human-readable summary of every direction in one phrase. Used as the
+ *  trailing ``Summary: …`` clause on synthetic chat notes. */
+export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemBrief): string {
+  const delta = computeBriefChangeDelta(previous, next);
+  const parts: string[] = [
+    ...formatKindParts(delta.facts, "fact", "facts"),
+    ...formatKindParts(delta.assumptions, "assumption", "assumptions"),
+    ...formatQuestionParts(delta.questions),
+  ];
+  if (delta.goalSummaryChanged) parts.push("goal summary edited");
+  if (delta.runSummaryChanged) parts.push("run summary edited");
   if (parts.length === 0) return "no material changes";
   return parts.join(", ");
 }

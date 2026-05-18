@@ -170,7 +170,9 @@
       "PowerShell($env:PYTHONPATH = \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend;C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\"; & \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" -m pytest C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\ -q --no-header --ignore=C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\test_live_gemini.py 2>&1 | Select-Object -Last 5)",
       "Bash(grep -n \"messages/researcher\\\\|messages/\\\\$\\\\|messages?after_id\\\\|sessions/\\\\${sessionId}/messages\" C:/Users/whyhowie/git-repo/mopt-bot/backend/app/routers/sessions/router.py)",
       "PowerShell($env:PYTHONPATH = \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend;C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\"; & \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\smoke_placeholder.py)",
-      "PowerShell($env:PYTHONPATH = \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend;C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\"; & \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\smoke_placeholder.py 2>&1 | Select-Object -Last 60)"
+      "PowerShell($env:PYTHONPATH = \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend;C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\"; & \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\smoke_placeholder.py 2>&1 | Select-Object -Last 60)",
+      "Bash(../mopt-bot/.venv/Scripts/python.exe -m pytest backend/tests/ -q -m \"not live_gemini\")",
+      "Bash(./node_modules/.bin/tsc -p tsconfig.json --noEmit)"
     ]
   }
 }

@@ -1251,61 +1251,41 @@ settings that changed (often with old → new values). For this turn:
 STUDY_CHAT_ANSWERED_OQ_CONTEXT = """
 ## Answered-open-question context
 
-The participant clicked Save in the Definition panel after editing one or
-more OQ answer fields. For each OQ whose `answer_text` is now non-empty in
-the brief snapshot, decide which bucket the text falls into and act
-accordingly.
+The participant just typed into one or more OQ answer fields. The synthetic
+user message in this turn quotes each `"question" → "answer"` pair (lines
+that look like `- "Q" → "A"`). The server has already routed any
+substantive answers through the classifier; any OQ that's now back to
+`status: "open"` with `answer_text: null` was reset because the
+participant hedged or asked you to explain.
 
-- **Substantive answer** — the text gives a concrete decision, value, or
-  constraint that resolves the question (e.g. *"go with GA"*, *"weight
-  10"*, *"yes, cap at 8 hours"*, *"balance workload across drivers"*).
-  Promote the Q+A into a `gathered` items[] row (agile/demo) or refresh
-  the OQ with a concrete answer-record (waterfall). Standard
-  close-the-question flow. Set `replace_open_questions=true` only when
-  your full list consolidates the change.
+For each quoted pair, decide which bucket and act:
 
-  - **Structural commitment is required** when the answer names a
-    goal-term concept or an algorithm choice. Populate the matching
-    `goal_terms[<key>]` (with `weight` + `type`) AND the matching
-    structured carrier — e.g. for "minimize travel time" emit
-    `goal_terms.travel_time = { weight, type: "objective", ... }`; for
-    "use GA" emit `goal_terms.search_strategy.properties.algorithm =
-    "GA"`. Without the structural commitment the server-side monitor
-    will re-add the canonical OQ for the same topic on the next turn —
-    producing the exact duplicate the dedup is meant to prevent.
+- **Substantive answer** (concrete decision, value, or choice) — the
+  classifier already promoted it; you'll see the resulting gathered row
+  in the brief and the OQ either closed or absent. Acknowledge the
+  commitment briefly. If the answer named a goal-term concept or
+  algorithm, ALSO populate the matching structured carrier in
+  `problem_brief_patch.goal_terms[<key>]` (with `weight` + `type`) so
+  the panel-derive step picks it up; without it the canonical monitor
+  re-surfaces the same OQ next turn.
 
-- **Counter-question / clarification request** — the text asks the agent
-  to explain rather than commit to a choice. This includes both
-  question-marked phrasings (*"can you explain X?"*, *"what does Y
-  mean?"*) AND **imperative explanation requests** (*"explain the search
-  strategies"*, *"describe what workload balance does"*, *"tell me about
-  the algorithm options"*, *"compare GA vs PSO"*). Do NOT promote it into
-  a gathered row. Instead:
-    1. **Lead the `assistant_message` with the explanation** — concrete,
-       2–4 sentences, naming the OQ's original options if any so the
-       participant can pick after reading. Don't open the reply with
-       generic "I've noted the update…" boilerplate; the explanation is
-       what the participant is waiting for.
-    2. **Re-open the OQ**: emit the same OQ in
-       `problem_brief_patch.open_questions` with the original `text`,
-       `status: "open"`, and `answer_text: null`. Set
-       `replace_open_questions=true` if you're sending the full list.
-    3. Do NOT add a NEW OQ on this turn — the existing one is still
-       waiting on a real answer.
+- **Counter-question / clarification request** (anything asking you to
+  explain, describe, compare, define — with or without a question mark) —
+  the server reset the OQ to open. Your job:
+    1. **Lead the visible reply with a concrete 2–4 sentence
+       explanation** of what the participant asked about. Quote the OQ's
+       original options if any so they can pick after reading.
+    2. Leave the OQ alone — don't reword it, don't re-emit it, don't
+       create a follow-up. The original text is still there for them to
+       answer next.
+    3. Don't commit anything structural (no goal_terms changes) until
+       the participant supplies a real answer.
 
-When multiple OQs were edited in one save (some answered substantively,
-some asking for clarification), handle each independently AND **lead the
-visible reply with the explanation(s)** before acknowledging the
-promotions. The participant is most likely waiting on the explanation;
-the ack can follow in a sentence or two.
+When multiple OQs were quoted, handle each independently and lead with
+the explanation(s) before any acknowledgements.
 
-Classification rule (no keyword test — read the text and decide):
-- Substantive answer = declarative or imperative naming a concrete
-  decision, value, constraint, or choice from the question's options.
-- Counter-question = anything asking the agent to elaborate, explain,
-  describe, compare, or define, with OR without a question mark.
-- When the text is ambiguous, prefer the counter-question branch:
-  explaining is safer than mis-promoting a half-answer into the brief.
+If the text is ambiguous, prefer the explanation branch — over-explaining
+is recoverable; mis-promoting a hedge is not.
 """.strip()
 
 

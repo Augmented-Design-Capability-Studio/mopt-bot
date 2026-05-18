@@ -24,7 +24,12 @@ import { mergeMessageUpdate, mergeMessagesFromPost } from "../chat/messageMerge"
 import { computeCanRunOptimization } from "../lib/optimizationGate";
 import { configChangeDetailedSummary } from "../problemConfig/configSummary";
 import { DEFINITION_CLEANUP_CHAT_MESSAGE } from "../problemDefinition/constants";
-import { cleanProblemBriefForCompare, cloneProblemBrief, problemBriefChangeSummary } from "../problemDefinition/summary";
+import {
+  cleanProblemBriefForCompare,
+  cloneProblemBrief,
+  computeBriefChangeDelta,
+  problemBriefChangeSummary,
+} from "../problemDefinition/summary";
 import type { ProblemPanelHydration } from "../problemConfig/problemPanelHydration";
 import { getProblemModule } from "../problemRegistry";
 import type { ClientOpsState } from "../lib/clientOps";
@@ -649,47 +654,57 @@ export function useClientSessionActions({
       const tutorialPatch = patchForTutorialEvent("definition-saved", nextSession);
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) {
-        // When at least one OQ flipped from open → answered in this save, take
-        // the OQ-answered branch on the backend instead of the generic
-        // definition-save branch. The OQ flow injects a dedicated prompt
-        // block that distinguishes substantive answers from counter-questions
-        // (e.g. "explain the search strategies") so the agent explains
-        // instead of mis-promoting the counter-question into a gathered row.
-        // Also swap the chat-note copy: the default ("acknowledge the updated
-        // gathered info…") biases the LLM toward summarising even when a
-        // counter-question is in flight. The OQ-answered variant primes for
-        // per-OQ handling and explanation-first replies.
+        // The synthetic chat note is strictly factual: it tells the
+        // participant (and the LLM) what changed in the brief, nothing
+        // more. The backend prompt block that fires for each context_kind
+        // (`STUDY_CHAT_ANSWERED_OQ_CONTEXT` for `open_question_answered`,
+        // the brief-edit-ack guidance for `definition_save`) owns all the
+        // "how to handle this turn" rules. Repeating them in the chat
+        // message was both noisy for the participant and redundant for
+        // the LLM. The `context_kind` discriminator is enough.
         const oqAnswered = flippedOqIds.length > 0;
-        const oqCount = flippedOqIds.length;
-        // Quote each (question, answer) pair so the main-turn LLM sees the
-        // participant's literal text. This is the only reliable channel for
-        // hedged answers on foundational OQs — the backend router reverts
-        // those to status=open + answer_text=null, so by the time the LLM
-        // reads the brief the answer text is gone. The quote in the chat
-        // note is what lets the LLM recognise *"please explain"* as a
-        // counter-question instead of confabulating a choice.
-        // Markdown rendering: a single \n keeps the next line inside the
-        // same bullet item (so trailing instructions visually glue to the
-        // last quote). Use \n\n to force a paragraph break between the
-        // quote list and the meta-instructions, and prefix the instructions
-        // with a labelled paragraph so they read as a distinct section.
-        const quoteBlock = flippedOqQuotes
-          .map(({ question, answer }) => `- For "${question}" I typed: "${answer}"`)
-          .join("\n");
-        const headerLine = oqCount === 1
-          ? "I just filled in an open question."
-          : `I just filled in ${oqCount} open questions.`;
-        const instructionParagraph =
-          "**How to handle this turn:** if my answer is a concrete decision, capture it in the brief. " +
-          "If I asked you to explain something or hedged, lead your reply with the explanation (or a follow-up) " +
-          "and leave that question open without rewording it. Acknowledge any other gathered or assumption edits briefly after.";
-        const defaultChatMessage = oqAnswered
-          ? `${headerLine} Summary: ${changedSummary}.\n\n${quoteBlock}\n\n${instructionParagraph}`
-          : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
+        const contextKind = oqAnswered ? "open_question_answered" : "definition_save";
+        // Pick the right verb so the participant sees a coherent line
+        // (*"Removed 2 open questions from the definition."* instead of
+        // the ambiguous *"Summary: 2 open questions"*).
+        const delta = computeBriefChangeDelta(previousBrief, cleanedBrief);
+        let defaultChatMessage: string;
+        if (oqAnswered) {
+          // Quotes give the LLM the participant's literal text, which is
+          // the only reliable channel for counter-questions on foundational
+          // OQs (the router resets those to open + null answer_text, so by
+          // the time the LLM reads the brief the text is gone).
+          const quoteBlock = flippedOqQuotes
+            .map(({ question, answer }) => `- "${question}" → "${answer}"`)
+            .join("\n");
+          const headerLine = flippedOqIds.length === 1
+            ? "Answered an open question:"
+            : `Answered ${flippedOqIds.length} open questions:`;
+          // If the save *also* touched other parts of the brief, mention
+          // it in one trailing clause so the LLM doesn't miss those edits.
+          const otherChanges: string[] = [];
+          if (delta.facts.added || delta.facts.removed || delta.facts.edited) {
+            otherChanges.push("definition items");
+          }
+          if (delta.assumptions.added || delta.assumptions.removed || delta.assumptions.edited) {
+            otherChanges.push("assumptions");
+          }
+          if (delta.goalSummaryChanged) otherChanges.push("goal summary");
+          if (delta.runSummaryChanged) otherChanges.push("run summary");
+          const tail = otherChanges.length > 0
+            ? `\n\nAlso edited: ${otherChanges.join(", ")}.`
+            : "";
+          defaultChatMessage = `${headerLine}\n${quoteBlock}${tail}`;
+        } else {
+          // No OQ answered → describe whatever changed (added/removed/
+          // edited/goal/run-summary). The phrase comes from
+          // problemBriefChangeSummary which is now direction-aware.
+          const summary = problemBriefChangeSummary(previousBrief, cleanedBrief);
+          defaultChatMessage = `Definition edited: ${summary}.`;
+        }
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()
           : defaultChatMessage;
-        const contextKind = oqAnswered ? "open_question_answered" : "definition_save";
         void postContextMessage(chatMessage, true, {
           skipHiddenBriefUpdate: !options?.chatNote?.trim(),
           contextKind,

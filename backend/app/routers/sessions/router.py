@@ -146,13 +146,13 @@ def _route_oq_answers_through_classifier(
     next_questions: list[dict[str, Any]] = []
     items = list(incoming_brief.get("items") or [])
 
-    def _reset_foundational_oq(parent_q: dict[str, Any]) -> dict[str, Any]:
-        """Revert a server-owned canonical OQ to its open state when the
-        user's answer was hedged / counter-question / unresolved. The
-        canonical text stays as the server originally wrote it; the
-        explanation flows through the chat pipeline via the synthetic
-        chat note (which quotes the participant's actual answer text)
-        plus the ``STUDY_CHAT_ANSWERED_OQ_CONTEXT`` prompt block.
+    def _reset_oq_to_open(parent_q: dict[str, Any]) -> dict[str, Any]:
+        """Revert an OQ to its open state when the user's answer was
+        hedged / a counter-question / a request for explanation. The
+        OQ's original text stays unchanged — the user can answer it
+        properly after seeing the agent's explanation. The synthetic
+        chat note quotes what the participant typed, and the main-turn
+        LLM picks it up via ``STUDY_CHAT_ANSWERED_OQ_CONTEXT``.
         """
         cleared = dict(parent_q)
         cleared["status"] = "open"
@@ -173,42 +173,26 @@ def _route_oq_answers_through_classifier(
         parent_is_foundational = parent_topic in FOUNDATIONAL_OQ_TOPICS
 
         if c.bucket == "new_open_question" and mode == "waterfall":
-            # Foundational OQs are server-owned: their canonical text is
-            # stable and the server (`_enforce_session_monitors`) controls
-            # their lifecycle. A classifier-generated re-ask on a foundational
-            # parent would either (a) get stripped at merge anyway (cluttering
-            # the brief mid-transaction) or (b) produce a duplicate alongside
-            # the canonical row. Instead: reset the parent to open and let
-            # the chat pipeline handle the explanation. The synthetic chat
-            # note quotes the participant's actual answer text so the main
-            # turn LLM sees their words without needing the brief to carry
-            # them as state.
-            if parent_is_foundational:
-                next_questions.append(_reset_foundational_oq(q))
-                continue
-            new_text = (c.new_question_text or "").strip()
-            if not new_text:
-                next_questions.append(q)
-                continue
-            next_questions.append(
-                {
-                    "id": f"{qid}-followup" if qid else f"question-followup-{len(next_questions)}",
-                    "text": new_text,
-                    "status": "open",
-                    "answer_text": None,
-                    "topic": parent_topic,
-                }
-            )
+            # Counter-question / unresolved hedge: reset the OQ to open
+            # regardless of topic. We used to create a `*-followup` OQ
+            # with classifier-generated text — that drift produced:
+            #  (a) for foundational parents: a duplicate alongside the
+            #      canonical monitor row
+            #  (b) for any parent: a long explanation-style OQ text that
+            #      kept the participant from re-answering cleanly
+            # The synthetic chat note quotes the participant's hedge text
+            # and `STUDY_CHAT_ANSWERED_OQ_CONTEXT` instructs the LLM to
+            # explain in chat. The OQ's original text is preserved so the
+            # user can answer the same question after reading.
+            next_questions.append(_reset_oq_to_open(q))
             continue
 
         if c.bucket == "assumption" and mode in ("agile", "demo"):
-            # Same foundational-topic guard for the assumption bucket:
-            # agile would otherwise auto-promote a hedged answer like
-            # *"please explain"* into an `algorithm: GA` assumption row
-            # based on the canonical OQ text mentioning GA first. The
-            # canonical stays unchanged; the explanation lives in chat.
+            # Foundational + hedged: don't auto-promote a counter-question
+            # into an algorithm/upload/goal assumption row. Reset and let
+            # the chat explanation flow handle it.
             if parent_is_foundational:
-                next_questions.append(_reset_foundational_oq(q))
+                next_questions.append(_reset_oq_to_open(q))
                 continue
             assumption_text = (c.assumption_text or "").strip()
             if not assumption_text:
