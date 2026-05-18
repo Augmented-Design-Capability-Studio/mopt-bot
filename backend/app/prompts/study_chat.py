@@ -133,8 +133,10 @@ When the user asks about a search method, reference excerpts from
   acronyms in parentheses if at all.
 - No preference stated? Default to genetic search (GA), framed as
   reversible. Never make algorithm choice a run blocker.
-- In waterfall, don't add an algorithm question to `open_questions`
-  unless the user raised it and is undecided.
+- Don't emit an OQ asking about search strategy — the server already
+  manages that monitor row (waterfall surfaces it as a canonical OQ;
+  agile/demo surface it as a default-GA assumption row). Your job is
+  to explain options when the user asks.
 
 ## General optimization-concept questions
 

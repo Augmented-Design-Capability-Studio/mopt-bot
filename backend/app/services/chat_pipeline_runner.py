@@ -1095,7 +1095,9 @@ def _run_derive_and_verify_stages(
         pipeline_status.fail_pipeline(
             message_id=message_id, paused_stage="deriving_config"
         )
-        return
+        # Raise so the orchestrator skips the post-stage settle_pipeline,
+        # which would otherwise clear meta.verifying despite the pause.
+        raise _PipelinePaused("deriving_config")
     pipeline_status.update_stage(
         message_id=message_id, stage_name="deriving_config", state="success"
     )
@@ -1211,7 +1213,7 @@ def _run_verify_config_stage(
             pipeline_status.fail_pipeline(
                 message_id=message_id, paused_stage="deriving_config"
             )
-            return
+            raise _PipelinePaused("deriving_config")
         pipeline_status.update_stage(
             message_id=message_id, stage_name="deriving_config", state="success"
         )
@@ -1268,6 +1270,7 @@ def _run_verify_config_stage(
     pipeline_status.fail_pipeline(
         message_id=message_id, paused_stage="verifying_config"
     )
+    raise _PipelinePaused("verifying_config")
 
 
 def _retry_brief_from_panel(

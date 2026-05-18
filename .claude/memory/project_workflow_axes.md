@@ -36,15 +36,16 @@ When auditing prompts or code:
 
 **Demo mode** is a third variant primarily for screen recordings: behaves like waterfall on OQs (no cap) but assumptions are essentially absent (closer to waterfall on axis 2). Demo is workflow-neutral in framing — never explain "agile vs waterfall" to demo participants.
 
-**Where the 4 axes show up in code:**
-- `optimization_gate.py`: axis 3 (the only mode branch in the gate).
+**Where the 4 axes show up in code (current):**
+- `optimization_gate.py:can_run_optimization`: axis 3 (waterfall blocks runs while any OQ has `status: "open"`).
 - `problem_brief.py:coerce_problem_brief_for_workflow`: axis 2 (waterfall converts assumption→OQ; demo drops assumptions).
-- `derivation.py:_enforce_session_monitors`: axis 4 (agile/demo: algorithm assumption row; waterfall: algorithm OQ).
-- `derivation.py:_sanitize_run_ack_patch_payload`: axis 2 (agile allows one provisional assumption on run-ack).
-- `derivation.py:_run_background_derivation` (algorithm safety net): axis 4 agile-only injection.
-- `goal_term_anchoring.py:evidence_kinds_for_workflow`: axis 2 (agile/demo: gathered + assumption count as evidence; waterfall: gathered only).
-- `services/llm.py:_visible_reply_consistency_block`: axes 1, 2, 4 (the `search_strategy_rule` + `question_rule` branch).
-- `services/workflow_compliance.py`: axes 1, 2 (waterfall: question→OQ check; agile/demo: claim→delta check).
-- `prompts/study_chat.py:STUDY_CHAT_WORKFLOW_*`: the four axes are the ONLY content of each workflow addendum.
+- `routers/sessions/derivation.py:_enforce_session_monitors` (monitor 3 branch): axis 4 (agile/demo emit `item-monitor-algorithm-default` assumption row; waterfall emits `oq-monitor-algorithm` OQ).
+- `services/goal_term_anchoring.py:evidence_kinds_for_workflow`: axis 2 (waterfall: `gathered` only; agile/demo: `gathered + assumption`).
+- `services/pipeline_verification.py:verify_brief_consistency`: axis 2 (waterfall flags any `kind: "assumption"` row) + axis 1/2 run-ack invariants (agile must add an assumption row; waterfall must add an OQ).
+- `prompts/study_chat.py:STUDY_CHAT_WORKFLOW_{WATERFALL,AGILE,DEMO}`: each addendum covers all 4 axes for its mode; nothing else.
+- `prompts/study_chat.py:STUDY_CHAT_RUN_ACK_{WATERFALL,AGILE,DEMO}`: post-run delta discipline per axis 2.
+- `prompts/study_chat.py:STUDY_CHAT_OQ_CLASSIFY_TASK` workflow gating: axis 2 (waterfall: hedged→new OQ; agile: hedged→assumption; demo: like waterfall).
+
+**Not mode-branched (intentionally symmetric):** OQ ownership (server owns foundational topics via `merge_problem_brief_patch` foundational-topic strip + `_enforce_session_monitors`), brief↔panel drift detection, pipeline shape, retry budget, failure UX.
 
 **Why this matters:** the study's whole point is comparing the two modes. Drift that collapses or scrambles the axes invalidates the comparison. Don't add mode-specific code paths or prompt rules for anything other than these four — and when you must, document which axis you're implementing.
