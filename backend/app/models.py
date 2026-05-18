@@ -70,6 +70,9 @@ class StudySession(Base):
     runs: Mapped[list["OptimizationRun"]] = relationship(
         "OptimizationRun", back_populates="session", cascade="all, delete-orphan"
     )
+    snapshots: Mapped[list["SessionSnapshot"]] = relationship(
+        "SessionSnapshot", back_populates="session", cascade="all, delete-orphan"
+    )
 
 
 class ChatMessage(Base):
@@ -102,6 +105,8 @@ class SessionSnapshot(Base):
     event_type: Mapped[str] = mapped_column(String(32), default="before_run")
     problem_brief_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     panel_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    session: Mapped["StudySession"] = relationship("StudySession", back_populates="snapshots")
 
 
 class OptimizationRun(Base):

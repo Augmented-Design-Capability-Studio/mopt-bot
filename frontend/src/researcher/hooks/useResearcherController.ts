@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   apiFetch,
+  apiFetchBlob,
   describeApiError,
   displayRunNumber,
   fetchProblemFiles,
@@ -489,6 +490,30 @@ export function useResearcherController() {
     await patchSession({ panel_config: panel });
   }
 
+  async function downloadSelectedSessionsDb() {
+    if (!savedToken.trim() || selectedIds.length === 0) return;
+    setBusy(true);
+    try {
+      const { blob, filename } = await apiFetchBlob("/sessions/export-db", savedToken.trim(), {
+        method: "POST",
+        body: JSON.stringify({ session_ids: selectedIds }),
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename ?? `mopt-sessions-${selectedIds.length}.db`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setError(null);
+      setNotice(`Downloaded ${selectedIds.length} session(s) as a SQLite file.`);
+    } catch (e) {
+      setNotice(null);
+      setError(describeApiError(e, "Download failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function exportJson() {
     if (!selected || !savedToken.trim()) return;
     try {
@@ -598,6 +623,7 @@ export function useResearcherController() {
     resyncBriefFromPanel,
     removeSession,
     removeSelectedSessions,
+    downloadSelectedSessionsDb,
     removeRun,
     pushParticipantStarterPanel,
     pushDummyParticipantUpload,

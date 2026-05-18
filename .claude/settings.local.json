@@ -172,7 +172,9 @@
       "PowerShell($env:PYTHONPATH = \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend;C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\"; & \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\smoke_placeholder.py)",
       "PowerShell($env:PYTHONPATH = \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend;C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\"; & \"C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\venv\\\\Scripts\\\\python.exe\" C:\\\\Users\\\\whyhowie\\\\git-repo\\\\mopt-bot\\\\backend\\\\tests\\\\smoke_placeholder.py 2>&1 | Select-Object -Last 60)",
       "Bash(../mopt-bot/.venv/Scripts/python.exe -m pytest backend/tests/ -q -m \"not live_gemini\")",
-      "Bash(./node_modules/.bin/tsc -p tsconfig.json --noEmit)"
+      "Bash(./node_modules/.bin/tsc -p tsconfig.json --noEmit)",
+      "Bash(.venv\\\\Scripts\\\\python.exe *)",
+      "Bash(./.venv/Scripts/python.exe *)"
     ]
   }
 }

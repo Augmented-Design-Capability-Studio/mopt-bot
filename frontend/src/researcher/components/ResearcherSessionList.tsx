@@ -11,6 +11,7 @@ type ResearcherSessionListProps = {
   onToggleSelect: (sessionId: string, checked: boolean) => void;
   onToggleSelectAll: (checked: boolean) => void;
   onRemoveSelected: () => void | Promise<void>;
+  onDownloadSelected: () => void | Promise<void>;
   onCreateSession: (body: {
     participant_number: string;
     workflow_mode: string;
@@ -29,6 +30,7 @@ export function ResearcherSessionList({
   onToggleSelect,
   onToggleSelectAll,
   onRemoveSelected,
+  onDownloadSelected,
   onCreateSession,
   testProblemsMeta,
   canCreateSession,
@@ -137,9 +139,19 @@ export function ResearcherSessionList({
           />
           Select all visible
         </label>
-        <button type="button" disabled={busy || selectedIds.length === 0} onClick={() => void onRemoveSelected()}>
-          Delete selected ({selectedIds.length})
-        </button>
+        <div style={{ display: "flex", gap: "0.4rem" }}>
+          <button
+            type="button"
+            disabled={busy || selectedIds.length === 0}
+            onClick={() => void onDownloadSelected()}
+            title="Save the selected sessions as a standalone .db file before you delete them."
+          >
+            Download selected (.db)
+          </button>
+          <button type="button" disabled={busy || selectedIds.length === 0} onClick={() => void onRemoveSelected()}>
+            Delete selected ({selectedIds.length})
+          </button>
+        </div>
       </div>
       {sessions.map((session) => (
         <div

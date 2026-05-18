@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sqlite3
+import tempfile
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from threading import Thread
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -604,6 +608,112 @@ def reset_session(
     db.commit()
     db.refresh(row)
     return helpers.session_to_out(row)
+
+
+@router.post("/export-db")
+def export_sessions_db(
+    background_tasks: BackgroundTasks,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Export a subset of sessions (and their child rows) into a fresh
+    SQLite file the researcher can download. Used as a "save before
+    delete" step — the UI selects sessions, downloads them as a
+    standalone .db, then deletes them from the live DB.
+
+    Only SQLite source DBs are supported; the response is the raw
+    SQLite file (octet-stream).
+    """
+    session_ids = body.get("session_ids") or []
+    if not isinstance(session_ids, list) or not all(isinstance(x, str) for x in session_ids):
+        raise HTTPException(status_code=400, detail="session_ids must be a list of strings")
+    if not session_ids:
+        raise HTTPException(status_code=400, detail="session_ids is empty")
+
+    settings = get_settings()
+    url = settings.database_url
+    if not url.startswith("sqlite:///"):
+        raise HTTPException(
+            status_code=501,
+            detail="export-db only supports SQLite source databases",
+        )
+    src_path = url[len("sqlite:///"):].lstrip("/")
+
+    # Subset to ids that actually exist — silently skip phantoms so the
+    # researcher gets a clean file even if the UI's list drifted from
+    # the DB by a row or two.
+    existing = {
+        r[0]
+        for r in db.query(StudySession.id).filter(StudySession.id.in_(session_ids)).all()
+    }
+    keep = [sid for sid in session_ids if sid in existing]
+    if not keep:
+        raise HTTPException(
+            status_code=404,
+            detail="None of the requested session_ids exist in the DB",
+        )
+
+    fd, out_path = tempfile.mkstemp(prefix="mopt-sessions-", suffix=".db")
+    os.close(fd)
+    src = sqlite3.connect(src_path)
+    dst = sqlite3.connect(out_path)
+    try:
+        # Defer FK enforcement so we can insert child rows even if
+        # they're loaded before their parent (table copy order is
+        # alphabetical via sqlite_master; doesn't matter for correctness).
+        dst.execute("PRAGMA foreign_keys=OFF")
+        # Copy schema (tables + indexes; views/triggers not used here).
+        for (sql,) in src.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type IN ('table','index') AND sql IS NOT NULL "
+            "  AND name NOT LIKE 'sqlite_%'"
+        ).fetchall():
+            dst.execute(sql)
+        # Copy the chosen sessions and their child rows. SQLite caps
+        # bound parameters at 999 per statement; chunk to stay safe.
+        chunk = 500
+
+        def _copy_filtered(table: str, id_column: str) -> None:
+            cols = [d[0] for d in src.execute(f"SELECT * FROM {table} LIMIT 0").description]
+            col_list = ",".join(cols)
+            ph = ",".join("?" * len(cols))
+            for i in range(0, len(keep), chunk):
+                batch = keep[i : i + chunk]
+                placeholders = ",".join("?" * len(batch))
+                rows = src.execute(
+                    f"SELECT {col_list} FROM {table} WHERE {id_column} IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                if rows:
+                    dst.executemany(f"INSERT INTO {table} ({col_list}) VALUES ({ph})", rows)
+
+        _copy_filtered("sessions", "id")
+        _copy_filtered("messages", "session_id")
+        _copy_filtered("runs", "session_id")
+        _copy_filtered("session_snapshots", "session_id")
+        dst.commit()
+    finally:
+        src.close()
+        dst.close()
+
+    # Best-effort cleanup once the response has finished streaming.
+    background_tasks.add_task(_safe_unlink, out_path)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"mopt-sessions-{len(keep)}-{ts}.db"
+    return FileResponse(
+        out_path,
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"X-Exported-Session-Count": str(len(keep))},
+    )
+
+
+def _safe_unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

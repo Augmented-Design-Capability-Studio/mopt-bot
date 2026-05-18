@@ -67,6 +67,48 @@ export async function apiFetch<T>(
   return data as T;
 }
 
+/** Same auth/path conventions as apiFetch but returns the raw response so
+ * callers can read it as a blob/binary. Used for endpoints that stream
+ * non-JSON payloads (e.g. exported SQLite files). On error the JSON
+ * `detail` (if any) is surfaced as ApiError, matching apiFetch. */
+export async function apiFetchBlob(
+  path: string,
+  token: string,
+  init: RequestInit = {},
+): Promise<{ blob: Blob; filename: string | null; headers: Headers }> {
+  const url = buildApiUrl(path);
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    ...(init.headers as Record<string, string> | undefined),
+  };
+  if (init.body !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(url, {
+    ...(method === "GET" || method === "HEAD" ? { cache: init.cache ?? "no-store" } : {}),
+    ...init,
+    headers,
+  });
+  if (!res.ok) {
+    // Best-effort parse for the JSON {detail: "..."} error shape.
+    let msg = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      if (typeof data === "object" && data && "detail" in data) {
+        msg = String((data as { detail: unknown }).detail);
+      }
+    } catch {
+      /* non-JSON error body — keep the HTTP status */
+    }
+    throw new ApiError(res.status, msg);
+  }
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename="?([^";]+)"?/i.exec(cd);
+  const filename = match ? match[1] : null;
+  return { blob: await res.blob(), filename, headers: res.headers };
+}
+
 /** Public metadata; no auth required (same origin or CORS). */
 export async function fetchTestProblemsMeta(): Promise<TestProblemMeta[]> {
   const url = buildApiUrl("/meta/test-problems");
