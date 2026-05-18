@@ -279,6 +279,62 @@ def _run_chat_pipeline_thread(
     from app.services import llm  # local import to avoid cycles
 
     try:
+        # ---- Resume guard: jump straight to the late stages ----
+        # Retrying from a `deriving_config` or `verifying_config` pause used
+        # to fall through the full S1→S5 pipeline, which re-ran S1 against a
+        # stale snapshot and either hung or overwrote the participant's
+        # in-flight state. Now we short-circuit: rebuild the retry_context
+        # for the late-stage helpers, then re-run only what's needed.
+        if resume_from in ("deriving_config", "verifying_config"):
+            retry_context: dict[str, Any] = {
+                "user_text": user_text,
+                "history_lines": history_lines,
+                "researcher_steers": researcher_steers,
+                "recent_runs_summary": recent_runs_summary,
+                "base_problem_brief": base_problem_brief,
+                "base_panel": base_panel,
+                "is_run_acknowledgement": is_run_acknowledgement,
+                "is_brief_edit_ack": is_brief_edit_ack,
+                "is_config_save": is_config_save,
+                "is_upload_context": is_upload_context,
+                "is_answered_open_question": is_answered_open_question,
+                "is_tutorial_active": is_tutorial_active,
+                "gate_status": gate_status,
+            }
+            with SessionLocal() as db:
+                row = db.get(StudySession, session_id)
+                latest_brief = helpers.problem_brief_dict(row) if row else base_problem_brief
+            if resume_from == "deriving_config":
+                _run_derive_and_verify_stages(
+                    message_id=message_id,
+                    session_id=session_id,
+                    revision=revision,
+                    brief=latest_brief,
+                    workflow_mode=workflow_mode,
+                    test_problem_id=test_problem_id,
+                    api_key=api_key,
+                    model_name=model_name,
+                    recent_runs_summary=recent_runs_summary,
+                    retry_context=retry_context,
+                )
+            else:  # verifying_config
+                _run_verify_config_stage(
+                    message_id=message_id,
+                    session_id=session_id,
+                    revision=revision,
+                    brief=latest_brief,
+                    workflow_mode=workflow_mode,
+                    test_problem_id=test_problem_id,
+                    api_key=api_key,
+                    model_name=model_name,
+                    recent_runs_summary=recent_runs_summary,
+                    derive_config=not (skip_derive_config or is_config_save),
+                    retry_context=retry_context,
+                )
+            pipeline_status.settle_pipeline(message_id=message_id)
+            _settle_session_state(session_id, revision)
+            return
+
         # ------------------ Stage 1: Drafting (S1 LLM call) ------------------
         if resume_from is None or resume_from == "drafting":
             pipeline_status.update_stage(
@@ -697,8 +753,6 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
     # Decrypt the Gemini key here (the original chat-turn path decrypts in
     # router._handle_post_participant_message before launching the runner;
     # the resume path bypasses that, so do it explicitly).
-    # Earlier this referenced ``row.gemini_api_key_encrypted`` which doesn't
-    # exist on the model — every Retry click 500'd on AttributeError.
     from app.crypto_util import decrypt_secret
 
     try:
@@ -706,6 +760,13 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
     except Exception:
         log.exception("Failed to decrypt gemini key during pipeline resume")
         api_key = ""
+    # Derive the flavor-specific flags from the pipeline flavor so a Retry
+    # from a config-save / brief-edit / run-ack turn re-runs with the right
+    # context. Defaulting all to False (the prior behaviour) caused the
+    # resumed pipeline to take the wrong S4-vs-skip branch.
+    is_config_save = flavor == "config_edit_ack"
+    is_brief_edit_ack = flavor == "brief_edit_ack"
+    is_run_acknowledgement = flavor == "run_ack"
     return dict(
         session_id=session_id,
         revision=int(row.processing_revision or 0),
@@ -720,15 +781,15 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
         recent_runs_summary=None,
         base_problem_brief=base_brief,
         base_panel=base_panel,
-        is_run_acknowledgement=False,
-        is_brief_edit_ack=False,
-        is_config_save=False,
+        is_run_acknowledgement=is_run_acknowledgement,
+        is_brief_edit_ack=is_brief_edit_ack,
+        is_config_save=is_config_save,
         is_upload_context=False,
         is_answered_open_question=False,
         is_tutorial_active=False,
         test_problem_id=row.test_problem_id,
         gate_status=None,
-        skip_derive_config=False,
+        skip_derive_config=is_config_save,
     )
 
 

@@ -634,18 +634,25 @@ export function useClientSessionActions({
       const tutorialPatch = patchForTutorialEvent("definition-saved", nextSession);
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel) {
-        const chatMessage = options?.chatNote?.trim()
-          ? options.chatNote.trim()
-          : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
         // When at least one OQ flipped from open → answered in this save, take
         // the OQ-answered branch on the backend instead of the generic
         // definition-save branch. The OQ flow injects a dedicated prompt
         // block that distinguishes substantive answers from counter-questions
-        // (e.g. "what does this mean?") so the agent explains instead of
-        // mis-promoting the counter-question into a gathered row.
-        const contextKind = flippedOqIds.length > 0
-          ? "open_question_answered"
-          : "definition_save";
+        // (e.g. "explain the search strategies") so the agent explains
+        // instead of mis-promoting the counter-question into a gathered row.
+        // Also swap the chat-note copy: the default ("acknowledge the updated
+        // gathered info…") biases the LLM toward summarising even when a
+        // counter-question is in flight. The OQ-answered variant primes for
+        // per-OQ handling and explanation-first replies.
+        const oqAnswered = flippedOqIds.length > 0;
+        const oqCount = flippedOqIds.length;
+        const defaultChatMessage = oqAnswered
+          ? `I just filled in ${oqCount === 1 ? "an open question" : `${oqCount} open questions`}. Summary: ${changedSummary}. Please read each newly-filled answer field on its own: if I gave a real answer, capture it in the brief; if I asked you to explain something instead, lead your reply with that explanation and leave the question open. Acknowledge any other gathered or assumption edits briefly after.`
+          : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
+        const chatMessage = options?.chatNote?.trim()
+          ? options.chatNote.trim()
+          : defaultChatMessage;
+        const contextKind = oqAnswered ? "open_question_answered" : "definition_save";
         void postContextMessage(chatMessage, true, {
           skipHiddenBriefUpdate: !options?.chatNote?.trim(),
           contextKind,

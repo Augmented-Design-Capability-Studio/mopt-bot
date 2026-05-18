@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -230,16 +231,29 @@ def session_to_out(row: StudySession) -> SessionOut:
     tpid = str(getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID)
     panel_payload = panel_dict(row)
     brief_payload = problem_brief_dict(row)
-    try:
-        from app.routers.sessions.sync import compute_brief_panel_drift
+    # Skip drift detection while a derivation is mid-flight: brief and panel
+    # are written in separate stages of the chat pipeline (S3 apply persists
+    # the brief; S4 derive persists the panel), so during the window between
+    # them the two are intentionally out of sync. Computing drift in that
+    # window surfaces phantom errors like "travel_time — in Config not in
+    # brief" even though the apply stage is about to mirror it. Drift is
+    # only meaningful at rest — when both stores have settled.
+    proc_state = processing_state(row)
+    brief_pending = str(getattr(proc_state, "brief_status", "") or "") == "pending"
+    config_pending = str(getattr(proc_state, "config_status", "") or "") == "pending"
+    if brief_pending or config_pending:
+        drift: list[dict[str, Any]] = []
+    else:
+        try:
+            from app.routers.sessions.sync import compute_brief_panel_drift
 
-        drift = compute_brief_panel_drift(
-            problem_brief=brief_payload,
-            panel_config=panel_payload,
-            test_problem_id=tpid,
-        )
-    except Exception:  # pragma: no cover — defensive, drift is diagnostic-only
-        drift = []
+            drift = compute_brief_panel_drift(
+                problem_brief=brief_payload,
+                panel_config=panel_payload,
+                test_problem_id=tpid,
+            )
+        except Exception:  # pragma: no cover — defensive, drift is diagnostic-only
+            drift = []
     return SessionOut(
         id=row.id,
         created_at=row.created_at,
@@ -251,7 +265,7 @@ def session_to_out(row: StudySession) -> SessionOut:
         panel_config=panel_payload,
         problem_brief=brief_payload,
         brief_panel_drift=drift,
-        processing=processing_state(row),
+        processing=proc_state,
         optimization_allowed=row.optimization_allowed,
         optimization_runs_blocked_by_researcher=row.optimization_runs_blocked_by_researcher,
         allow_agent_autorun=bool(getattr(row, "allow_agent_autorun", False)),

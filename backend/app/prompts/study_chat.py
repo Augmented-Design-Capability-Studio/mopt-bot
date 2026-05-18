@@ -463,101 +463,6 @@ STUDY_CHAT_RUN_ACK_DEMO = """
 
 
 # ---------------------------------------------------------------------------
-# Open-question maintenance — used by the main-turn LLM().
-# Single focused call per chat turn that owns the OQ list end-to-end:
-# adds, drops, keeps, rephrases. Replaces ad-hoc add/prune signals.
-# ---------------------------------------------------------------------------
-
-STUDY_CHAT_OQ_MAINTAIN_TASK = """
-## Definition-maintenance task
-
-You return the FINAL state of two lists this turn:
-1. **Open questions** — full set of unresolved clarifying questions
-   (all workflows).
-2. **Assumptions** (agile/demo only) — per-row decisions on
-   `kind: "assumption"` items.
-
-Inputs (in the user payload): `workflow_mode`, `user_message`,
-`visible_reply`, `current_open_questions`, `current_assumptions`
-(agile/demo only), `recent_gathered`.
-
-### Open-question decisions
-
-- **ADD** when `visible_reply` asks a clarifying question the user
-  hasn't answered. This is a MUST, not a heuristic — if the reply ends
-  with a question to the user and no existing OQ covers it, emit one.
-  Phrase as a plain question with options inline.
-- **DROP** when the user dismissed / deferred / answered the OQ
-  ("skip", "not yet", "later", "we don't need that", or content already
-  in `recent_gathered`).
-- **KEEP** otherwise — echo the existing `id`.
-- **REPHRASE** by keeping the `id` and tweaking only `text` (never
-  change which decision the question asks about).
-- **NEVER add an OQ for permission-to-run.** "Ready to run?",
-  "Shall I start?", "Click Run when ready" are run invitations, not
-  open questions — the inline Run button on the bubble handles them.
-
-System-managed OQs (ids starting with `oq-monitor-`) belong to a
-server-side enforcer. Each monitor OQ corresponds to one structured
-``topic_tag`` value:
-
-- `oq-monitor-upload` → topic `"upload"` (asking the user to upload data).
-- `oq-monitor-goal` → topic `"primary_goal"` (asking the user to pick a
-  primary optimization goal — travel time, time windows, workload
-  balance, etc.).
-- `oq-monitor-algorithm` → topic `"search_strategy"` (waterfall only —
-  asking the user to pick a search method like GA / PSO / SA).
-
-Rules for these topics:
-1. If a monitor OQ is in `current_open_questions`, KEEP it (echo its id).
-2. **For any new OQ you emit on one of these topics, set
-   `topic_tag` to the matching enum value.** The server uses the tag
-   to dedup against the canonical monitor OQ — if the monitor is
-   already present, your tagged OQ will be suppressed automatically
-   (no friction for you; just declare the topic honestly).
-3. Omit `topic_tag` on any OQ that doesn't fit one of the three
-   monitor topics. Free-form clarifying questions (e.g. *"how many
-   drivers are available?"*, *"what's the typical shift length?"*)
-   leave it null.
-
-### Assumption decisions (agile/demo only)
-
-For each `current_assumptions` row, pick one action by id:
-- **keep** — unchanged.
-- **rephrase** — small edit (e.g. wording / value tweak) without a
-  lock-in. Provide `rephrased_text`.
-- **drop** — user dismissed / contradicted / removed it ("scrap that",
-  "forget that", "no don't add that"), or a later message supersedes
-  it with an incompatible choice.
-- **promote_to_gathered** — user explicitly confirmed ("yes", "lock
-  that in", "go with that"), OR locked a value ("set lateness to 12"
-  on a row that previously said "around 10"). Provide `rephrased_text`
-  carrying the locked-in sentence; the server flips kind to gathered
-  and source to user (the user originated the lock-in).
-
-Empty `current_assumptions` → empty `assumption_actions`. Never
-invent decisions for ids you didn't receive.
-
-### Workflow rules
-
-- **WATERFALL**: cap 3 active OQs. Be active on adds AND drops — the
-  run gate depends on accuracy. No assumptions.
-- **AGILE**: keep OQs LEAN — only true must-choose forks (zero is OK).
-  Agile expresses provisional choices through assumptions, not
-  questions. Be active on the assumption side (drop dismissed, promote
-  confirmed).
-- **DEMO**: like waterfall on OQs (no cap); assumptions as in agile.
-
-### Output
-
-`open_questions`: full updated list, items `{id?: string, text: string}`
-(echo id for kept/rephrased, omit for new — server assigns).
-`assumption_actions`: per-id decisions. `rephrased_text` required for
-`rephrase` and `promote_to_gathered`.
-""".strip()
-
-
-# ---------------------------------------------------------------------------
 # Open-question answer classifier — used by classify_answered_open_questions().
 # Routes each just-answered OQ into one of three buckets per workflow mode.
 # ---------------------------------------------------------------------------
@@ -676,8 +581,7 @@ STUDY_CHAT_RUN_ACK_AGILE = """
   you're ready.") AFTER you've named the commitment. Asking to run
   without first committing the change you just discussed is a
   regression — the participant sees "I suggest X. Ready to run?" and
-  expects X to be in place. Permission-to-run is NEVER an open
-  question; the inline Run button on the bubble handles it.
+  expects X to be in place.
 """.strip()
 
 STUDY_CHAT_RUN_ACK_WATERFALL = """
@@ -705,8 +609,7 @@ STUDY_CHAT_RUN_ACK_WATERFALL = """
   point the spec is covered and inviting another run is appropriate
   (sets `is_run_invitation=true`). If you raised a new OQ this turn,
   wait for the answer; inviting a run while a proposal is unanswered
-  is a regression. Permission-to-run is NEVER an open question; the
-  inline Run button handles it.
+  is a regression.
 """.strip()
 
 
@@ -724,63 +627,46 @@ STUDY_CHAT_RUN_ACK_WATERFALL = """
 # ---------------------------------------------------------------------------
 
 STUDY_CHAT_ITEMS_DISCIPLINE = """
-## problem_brief_patch.items rules — follow these exactly
+## problem_brief_patch.items rules
 
 **Coherent fact set.** When a newer fact supersedes an older one (new
 algorithm choice, updated population size, changed weight target), keep
-only the latest version — never carry contradictory duplicates.
+only the latest version — never carry contradictory duplicates. Omit
+untouched fields.
 
-**Only include keys you are changing.** Omit untouched fields.
+**Goal terms are structured.** Commit goal terms via
+``goal_terms[<key>]`` with ``weight``, ``type``
+(``objective``/``soft``/``hard``/``custom``), and
+``ambiguity_note.chosen_rationale`` (one short sentence on why this
+term — surfaces as the reasoning clause on the canonical Definition
+row). The server synthesizes the matching ``config-weight-<key>``
+items[] row as *"{Label} ({type}, weight N) — {reasoning}."* — don't
+emit a parallel anchor row. ``evidence_item_ids`` cites supporting
+context items, not the goal-term row itself.
 
-**Holistic cleanup.** When the user asks to clean up, consolidate,
-deduplicate, reorganize, or remove definition entries, set
-``cleanup_mode=true`` AND ``replace_editable_items=true`` and emit a
-coherent **full** replacement list across `gathered` + `assumption`
-rows. Incremental append-style edits are wrong on cleanup turns. For
-``open_questions`` on cleanup, either omit the field (leave the list
-unchanged) or send a deliberate full list with
-``replace_open_questions=true`` — including to drop moot questions, or
-``open_questions: []`` only to clear them all intentionally.
-
-**Goal terms are structured, not prose.** When committing or retuning a
-goal term (objective / soft / hard / custom), put the weight, type, and
-reasoning into ``goal_terms[<key>]``:
-- ``weight``: numeric emphasis.
-- ``type``: ``objective`` / ``soft`` / ``hard`` / ``custom``.
-- ``ambiguity_note.chosen_rationale``: one short sentence on why this
-  term — surfaces as the user-facing reasoning clause on the canonical
-  Definition row. Required on any newly-introduced term so the row reads
-  as a complete natural-language statement. (For unambiguous mappings you
-  may omit ``considered_alternatives``; the rationale alone is enough.)
-
-The server synthesizes a single canonical ``config-weight-<key>`` items[]
-row from each ``goal_terms`` entry — *"{Label} ({type}, weight N) —
-{reasoning}."* — so you do **not** need to emit a parallel anchor row for
-the term yourself. ``evidence_item_ids`` still cites supporting context
-items (uploads, user-quoted constraints) but never a goal-term anchor row.
-
-**No "Goal:" / "Objective:" prefixed items.** The goal summary belongs in
-``goal_summary`` (the dedicated field at the top of the brief), not as an
-items[] row. Never start an items[] text with ``Goal:``, ``Objective:``,
-``Primary goal:``, or similar headings — the server will strip the prefix
-and re-route the content to ``goal_summary`` if it leaks through, which
-is wasted ceremony.
+**Goal summary lives in ``goal_summary``**, not items[]. Never start
+an items[] text with ``Goal:``, ``Objective:``, ``Primary goal:``, or
+similar headings; the server strips them and re-routes to
+``goal_summary``.
 
 **Other items[] rows are natural language.** Gathered facts and
-assumptions that are NOT goal terms (data context, scale, entities,
-operational caveats, etc.) stay as free-form natural-language statements.
-Keep one fact per row, no bundled comma-lists.
+assumptions about non-goal-term aspects (data context, scale,
+entities, operational caveats, etc.) stay as free-form
+natural-language statements, one fact per row.
 
-**Incremental vs cleanup.** "At most one new objective or constraint
-per turn" applies to **incremental** updates. A holistic cleanup
-snapshot must still list every current term as its own row — many
-rows are expected.
+**Holistic cleanup.** When the user asks to clean up / consolidate /
+deduplicate, set ``cleanup_mode=true`` AND ``replace_editable_items=true``
+and emit a coherent **full** replacement list. Incremental
+append-style edits are wrong on cleanup turns. For ``open_questions``
+on cleanup, either omit the field (leave the list unchanged) or send a
+deliberate full list with ``replace_open_questions=true``.
+
+**Incremental cap.** Outside cleanup, prefer at most one new objective
+or constraint per turn.
 
 **No self-descriptions.** Brief items describe the problem (goals,
 constraints, modelling choices, config slots) — never the agent's
-role, capabilities, or session context. Rows like *"I assist with
-translating business goals…"* or *"I focus on helping you weigh
-priorities…"* must never appear as any kind of items[] entry.
+role or capabilities.
 """.strip()
 
 
@@ -1376,13 +1262,28 @@ accordingly.
   close-the-question flow. Set `replace_open_questions=true` only when
   your full list consolidates the change.
 
-- **Counter-question / clarification request** — the text asks for an
-  explanation instead of answering (e.g. *"can you explain X?"*, *"what
-  does Y mean?"*, *"what would each choice change?"*). Do NOT promote it
-  into a gathered row. Instead:
-    1. In `assistant_message`, give a short, concrete explanation of the
-       concept the participant asked about. Quote the OQ's original
-       options if relevant so the participant can pick after reading.
+  - **Structural commitment is required** when the answer names a
+    goal-term concept or an algorithm choice. Populate the matching
+    `goal_terms[<key>]` (with `weight` + `type`) AND the matching
+    structured carrier — e.g. for "minimize travel time" emit
+    `goal_terms.travel_time = { weight, type: "objective", ... }`; for
+    "use GA" emit `goal_terms.search_strategy.properties.algorithm =
+    "GA"`. Without the structural commitment the server-side monitor
+    will re-add the canonical OQ for the same topic on the next turn —
+    producing the exact duplicate the dedup is meant to prevent.
+
+- **Counter-question / clarification request** — the text asks the agent
+  to explain rather than commit to a choice. This includes both
+  question-marked phrasings (*"can you explain X?"*, *"what does Y
+  mean?"*) AND **imperative explanation requests** (*"explain the search
+  strategies"*, *"describe what workload balance does"*, *"tell me about
+  the algorithm options"*, *"compare GA vs PSO"*). Do NOT promote it into
+  a gathered row. Instead:
+    1. **Lead the `assistant_message` with the explanation** — concrete,
+       2–4 sentences, naming the OQ's original options if any so the
+       participant can pick after reading. Don't open the reply with
+       generic "I've noted the update…" boilerplate; the explanation is
+       what the participant is waiting for.
     2. **Re-open the OQ**: emit the same OQ in
        `problem_brief_patch.open_questions` with the original `text`,
        `status: "open"`, and `answer_text: null`. Set
@@ -1390,14 +1291,19 @@ accordingly.
     3. Do NOT add a NEW OQ on this turn — the existing one is still
        waiting on a real answer.
 
-When multiple OQs were edited in one save, handle each independently —
-some can promote, some can re-open in the same turn.
+When multiple OQs were edited in one save (some answered substantively,
+some asking for clarification), handle each independently AND **lead the
+visible reply with the explanation(s)** before acknowledging the
+promotions. The participant is most likely waiting on the explanation;
+the ack can follow in a sentence or two.
 
-You decide which bucket the text falls into by reading it — no keyword
-rule. A trailing "?" with interrogative framing usually means
-counter-question; a declarative or imperative phrase usually means
-answer. When the text is ambiguous, prefer the counter-question branch:
-explaining is safer than mis-promoting a half-answer into the brief.
+Classification rule (no keyword test — read the text and decide):
+- Substantive answer = declarative or imperative naming a concrete
+  decision, value, constraint, or choice from the question's options.
+- Counter-question = anything asking the agent to elaborate, explain,
+  describe, compare, or define, with OR without a question mark.
+- When the text is ambiguous, prefer the counter-question branch:
+  explaining is safer than mis-promoting a half-answer into the brief.
 """.strip()
 
 

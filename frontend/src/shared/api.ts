@@ -267,6 +267,13 @@ export type ProblemBriefQuestion = {
   text: string;
   status: "open" | "answered";
   answer_text: string | null;
+  /** Topic classifier the LLM emits on every OQ. The first three values
+   *  are server-managed — the server surfaces canonical foundational OQs
+   *  (oq-monitor-upload / oq-monitor-goal / oq-monitor-algorithm) and
+   *  removes them when the topic is covered, so any LLM-emitted OQ with
+   *  one of those topics is dropped at merge. Free-form clarifications
+   *  use ``"other"``. */
+  topic: "upload" | "primary_goal" | "search_strategy" | "other";
 };
 
 export type ProblemBrief = {

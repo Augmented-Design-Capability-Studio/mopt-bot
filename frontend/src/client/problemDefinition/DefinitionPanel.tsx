@@ -453,7 +453,15 @@ export function DefinitionPanel({
       ...problemBrief,
       open_questions: [
         ...openQuestions,
-        { id: makeId("question-open"), text, status: "open" as ProblemBriefQuestion["status"], answer_text: null },
+        {
+          id: makeId("question-open"),
+          text,
+          status: "open" as ProblemBriefQuestion["status"],
+          answer_text: null,
+          // Researcher-side editor creates only free-form clarifications;
+          // foundational topics are server-owned.
+          topic: "other",
+        },
       ],
     });
   }

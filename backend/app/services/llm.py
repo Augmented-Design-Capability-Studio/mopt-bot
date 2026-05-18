@@ -197,20 +197,21 @@ _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
     "properties": {
         "id": {"type": "string"},
         "text": {"type": "string"},
-        "topic_tag": {
+        "topic": {
             "type": "string",
-            "enum": ["upload", "primary_goal", "search_strategy"],
+            "enum": ["upload", "primary_goal", "search_strategy", "other"],
             "description": (
-                "Optional. Set when this OQ asks about one of the three "
-                "server-managed monitor topics. The server uses the tag to "
-                "dedup against the canonical monitor OQ (oq-monitor-upload / "
-                "oq-monitor-goal / oq-monitor-algorithm) so the participant "
-                "never sees two OQs asking the same thing. Omit (or leave "
-                "null) on any free-form clarifying question."
+                "Required classifier. Set to one of `upload`, `primary_goal`, "
+                "or `search_strategy` ONLY if your question targets that "
+                "foundational topic — those topics are server-managed and any "
+                "OQ tagged with them is dropped at merge time (the server "
+                "surfaces and removes its own canonical row). For every other "
+                "clarifying question (driver count, shift length, term "
+                "meaning, etc.) set `other`. Always populated; never null."
             ),
         },
     },
-    "required": ["id", "text"],
+    "required": ["id", "text", "topic"],
 }
 
 _PROBLEM_BRIEF_UNMODELED_REQUEST_SCHEMA: dict[str, Any] = {
@@ -921,21 +922,31 @@ def _build_main_turn_schema(test_problem_id: str | None) -> dict[str, Any]:
 
 _MAIN_TURN_OUTPUT_RULES = (
     "## Output rules\n\n"
-    "You emit ONE structured response carrying everything the server needs for "
-    "this turn — visible reply, intent flags, brief patch, and (agile/demo only) "
-    "per-row assumption decisions. The server does NOT call a separate brief LLM. "
-    "Plan the patch in lockstep with the visible reply so claims and structural "
-    "deltas stay consistent — the server's verification step will flag mismatches "
-    "and force a retry that costs an extra round-trip.\n\n"
-    "Algorithm carrier: when your visible reply commits to a search-strategy "
-    "algorithm (agile starting default, user-named choice, post-result switch), "
-    "ALSO populate `problem_brief_patch.goal_terms.search_strategy.properties."
-    "algorithm` with one of: GA, PSO, SA, SwarmSA, ACOR. The panel-derive step "
-    "reads this structured field — don't rely on items[] prose extraction.\n\n"
-    "Maintenance: include the full new open_questions list when you intend a "
-    "replacement (set `replace_open_questions=true`); otherwise emit only the "
-    "rows you are adding/keeping. Use `assumption_actions` for explicit "
-    "per-row decisions on existing assumption rows in agile/demo."
+    "You emit ONE structured response: visible reply, intent flags, brief "
+    "patch, and (agile/demo only) per-row assumption decisions. Plan the "
+    "patch in lockstep with the visible reply — the server's verification "
+    "will flag mismatches and force a retry.\n\n"
+    "**Goal summary.** When committing the FIRST primary objective and "
+    "`current_problem_brief.goal_summary` is empty, set "
+    "`problem_brief_patch.goal_summary` to a short qualitative sentence "
+    "(e.g. *\"Minimize total travel time.\"*). No numbers, algorithm names, "
+    "or budgets.\n\n"
+    "**Algorithm carrier.** When committing a search-strategy algorithm, "
+    "populate `problem_brief_patch.goal_terms.search_strategy.properties."
+    "algorithm` with one of: GA, PSO, SA, SwarmSA, ACOR.\n\n"
+    "**Open questions.** Every OQ you emit MUST have a `topic` field set to "
+    "one of `upload`, `primary_goal`, `search_strategy`, or `other`. The "
+    "first three are server-managed — the server surfaces canonical rows "
+    "for uncovered foundational topics and removes them when covered, so "
+    "any OQ you tag with one of those topics is dropped at merge. For your "
+    "own clarifications (driver count, term meaning, ambiguity forks, etc.) "
+    "set `topic: \"other\"`. ADD an `other` OQ when your visible reply "
+    "asks a question; DROP one when the user has answered, deferred, or "
+    "the topic has resolved; KEEP otherwise (echo the existing id). Never "
+    "emit an OQ for permission-to-run.\n\n"
+    "Set `replace_open_questions=true` only when you're sending the full "
+    "new list. Use `assumption_actions` for per-row decisions on existing "
+    "assumption rows (agile/demo)."
 )
 
 

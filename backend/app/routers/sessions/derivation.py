@@ -325,6 +325,13 @@ def apply_brief_patch_with_cleanup(
     # synthesized one.
     merged = _synthesize_canonical_weight_items(merged, test_problem_id)
 
+    # ``goal_summary`` fallback: when the LLM commits a primary objective
+    # but forgets to populate the headline ``goal_summary`` field, derive
+    # one from the goal-term label so the Definition's top section reflects
+    # what's actually committed. Only fires when the field is empty — any
+    # LLM-set value wins.
+    merged = _autofill_goal_summary_from_objective(merged, test_problem_id)
+
     consolidated, run_meta = consolidate_run_summary(
         merged,
         recent_runs_summary=recent_runs_summary,
@@ -334,6 +341,66 @@ def apply_brief_patch_with_cleanup(
     )
     consolidated = _enforce_session_monitors(consolidated, workflow_mode)
     return consolidated, {"removed_total": 0, **run_meta}
+
+
+def _autofill_goal_summary_from_objective(
+    brief: dict[str, Any], test_problem_id: str | None
+) -> dict[str, Any]:
+    """If ``goal_summary`` is empty and at least one ``goal_terms`` entry
+    has ``type: "objective"`` with positive weight, synthesize a short
+    qualitative sentence from the goal-term label(s) so the Definition's
+    headline reflects the committed objective.
+
+    Single objective → *"Minimize <label>."*; multiple objectives → a
+    short conjunction. The LLM is supposed to set ``goal_summary`` itself
+    (per prompt discipline) but this fallback prevents the headline from
+    staying blank when it forgets — observed on plain "minimize travel
+    time" answers where ``goal_terms.travel_time`` got committed but
+    ``goal_summary`` stayed empty.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    if str(brief.get("goal_summary") or "").strip():
+        return brief
+    goal_terms = brief.get("goal_terms")
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return brief
+    objective_labels: list[str] = []
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id)
+        labels = port.weight_item_labels() or {}
+    except Exception:  # pragma: no cover — defensive
+        labels = {}
+    for key, entry in goal_terms.items():
+        if key == "search_strategy":
+            continue
+        if not isinstance(entry, dict):
+            continue
+        gtype = str(entry.get("type") or "").strip().lower()
+        if gtype != "objective":
+            continue
+        weight = entry.get("weight")
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool):
+            continue
+        if weight <= 0:
+            continue
+        label = labels.get(key) or key.replace("_", " ")
+        # Keep the label lowercase mid-sentence so it reads naturally.
+        objective_labels.append(label[0].lower() + label[1:] if label else key)
+    if not objective_labels:
+        return brief
+    if len(objective_labels) == 1:
+        summary = f"Minimize {objective_labels[0]}."
+    elif len(objective_labels) == 2:
+        summary = f"Minimize {objective_labels[0]} and {objective_labels[1]}."
+    else:
+        head = ", ".join(objective_labels[:-1])
+        summary = f"Minimize {head}, and {objective_labels[-1]}."
+    next_brief = dict(brief)
+    next_brief["goal_summary"] = summary
+    return next_brief
 
 
 # Stable ids for the three server-side monitor rows. Idempotent: re-emission
@@ -360,17 +427,6 @@ _MONITOR_ITEM_ALGORITHM_TEXT = (
     "Search strategy is set to genetic search (GA) as a starting point — "
     "change anytime."
 )
-
-# Monitor topic_tag → canonical monitor OQ id. The maintain LLM emits
-# ``topic_tag`` on any new OQ that asks about a monitor-managed topic;
-# the server uses this map to suppress those duplicates when the canonical
-# monitor OQ is already active.
-_MONITOR_TOPIC_TAG_TO_OQ_ID: dict[str, str] = {
-    "upload": _MONITOR_OQ_UPLOAD_ID,
-    "primary_goal": _MONITOR_OQ_GOAL_ID,
-    "search_strategy": _MONITOR_OQ_ALGORITHM_ID,
-}
-
 
 def _enforce_session_monitors(
     brief: dict[str, Any], workflow_mode: str | None
@@ -433,12 +489,13 @@ def _enforce_session_monitors(
             if not (isinstance(i, dict) and str(i.get("id") or "") == item_id)
         ]
 
-    def _append_oq(oq_id: str, text: str) -> None:
+    def _append_oq(oq_id: str, text: str, topic: str) -> None:
         open_questions.append({
             "id": oq_id,
             "text": text,
             "status": "open",
             "answer_text": None,
+            "topic": topic,
         })
 
     # Monitor 1: upload
@@ -449,7 +506,7 @@ def _enforce_session_monitors(
     if has_upload:
         _drop_oq(_MONITOR_OQ_UPLOAD_ID)
     elif not _has_oq(_MONITOR_OQ_UPLOAD_ID):
-        _append_oq(_MONITOR_OQ_UPLOAD_ID, _MONITOR_OQ_UPLOAD_TEXT)
+        _append_oq(_MONITOR_OQ_UPLOAD_ID, _MONITOR_OQ_UPLOAD_TEXT, "upload")
 
     # Monitor 2: goal term
     goal_terms = next_brief.get("goal_terms")
@@ -457,7 +514,7 @@ def _enforce_session_monitors(
     if has_goal:
         _drop_oq(_MONITOR_OQ_GOAL_ID)
     elif not _has_oq(_MONITOR_OQ_GOAL_ID):
-        _append_oq(_MONITOR_OQ_GOAL_ID, _MONITOR_OQ_GOAL_TEXT)
+        _append_oq(_MONITOR_OQ_GOAL_ID, _MONITOR_OQ_GOAL_TEXT, "primary_goal")
 
     # Monitor 3: search strategy
     has_algorithm = algorithm_mentioned_in_brief(items, workflow_mode=workflow)
@@ -477,53 +534,16 @@ def _enforce_session_monitors(
         if has_algorithm:
             _drop_oq(_MONITOR_OQ_ALGORITHM_ID)
         elif not _has_oq(_MONITOR_OQ_ALGORITHM_ID):
-            _append_oq(_MONITOR_OQ_ALGORITHM_ID, _MONITOR_OQ_ALGORITHM_TEXT)
+            _append_oq(_MONITOR_OQ_ALGORITHM_ID, _MONITOR_OQ_ALGORITHM_TEXT, "search_strategy")
         # Drop any agile-mode assumption that may be lingering.
         _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
 
-    # ---- Tag-based dedup ----
-    # The main-turn LLM may emit its own OQ asking about one of the three
-    # monitor-managed topics (e.g. "What is your primary goal?"). When that
-    # happens, the bubble would otherwise show TWO OQs covering the same
-    # ground — the LLM's plus the canonical monitor's. We dedup structurally
-    # via the OQ's ``topic_tag`` enum: any non-monitor OQ tagged with an
-    # active monitor's topic gets dropped in favour of the canonical monitor
-    # OQ (which has a stable id and a well-worded prompt).
-    #
-    # The tag is also stripped from any surviving OQ before persistence — it's
-    # a one-shot routing hint, not brief state, so future turns don't have to
-    # re-emit it just to preserve it.
-    active_monitor_oq_ids: set[str] = set()
-    if not has_upload:
-        active_monitor_oq_ids.add(_MONITOR_OQ_UPLOAD_ID)
-    if not has_goal:
-        active_monitor_oq_ids.add(_MONITOR_OQ_GOAL_ID)
-    if not is_agile_or_demo and not has_algorithm:
-        active_monitor_oq_ids.add(_MONITOR_OQ_ALGORITHM_ID)
-    tag_to_active_monitor_id = {
-        tag: oq_id
-        for tag, oq_id in _MONITOR_TOPIC_TAG_TO_OQ_ID.items()
-        if oq_id in active_monitor_oq_ids
-    }
-    deduped_open_questions: list[dict[str, Any]] = []
-    for q in open_questions:
-        if not isinstance(q, dict):
-            deduped_open_questions.append(q)
-            continue
-        q_id = str(q.get("id") or "")
-        tag = q.get("topic_tag")
-        is_monitor_oq = q_id in _MONITOR_TOPIC_TAG_TO_OQ_ID.values()
-        if (
-            not is_monitor_oq
-            and isinstance(tag, str)
-            and tag in tag_to_active_monitor_id
-        ):
-            # Suppress in favour of the active canonical monitor OQ.
-            continue
-        if "topic_tag" in q:
-            q = {k: v for k, v in q.items() if k != "topic_tag"}
-        deduped_open_questions.append(q)
-    open_questions = deduped_open_questions
+    # No tag-dedup loop is needed any more: foundational-topic OQs from the
+    # LLM are stripped at merge time in `merge_problem_brief_patch` (the
+    # required `topic` enum on the OQ schema gives the boundary check
+    # everything it needs). The only OQs that reach this point are
+    # canonical monitor rows we added above plus the LLM's `topic="other"`
+    # clarifications, and those never duplicate each other by construction.
 
     next_brief["items"] = items
     next_brief["open_questions"] = open_questions

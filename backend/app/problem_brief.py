@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 from copy import deepcopy
 from typing import Any
 from uuid import uuid4
+
+log = logging.getLogger(__name__)
 
 CONFIG_ITEM_PREFIX = "config-"
 _OPEN_QUESTION_TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -362,25 +365,29 @@ def _normalize_question_answer_text(raw: Any) -> str | None:
     return text or None
 
 
-_VALID_QUESTION_TOPIC_TAGS: frozenset[str] = frozenset(
+FOUNDATIONAL_OQ_TOPICS: frozenset[str] = frozenset(
     {"upload", "primary_goal", "search_strategy"}
 )
+"""Topics whose OQs the server (`_enforce_session_monitors`) owns. The
+main-turn LLM must NOT emit OQs with one of these `topic` values — those
+get stripped at merge. The canonical monitor rows are added/removed
+based on coverage. See [[feedback_no_prompt_bandages]] for why ownership
+is structural, not prompt-driven."""
+
+_VALID_QUESTION_TOPICS: frozenset[str] = FOUNDATIONAL_OQ_TOPICS | {"other"}
 
 
-def _normalize_question_topic_tag(raw: Any) -> str | None:
-    """Preserve a valid ``topic_tag`` enum value through the normalizer.
-
-    ``topic_tag`` is a one-shot routing hint emitted by the main-turn LLM so
-    the server can dedup OQs that overlap with a monitor-managed topic.
-    Without this preservation, the value silently fell out of the normalized
-    dict before ``_enforce_session_monitors`` could read it — which meant
-    LLM-tagged duplicates still slipped through (see session 9d77's
-    ``oq-primary-goal`` vs ``oq-monitor-goal``).
+def _normalize_question_topic(raw: Any) -> str:
+    """Return a valid ``topic`` enum value (`upload`, `primary_goal`,
+    `search_strategy`, or `other`). Anything missing / malformed defaults
+    to ``other`` so a legacy brief (or an LLM glitch) doesn't blow up
+    normalization.
     """
-    if not isinstance(raw, str):
-        return None
-    value = raw.strip()
-    return value if value in _VALID_QUESTION_TOPIC_TAGS else None
+    if isinstance(raw, str):
+        value = raw.strip()
+        if value in _VALID_QUESTION_TOPICS:
+            return value
+    return "other"
 
 
 def _normalize_question(raw: Any) -> dict[str, Any] | None:
@@ -393,22 +400,25 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
             answer_text = None
-        out: dict[str, Any] = {
+        return {
             "id": question_id,
             "text": text,
             "status": status,
             "answer_text": answer_text,
+            "topic": _normalize_question_topic(raw.get("topic")),
         }
-        tag = _normalize_question_topic_tag(raw.get("topic_tag"))
-        if tag is not None:
-            out["topic_tag"] = tag
-        return out
     if raw is None:
         return None
     text = str(raw).strip()
     if not text:
         return None
-    return {"id": _new_question_id(), "text": text, "status": "open", "answer_text": None}
+    return {
+        "id": _new_question_id(),
+        "text": text,
+        "status": "open",
+        "answer_text": None,
+        "topic": "other",
+    }
 
 
 def _preserve_answered_state(
@@ -494,28 +504,30 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
         fragments = _split_question_text(normalized["text"])
         if not fragments:
             continue
-        topic_tag = normalized.get("topic_tag")
+        topic = normalized.get("topic", "other")
+        status = normalized.get("status", "open")
+        answer_text = normalized.get("answer_text")
         if len(fragments) == 1:
-            row: dict[str, Any] = {
-                "id": normalized["id"],
-                "text": fragments[0],
-                "status": normalized.get("status", "open"),
-                "answer_text": normalized.get("answer_text"),
-            }
-            if topic_tag:
-                row["topic_tag"] = topic_tag
-            out.append(row)
+            out.append(
+                {
+                    "id": normalized["id"],
+                    "text": fragments[0],
+                    "status": status,
+                    "answer_text": answer_text,
+                    "topic": topic,
+                }
+            )
             continue
         for idx, fragment in enumerate(fragments, start=1):
-            row = {
-                "id": f"{normalized['id']}-{idx}",
-                "text": fragment,
-                "status": normalized.get("status", "open"),
-                "answer_text": normalized.get("answer_text"),
-            }
-            if topic_tag:
-                row["topic_tag"] = topic_tag
-            out.append(row)
+            out.append(
+                {
+                    "id": f"{normalized['id']}-{idx}",
+                    "text": fragment,
+                    "status": status,
+                    "answer_text": answer_text,
+                    "topic": topic,
+                }
+            )
     return out
 
 
@@ -1206,6 +1218,26 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     # turns that only replace items), keep the existing list — do not wipe it.
     if "open_questions" in patch:
         incoming_questions = _coerce_question_list(patch.get("open_questions"))
+        # Server owns the foundational-topic OQs (upload / primary_goal /
+        # search_strategy) via _enforce_session_monitors. Strip any LLM-
+        # emitted OQ tagged with one of those topics BEFORE merge so the
+        # main-turn LLM can never duplicate canonical monitor rows. The
+        # required `topic` enum on the schema means every incoming OQ has
+        # a real value to compare against. See [[feedback_no_prompt_bandages]].
+        dropped_foundational = [
+            q.get("id") for q in incoming_questions
+            if str(q.get("topic") or "") in FOUNDATIONAL_OQ_TOPICS
+        ]
+        if dropped_foundational:
+            log.debug(
+                "Stripped %d LLM-emitted foundational OQs from patch: %s",
+                len(dropped_foundational),
+                dropped_foundational,
+            )
+        incoming_questions = [
+            q for q in incoming_questions
+            if str(q.get("topic") or "") not in FOUNDATIONAL_OQ_TOPICS
+        ]
         extra_gathered, incoming_questions = _split_pseudo_answered_open_questions(incoming_questions)
         if extra_gathered:
             _merge_gathered_deduped(merged["items"], extra_gathered)
