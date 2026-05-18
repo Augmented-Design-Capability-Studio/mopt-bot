@@ -69,6 +69,16 @@ class ProblemBriefQuestion(BaseModel):
     text: str
     status: Literal["open", "answered"] = "open"
     answer_text: str | None = None
+    # Required by the main-turn schema (`_PROBLEM_BRIEF_QUESTION_SCHEMA`) so
+    # the server can distinguish foundational-topic OQs (server-owned) from
+    # free-form clarifications. Optional here because legacy briefs in
+    # snapshots and external PATCH bodies may omit it; `normalize_problem_brief`
+    # defaults missing values to `"other"`. Listing the field on the Pydantic
+    # model is what stops it from being silently stripped during
+    # `body.problem_brief.model_dump()` on the brief PATCH endpoint — the
+    # missing line was the reason router-generated `*-followup` OQs lost
+    # their inherited topic and slipped past the foundational-topic strip.
+    topic: Literal["upload", "primary_goal", "search_strategy", "other"] = "other"
 
 
 class ProblemBrief(BaseModel):
@@ -77,6 +87,24 @@ class ProblemBrief(BaseModel):
     items: list[ProblemBriefItem] = Field(default_factory=list)
     # Accept legacy string questions; normalize_problem_brief coerces to {id, text}.
     open_questions: list[ProblemBriefQuestion | str] = Field(default_factory=list)
+    # `goal_terms` is the structured carrier for every per-key
+    # weight/type/properties/evidence record. **Must be listed here** —
+    # Pydantic silently drops unlisted fields during
+    # `body.problem_brief.model_dump()` on the brief PATCH endpoint, so
+    # before this line existed every OQ-answer save wiped the committed
+    # goal terms (observed pattern: user answers an OQ → backend saves
+    # the validated brief → `goal_terms.travel_time` gone → S5 verify
+    # immediately flags "travel_time on panel but not in brief"). Same
+    # Pydantic-strip class of bug as `ProblemBriefQuestion.topic`.
+    goal_terms: dict[str, Any] = Field(default_factory=dict)
+    # `unmodeled_requests` is the append-only audit log of participant
+    # asks that don't map to any modelled goal-term. Same Pydantic-strip
+    # concern — listing it here keeps it stable across PATCH round-trips.
+    unmodeled_requests: list[dict[str, Any]] = Field(default_factory=list)
+    # One-way sticky warmth flag (see `topic_engaged_next` in the
+    # main-turn patch). Stripped here would cause the brief to
+    # silently regress to cold-start framing on every PATCH save.
+    topic_engaged: bool = False
     solver_scope: str = ""
     backend_template: str = ""
 

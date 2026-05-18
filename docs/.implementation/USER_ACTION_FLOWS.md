@@ -87,11 +87,14 @@ Synthetic post → A1 with the run-context block injected.
 - File upload (currently simulated): synthetic post sets
   `is_upload_context=true` on S1's system instruction; A1 flow.
 
-## G. Brief fields: what the participant sees at the top of the Definition
+## G. Brief fields and the primary-goal information flow
 
-Three header fields define the "what is this problem about?" surface. They
-are required by the spec; the system has deterministic backstops when the
-LLM forgets, but the LLM should still fill them.
+Three header fields define the "what is this problem about?" surface,
+and the primary goal MUST be reflected consistently across all of them
+PLUS the panel. The system has deterministic backstops when the LLM
+forgets, but the LLM should populate them itself.
+
+### Header fields
 
 - **`goal_summary` (always shown).** One short qualitative sentence on
   the overall objective (*"Minimize total travel time."*). Populated by
@@ -108,20 +111,158 @@ LLM forgets, but the LLM should still fill them.
   one, `_promote_goal_prefixed_items` strips the prefix and routes the
   content to `goal_summary`.
 
-## H. Open questions and topic ownership
+### Primary-goal flow (must stay coherent)
+
+Committing a primary objective like "minimize travel time" must land in
+**four places at once** — the rule is structural, not a prompt request:
+
+1. **`brief.goal_terms.travel_time = {weight: 1.0, type: "objective", ...}`** —
+   the canonical structured carrier the LLM emits in `problem_brief_patch.goal_terms`.
+   This is the source of truth.
+2. **`brief.goal_summary = "Minimize total travel time."`** — set by
+   the LLM, or deterministically derived from (1) by
+   `_autofill_goal_summary_from_objective` when the LLM forgets.
+3. **`brief.items[] config-weight-travel_time`** — server-synthesized
+   from (1) via `_synthesize_canonical_weight_items`. Format:
+   *"{Label} ({type}, weight N) — {reasoning}."* Rebuilt on every brief
+   merge so it always matches the structured carrier; **stale rows are
+   dropped even when the synthesizer produces no new extras** so a
+   wiped `goal_terms` never leaves a misleading display row behind.
+4. **`panel.problem.goal_terms.travel_time = {weight, type, rank}`** —
+   produced by S4 (`generate_config_from_brief`) and mirrored by
+   `sync_panel_from_problem_brief`. The workflow-legitimacy gate
+   honors the structured carrier signal first
+   (`brief_mentions_search_strategy`-style check).
+
+### Protections against accidental wipe
+
+- `merge_problem_brief_patch` honors `replace_goal_terms=true` **only
+  when `cleanup_mode=true`**. An LLM patch that sets the replace flag
+  mid-conversation while omitting a previously-committed key would
+  otherwise silently wipe `goal_terms.travel_time` and leave the
+  participant with `goal_summary` and items[] referencing a term the
+  panel no longer has.
+- The anchor filter only fires on **new** keys, so an existing
+  `goal_terms.travel_time` carried over from a prior turn is never
+  re-validated and dropped.
+
+### Inconsistency = bug, surface immediately
+
+If any one of the four sites disagrees, surface it as drift:
+
+- `brief.goal_terms.travel_time` exists but `panel.problem.goal_terms.travel_time`
+  doesn't → S5 verifier raises `brief_panel_mismatch`.
+- `brief.items[].config-weight-travel_time` exists but
+  `brief.goal_terms.travel_time` doesn't → silent inconsistency
+  (previously the 26f4-session pattern); now prevented by the
+  synthesizer's always-drop-stale behavior.
+- `brief.goal_summary` mentions a term that isn't in `goal_terms` →
+  acceptable transiently (the LLM committed `goal_summary` but the
+  anchor filter dropped the term); the autofill backstop will
+  re-populate or clear `goal_summary` based on the surviving
+  `goal_terms`.
+
+## H. Open-question state machine
 
 Every OQ carries a required `topic` enum (`upload | primary_goal |
-search_strategy | other`). The first three are server-owned: the
-**main-turn LLM never gets to emit them** — `merge_problem_brief_patch`
-strips any incoming OQ tagged with a foundational topic before the merge.
-`_enforce_session_monitors` is the sole writer for the canonical
-`oq-monitor-{upload,goal,algorithm}` rows; it adds them when the topic is
-uncovered and drops them when covered.
+search_strategy | other`) that partitions ownership:
 
-Free-form clarifications (driver count, term meaning, ambiguity forks)
-are tagged `other` and flow through normally. ADD when the visible reply
-asks one; DROP when the user answers / defers / topic resolves; KEEP
-otherwise (echo id).
+- **Foundational topics** (`upload`, `primary_goal`, `search_strategy`):
+  server-owned. The main-turn LLM is structurally blocked from emitting
+  them — `merge_problem_brief_patch` strips any incoming OQ tagged with
+  a foundational topic before the merge. `_enforce_session_monitors` is
+  the sole writer.
+- **`other`** (free-form clarifications): LLM-owned. The main-turn LLM
+  adds / drops / keeps these per turn.
+
+### Transitions per OQ
+
+```
+        ┌──────────────────────────────── transitions ───────────────────────────────┐
+        │                                                                            │
+        ▼                                                                            │
+   (not present) ──[server: monitor activates]──→ open (foundational, server-owned) ──┐
+                                                                                      │
+                  ──[LLM: visible reply asks a question]──→ open (other, LLM-owned) ──┤
+                                                                                      ▼
+                                                                              ┌──────────────────────────┐
+                                                                              │  open — visible in panel │
+                                                                              └──────────────────────────┘
+                                                                                      │
+              ┌───────────────────────────────────────────────────────────────────────┤
+              ▼                                                                       ▼
+   participant answers in chat                                       participant types in answer field
+   (LLM main turn sees the brief +                                   + saves brief PATCH:
+   user message; promotes / drops                                    `is_answered_open_question=True`
+   per OQ-lifecycle rules)                                           classifier buckets the answer
+              │                                                                       │
+              ▼                                                                       ▼
+        ┌──────────────────────────────────────┐                  ┌──────────────────────────────────────┐
+        │ bucket: substantive answer           │                  │ bucket via classify_answered_oqs:    │
+        │ → goal_term commit / items[] row     │                  │ • gathered: promote (drop OQ)        │
+        │   for `other`-tagged OQs             │                  │ • assumption (agile/demo): add row   │
+        │ → server monitor drops               │                  │ • new_open_question (waterfall):     │
+        │   `oq-monitor-*` once topic covered  │                  │   re-ask with topic INHERITED        │
+        └──────────────────────────────────────┘                  │   from parent (so foundational       │
+                                                                  │   re-asks get re-stripped at merge   │
+                                                                  │   → canonical monitor surfaces again)│
+                                                                  └──────────────────────────────────────┘
+                                                                                      │
+                                                                                      ▼
+                                                                  main-turn LLM sees the synthetic post
+                                                                  with `is_answered_open_question=True`
+                                                                  + `STUDY_CHAT_ANSWERED_OQ_CONTEXT`:
+                                                                    if `answer_text` is a counter-question
+                                                                    → explain in `assistant_message`,
+                                                                       re-open the OQ
+                                                                    if substantive answer
+                                                                    → standard promote / drop path
+```
+
+### Coverage triggers (foundational monitors)
+
+The server adds/removes the canonical foundational OQs based on `brief`
+state — this is the *only* path that creates them:
+
+| Topic | OQ id | Removed when |
+|---|---|---|
+| `upload` | `oq-monitor-upload` | Any items[] row has `source: "upload"` |
+| `primary_goal` | `oq-monitor-goal` | `goal_terms` is non-empty (any committed objective term) |
+| `search_strategy` (waterfall only) | `oq-monitor-algorithm` | `brief_mentions_search_strategy` returns True (carrier set OR slot-tagged item OR algorithm name in text) |
+| `search_strategy` (agile/demo) | *Replaced by `item-monitor-algorithm-default` assumption row* | Same as above (axis 4) |
+
+The "covered" predicate is recomputed on every brief save, so the
+participant supplying any of these signals — via chat, OQ answer, panel
+save, or upload — drops the corresponding monitor row immediately.
+
+### Counter-question handling (any topic)
+
+When a participant types a clarifying question into an OQ answer field
+(e.g. *"can you explain"*):
+
+1. Frontend posts the synthetic chat note with `context_kind:
+   "open_question_answered"` (because `flippedOqIds.length > 0`).
+2. The PATCH endpoint runs `classify_answered_open_questions`. The
+   classifier may bucket the hedged answer as `new_open_question`
+   (waterfall) — the re-ask inherits the **parent OQ's topic**. If that
+   topic is foundational, the re-ask is dropped at merge by the
+   foundational-topic strip; the canonical monitor OQ remains as the
+   single visible row.
+3. The main-turn LLM sees `is_answered_open_question=True` →
+   `STUDY_CHAT_ANSWERED_OQ_CONTEXT` injects the explain-vs-promote
+   prompt block. The explanation lands in `assistant_message`; the
+   original OQ stays open with `answer_text: null`.
+
+### Invariants
+
+- At most one OQ per foundational topic in any brief state (server
+  enforces).
+- An OQ with `topic ∈ foundational` from the LLM patch never reaches
+  `open_questions[]` (merge-strip).
+- Counter-questions never produce a duplicate foundational OQ (router
+  inherits parent topic; classifier-generated re-asks get stripped).
+- `goal_terms[key]` commits drop their corresponding monitor row on the
+  same turn (monitor coverage check runs on each merge).
 
 ## I. Documentation retrieval (RAG)
 

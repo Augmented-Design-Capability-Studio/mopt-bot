@@ -331,18 +331,28 @@ export function useResearcherController() {
     if (!selected || !savedToken.trim()) return;
     if (!window.confirm("Delete this session and all logs?")) return;
     setBusy(true);
+    let deleteError: string | null = null;
     try {
       await apiFetch(`/sessions/${selected}`, savedToken.trim(), { method: "DELETE" });
-      setSelected(null);
-      setDetail(null);
-      setMessages([]);
-      setRuns([]);
-      await refreshList();
     } catch (e) {
-      setError(describeApiError(e, "Delete failed"));
-    } finally {
-      setBusy(false);
+      deleteError = describeApiError(e, "Delete failed");
     }
+    // Always clear local detail state + refresh the sidebar list so the UI
+    // reflects whatever actually happened in the DB. Without this, a failed
+    // single delete left the sidebar showing the row that the DB may or
+    // may not still have (same class of stale-UI bug the bulk path had).
+    setSelected(null);
+    setDetail(null);
+    setMessages([]);
+    setRuns([]);
+    try {
+      await refreshList();
+    } catch {
+      // refreshList errors are surfaced separately; don't mask the
+      // delete result.
+    }
+    setError(deleteError);
+    setBusy(false);
   }
 
   async function removeSelectedSessions() {
@@ -350,9 +360,21 @@ export function useResearcherController() {
     if (!window.confirm(`Delete ${selectedIds.length} selected session(s) and all logs?`)) return;
     detailPollGen.current += 1;
     setBusy(true);
+    // Per-iteration catch so one failure (404 already-deleted, stale token,
+    // transient network blip) doesn't abort the rest of the batch. We
+    // collect failures and refresh the list regardless — the user gets a
+    // concrete count of what landed, not a generic "Batch delete failed"
+    // that leaves the sidebar lying about what's still in the DB.
+    const failures: Array<{ sessionId: string; error: string }> = [];
+    let successCount = 0;
     try {
       for (const sessionId of selectedIds) {
-        await apiFetch(`/sessions/${sessionId}`, savedToken.trim(), { method: "DELETE" });
+        try {
+          await apiFetch(`/sessions/${sessionId}`, savedToken.trim(), { method: "DELETE" });
+          successCount += 1;
+        } catch (e) {
+          failures.push({ sessionId, error: describeApiError(e, "Delete failed") });
+        }
       }
       if (selected && selectedIds.includes(selected)) {
         setSelected(null);
@@ -361,10 +383,20 @@ export function useResearcherController() {
         setRuns([]);
       }
       setSelectedIds([]);
+      // Always refresh — partial successes still updated the DB.
       await refreshList();
-      setError(null);
-    } catch (e) {
-      setError(describeApiError(e, "Batch delete failed"));
+      if (failures.length === 0) {
+        setError(null);
+      } else {
+        const sample = failures
+          .slice(0, 3)
+          .map((f) => `${f.sessionId.slice(0, 8)}: ${f.error}`)
+          .join("; ");
+        const more = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
+        setError(
+          `Deleted ${successCount} of ${selectedIds.length}; ${failures.length} failed: ${sample}${more}`,
+        );
+      }
     } finally {
       setBusy(false);
     }

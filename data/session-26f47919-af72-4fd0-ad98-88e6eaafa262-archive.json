@@ -1,48 +1,102 @@
 {
   "export_schema_version": 2,
-  "exported_at": "2026-05-18T03:09:35.492222Z",
+  "exported_at": "2026-05-18T05:08:44.751775Z",
   "timeline": [
     {
       "kind": "message",
-      "at": "2026-05-18T03:08:20.065487Z",
+      "at": "2026-05-18T05:06:53.526869Z",
       "ref": {
         "message_id": 1549
       },
       "label": "user/chat",
-      "payload_summary": "I'd like to optimize my delivery fleet's schedule"
+      "payload_summary": "I'd like to optimize for my delivery fleet"
     },
     {
       "kind": "message",
-      "at": "2026-05-18T03:08:20.086656Z",
+      "at": "2026-05-18T05:06:53.559782Z",
       "ref": {
         "message_id": 1550
       },
       "label": "assistant/chat",
-      "payload_summary": "I can certainly help you optimize your delivery schedules. To get started with a setup, I need to know: what is your primary objective (e.g., minimizing total …"
+      "payload_summary": "I'm ready to help you optimize your delivery fleet. To get started, what would you like the solver to prioritize first—for instance, are you most concerned wit…"
     },
     {
       "kind": "message",
-      "at": "2026-05-18T03:08:36.459690Z",
+      "at": "2026-05-18T05:07:05.519197Z",
       "ref": {
         "message_id": 1551
+      },
+      "label": "user/chat",
+      "payload_summary": "I'm uploading the following file(s): DRIVER_INFO.csv, ORDERS.csv"
+    },
+    {
+      "kind": "message",
+      "at": "2026-05-18T05:07:05.545688Z",
+      "ref": {
+        "message_id": 1552
+      },
+      "label": "assistant/chat",
+      "payload_summary": "Thanks for the data files. Now that I have your driver and order information, what is your primary goal for this fleet schedule—for instance, are you most focu…"
+    },
+    {
+      "kind": "message",
+      "at": "2026-05-18T05:07:14.467698Z",
+      "ref": {
+        "message_id": 1553
       },
       "label": "user/chat",
       "payload_summary": "minimize travel time"
     },
     {
       "kind": "message",
-      "at": "2026-05-18T03:08:36.481902Z",
+      "at": "2026-05-18T05:07:14.485182Z",
       "ref": {
-        "message_id": 1552
+        "message_id": 1554
       },
       "label": "assistant/chat",
-      "payload_summary": "I've set travel time as the primary objective for your schedule. To move forward, would you prefer an evolutionary search, a swarm-based approach, or an anneal…"
+      "payload_summary": "I've noted that minimizing total travel time is your primary objective. Since I still need to know your preferred search method, could you confirm if you'd lik…"
+    },
+    {
+      "kind": "snapshot",
+      "at": "2026-05-18T05:07:33.329786Z",
+      "ref": {
+        "snapshot_id": 1270
+      },
+      "label": "manual_save",
+      "payload_summary": "brief=yes panel=yes"
+    },
+    {
+      "kind": "message",
+      "at": "2026-05-18T05:07:33.338668Z",
+      "ref": {
+        "message_id": 1555
+      },
+      "label": "assistant/panel",
+      "payload_summary": "Problem definition saved (1 open question)."
+    },
+    {
+      "kind": "message",
+      "at": "2026-05-18T05:07:33.360011Z",
+      "ref": {
+        "message_id": 1556
+      },
+      "label": "user/chat",
+      "payload_summary": "I just filled in an open question. Summary: 1 open question. Please read each newly-filled answer field on its own: if I gave a real answer, capture it in the …"
+    },
+    {
+      "kind": "message",
+      "at": "2026-05-18T05:07:33.384588Z",
+      "ref": {
+        "message_id": 1557
+      },
+      "label": "assistant/chat",
+      "payload_summary": "I've noted that we'll start with genetic search (GA) as our primary approach. Since we now have your preferred algorithm, minimizing travel time as your core o…"
     }
   ],
   "session": {
     "id": "26f47919-af72-4fd0-ad98-88e6eaafa262",
     "created_at": "2026-05-18T03:07:53.747254Z",
-    "updated_at": "2026-05-18T03:08:48.978697Z",
+    "updated_at": "2026-05-18T05:07:39.809834Z",
     "workflow_mode": "waterfall",
     "participant_number": "P_l7",
     "test_problem_id": "vrptw",
@@ -53,23 +107,31 @@
           "travel_time": {
             "weight": 1,
             "type": "objective",
-            "rank": 1,
-            "evidence_item_ids": [
-              "item-travel-time-objective"
-            ]
+            "rank": 1
           }
-        }
+        },
+        "only_active_terms": true,
+        "algorithm": "GA",
+        "epochs": 100,
+        "pop_size": 50,
+        "algorithm_params": {
+          "pc": 0.9,
+          "pm": 0.05
+        },
+        "goal_term_order": [
+          "travel_time"
+        ]
       }
     },
     "problem_brief": {
-      "goal_summary": "",
+      "goal_summary": "Minimize total travel time.",
       "run_summary": "",
       "items": [
         {
-          "id": "item-travel-time-objective",
-          "text": "Minimize total route duration and driving minutes.",
+          "id": "item-gathered-upload",
+          "text": "Source data file(s) uploaded: DRIVER_INFO.csv, ORDERS.csv.",
           "kind": "gathered",
-          "source": "user"
+          "source": "upload"
         },
         {
           "id": "config-weight-travel_time",
@@ -80,22 +142,18 @@
       ],
       "open_questions": [
         {
-          "id": "oq-primary-goal",
-          "text": "What is the primary objective for your delivery schedules? (e.g., minimizing total travel time, improving on-time arrival, or balancing driver workload).",
+          "id": "oq-monitor-algorithm-followup",
+          "text": "Genetic search (GA) is a good starting point for routing, as it explores many variations in parallel. Particle swarm (PSO) is often effective for balancing workloads, while simulated annealing (SA) is useful for fine-tuning specific paths. Would you like to start with genetic search, or try one of the others?",
           "status": "open",
-          "answer_text": null
-        },
-        {
-          "id": "oq-monitor-upload",
-          "text": "Please use the **Upload file(s)...** button in the chat footer to share your data so we can set up a baseline run.",
-          "status": "open",
-          "answer_text": null
+          "answer_text": null,
+          "topic": "search_strategy"
         },
         {
           "id": "oq-monitor-algorithm",
           "text": "Which search strategy should we use? Common choices: genetic search (GA), particle swarm (PSO), or simulated annealing (SA).",
           "status": "open",
-          "answer_text": null
+          "answer_text": null,
+          "topic": "search_strategy"
         }
       ],
       "goal_terms": {
@@ -103,16 +161,26 @@
           "weight": 1,
           "type": "objective",
           "evidence_item_ids": [
-            "item-travel-time-objective"
+            "config-weight-travel_time"
           ]
+        },
+        "search_strategy": {
+          "weight": 0,
+          "type": "custom",
+          "evidence_item_ids": [
+            "config-search-strategy"
+          ],
+          "properties": {
+            "algorithm": "GA"
+          }
         }
       },
       "unmodeled_requests": [],
       "topic_engaged": true,
       "solver_scope": "general_metaheuristic_translation",
-      "backend_template": "deferred"
+      "backend_template": "routing_time_windows"
     },
-    "processing_revision": 5,
+    "processing_revision": 58,
     "brief_status": "ready",
     "config_status": "ready",
     "processing_error": null,
@@ -121,7 +189,7 @@
     "participant_tutorial_enabled": false,
     "tutorial_step_override": null,
     "tutorial_chat_started": false,
-    "tutorial_uploaded_files": false,
+    "tutorial_uploaded_files": true,
     "tutorial_definition_tab_visited": false,
     "tutorial_definition_saved": false,
     "tutorial_config_tab_visited": false,
@@ -139,23 +207,23 @@
     "gemini_model": "gemini-3.1-flash-lite-preview",
     "embedding_model": "gemini-embedding-001",
     "gemini_key_configured": true,
-    "content_reset_revision": 0
+    "content_reset_revision": 5
   },
   "messages": [
     {
       "id": 1549,
-      "created_at": "2026-05-18T03:08:20.065487Z",
+      "created_at": "2026-05-18T05:06:53.526869Z",
       "role": "user",
-      "content": "I'd like to optimize my delivery fleet's schedule",
+      "content": "I'd like to optimize for my delivery fleet",
       "visible_to_participant": true,
       "kind": "chat",
       "meta": null
     },
     {
       "id": 1550,
-      "created_at": "2026-05-18T03:08:20.086656Z",
+      "created_at": "2026-05-18T05:06:53.559782Z",
       "role": "assistant",
-      "content": "I can certainly help you optimize your delivery schedules. To get started with a setup, I need to know: what is your primary objective (e.g., minimizing total travel time, improving on-time arrival, or balancing driver workload)?",
+      "content": "I'm ready to help you optimize your delivery fleet. To get started, what would you like the solver to prioritize first—for instance, are you most concerned with reducing total travel time, improving punctuality for your time windows, or perhaps balancing the workload across your drivers?",
       "visible_to_participant": true,
       "kind": "chat",
       "meta": {
@@ -224,7 +292,7 @@
           "panel_config": null
         },
         "v2_turn_snapshot": {
-          "assistant_message": "I can certainly help you optimize your delivery schedules. To get started with a setup, I need to know: what is your primary objective (e.g., minimizing total travel time, improving on-time arrival, or balancing driver workload)?",
+          "assistant_message": "I'm ready to help you optimize your delivery fleet. To get started, what would you like the solver to prioritize first—for instance, are you most concerned with reducing total travel time, improving punctuality for your time windows, or perhaps balancing the workload across your drivers?",
           "inline_followup": null,
           "is_change_intent": true,
           "cleanup_intent": false,
@@ -238,11 +306,17 @@
           "problem_brief_patch": {
             "open_questions": [
               {
-                "id": "oq-primary-goal",
-                "text": "What is the primary objective for your delivery schedules? (e.g., minimizing total travel time, improving on-time arrival, or balancing driver workload).",
-                "topic_tag": "primary_goal"
+                "id": "goal-term-selection",
+                "text": "What is your primary optimization goal? (e.g., minimizing total travel time, improving delivery punctuality, or balancing workload across vehicles.)",
+                "topic": "primary_goal"
+              },
+              {
+                "id": "search-strategy-selection",
+                "text": "How would you like the engine to search for improvements? I can set it up using an evolutionary search, a swarm-based approach, or an annealing-based strategy.",
+                "topic": "search_strategy"
               }
-            ]
+            ],
+            "topic_engaged_next": true
           },
           "replace_editable_items": false,
           "replace_open_questions": true,
@@ -253,18 +327,18 @@
     },
     {
       "id": 1551,
-      "created_at": "2026-05-18T03:08:36.459690Z",
+      "created_at": "2026-05-18T05:07:05.519197Z",
       "role": "user",
-      "content": "minimize travel time",
+      "content": "I'm uploading the following file(s): DRIVER_INFO.csv, ORDERS.csv",
       "visible_to_participant": true,
       "kind": "chat",
       "meta": null
     },
     {
       "id": 1552,
-      "created_at": "2026-05-18T03:08:36.481902Z",
+      "created_at": "2026-05-18T05:07:05.545688Z",
       "role": "assistant",
-      "content": "I've set travel time as the primary objective for your schedule. To move forward, would you prefer an evolutionary search, a swarm-based approach, or an annealing-based strategy?",
+      "content": "Thanks for the data files. Now that I have your driver and order information, what is your primary goal for this fleet schedule—for instance, are you most focused on minimizing total travel time, improving punctuality for your time windows, or balancing the workload across your drivers? Also, which search strategy should we use to explore the options? I can set up a genetic search (GA), particle swarm (PSO), or simulated annealing (SA) approach.",
       "visible_to_participant": true,
       "kind": "chat",
       "meta": {
@@ -283,15 +357,8 @@
               "name": "verifying_brief",
               "state": "success",
               "label": "Verifying intent & definition",
-              "retried": true,
-              "issues": [
-                {
-                  "category": "unanchored_goal_term",
-                  "severity": "error",
-                  "subject": "goal_terms.travel_time",
-                  "message": "The new goal-term `travel_time` has no evidence anchor in the brief. Either cite an items[] id under `evidence_item_ids`, populate the structured `properties` carrier, or omit the goal term."
-                }
-              ]
+              "retried": false,
+              "issues": []
             },
             {
               "name": "applying",
@@ -329,19 +396,33 @@
           "problem_brief": {
             "goal_summary": "",
             "run_summary": "",
-            "items": [],
+            "items": [
+              {
+                "id": "item-gathered-upload",
+                "text": "Source data file(s) uploaded: DRIVER_INFO.csv, ORDERS.csv.",
+                "kind": "gathered",
+                "source": "upload"
+              }
+            ],
             "open_questions": [
               {
-                "id": "oq-primary-goal",
-                "text": "What is the primary objective for your delivery schedules? (e.g., minimizing total travel time, improving on-time arrival, or balancing driver workload).",
+                "id": "oq-monitor-goal",
+                "text": "What's your primary optimization goal? For example, minimize total travel time, meet customer time windows, balance driver workload, or another priority.",
                 "status": "open",
                 "answer_text": null,
-                "topic_tag": "primary_goal"
+                "topic": "primary_goal"
+              },
+              {
+                "id": "oq-monitor-algorithm",
+                "text": "Which search strategy should we use? Common choices: genetic search (GA), particle swarm (PSO), or simulated annealing (SA).",
+                "status": "open",
+                "answer_text": null,
+                "topic": "search_strategy"
               }
             ],
             "goal_terms": {},
             "unmodeled_requests": [],
-            "topic_engaged": false,
+            "topic_engaged": true,
             "solver_scope": "general_metaheuristic_translation",
             "backend_template": "routing_time_windows"
           },
@@ -350,7 +431,156 @@
           }
         },
         "v2_turn_snapshot": {
-          "assistant_message": "I've set travel time as the primary objective for your schedule. To move forward, would you prefer an evolutionary search, a swarm-based approach, or an annealing-based strategy?",
+          "assistant_message": "Thanks for the data files. Now that I have your driver and order information, what is your primary goal for this fleet schedule—for instance, are you most focused on minimizing total travel time, improving punctuality for your time windows, or balancing the workload across your drivers? Also, which search strategy should we use to explore the options? I can set up a genetic search (GA), particle swarm (PSO), or simulated annealing (SA) approach.",
+          "inline_followup": null,
+          "is_change_intent": true,
+          "cleanup_intent": false,
+          "clear_intent": false,
+          "should_trigger_run": false,
+          "intent_type": "none",
+          "confidence": 0,
+          "is_run_invitation": false,
+          "change_clause": null,
+          "question_clause": null,
+          "problem_brief_patch": {
+            "items": [
+              {
+                "id": "item-gathered-upload",
+                "text": "Source data file(s) uploaded: DRIVER_INFO.csv, ORDERS.csv.",
+                "kind": "gathered",
+                "source": "upload"
+              }
+            ],
+            "open_questions": [
+              {
+                "id": "oq-monitor-goal",
+                "text": "What's your primary optimization goal? For example, minimize total travel time, meet customer time windows, balance driver workload, or another priority.",
+                "topic": "primary_goal"
+              },
+              {
+                "id": "oq-monitor-algorithm",
+                "text": "Which search strategy should we use? Common choices: genetic search (GA), particle swarm (PSO), or simulated annealing (SA).",
+                "topic": "search_strategy"
+              }
+            ],
+            "topic_engaged_next": true
+          },
+          "replace_editable_items": false,
+          "replace_open_questions": true,
+          "cleanup_mode": false,
+          "assumption_actions": []
+        }
+      }
+    },
+    {
+      "id": 1553,
+      "created_at": "2026-05-18T05:07:14.467698Z",
+      "role": "user",
+      "content": "minimize travel time",
+      "visible_to_participant": true,
+      "kind": "chat",
+      "meta": null
+    },
+    {
+      "id": 1554,
+      "created_at": "2026-05-18T05:07:14.485182Z",
+      "role": "assistant",
+      "content": "I've noted that minimizing total travel time is your primary objective. Since I still need to know your preferred search method, could you confirm if you'd like to use a genetic search (GA), particle swarm (PSO), or simulated annealing (SA) approach?",
+      "visible_to_participant": true,
+      "kind": "chat",
+      "meta": {
+        "verifying": false,
+        "pipeline": {
+          "flavor": "chat",
+          "stages": [
+            {
+              "name": "drafting",
+              "state": "success",
+              "label": "Drafting reply",
+              "retried": false,
+              "issues": []
+            },
+            {
+              "name": "verifying_brief",
+              "state": "success",
+              "label": "Verifying intent & definition",
+              "retried": false,
+              "issues": []
+            },
+            {
+              "name": "applying",
+              "state": "success",
+              "label": "Applying changes",
+              "retried": false,
+              "issues": []
+            },
+            {
+              "name": "deriving_config",
+              "state": "success",
+              "label": "Deriving config",
+              "retried": false,
+              "issues": [],
+              "substages": [
+                "goal terms",
+                "algorithm"
+              ]
+            },
+            {
+              "name": "verifying_config",
+              "state": "success",
+              "label": "Verifying config",
+              "retried": false,
+              "issues": [],
+              "substages": [
+                "goal terms",
+                "algorithm"
+              ]
+            }
+          ],
+          "paused_stage": null
+        },
+        "pre_turn_state": {
+          "problem_brief": {
+            "goal_summary": "",
+            "run_summary": "",
+            "items": [
+              {
+                "id": "item-gathered-upload",
+                "text": "Source data file(s) uploaded: DRIVER_INFO.csv, ORDERS.csv.",
+                "kind": "gathered",
+                "source": "upload"
+              }
+            ],
+            "open_questions": [
+              {
+                "id": "oq-monitor-goal",
+                "text": "What's your primary optimization goal? For example, minimize total travel time, meet customer time windows, balance driver workload, or another priority.",
+                "status": "open",
+                "answer_text": null,
+                "topic": "primary_goal"
+              },
+              {
+                "id": "oq-monitor-algorithm",
+                "text": "Which search strategy should we use? Common choices: genetic search (GA), particle swarm (PSO), or simulated annealing (SA).",
+                "status": "open",
+                "answer_text": null,
+                "topic": "search_strategy"
+              }
+            ],
+            "goal_terms": {},
+            "unmodeled_requests": [],
+            "topic_engaged": true,
+            "solver_scope": "general_metaheuristic_translation",
+            "backend_template": "routing_time_windows"
+          },
+          "panel_config": {
+            "problem": {
+              "only_active_terms": true
+            }
+          }
+        },
+        "v2_turn_snapshot": {
+          "assistant_message": "I've noted that minimizing total travel time is your primary objective. Since I still need to know your preferred search method, could you confirm if you'd like to use a genetic search (GA), particle swarm (PSO), or simulated annealing (SA) approach?",
           "inline_followup": null,
           "is_change_intent": true,
           "cleanup_intent": false,
@@ -362,10 +592,11 @@
           "change_clause": null,
           "question_clause": null,
           "problem_brief_patch": {
+            "goal_summary": "Minimize total travel time.",
             "items": [
               {
-                "id": "item-travel-time-objective",
-                "text": "Minimize total route duration and driving minutes.",
+                "id": "item-gathered-travel-time",
+                "text": "Minimize total travel time.",
                 "kind": "gathered",
                 "source": "user"
               }
@@ -375,13 +606,186 @@
                 "weight": 1,
                 "type": "objective",
                 "evidence_item_ids": [
-                  "item-travel-time-objective"
+                  "item-gathered-travel-time"
                 ]
               }
             },
+            "replace_goal_terms": false
+          },
+          "replace_editable_items": false,
+          "replace_open_questions": true,
+          "cleanup_mode": false,
+          "assumption_actions": []
+        }
+      }
+    },
+    {
+      "id": 1555,
+      "created_at": "2026-05-18T05:07:33.338668Z",
+      "role": "assistant",
+      "content": "Problem definition saved (1 open question).",
+      "visible_to_participant": true,
+      "kind": "panel",
+      "meta": null
+    },
+    {
+      "id": 1556,
+      "created_at": "2026-05-18T05:07:33.360011Z",
+      "role": "user",
+      "content": "I just filled in an open question. Summary: 1 open question. Please read each newly-filled answer field on its own: if I gave a real answer, capture it in the brief; if I asked you to explain something instead, lead your reply with that explanation and leave the question open. Acknowledge any other gathered or assumption edits briefly after.",
+      "visible_to_participant": true,
+      "kind": "chat",
+      "meta": null
+    },
+    {
+      "id": 1557,
+      "created_at": "2026-05-18T05:07:33.384588Z",
+      "role": "assistant",
+      "content": "I've noted that we'll start with genetic search (GA) as our primary approach. Since we now have your preferred algorithm, minimizing travel time as your core objective, and your order and driver data, we're ready to start. I've set up a convergence chart, run metric cards, a constraint-summary view, and a detailed schedule timeline for this task—they'll populate once you run the solver.",
+      "visible_to_participant": true,
+      "kind": "chat",
+      "meta": {
+        "verifying": false,
+        "pipeline": {
+          "flavor": "chat",
+          "stages": [
+            {
+              "name": "drafting",
+              "state": "success",
+              "label": "Drafting reply",
+              "retried": false,
+              "issues": []
+            },
+            {
+              "name": "verifying_brief",
+              "state": "success",
+              "label": "Verifying intent & definition",
+              "retried": false,
+              "issues": []
+            },
+            {
+              "name": "applying",
+              "state": "success",
+              "label": "Applying changes",
+              "retried": false,
+              "issues": []
+            },
+            {
+              "name": "deriving_config",
+              "state": "success",
+              "label": "Deriving config",
+              "retried": false,
+              "issues": [],
+              "substages": [
+                "goal terms",
+                "algorithm"
+              ]
+            },
+            {
+              "name": "verifying_config",
+              "state": "success",
+              "label": "Verifying config",
+              "retried": false,
+              "issues": [],
+              "substages": [
+                "goal terms",
+                "algorithm"
+              ]
+            }
+          ],
+          "paused_stage": null
+        },
+        "pre_turn_state": {
+          "problem_brief": {
+            "goal_summary": "Minimize total travel time.",
+            "run_summary": "",
+            "items": [
+              {
+                "id": "item-gathered-upload",
+                "text": "Source data file(s) uploaded: DRIVER_INFO.csv, ORDERS.csv.",
+                "kind": "gathered",
+                "source": "upload"
+              },
+              {
+                "id": "config-weight-travel_time",
+                "text": "Travel time (primary objective, weight 1.0) — to minimize total driving minutes across all routes.",
+                "kind": "gathered",
+                "source": "agent"
+              }
+            ],
+            "open_questions": [
+              {
+                "id": "oq-monitor-algorithm-followup",
+                "text": "Genetic search (GA) is a good starting point for routing, as it explores many variations in parallel. Particle swarm (PSO) is often effective for balancing workloads, while simulated annealing (SA) is useful for fine-tuning specific paths. Would you like to start with genetic search, or try one of the others?",
+                "status": "open",
+                "answer_text": null,
+                "topic": "search_strategy"
+              }
+            ],
+            "goal_terms": {},
+            "unmodeled_requests": [],
+            "topic_engaged": false,
+            "solver_scope": "general_metaheuristic_translation",
+            "backend_template": "routing_time_windows"
+          },
+          "panel_config": {
+            "problem": {
+              "goal_terms": {
+                "travel_time": {
+                  "weight": 1,
+                  "type": "objective",
+                  "rank": 1
+                }
+              },
+              "only_active_terms": true
+            }
+          }
+        },
+        "v2_turn_snapshot": {
+          "assistant_message": "I've noted that we'll start with genetic search (GA) as our primary approach. Since we now have your preferred algorithm, minimizing travel time as your core objective, and your order and driver data, we're ready to start. I've set up a convergence chart, run metric cards, a constraint-summary view, and a detailed schedule timeline for this task—they'll populate once you run the solver.",
+          "inline_followup": null,
+          "is_change_intent": true,
+          "cleanup_intent": false,
+          "clear_intent": false,
+          "should_trigger_run": false,
+          "intent_type": "affirm_invite",
+          "confidence": 1,
+          "is_run_invitation": false,
+          "change_clause": null,
+          "question_clause": null,
+          "problem_brief_patch": {
+            "goal_summary": "Minimize total travel time.",
+            "items": [
+              {
+                "id": "config-search-strategy",
+                "text": "Search strategy: Genetic search (GA).",
+                "kind": "gathered",
+                "source": "user"
+              }
+            ],
+            "goal_terms": {
+              "travel_time": {
+                "weight": 1,
+                "type": "objective",
+                "evidence_item_ids": [
+                  "config-weight-travel_time"
+                ]
+              },
+              "search_strategy": {
+                "weight": 0,
+                "type": "custom",
+                "properties": {
+                  "algorithm": "GA"
+                },
+                "evidence_item_ids": [
+                  "config-search-strategy"
+                ]
+              }
+            },
+            "replace_goal_terms": false,
             "topic_engaged_next": true,
             "solver_scope": "general_metaheuristic_translation",
-            "backend_template": "deferred"
+            "backend_template": "routing_time_windows"
           },
           "replace_editable_items": false,
           "replace_open_questions": true,
@@ -392,5 +796,55 @@
     }
   ],
   "runs": [],
-  "snapshots": []
+  "snapshots": [
+    {
+      "id": 1270,
+      "created_at": "2026-05-18T05:07:33.329786Z",
+      "event_type": "manual_save",
+      "problem_brief": {
+        "goal_summary": "Minimize total travel time.",
+        "run_summary": "",
+        "items": [
+          {
+            "id": "item-gathered-upload",
+            "text": "Source data file(s) uploaded: DRIVER_INFO.csv, ORDERS.csv.",
+            "kind": "gathered",
+            "source": "upload"
+          },
+          {
+            "id": "config-weight-travel_time",
+            "text": "Travel time (primary objective, weight 1.0) — to minimize total driving minutes across all routes.",
+            "kind": "gathered",
+            "source": "agent"
+          }
+        ],
+        "open_questions": [
+          {
+            "id": "oq-monitor-algorithm-followup",
+            "text": "Genetic search (GA) is a good starting point for routing, as it explores many variations in parallel. Particle swarm (PSO) is often effective for balancing workloads, while simulated annealing (SA) is useful for fine-tuning specific paths. Would you like to start with genetic search, or try one of the others?",
+            "status": "open",
+            "answer_text": null,
+            "topic": "search_strategy"
+          }
+        ],
+        "goal_terms": {},
+        "unmodeled_requests": [],
+        "topic_engaged": false,
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows"
+      },
+      "panel_config": {
+        "problem": {
+          "goal_terms": {
+            "travel_time": {
+              "weight": 1,
+              "type": "objective",
+              "rank": 1
+            }
+          },
+          "only_active_terms": true
+        }
+      }
+    }
+  ]
 }

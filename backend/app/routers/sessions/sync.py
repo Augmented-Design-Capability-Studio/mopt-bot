@@ -682,7 +682,46 @@ def _merge_non_destructive_managed_fields(
                 "Panel-derive filled brief.goal_terms keys the LLM omitted: %s",
                 missing_from_panel,
             )
-        if unauthorized or missing_from_panel:
+
+        # Brief-as-source-of-truth, third case: keys present in BOTH brief
+        # and panel must use the BRIEF's weight/type/properties. The LLM
+        # derivation sometimes returns the *current* panel value (or omits
+        # the field entirely, falling back to current via the merge above)
+        # — so a brief-side bump like ``workload_balance.weight = 2.0``
+        # never reaches the panel and S5 verify flags brief↔panel drift
+        # in a loop that Retry can't break. The brief is the source of
+        # truth for committed weights; force-overwrite.
+        weight_overwrites: list[str] = []
+        if isinstance(brief_goal_terms_raw, dict):
+            for key, brief_entry in brief_goal_terms_raw.items():
+                if key not in merged_goal_terms_final:
+                    continue
+                if not isinstance(brief_entry, dict):
+                    continue
+                panel_entry = merged_goal_terms_final[key]
+                if not isinstance(panel_entry, dict):
+                    continue
+                for field in ("weight", "type", "rank", "locked", "properties"):
+                    if field not in brief_entry:
+                        continue
+                    brief_val = brief_entry[field]
+                    if panel_entry.get(field) != brief_val:
+                        panel_entry[field] = deepcopy(brief_val) if isinstance(brief_val, (dict, list)) else brief_val
+                        if field == "weight":
+                            weight_overwrites.append(key)
+                            # Keep legacy weights map in lockstep.
+                            if isinstance(brief_val, (int, float)) and not isinstance(brief_val, bool):
+                                weights_map = merged.get("weights")
+                                if not isinstance(weights_map, dict):
+                                    weights_map = {}
+                                    merged["weights"] = weights_map
+                                weights_map[key] = float(brief_val)
+        if weight_overwrites:
+            log.info(
+                "Panel-derive overwrote panel weights with brief values for: %s",
+                weight_overwrites,
+            )
+        if unauthorized or missing_from_panel or weight_overwrites:
             merged["goal_terms"] = merged_goal_terms_final
 
     current_weights = _weights_from_problem(current_problem)

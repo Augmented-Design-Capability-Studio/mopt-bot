@@ -292,20 +292,25 @@ def brief_mentions_search_strategy(
     test_problem_id: str | None = None,
     workflow_mode: str | None = None,
 ) -> bool:
-    """Return True iff the brief carries a gathered/assumption row that
-    justifies a search-strategy panel block.
+    """Return True iff the brief carries a recorded signal that justifies
+    a search-strategy panel block.
 
-    Two signals (either is sufficient):
+    Three signals (any one is sufficient):
 
-    1. **Slot-tagged item.** A brief item whose id resolves to a search-
+    1. **Structured carrier.** ``brief.goal_terms.search_strategy.properties.algorithm``
+       holds a non-empty algorithm name. This is the canonical structured
+       store for the algorithm choice — when the LLM commits it via the
+       brief patch, the carrier alone is the source of truth. Previously
+       this signal was missing here, so a brief carrying ``"GA"`` in the
+       carrier but no separate items[] row got its panel ``algorithm``
+       stripped by ``sync_panel_from_problem_brief``'s workflow-legitimacy
+       gate, then S5 verify_panel flagged brief↔panel drift in a loop.
+    2. **Slot-tagged item.** A brief item whose id resolves to a search-
        strategy slot (``search_strategy``, ``algorithm``, ``epochs``,
-       ``pop_size``, or any ``algorithm_param:*``). Slot detection goes
-       through ``problem_brief.problem_brief_item_slot``, which is port-
-       aware and returns the same slot keys whether the row was synthesized
-       from the panel or written by the LLM.
-    2. **Algorithm name mentioned in text.** Falls back to the closed-
-       vocabulary text scanner so chat-only mentions (e.g. *"let's start
-       with GA"*) count even before the panel has been synced.
+       ``pop_size``, or any ``algorithm_param:*``).
+    3. **Algorithm name mentioned in text.** The closed-vocabulary text
+       scanner so chat-only mentions (e.g. *"let's start with GA"*) count
+       even before the panel has been synced.
 
     The gate is workflow-agnostic and problem-agnostic: it only asks
     whether the brief has a recorded reason to expose search-strategy
@@ -313,6 +318,17 @@ def brief_mentions_search_strategy(
     """
     if not isinstance(brief, dict):
         return False
+    # Structured carrier check — runs FIRST because it's the canonical
+    # signal and doesn't depend on items[] being populated.
+    goal_terms = brief.get("goal_terms")
+    if isinstance(goal_terms, dict):
+        ss_entry = goal_terms.get("search_strategy")
+        if isinstance(ss_entry, dict):
+            props = ss_entry.get("properties")
+            if isinstance(props, dict):
+                algo = props.get("algorithm")
+                if isinstance(algo, str) and algo.strip():
+                    return True
     raw_items = brief.get("items")
     items: list[dict[str, Any]] = (
         [item for item in raw_items if isinstance(item, dict)]

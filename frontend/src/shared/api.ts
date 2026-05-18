@@ -281,6 +281,14 @@ export type ProblemBrief = {
   run_summary: string;
   items: ProblemBriefItem[];
   open_questions: ProblemBriefQuestion[];
+  /** Structured per-goal-term carrier (weight, type, properties,
+   *  evidence_item_ids, ambiguity_note). Opaque to the frontend; we never
+   *  edit it directly, but it MUST round-trip through PATCH unchanged so
+   *  the backend doesn't think the participant just wiped every committed
+   *  goal-term. */
+  goal_terms?: Record<string, unknown>;
+  unmodeled_requests?: unknown[];
+  topic_engaged?: boolean;
   solver_scope: string;
   backend_template: string;
 };

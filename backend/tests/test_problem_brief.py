@@ -544,6 +544,15 @@ def test_merge_goal_terms_deep_merges_per_key():
 
 
 def test_merge_goal_terms_replace_flag_overwrites_full_map():
+    """`replace_goal_terms=true` only takes effect on cleanup turns
+    (paired with `cleanup_mode=true`). Outside cleanup, the merge falls
+    back to deep-merge so an incomplete LLM patch can't silently wipe
+    committed terms like ``travel_time``. See the 26f4-session bug:
+    LLM set the replace flag mid-conversation while emitting only
+    ``search_strategy``, dropping ``travel_time`` and leaving
+    ``goal_summary`` / synthesized items[] referencing a term the
+    panel no longer had.
+    """
     base = normalize_problem_brief(
         _minimal_brief_payload(
             goal_terms={
@@ -552,7 +561,8 @@ def test_merge_goal_terms_replace_flag_overwrites_full_map():
             },
         )
     )
-    merged = merge_problem_brief_patch(
+    # Without cleanup_mode: replace flag is ignored, deep-merge runs.
+    merged_no_cleanup = merge_problem_brief_patch(
         base,
         {
             "replace_goal_terms": True,
@@ -561,7 +571,23 @@ def test_merge_goal_terms_replace_flag_overwrites_full_map():
             },
         },
     )
-    assert set(merged["goal_terms"].keys()) == {"lateness_penalty"}
+    assert set(merged_no_cleanup["goal_terms"].keys()) == {
+        "travel_time",
+        "worker_preference",
+        "lateness_penalty",
+    }
+    # With cleanup_mode=true: replace honored, full map swapped.
+    merged_cleanup = merge_problem_brief_patch(
+        base,
+        {
+            "cleanup_mode": True,
+            "replace_goal_terms": True,
+            "goal_terms": {
+                "lateness_penalty": {"weight": 7.0, "type": "objective"},
+            },
+        },
+    )
+    assert set(merged_cleanup["goal_terms"].keys()) == {"lateness_penalty"}
 
 
 def test_sync_problem_brief_from_panel_mirrors_goal_terms():

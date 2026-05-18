@@ -140,9 +140,24 @@ def _route_oq_answers_through_classifier(
     for entry in classifications:
         classified_by_id[str(entry.question_id)] = entry
 
+    from app.problem_brief import FOUNDATIONAL_OQ_TOPICS
+
     mode = (workflow_mode or "").strip().lower()
     next_questions: list[dict[str, Any]] = []
     items = list(incoming_brief.get("items") or [])
+
+    def _reset_foundational_oq(parent_q: dict[str, Any]) -> dict[str, Any]:
+        """Revert a server-owned canonical OQ to its open state when the
+        user's answer was hedged / counter-question / unresolved. The
+        canonical text stays as the server originally wrote it; the
+        explanation flows through the chat pipeline via the synthetic
+        chat note (which quotes the participant's actual answer text)
+        plus the ``STUDY_CHAT_ANSWERED_OQ_CONTEXT`` prompt block.
+        """
+        cleared = dict(parent_q)
+        cleared["status"] = "open"
+        cleared["answer_text"] = None
+        return cleared
 
     for q in open_questions:
         if not isinstance(q, dict):
@@ -154,7 +169,23 @@ def _route_oq_answers_through_classifier(
             next_questions.append(q)
             continue
 
+        parent_topic = str(q.get("topic") or "other").strip() or "other"
+        parent_is_foundational = parent_topic in FOUNDATIONAL_OQ_TOPICS
+
         if c.bucket == "new_open_question" and mode == "waterfall":
+            # Foundational OQs are server-owned: their canonical text is
+            # stable and the server (`_enforce_session_monitors`) controls
+            # their lifecycle. A classifier-generated re-ask on a foundational
+            # parent would either (a) get stripped at merge anyway (cluttering
+            # the brief mid-transaction) or (b) produce a duplicate alongside
+            # the canonical row. Instead: reset the parent to open and let
+            # the chat pipeline handle the explanation. The synthetic chat
+            # note quotes the participant's actual answer text so the main
+            # turn LLM sees their words without needing the brief to carry
+            # them as state.
+            if parent_is_foundational:
+                next_questions.append(_reset_foundational_oq(q))
+                continue
             new_text = (c.new_question_text or "").strip()
             if not new_text:
                 next_questions.append(q)
@@ -165,11 +196,20 @@ def _route_oq_answers_through_classifier(
                     "text": new_text,
                     "status": "open",
                     "answer_text": None,
+                    "topic": parent_topic,
                 }
             )
             continue
 
         if c.bucket == "assumption" and mode in ("agile", "demo"):
+            # Same foundational-topic guard for the assumption bucket:
+            # agile would otherwise auto-promote a hedged answer like
+            # *"please explain"* into an `algorithm: GA` assumption row
+            # based on the canonical OQ text mentioning GA first. The
+            # canonical stays unchanged; the explanation lives in chat.
+            if parent_is_foundational:
+                next_questions.append(_reset_foundational_oq(q))
+                continue
             assumption_text = (c.assumption_text or "").strip()
             if not assumption_text:
                 next_questions.append(q)
@@ -588,9 +628,19 @@ def delete_session(
     db: Session = Depends(get_db),
     _: Principal = Depends(require_researcher),
 ):
+    """Hard-delete a session and its cascaded children (messages, runs,
+    snapshots). Idempotent — a missing row returns 204 (success), not 404.
+
+    The 404-on-missing behaviour bricked the researcher's bulk-delete loop:
+    if any one ID had already been removed (e.g. duplicate click, stale
+    sidebar list after a manual DB wipe), the frontend's per-iteration
+    `await apiFetch(...)` threw, aborted the rest of the batch, and the
+    refresh-list call after the loop never ran — so the UI kept showing
+    sessions that were already gone from the DB.
+    """
     row = db.get(StudySession, session_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        return None  # treat missing as already-deleted (idempotent)
     db.delete(row)
     db.commit()
     return None

@@ -1201,6 +1201,7 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     merged = deepcopy(base)
     replace_editable_items = bool(patch.get("replace_editable_items"))
     replace_open_questions = bool(patch.get("replace_open_questions"))
+    cleanup_mode = bool(patch.get("cleanup_mode"))
 
     if "goal_summary" in patch:
         raw_goal = patch.get("goal_summary") or ""
@@ -1277,17 +1278,26 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
         )
     if "goal_terms" in patch:
         # Per-key deep merge — see _merge_goal_term_entry for `properties` semantics.
-        # `replace_goal_terms` flag (when set true) replaces the full map instead.
+        # `replace_goal_terms` flag (when set true on a cleanup turn) replaces
+        # the full map instead. We gate the replace on ``cleanup_mode=true``
+        # because LLMs occasionally set the flag mid-conversation while
+        # emitting an incomplete goal_terms map — which silently wipes
+        # committed terms like ``travel_time`` and leaves the brief out of
+        # sync with both ``items[]`` (the synthesized canonical row) and the
+        # panel (which then loses the goal_term). The cleanup_mode gate
+        # matches the prompt convention ("holistic cleanup: set
+        # cleanup_mode=true AND replace_editable_items=true").
         # Defence against LLM-emitted prose rows that would collide with the
-        # synthesizer's id namespace (e.g. `config-driver-pref-*`) is enforced
-        # at the JSON-schema layer via `port.all_synthesized_id_prefixes()` —
-        # see `_build_problem_brief_item_schema` in `app.services.llm`.
-        # Gemini rejects any items[] entry whose id matches a forbidden prefix,
-        # so by the time the patch reaches this merge step, the id namespace is
-        # already exclusive to the synthesizer.
-        if bool(patch.get("replace_goal_terms")):
+        # synthesizer's id namespace lives at the JSON-schema layer.
+        cleanup_replace = bool(patch.get("replace_goal_terms")) and cleanup_mode
+        if cleanup_replace:
             merged["goal_terms"] = _normalize_goal_terms_map(patch.get("goal_terms"))
         else:
+            if bool(patch.get("replace_goal_terms")) and not cleanup_mode:
+                log.debug(
+                    "Ignoring replace_goal_terms=true outside cleanup_mode; "
+                    "falling back to deep-merge to protect committed terms"
+                )
             normalized_patch = _normalize_goal_terms_map(patch.get("goal_terms"))
             merged["goal_terms"] = _merge_goal_terms_maps(merged.get("goal_terms"), normalized_patch)
 

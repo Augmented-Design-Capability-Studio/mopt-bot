@@ -599,16 +599,31 @@ export function useClientSessionActions({
 
     // Identify OQs whose status flipped to "answered" with a non-empty answer in this save.
     // Each such card shows a spinning shield until the PATCH response returns — the backend
-    // classifier rephrases concrete answers and routes hedged ones to assumptions or to a
-    // simpler follow-up question.
+    // classifier rephrases concrete answers, and for foundational-topic parents (server-
+    // owned canonical OQs) reverts hedged / counter-question answers back to open so the
+    // canonical text stays untouched.
     const baselineOqStatusById = new Map(
       previousBrief.open_questions.map((q) => [q.id, q.status] as const),
     );
     const flippedOqIds: string[] = [];
+    // Also capture the {question, answer} pairs for the chat note so the
+    // main-turn LLM can read what the participant actually typed without
+    // having to re-parse the brief — useful especially when the backend
+    // reverts the answer on a foundational counter-question (the answer
+    // text would otherwise vanish from the brief by the time the LLM
+    // sees it).
+    const flippedOqQuotes: Array<{ question: string; answer: string }> = [];
     for (const q of cleanedBrief.open_questions) {
       const wasAnswered = baselineOqStatusById.get(q.id) === "answered";
-      const nowAnswered = q.status === "answered" && (q.answer_text ?? "").trim().length > 0;
-      if (nowAnswered && !wasAnswered) flippedOqIds.push(q.id);
+      const answer = (q.answer_text ?? "").trim();
+      const nowAnswered = q.status === "answered" && answer.length > 0;
+      if (nowAnswered && !wasAnswered) {
+        flippedOqIds.push(q.id);
+        flippedOqQuotes.push({
+          question: (q.text ?? "").trim(),
+          answer,
+        });
+      }
     }
 
     savingProblemBriefRef.current = true;
@@ -646,8 +661,30 @@ export function useClientSessionActions({
         // per-OQ handling and explanation-first replies.
         const oqAnswered = flippedOqIds.length > 0;
         const oqCount = flippedOqIds.length;
+        // Quote each (question, answer) pair so the main-turn LLM sees the
+        // participant's literal text. This is the only reliable channel for
+        // hedged answers on foundational OQs — the backend router reverts
+        // those to status=open + answer_text=null, so by the time the LLM
+        // reads the brief the answer text is gone. The quote in the chat
+        // note is what lets the LLM recognise *"please explain"* as a
+        // counter-question instead of confabulating a choice.
+        // Markdown rendering: a single \n keeps the next line inside the
+        // same bullet item (so trailing instructions visually glue to the
+        // last quote). Use \n\n to force a paragraph break between the
+        // quote list and the meta-instructions, and prefix the instructions
+        // with a labelled paragraph so they read as a distinct section.
+        const quoteBlock = flippedOqQuotes
+          .map(({ question, answer }) => `- For "${question}" I typed: "${answer}"`)
+          .join("\n");
+        const headerLine = oqCount === 1
+          ? "I just filled in an open question."
+          : `I just filled in ${oqCount} open questions.`;
+        const instructionParagraph =
+          "**How to handle this turn:** if my answer is a concrete decision, capture it in the brief. " +
+          "If I asked you to explain something or hedged, lead your reply with the explanation (or a follow-up) " +
+          "and leave that question open without rewording it. Acknowledge any other gathered or assumption edits briefly after.";
         const defaultChatMessage = oqAnswered
-          ? `I just filled in ${oqCount === 1 ? "an open question" : `${oqCount} open questions`}. Summary: ${changedSummary}. Please read each newly-filled answer field on its own: if I gave a real answer, capture it in the brief; if I asked you to explain something instead, lead your reply with that explanation and leave the question open. Acknowledge any other gathered or assumption edits briefly after.`
+          ? `${headerLine} Summary: ${changedSummary}.\n\n${quoteBlock}\n\n${instructionParagraph}`
           : `I just manually updated the problem definition. Summary: ${changedSummary}. Please acknowledge the updated gathered info and assumptions. If the definition is now specific enough to justify a solver configuration change, mention that briefly; otherwise stay focused on clarifying the definition.`;
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()

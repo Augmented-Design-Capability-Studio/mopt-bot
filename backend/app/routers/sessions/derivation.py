@@ -316,6 +316,18 @@ def apply_brief_patch_with_cleanup(
             merged = dict(merged)
             merged["goal_terms"] = filtered
 
+    # Drop LLM-emitted "goal-term anchor" rows: items that are (a) NEW this
+    # turn (not in base.items by id) AND (b) cited by a NEW goal_term's
+    # `evidence_item_ids`. These rows describe the same goal-term as the
+    # canonical `config-weight-<key>` row about to be synthesized — keeping
+    # both gives the participant two near-identical lines. The anchor
+    # filter above already consumed the citation, so dropping the cited
+    # item here is safe. Existing items (carried over from prior turns)
+    # are NEVER dropped; only fresh anchors this patch introduced.
+    merged = _drop_redundant_goal_term_anchors(
+        base_brief=base_problem_brief, merged=merged
+    )
+
     # Canonical goal-term rows: synthesize a ``config-weight-<key>`` items[]
     # row for every surviving goal_terms key, with text in the canonical
     # ``{Label} ({type}, weight N) — {reasoning}.`` form. Runs AFTER the
@@ -341,6 +353,73 @@ def apply_brief_patch_with_cleanup(
     )
     consolidated = _enforce_session_monitors(consolidated, workflow_mode)
     return consolidated, {"removed_total": 0, **run_meta}
+
+
+def _drop_redundant_goal_term_anchors(
+    *,
+    base_brief: dict[str, Any] | None,
+    merged: dict[str, Any],
+) -> dict[str, Any]:
+    """Drop LLM-emitted items[] rows that double as goal-term anchors.
+
+    Pattern this fixes: the LLM emits ``goal_terms.travel_time = {weight,
+    type, evidence_item_ids: ["item-primary-travel-time"]}`` AND a matching
+    items[] row ``{id: "item-primary-travel-time", text: "Total travel
+    time (objective, weight 1.0) — minimizing overall distance…"}``.
+    The synthesizer is about to emit ``config-weight-travel_time`` with
+    essentially the same content — the participant ends up seeing two
+    near-identical rows.
+
+    Rule (purely structural, no NL):
+    - An items[] row is dropped iff its id is **new this turn** (not in
+      ``base.items`` by id) **AND** it's cited by the ``evidence_item_ids``
+      of a goal_term that is **also new this turn** (not in
+      ``base.goal_terms`` by key).
+    - Existing items (carried from prior turns) and items cited by
+      already-existing goal_terms are NEVER touched — keeps user-curated
+      context safe.
+    """
+    if not isinstance(merged, dict):
+        return merged
+    base_item_ids: set[str] = set()
+    base_gt_keys: set[str] = set()
+    if isinstance(base_brief, dict):
+        for it in (base_brief.get("items") or []):
+            if isinstance(it, dict):
+                base_item_ids.add(str(it.get("id") or ""))
+        base_gt = base_brief.get("goal_terms")
+        if isinstance(base_gt, dict):
+            base_gt_keys = {k for k in base_gt.keys() if isinstance(k, str)}
+
+    merged_gt = merged.get("goal_terms")
+    if not isinstance(merged_gt, dict):
+        return merged
+    anchor_ids_to_drop: set[str] = set()
+    for key, entry in merged_gt.items():
+        if not isinstance(key, str) or key in base_gt_keys:
+            continue  # existing goal_term — leave its evidence alone
+        if not isinstance(entry, dict):
+            continue
+        evidence = entry.get("evidence_item_ids")
+        if not isinstance(evidence, list):
+            continue
+        for eid in evidence:
+            if not isinstance(eid, str):
+                continue
+            sid = eid.strip()
+            if not sid or sid in base_item_ids:
+                continue  # only drop NEW anchors, never existing items
+            anchor_ids_to_drop.add(sid)
+    if not anchor_ids_to_drop:
+        return merged
+
+    next_items = [
+        it for it in (merged.get("items") or [])
+        if not (isinstance(it, dict) and str(it.get("id") or "") in anchor_ids_to_drop)
+    ]
+    next_brief = dict(merged)
+    next_brief["items"] = next_items
+    return next_brief
 
 
 def _autofill_goal_summary_from_objective(
@@ -449,7 +528,7 @@ def _enforce_session_monitors(
     no monitor rows, so a "hi" turn doesn't immediately surface three OQs.
     """
     from app.problem_brief import is_chat_cold_start
-    from app.services.goal_term_anchoring import algorithm_mentioned_in_brief
+    from app.services.goal_term_anchoring import brief_mentions_search_strategy
 
     if not isinstance(brief, dict):
         return brief
@@ -517,7 +596,18 @@ def _enforce_session_monitors(
         _append_oq(_MONITOR_OQ_GOAL_ID, _MONITOR_OQ_GOAL_TEXT, "primary_goal")
 
     # Monitor 3: search strategy
-    has_algorithm = algorithm_mentioned_in_brief(items, workflow_mode=workflow)
+    # Use brief_mentions_search_strategy (carrier-aware) instead of the
+    # text-only algorithm_mentioned_in_brief. Without this, an LLM that
+    # committed `goal_terms.search_strategy.properties.algorithm = "GA"`
+    # via the structured carrier but no items[] row mentioning GA would
+    # be considered "no algorithm" — and the monitor would re-add
+    # `oq-monitor-algorithm` alongside the canonical one stored by the
+    # PATCH path. (Observed in the 26f4 session: counter-question on
+    # the algorithm OQ → router's reset + this monitor re-add gave the
+    # participant two algorithm OQs.)
+    has_algorithm = brief_mentions_search_strategy(
+        next_brief, workflow_mode=workflow
+    )
     if is_agile_or_demo:
         if has_algorithm:
             _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
@@ -575,10 +665,24 @@ def _synthesize_canonical_weight_items(
     if not isinstance(brief, dict):
         return brief
     extras = synthesize_canonical_goal_term_items(brief, test_problem_id)
-    if not extras:
+    base_items = list(brief.get("items") or [])
+    has_stale = any(
+        isinstance(item, dict)
+        and str(item.get("id") or "").startswith("config-weight-")
+        for item in base_items
+    )
+    # Both branches need to run: even when no new extras are produced (e.g.
+    # the brief's only goal_term is the carrier-only `search_strategy`, or
+    # `goal_terms` was wiped this turn), stale `config-weight-*` rows from
+    # prior turns must still be dropped. Previously the early-return on
+    # empty extras left stale rows behind, producing the
+    # 26f4-session pattern: items[] showed
+    # `Travel time (primary objective, weight 1.0)` even though
+    # `goal_terms.travel_time` was already gone — so the brief and the
+    # panel disagreed silently.
+    if not extras and not has_stale:
         return brief
     next_brief = dict(brief)
-    base_items = list(brief.get("items") or [])
     kept_items = [
         item
         for item in base_items
