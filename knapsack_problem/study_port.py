@@ -163,6 +163,74 @@ class KnapsackStudyPort:
     def auto_anchored_goal_term_keys(self) -> frozenset[str]:
         return frozenset(self.weight_display_keys())
 
+    def gate_conditional_companions(self) -> dict[str, str]:
+        return {}
+
+    def companion_present(self, goal_term_key: str, value: Any) -> bool:
+        if isinstance(value, list):
+            return len(value) > 0
+        return bool(value)
+
+    def verify_brief_companion(
+        self,
+        brief: dict[str, Any],
+        *,
+        visible_reply: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def goal_term_rationales(self) -> dict[str, str]:
+        return {
+            "value_emphasis": "to push the solver toward higher-value selections",
+            "capacity_overflow": "to discourage exceeding the knapsack capacity",
+            "selection_sparsity": "to keep the selection compact rather than grabbing everything",
+        }
+
+    def extra_managed_problem_fields(self) -> tuple[str, ...]:
+        return ()
+
+    def goal_term_property_field_mirrors(self) -> dict[str, str]:
+        return {}
+
+    def is_goal_term_self_anchored(self, key: str, entry: dict[str, Any]) -> bool:
+        return False
+
+    def normalize_goal_term_property(
+        self, prop_key: str, prop_val: Any
+    ) -> tuple[bool, Any] | None:
+        return None
+
+    def problem_brief_item_slot(self, item: dict[str, Any]) -> str | None:
+        return None
+
+    def brief_item_ids_to_strip_on_goal_term_removal(
+        self,
+        removed_keys: set[str],
+        prior_goal_terms: dict[str, Any],
+        brief_items: list[dict[str, Any]],
+    ) -> set[str]:
+        ids: set[str] = set()
+        for key in removed_keys:
+            entry = prior_goal_terms.get(key) if isinstance(prior_goal_terms, dict) else None
+            if not isinstance(entry, dict):
+                continue
+            evidence = entry.get("evidence_item_ids")
+            if isinstance(evidence, list):
+                for eid in evidence:
+                    if isinstance(eid, str) and eid:
+                        ids.add(eid)
+        return ids
+
+    def synthesize_brief_items_from_goal_terms(
+        self, goal_terms: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def format_run_context_violation_details(
+        self, violations: dict[str, Any]
+    ) -> list[str]:
+        return []
+
     def visualization_capabilities(self) -> list[str]:
         return [
             "Convergence trend across iterations",

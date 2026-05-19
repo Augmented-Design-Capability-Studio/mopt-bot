@@ -89,8 +89,25 @@ export function configChangeDetailedSummary(
         lines.push(`added goal term ${key} (${formatGoalTerm(next)})`);
       } else if (prev != null && next == null) {
         lines.push(`removed goal term ${key}`);
-      } else if (prev != null && next != null && stableJSON(prev) !== stableJSON(next)) {
-        lines.push(`goal term ${key}: ${formatGoalTerm(prev)} → ${formatGoalTerm(next)}`);
+      } else if (prev != null && next != null) {
+        // Compare only the user-editable subset. The full entry carries
+        // server-derived fields (rank, evidence_item_ids, ambiguity_note)
+        // that the participant can't see or change in the panel JSON; a
+        // raw stableJSON diff would surface phantom changes whenever the
+        // backend rebuilt the entry (e.g. _rebuild_goal_terms re-stamping
+        // rank). Surface granular per-field deltas so the LLM reply can
+        // mirror them as bullets.
+        const prevCmp = normalizeGoalTermForCompare(prev);
+        const nextCmp = normalizeGoalTermForCompare(next);
+        if (stableJSON(prevCmp) !== stableJSON(nextCmp)) {
+          const fieldLines = goalTermFieldDiffLines(key, prevCmp, nextCmp);
+          if (fieldLines.length > 0) {
+            lines.push(...fieldLines);
+          } else {
+            // Shouldn't happen — fall back to whole-entry transition.
+            lines.push(`goal term ${key}: ${formatGoalTerm(prev)} → ${formatGoalTerm(next)}`);
+          }
+        }
       }
     }
   } else {
@@ -153,6 +170,69 @@ function formatGoalTerm(value: unknown): string {
   if (typeof type === "string" && type) parts.push(type);
   if (typeof weight === "number") parts.push(`weight ${weight}`);
   return parts.length > 0 ? parts.join(", ") : formatScalar(value);
+}
+
+/**
+ * Strip server-derived fields from a goal_terms entry so the diff only
+ * surfaces user-edited changes. `rank` is re-stamped by the backend on
+ * every save (e.g. _rebuild_goal_terms), `evidence_item_ids` and
+ * `ambiguity_note` are LLM-managed — none of these are knobs the
+ * participant turns in the panel JSON.
+ */
+function normalizeGoalTermForCompare(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (typeof obj.weight === "number") out.weight = obj.weight;
+  if (typeof obj.type === "string" && obj.type) out.type = obj.type;
+  if (typeof obj.locked === "boolean") out.locked = obj.locked;
+  if (obj.properties !== undefined) {
+    const props = obj.properties;
+    if (props && typeof props === "object" && !Array.isArray(props)) {
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props as Record<string, unknown>)) {
+        if (v === null || v === undefined) continue;
+        if (Array.isArray(v) && v.length === 0) continue;
+        if (typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length === 0) continue;
+        cleaned[k] = v;
+      }
+      if (Object.keys(cleaned).length > 0) out.properties = cleaned;
+    }
+  }
+  return out;
+}
+
+/**
+ * Per-field diff lines for a goal_terms entry. Returns one line per
+ * changed field (weight/type/locked, plus per-property changes under
+ * `properties`). Surfaces concrete transitions like
+ * "goal term value_emphasis: weight 5 → 7" instead of an opaque whole-
+ * entry stableJSON diff.
+ */
+function goalTermFieldDiffLines(
+  key: string,
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  const fieldKeys = new Set<string>([...Object.keys(prev), ...Object.keys(next)]);
+  for (const field of [...fieldKeys].sort()) {
+    if (field === "properties") continue;
+    const pv = prev[field];
+    const nv = next[field];
+    if (stableJSON(pv) === stableJSON(nv)) continue;
+    out.push(`goal term ${key}: ${field} ${formatScalar(pv)} → ${formatScalar(nv)}`);
+  }
+  const prevProps = recordOrNull(prev.properties) ?? {};
+  const nextProps = recordOrNull(next.properties) ?? {};
+  const propKeys = new Set<string>([...Object.keys(prevProps), ...Object.keys(nextProps)]);
+  for (const prop of [...propKeys].sort()) {
+    const pv = prevProps[prop];
+    const nv = nextProps[prop];
+    if (stableJSON(pv) === stableJSON(nv)) continue;
+    out.push(`goal term ${key}: ${prop} ${formatScalar(pv)} → ${formatScalar(nv)}`);
+  }
+  return out;
 }
 
 function formatScalar(value: unknown): string {

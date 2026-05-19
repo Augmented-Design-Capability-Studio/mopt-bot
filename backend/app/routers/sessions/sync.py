@@ -949,6 +949,36 @@ def sync_panel_from_problem_brief(
     ):
         for key in SEARCH_STRATEGY_PANEL_FIELDS:
             next_problem.pop(key, None)
+    else:
+        # Carrier→panel deterministic mirror. The LLM-driven panel derivation
+        # (governed by STUDY_CHAT_SEARCH_STRATEGY_ANCHORING) treats `brief.items[]`
+        # as the only evidence for emitting search-strategy fields. In tutorial
+        # mode the chat LLM may commit the algorithm via the structured carrier
+        # (``goal_terms.search_strategy.properties.algorithm``) and skip the
+        # items[] row, so LLM-derive omits panel.algorithm and S5 catches the
+        # drift in a retry loop. The carrier is canonical — if it carries a
+        # value and the panel slot is empty, mirror it deterministically.
+        ss_carrier = (
+            problem_brief.get("goal_terms", {}).get("search_strategy", {}).get("properties", {})
+            if isinstance(problem_brief, dict)
+            else {}
+        )
+        if isinstance(ss_carrier, dict):
+            for carrier_key in ("algorithm", "epochs", "pop_size"):
+                carrier_val = ss_carrier.get(carrier_key)
+                current_val = next_problem.get(carrier_key)
+                if carrier_key == "algorithm":
+                    if isinstance(carrier_val, str) and carrier_val.strip() and not (
+                        isinstance(current_val, str) and current_val.strip()
+                    ):
+                        next_problem[carrier_key] = carrier_val.strip()
+                else:
+                    if (
+                        isinstance(carrier_val, (int, float))
+                        and not isinstance(carrier_val, bool)
+                        and current_val in (None, "", 0)
+                    ):
+                        next_problem[carrier_key] = carrier_val
 
     # Drop stale `goal_term_order` entries whose keys were filtered out of
     # `goal_terms` above (unauthorized/unanchored sweeps) or that were carried

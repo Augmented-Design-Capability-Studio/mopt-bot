@@ -513,16 +513,17 @@ export function useClientSessionActions({
       const tutorialPatch = patchForTutorialEvent("config-saved", nextSession);
       if (tutorialPatch) void setParticipantTutorialState(tutorialPatch);
       if (invokeModel && detailedChanges !== "no settings changed") {
-        // Run the hidden brief update so the LLM can refresh affected brief
-        // rows in natural language (preserving prior rationale, noting that
-        // the participant adjusted the value themselves). The backend
-        // detects this context message and injects the rationale-preservation
-        // prompt fragment. Skip the post entirely on no-op saves so the
-        // chat doesn't accumulate "you changed nothing" turns when the
-        // participant clicks Save without editing anything.
+        // Strictly factual chat note — what changed, nothing more. Mirrors
+        // the brief-edit-ack pattern: the backend prompt block fired by
+        // `context_kind: "config_save"` (STUDY_CHAT_CONFIG_SAVE_RATIONALE)
+        // owns all "how to handle this turn" rules, including bullet-point
+        // visible-reply format. Repeating those instructions in the user
+        // message was noisy in chat and redundant for the LLM. Skip the
+        // post entirely on no-op saves so the chat doesn't accumulate
+        // "you changed nothing" turns when the participant clicks Save
+        // without editing anything.
         void postContextMessage(
-          `I manually updated the problem configuration: ${detailedChanges}. ` +
-            `Please acknowledge in 1-2 short sentences using user-friendly names, then update the brief rows for the affected settings while preserving any prior rationale.`,
+          `Config edited: ${detailedChanges}.`,
           true,
           { skipHiddenBriefUpdate: false, contextKind: "config_save" },
         );

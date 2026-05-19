@@ -217,9 +217,12 @@ def _route_oq_answers_through_classifier(
             if not rephrased:
                 next_questions.append(q)
                 continue
+            gathered_item_id = (
+                f"item-gathered-from-question-{qid}" if qid else f"item-gathered-{len(items)}"
+            )
             items.append(
                 {
-                    "id": f"item-gathered-from-question-{qid}" if qid else f"item-gathered-{len(items)}",
+                    "id": gathered_item_id,
                     "text": rephrased,
                     "kind": "gathered",
                     "source": "user",
@@ -240,7 +243,35 @@ def _route_oq_answers_through_classifier(
                     if not isinstance(goal_terms, dict):
                         goal_terms = {}
                     if key not in goal_terms:
-                        goal_terms[key] = {"type": proposal.type}
+                        existing_ranks = [
+                            int(entry.get("rank"))
+                            for entry in goal_terms.values()
+                            if isinstance(entry, dict)
+                            and isinstance(entry.get("rank"), (int, float))
+                            and not isinstance(entry.get("rank"), bool)
+                        ]
+                        next_rank = (max(existing_ranks) + 1) if existing_ranks else 1
+                        # Complete entry: weight (default 1.0), type, rank,
+                        # evidence_item_ids (the gathered row we just added),
+                        # and ambiguity_note.chosen_rationale (so downstream
+                        # synthesize_canonical_goal_term_items can render a
+                        # complete "<Label> (<role>, weight N) — <rationale>."
+                        # row instead of the bare fallback).
+                        question_text = str(q.get("text") or "").strip()
+                        rationale = (
+                            f"endorsed via answered question: {question_text}"
+                            if question_text
+                            else "endorsed via answered open question"
+                        )
+                        goal_terms[key] = {
+                            "weight": 1.0,
+                            "type": proposal.type,
+                            "rank": next_rank,
+                            "evidence_item_ids": [gathered_item_id],
+                            "ambiguity_note": {
+                                "chosen_rationale": rationale,
+                            },
+                        }
                         incoming_brief["goal_terms"] = goal_terms
             continue
 
@@ -1552,22 +1583,25 @@ def patch_participant_panel(
 
     create_snapshot(db, session_id, EVENT_MANUAL_SAVE)
 
-    ack_parts = []
+    # Deterministic ack now carries server-side warnings only — the user-
+    # facing change summary lives in the LLM-generated reply triggered by
+    # the `context_kind: "config_save"` chat post (see saveConfig in
+    # useClientSessionActions.ts + STUDY_CHAT_CONFIG_SAVE_RATIONALE). Format
+    # as a bullet list so the bubble matches the LLM reply visually.
+    ack_lines: list[str] = []
     if body.acknowledgement:
-        ack_parts.append(body.acknowledgement)
+        ack_lines.append(body.acknowledgement.strip())
     for w in weight_warnings:
-        ack_parts.append(f"Note: {w}")
+        ack_lines.append(f"- {w}")
     if cascade_strip_count > 0:
         labels = port.weight_item_labels()
-        removed_labels = sorted(
-            labels.get(k, k) for k in removed_goal_term_keys
-        )
+        removed_labels = sorted(labels.get(k, k) for k in removed_goal_term_keys)
         joined = ", ".join(removed_labels)
         plural = "row" if cascade_strip_count == 1 else "rows"
-        ack_parts.append(
-            f"Note: Removed {joined}; cleared {cascade_strip_count} related brief {plural}."
+        ack_lines.append(
+            f"- Removed {joined}; cleared {cascade_strip_count} related brief {plural}."
         )
-    ack = " ".join(ack_parts).strip()
+    ack = "\n".join(line for line in ack_lines if line).strip()
     if ack:
         derivation.append_message(db, session_id, "assistant", ack, True, kind="panel")
     return helpers.session_to_out(row)

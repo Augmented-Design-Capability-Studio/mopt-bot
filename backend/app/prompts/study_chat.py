@@ -637,14 +637,24 @@ only the latest version — never carry contradictory duplicates. Omit
 untouched fields.
 
 **Goal terms are structured.** Commit goal terms via
-``goal_terms[<key>]`` with ``weight``, ``type``
-(``objective``/``soft``/``hard``/``custom``), and
-``ambiguity_note.chosen_rationale`` (one short sentence on why this
-term — surfaces as the reasoning clause on the canonical Definition
-row). The server synthesizes the matching ``config-weight-<key>``
+``goal_terms[<key>]``. When INTRODUCING a goal term (key not yet in
+``brief.goal_terms``), the entry MUST populate all of:
+- ``weight`` (number — concrete importance level, not a placeholder),
+- ``type`` (``objective``/``soft``/``hard``/``custom``),
+- ``rank`` (positive integer; next available value across the goal_terms map),
+- ``ambiguity_note.chosen_rationale`` (one short sentence on why this
+  term — surfaces as the reasoning clause on the canonical Definition row),
+- ``evidence_item_ids`` (cite at least one supporting brief items[] row
+  that justifies the term — gathered in waterfall, gathered or
+  assumption in agile/demo).
+
+A partial entry (e.g. just ``{"type": "soft"}``) is incomplete and
+must not be emitted; the synthesizer can't render a proper canonical
+row from it. The server synthesizes the matching ``config-weight-<key>``
 items[] row as *"{Label} ({type}, weight N) — {reasoning}."* — don't
-emit a parallel anchor row. ``evidence_item_ids`` cites supporting
-context items, not the goal-term row itself.
+emit a parallel anchor row. Companion property fields (e.g.
+``properties.driver_preferences``) are governed by the per-problem
+appendix and are not affected by this completeness rule.
 
 **Goal summary lives in ``goal_summary``**, not items[]. Never start
 an items[] text with ``Goal:``, ``Objective:``, ``Primary goal:``, or
@@ -1208,34 +1218,31 @@ never lost.
 STUDY_CHAT_CONFIG_SAVE_RATIONALE = """
 ## Config-save context (panel is authoritative this turn)
 
-The user just saved a Problem Config edit. Their message lists the exact
-settings that changed (often with old → new values). For this turn:
+The user just saved a Problem Config edit. Their message reads
+*"Config edited: <semicolon-separated list of changes>."* — that list is
+the authoritative diff. For this turn:
 
+- **Visible-reply format (REQUIRED).** Open with one short sentence
+  acknowledging the save, then a bulleted list with one bullet per changed
+  field. Each bullet is a single line: *"- {User-friendly label}: {old} →
+  {new}"* (or *"- {Label}: added"* / *"- {Label}: removed"* when one side
+  is absent). No prose paragraphs after the list. No "next steps" tail. No
+  "Anything else?" trailers. The chat message already supplies the list —
+  re-state it in the bullet form using user-friendly labels.
 - **Treat the panel as the source of truth.** Do not push back on goal-term
   removals or additions the user made — the brief should follow the panel,
   not the other way around.
-- **Refresh affected brief rows in natural language.** For each goal term whose
-  weight, type, rank, or presence changed, find any existing brief row whose
-  subject is that term and update the text to reflect the new value while
-  **preserving the prior rationale** the user or you previously stated
-  (e.g. "value emphasis bumped from 5 to 7 by the user — keeping the push for
-  fuller bags"). Avoid flat boilerplate like "X is a primary objective term
-  (weight Y)."
-- **Note the manual adjustment naturally.** Phrases like "the user raised this
-  to 7", "set by the user to a hard 200", "removed by the user", or "the user
-  kept this at 5" make it clear the value came from a deliberate panel edit,
-  not from your inference. **Never use the word "participant"** in any visible
-  output — always use "the user", "you", or omit the subject.
-- **Removed terms.** If a term was removed from goal_terms, update or drop the
-  matching brief row to reflect the rejection — don't restate the term as if
-  still active. If there is a related answered open question or assumption
-  about that term, leave its rationale visible (the user has it on record),
-  but make clear the term is no longer being optimized.
-- **Other settings.** For algorithm, iterations, population, and other non-goal
-  fields that changed, update the search-strategy row(s) similarly and keep it
-  one concise gathered row per slot.
-- **Don't introduce new unrelated assumptions or open questions** on this turn.
-  Stay focused on reflecting the user's manual edits faithfully.
+- **Refresh affected brief rows in `problem_brief_patch`.** For each goal
+  term whose weight, type, rank, or presence changed, update the matching
+  brief row while **preserving the prior rationale** the user or you
+  previously stated. This refresh goes in the patch, not the visible reply.
+- **Removed terms.** If a term was removed from goal_terms, update or drop
+  the matching brief row to reflect the rejection — don't restate the term
+  as if still active.
+- **Never use the word "participant"** in any visible output — always use
+  "the user", "you", or omit the subject.
+- **Don't introduce new unrelated assumptions or open questions** on this
+  turn. Stay focused on reflecting the user's manual edits faithfully.
 """.strip()
 
 
