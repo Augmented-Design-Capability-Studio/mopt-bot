@@ -178,7 +178,11 @@
       "Bash(.\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests knapsack_problem/tests vrptw_problem/tests -x --deselect backend/tests/test_live_gemini.py -q)",
       "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests knapsack_problem/tests vrptw_problem/tests -x --deselect backend/tests/test_live_gemini.py -q 2>&1 | Select-Object -Last 80)",
       "PowerShell(Set-Location frontend; npx tsc --noEmit -p tsconfig.json; $code = $LASTEXITCODE; Set-Location ..; \"Exit: $code\")",
-      "Bash(wc *)"
+      "Bash(wc *)",
+      "Bash(npm install *)",
+      "Bash(sqlite3 frontend/data/mopt_study.db \".tables\")",
+      "Bash(sqlite3 frontend/data/mopt_study.db \"SELECT COUNT\\(*\\) FROM sessions;\")",
+      "Bash(sqlite3 frontend/data/mopt_study.db \".schema sessions\")"
     ]
   }
 }
