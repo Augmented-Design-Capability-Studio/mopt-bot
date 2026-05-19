@@ -263,6 +263,64 @@ class KnapsackStudyPort:
         # default permissive shape from schema_shared is used.
         return None
 
+    def goal_term_extraction_schema(self) -> dict | None:
+        concept = {
+            "type": "object",
+            "properties": {
+                "named": {
+                    "type": "boolean",
+                    "description": (
+                        "True iff the participant has DIRECTLY committed to "
+                        "this concept (as an objective, constraint, or "
+                        "preference) in their stated framing — not just "
+                        "mentioned the underlying entity in passing."
+                    ),
+                },
+                "rationale_phrase": {
+                    "type": "string",
+                    "description": (
+                        "One short clause (<=12 words) paraphrasing the "
+                        "participant's reason for committing. Empty when "
+                        "named=false."
+                    ),
+                },
+            },
+            "required": ["named"],
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "concepts": {
+                    "type": "object",
+                    "properties": {
+                        "value_emphasis": concept,
+                        "capacity_overflow": concept,
+                        "selection_sparsity": concept,
+                    },
+                    "required": [
+                        "value_emphasis",
+                        "capacity_overflow",
+                        "selection_sparsity",
+                    ],
+                }
+            },
+            "required": ["concepts"],
+        }
+
+    def seed_goal_term_defaults(self, key: str) -> dict | None:
+        # Match the magnitudes in ``mediocre_participant_starter_config``
+        # (value=1, capacity=40) so cold-start seeding produces the same
+        # initial panel a researcher-pushed starter would. Selection
+        # sparsity is opt-in and rare, but a light tie-breaker (0.5) when
+        # the participant does name it.
+        defaults: dict[str, dict] = {
+            "value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1},
+            "capacity_overflow": {"weight": 40.0, "type": "soft", "rank": 2},
+            "selection_sparsity": {"weight": 0.5, "type": "soft", "rank": 3},
+        }
+        entry = defaults.get(key)
+        return dict(entry) if entry is not None else None
+
     def mediocre_participant_starter_config(self) -> dict:
         from copy import deepcopy
         return deepcopy({

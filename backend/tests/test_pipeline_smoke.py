@@ -84,6 +84,52 @@ def test_waterfall_runack_missing_oq():
     assert any(i.category == "runack_invariant_violation" for i in issues)
 
 
+def test_tutorial_runack_suppression_waterfall():
+    """Tutorial Runs 1+2 in waterfall: caller sets ``suppress_runack_invariant``
+    so the 'must add new OQ on a run-ack' rule doesn't fire."""
+    issues = verify_brief_consistency(
+        merged_brief={
+            "items": [{"id": "i1", "text": "foo", "kind": "gathered"}],
+            "goal_terms": {},
+            "open_questions": [],
+        },
+        base_brief={
+            "items": [{"id": "i1", "text": "foo", "kind": "gathered"}],
+            "goal_terms": {},
+            "open_questions": [],
+        },
+        patch={},
+        visible_reply="Run #1 packed over capacity as expected.",
+        workflow_mode="waterfall",
+        is_run_acknowledgement=True,
+        suppress_runack_invariant=True,
+    )
+    assert not any(i.category == "runack_invariant_violation" for i in issues)
+
+
+def test_tutorial_runack_suppression_agile():
+    """Tutorial suppression is symmetric: agile's 'must add new assumption'
+    invariant is skipped too."""
+    issues = verify_brief_consistency(
+        merged_brief={
+            "items": [{"id": "i1", "text": "foo", "kind": "gathered"}],
+            "goal_terms": {},
+            "open_questions": [],
+        },
+        base_brief={
+            "items": [{"id": "i1", "text": "foo", "kind": "gathered"}],
+            "goal_terms": {},
+            "open_questions": [],
+        },
+        patch={},
+        visible_reply="Run #1 packed over capacity as expected.",
+        workflow_mode="agile",
+        is_run_acknowledgement=True,
+        suppress_runack_invariant=True,
+    )
+    assert not any(i.category == "runack_invariant_violation" for i in issues)
+
+
 def test_waterfall_no_assumption_invariant():
     issues = verify_brief_consistency(
         merged_brief={

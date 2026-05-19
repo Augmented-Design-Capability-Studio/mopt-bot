@@ -255,6 +255,8 @@ def apply_brief_patch_with_cleanup(
     cleanup_mode: bool = False,
     user_text: str = "",
     api_key: str | None = None,
+    model_name: str | None = None,
+    suppress_runack_invariant: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Deterministic patch-merge pipeline used by the apply stage (S3).
 
@@ -279,6 +281,56 @@ def apply_brief_patch_with_cleanup(
     from app.services.goal_term_anchoring import filter_unanchored_new_goal_terms
 
     merged = merge_problem_brief_patch(base_problem_brief, patch_payload)
+    # Tutorial Runs 1+2 run-ack strip: the bubble drives the next step, so a
+    # post-run agent reply that adds new OQs (waterfall) or new assumption
+    # rows / goal_term keys (agile) is exactly the noise we want to suppress.
+    # The prompt nudge in STUDY_CHAT_TUTORIAL_GUARDRAILS asks the LLM to
+    # skip these, but it's not always honored — strip them server-side so
+    # behavior is deterministic. Symmetric across modes; never strips
+    # entries that were already in base (so retunes / answered OQs survive).
+    if suppress_runack_invariant:
+        merged = _strip_runack_additions(merged, base_problem_brief)
+    # Closed-vocabulary strip: drop any goal_terms key the active port doesn't
+    # recognise. Each port owns a fixed set of weight keys
+    # (``weight_display_keys()``) plus the carrier-only ``search_strategy``;
+    # anything else is an LLM hallucination (e.g. ``total_value`` paraphrasing
+    # ``value_emphasis``). Stripping here, before anchor filtering and panel
+    # derivation, means the brief never carries keys the panel can't admit —
+    # which previously surfaced as `missing_in_panel` drift on every retry.
+    merged = _strip_unknown_goal_term_keys(merged, test_problem_id)
+
+    # Cold-start canonical-concept extraction. When the V2 brief patch landed
+    # only `goal_summary` / setup prose but no structured `goal_terms` AND
+    # the brief had nothing prior, run a port-aware structured-output Gemini
+    # call to seed the canonical keys the participant explicitly named.
+    # Gated on (base.goal_terms empty AND merged.goal_terms empty) so user
+    # retirements on later turns stay sticky — the extractor never fires
+    # after any goal term has been committed.
+    base_gt = (
+        base_problem_brief.get("goal_terms")
+        if isinstance(base_problem_brief, dict)
+        and isinstance(base_problem_brief.get("goal_terms"), dict)
+        else {}
+    )
+    merged_gt = (
+        merged.get("goal_terms")
+        if isinstance(merged.get("goal_terms"), dict)
+        else {}
+    )
+    if not base_gt and not merged_gt and api_key and model_name:
+        from app.services.goal_term_extraction import extract_canonical_goal_terms
+
+        seeds = extract_canonical_goal_terms(
+            merged_brief=merged,
+            user_text=user_text or "",
+            api_key=api_key,
+            model_name=model_name,
+            test_problem_id=test_problem_id,
+        )
+        if seeds:
+            merged = dict(merged)
+            merged["goal_terms"] = seeds
+
     merged = _synthesize_goal_term_prose_items(merged, test_problem_id)
 
     proposed_goal_terms = (
@@ -351,8 +403,134 @@ def apply_brief_patch_with_cleanup(
         is_run_acknowledgement=is_run_acknowledgement,
         test_problem_id=test_problem_id,
     )
-    consolidated = _enforce_session_monitors(consolidated, workflow_mode)
+    consolidated = _enforce_session_monitors(
+        consolidated, workflow_mode, test_problem_id=test_problem_id
+    )
     return consolidated, {"removed_total": 0, **run_meta}
+
+
+def _strip_runack_additions(
+    merged: dict[str, Any], base_problem_brief: dict[str, Any]
+) -> dict[str, Any]:
+    """Tutorial Runs 1+2 hard gate: drop new OQs / new assumption items /
+    new goal_term keys the agent tried to add on this run-ack turn.
+
+    Caller computes ``suppress_runack_invariant`` for the symmetric tutorial
+    case (waterfall: would-be new OQ, agile: would-be new assumption) and
+    only invokes this strip when the flag is set. Everything already in
+    base survives — answers to existing OQs, retunes of existing
+    ``goal_terms`` entries, and ack edits to existing assumption rows all
+    pass through.
+    """
+    if not isinstance(merged, dict):
+        return merged
+    base = base_problem_brief if isinstance(base_problem_brief, dict) else {}
+    base_oq_ids = {
+        str(q.get("id") or "")
+        for q in (base.get("open_questions") or [])
+        if isinstance(q, dict)
+    }
+    base_item_ids = {
+        str(it.get("id") or "")
+        for it in (base.get("items") or [])
+        if isinstance(it, dict)
+    }
+    base_gt_keys = {
+        k
+        for k in (
+            base.get("goal_terms").keys()
+            if isinstance(base.get("goal_terms"), dict)
+            else []
+        )
+        if isinstance(k, str)
+    }
+
+    next_brief = dict(merged)
+    next_oqs = [
+        q
+        for q in (merged.get("open_questions") or [])
+        if isinstance(q, dict) and str(q.get("id") or "") in base_oq_ids
+    ]
+    if len(next_oqs) != len(merged.get("open_questions") or []):
+        log.info(
+            "Tutorial run-ack strip dropped %d new open_questions",
+            len(merged.get("open_questions") or []) - len(next_oqs),
+        )
+    next_brief["open_questions"] = next_oqs
+
+    next_items = []
+    dropped_item_count = 0
+    for it in merged.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        kind = str(it.get("kind") or "").strip().lower()
+        item_id = str(it.get("id") or "")
+        if kind == "assumption" and item_id not in base_item_ids:
+            dropped_item_count += 1
+            continue
+        next_items.append(it)
+    if dropped_item_count:
+        log.info(
+            "Tutorial run-ack strip dropped %d new assumption items",
+            dropped_item_count,
+        )
+    next_brief["items"] = next_items
+
+    if isinstance(merged.get("goal_terms"), dict):
+        filtered_gt = {
+            k: v for k, v in merged["goal_terms"].items() if k in base_gt_keys
+        }
+        if len(filtered_gt) != len(merged["goal_terms"]):
+            log.info(
+                "Tutorial run-ack strip dropped %d new goal_terms keys: %s",
+                len(merged["goal_terms"]) - len(filtered_gt),
+                sorted(set(merged["goal_terms"].keys()) - base_gt_keys),
+            )
+        next_brief["goal_terms"] = filtered_gt
+    return next_brief
+
+
+def _strip_unknown_goal_term_keys(
+    brief: dict[str, Any], test_problem_id: str | None
+) -> dict[str, Any]:
+    """Drop goal_terms keys outside the active port's closed vocabulary.
+
+    Each port declares its weight keys via ``weight_display_keys()`` — that's
+    the closed set the panel admits. Plus ``search_strategy`` is the
+    carrier-only key for the algorithm choice. Anything else the LLM emits
+    (e.g. ``total_value`` instead of ``value_emphasis``, ``efficient_packing``
+    instead of ``capacity_overflow``) is a paraphrase the panel can't honor
+    and would surface as ``missing_in_panel`` drift on every chat turn.
+
+    Strip them deterministically here, before the anchor filter and before
+    panel derivation, so the brief never carries unknown keys.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    goal_terms = brief.get("goal_terms")
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return brief
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id) if test_problem_id is not None else None
+        allowed = set(port.weight_display_keys()) if port else set()
+    except Exception:  # pragma: no cover — defensive
+        allowed = set()
+    if not allowed:
+        return brief
+    allowed = allowed | {"search_strategy"}
+    unknown = [k for k in goal_terms.keys() if isinstance(k, str) and k not in allowed]
+    if not unknown:
+        return brief
+    log.info(
+        "Dropping non-vocabulary brief.goal_terms keys: %s (allowed=%s)",
+        unknown,
+        sorted(allowed),
+    )
+    next_brief = dict(brief)
+    next_brief["goal_terms"] = {k: v for k, v in goal_terms.items() if k not in unknown}
+    return next_brief
 
 
 def _drop_redundant_goal_term_anchors(
@@ -493,10 +671,9 @@ _MONITOR_OQ_UPLOAD_TEXT = (
     "Please use the **Upload file(s)...** button in the chat footer to share "
     "your data so we can set up a baseline run."
 )
-_MONITOR_OQ_GOAL_TEXT = (
-    "What's your primary optimization goal? For example, minimize total "
-    "travel time, meet customer time windows, balance driver workload, or "
-    "another priority."
+_MONITOR_OQ_GOAL_TEXT_FALLBACK = (
+    "What's your primary optimization goal? Tell me which priority should drive "
+    "the search."
 )
 _MONITOR_OQ_ALGORITHM_TEXT = (
     "Which search strategy should we use? Common choices: genetic search "
@@ -507,8 +684,46 @@ _MONITOR_ITEM_ALGORITHM_TEXT = (
     "change anytime."
 )
 
+
+def _monitor_goal_oq_text(test_problem_id: str | None) -> str:
+    """Build the canonical goal-term OQ text from the active port's labels.
+
+    Per-port `weight_item_labels()` are the natural-language names the
+    participant already sees in the Definition tab. Pulling examples from
+    them keeps the monitor OQ aligned with the active benchmark instead of
+    hardcoding one problem's vocabulary (which previously leaked VRPTW
+    examples like "minimize total travel time" into knapsack sessions).
+    """
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id) if test_problem_id is not None else None
+        labels_map = port.weight_item_labels() if port else {}
+        display_keys = port.weight_display_keys() if port else []
+    except Exception:  # pragma: no cover — defensive
+        labels_map = {}
+        display_keys = []
+    ordered = [labels_map[k] for k in display_keys if k in labels_map and labels_map[k]]
+    if not ordered:
+        ordered = [v for v in (labels_map or {}).values() if v]
+    if not ordered:
+        return _MONITOR_OQ_GOAL_TEXT_FALLBACK
+    if len(ordered) == 1:
+        examples = ordered[0]
+    elif len(ordered) == 2:
+        examples = f"{ordered[0]} or {ordered[1]}"
+    else:
+        head = ", ".join(ordered[:-1])
+        examples = f"{head}, or {ordered[-1]}"
+    return (
+        "What's your primary optimization goal? For example, you could prioritize "
+        f"{examples}, or name another priority."
+    )
+
 def _enforce_session_monitors(
-    brief: dict[str, Any], workflow_mode: str | None
+    brief: dict[str, Any],
+    workflow_mode: str | None,
+    test_problem_id: str | None = None,
 ) -> dict[str, Any]:
     """Server-side state machine: keep the three "what's still missing" rows
     in lockstep with brief state. Three monitors, each idempotent via a stable
@@ -593,7 +808,11 @@ def _enforce_session_monitors(
     if has_goal:
         _drop_oq(_MONITOR_OQ_GOAL_ID)
     elif not _has_oq(_MONITOR_OQ_GOAL_ID):
-        _append_oq(_MONITOR_OQ_GOAL_ID, _MONITOR_OQ_GOAL_TEXT, "primary_goal")
+        _append_oq(
+            _MONITOR_OQ_GOAL_ID,
+            _monitor_goal_oq_text(test_problem_id),
+            "primary_goal",
+        )
 
     # Monitor 3: search strategy
     # Use brief_mentions_search_strategy (carrier-aware) instead of the

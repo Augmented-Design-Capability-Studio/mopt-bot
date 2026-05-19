@@ -23,6 +23,60 @@ When you adjust priorities in chat or in the Problem Config tab, the bridge pick
 them up, the evaluator re-weights its score on the next run, and the optimizer
 explores alternative selections accordingly.
 
+## Goal Terms — the closed vocabulary
+
+Three priorities can appear on the panel; each maps to one weight key the solver
+recognises:
+
+| Priority you can name in chat | Weight key the panel exposes | Default term type |
+|---|---|---|
+| Total packed value / profit | `value_emphasis` | Objective (maximize) |
+| Capacity overflow penalty | `capacity_overflow` | Soft constraint |
+| Selection size / sparsity | `selection_sparsity` | Soft (opt-in only) |
+
+These three keys are *auto-anchored* on the port (`auto_anchored_goal_term_keys`
+returns the full set): the brief-update step does not need a separate items[]
+anchor row to admit them, because the key set is tightly scoped to the problem
+and misuse is implausible. That keeps the canonical concepts available even when
+the natural-language brief patch commits only prose.
+
+When you ask the agent to keep the selection small (or use words like *fewer
+items*, *lighter bag*, *sparsity*), `selection_sparsity` is committed on the
+same turn. Without that explicit request it stays off the panel — the phrase
+"of the selected items" is part of the value/capacity restatement, not a
+sparsity ask.
+
+## First-turn behaviour (canonical starter prompt)
+
+The starter prompt the tutorial pastes for you states both the objective and
+the capacity rule:
+
+> *I would like to optimize for a simple knapsack problem. I have a list of 22
+> items with various values and weights to put into a bag of 50-weight
+> capacity. I want to maximize the value in the bag without exceeding the
+> capacity limit.*
+
+When the agent sees a first message that contains **both** the canonical
+objective (*maximize the value*) and the canonical constraint (*without
+exceeding capacity*), it commits both goal terms on that same turn — regardless
+of whether you're in agile or waterfall mode. You should see:
+
+- `Total packed value (objective, weight 1.0) — to push the solver toward
+  higher-value selections.`
+- `Knapsack capacity overflow (soft, weight 40-ish) — to discourage exceeding
+  the knapsack capacity.`
+
+as gathered rows in the Definition tab right after the first reply. No
+*"what's your primary optimization goal?"* open question fires, because the
+question is already answered. The two open questions you should see on the
+first turn instead are:
+
+- **Upload your data file(s).** The chat-footer **Upload file(s)...** control
+  is the way in.
+- **Which search strategy should we use?** (waterfall only — agile commits
+  genetic search (GA) as an assumption you can override). Knapsack-relevant
+  options are GA, PSO, SA, SwarmSA, and ACOR.
+
 ## Why Results Sometimes Underperform
 
 When a run finishes and the result looks weaker than expected, it is usually one of:

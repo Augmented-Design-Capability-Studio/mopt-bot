@@ -136,17 +136,31 @@ export function ResultsPanel({
   // Keep Run availability tied to run-specific state (optimizing + gate), not global busy UI state.
   const runBlockedByOptimizeProgress = optimizing;
   const runBlockedByGate = !canRunOptimization;
+  // While the chat pipeline is mid-flight, the brief and panel may be in
+  // a half-merged state — a Run click here could fire against stale or
+  // partially-updated config. Lock the button until the pipeline settles.
+  // Single named flag so this can be cleanly removed if LLM responses get
+  // fast enough that the safety isn't worth the forced wait.
+  const runBlockedByPipelineProcessing =
+    session?.processing?.brief_status === "pending" ||
+    session?.processing?.config_status === "pending";
   const runButtonDisabled =
-    runBlockedBySession || runBlockedByEditMode || runBlockedByOptimizeProgress || runBlockedByGate;
+    runBlockedBySession ||
+    runBlockedByEditMode ||
+    runBlockedByOptimizeProgress ||
+    runBlockedByGate ||
+    runBlockedByPipelineProcessing;
   const runButtonReason = runBlockedBySession
     ? "This session has ended."
     : runBlockedByEditMode
       ? "Save or cancel your current edits before running optimization."
       : runBlockedByOptimizeProgress
         ? "An optimization run is already in progress."
-        : runBlockedByGate
-          ? runDisabledHint || diagnosticRunGateReason
-          : undefined;
+        : runBlockedByPipelineProcessing
+          ? "Waiting for the agent to finish updating the brief and config…"
+          : runBlockedByGate
+            ? runDisabledHint || diagnosticRunGateReason
+            : undefined;
   const [showRawJsonDialog, setShowRawJsonDialog] = useState(false);
   const [vizTabId, setVizTabId] = useState<string>("__convergence__");
   const [unreadRunIndex, setUnreadRunIndex] = useState<number | null>(null);
@@ -388,7 +402,7 @@ export function ResultsPanel({
                 title={runButtonReason}
                 onClick={() => void onRunOptimize()}
               >
-                Run optimization
+                {runBlockedByPipelineProcessing ? "Updating…" : "Run optimization"}
               </button>
             </span>
           </div>

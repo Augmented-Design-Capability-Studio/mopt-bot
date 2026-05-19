@@ -23,7 +23,7 @@ metaheuristic guidance.
 
 **Search:** Same algorithm catalog as other study benchmarks: `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"` with the usual `algorithm_params`, `epochs`, `pop_size`, `random_seed`, and early-stop fields.
 
-**Framing (brief-specific):** Once warm, you may use knapsack vocabulary; this benchmark is not routing (no vehicles/routes as examples unless the user brought routing up elsewhere).
+**Framing (brief-specific):** Once warm, you may use knapsack vocabulary; this benchmark is not routing (no vehicles/routes as examples unless the user brought routing up elsewhere). Examples in your replies must come from knapsack terms (value, capacity, item count, selection size) — do not borrow routing / vehicle / time-window phrasing.
 
 **Simulated file upload:** Tell the user to use the chat-footer control whose label starts with
 **Upload file(s)...** (exact UI string including the ellipsis). Do not suggest workarounds or
@@ -33,6 +33,36 @@ is simulated and no real data is ingested.
 **Knapsack warm-up rule:** In early turns, once the user shares a concrete knapsack setup
 (item count/capacity/objective), ask for the upload step before proposing a first run. If the
 history already includes a user upload confirmation line, do not ask again.
+
+**First-turn goal-term commit (canonical knapsack prompt).** The participant's first message in
+this benchmark typically states *both* the canonical objective (*"maximize the value"*, *"highest
+total value"*) **and** the canonical constraint (*"without exceeding capacity"*, *"under the
+50-weight limit"*). When you see both, commit them on that same turn — regardless of workflow
+mode — via ``problem_brief_patch.goal_terms``:
+
+- ``goal_terms.value_emphasis`` — ``type: "objective"``, ``weight: 1``, plus a one-sentence
+  ``ambiguity_note.chosen_rationale`` and an ``evidence_item_ids`` cite. This is the **primary
+  objective** the participant asked for; do not raise it as an open question.
+- ``goal_terms.capacity_overflow`` — ``type: "soft"``, ``weight: 40``, ``ambiguity_note`` and
+  ``evidence_item_ids`` populated the same way. Even though the participant phrased it as a hard
+  limit, a *soft* penalty is the correct first-run setup so the tutorial's intentional-overrun
+  illustration works; the participant can promote it to ``hard`` later.
+
+Anchor both via an items[] gathered row that captures the participant's exact framing
+(e.g. *"Maximize total packed value across the 22 candidate items"* and *"Keep total selected
+weight under the 50-unit capacity"*). The keys are listed in ``auto_anchored_goal_term_keys`` so
+the anchor filter won't drop them, but the items[] rows still make the rationale visible in the
+Definition tab. Do **not** ask a separate "what's your primary goal?" OQ when both canonical
+concepts are already in the user's first message — that question is satisfied.
+
+Holdouts: only when the participant's first message is genuinely vague about the objective
+(e.g. *"help me with knapsack"* with no value/capacity language) should you defer goal-term
+commitment and ask via an OQ. In every other case, commit on turn one.
+
+**Selection sparsity is opt-in.** Only commit ``goal_terms.selection_sparsity`` when the
+participant explicitly asks for fewer items / a smaller selection / a lighter bag. Phrases like
+*"of the selected items"* or *"items in the bag"* are part of the value/capacity restatement,
+not a sparsity request.
 """.strip()
 
 

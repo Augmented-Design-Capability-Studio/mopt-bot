@@ -697,6 +697,316 @@ def test_apply_brief_patch_anchors_goal_terms_against_user_message(monkeypatch):
     assert "travel_time" in (out.get("goal_terms") or {}), out
 
 
+def test_apply_brief_patch_seeds_goal_terms_from_extraction(monkeypatch):
+    """When the LLM brief patch lands goal_summary but no goal_terms on a
+    cold start, the canonical-concept extractor seeds the missing keys
+    and the synthesizer renders the matching config-weight-<key> rows."""
+    from app.routers.sessions import derivation
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    captured: dict[str, object] = {}
+
+    def _fake_extract(*, merged_brief, user_text, api_key, model_name, test_problem_id):
+        captured["called"] = True
+        captured["user_text"] = user_text
+        captured["test_problem_id"] = test_problem_id
+        return {
+            "value_emphasis": {
+                "weight": 1.0,
+                "type": "objective",
+                "rank": 1,
+                "ambiguity_note": {"chosen_rationale": "User asked to maximize value."},
+            },
+            "capacity_overflow": {
+                "weight": 40.0,
+                "type": "soft",
+                "rank": 2,
+                "ambiguity_note": {
+                    "chosen_rationale": "User asked to stay under the capacity limit."
+                },
+            },
+        }
+
+    monkeypatch.setattr(
+        "app.services.goal_term_extraction.extract_canonical_goal_terms",
+        _fake_extract,
+    )
+
+    base = default_problem_brief("knapsack")
+    patch_payload = {
+        "goal_summary": "Maximize total value without exceeding capacity.",
+        "items": [
+            {
+                "id": "item-001",
+                "text": "Knapsack capacity is set to 50 units.",
+                "kind": "gathered",
+                "source": "user",
+            },
+        ],
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="waterfall",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="I want to maximize the value without exceeding capacity.",
+        api_key="test-key",
+        model_name="test-model",
+    )
+    assert captured.get("called") is True
+    out_keys = set((out.get("goal_terms") or {}).keys())
+    assert "value_emphasis" in out_keys, out_keys
+    assert "capacity_overflow" in out_keys, out_keys
+    # Canonical config-weight rows synthesized from the seeded goal_terms.
+    item_ids = {it.get("id") for it in out.get("items") or [] if isinstance(it, dict)}
+    assert "config-weight-value_emphasis" in item_ids, item_ids
+    assert "config-weight-capacity_overflow" in item_ids, item_ids
+    # Monitor must NOT fire the goal-term OQ now that goal_terms is non-empty.
+    oq_ids = {q.get("id") for q in out.get("open_questions") or [] if isinstance(q, dict)}
+    assert "oq-monitor-goal" not in oq_ids, oq_ids
+
+
+def test_apply_brief_patch_skips_extractor_when_goal_terms_already_set(monkeypatch):
+    """The extractor is gated on cold start — once any goal_term is in
+    base.goal_terms, it never fires, so retired keys aren't resurrected."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    def _fake_extract(**kwargs):
+        raise AssertionError("Extractor must not run when base.goal_terms is non-empty")
+
+    monkeypatch.setattr(
+        "app.services.goal_term_extraction.extract_canonical_goal_terms",
+        _fake_extract,
+    )
+
+    base = default_problem_brief("knapsack")
+    base["goal_terms"] = {
+        "value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1}
+    }
+    apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload={"goal_summary": "Still maximizing value."},
+        workflow_mode="agile",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="keep maximizing value",
+        api_key="test-key",
+        model_name="test-model",
+    )
+
+
+def test_apply_brief_patch_runack_strip_waterfall_drops_new_oqs():
+    """Tutorial Runs 1+2 in waterfall: a post-run patch trying to add new
+    open_questions is stripped server-side. Existing OQs survive."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    base = default_problem_brief("knapsack")
+    base["open_questions"] = [
+        {
+            "id": "oq-existing",
+            "text": "Pre-existing question to keep.",
+            "status": "open",
+            "answer_text": None,
+            "topic": "other",
+        }
+    ]
+    base["items"] = [
+        {
+            "id": "item-001",
+            "text": "Knapsack capacity is set to 50 units.",
+            "kind": "gathered",
+            "source": "user",
+        }
+    ]
+    base["goal_terms"] = {
+        "value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1},
+        "capacity_overflow": {"weight": 40.0, "type": "soft", "rank": 2},
+    }
+    patch_payload = {
+        "open_questions": [
+            {
+                "id": "oq-existing",
+                "text": "Pre-existing question to keep.",
+                "status": "open",
+                "answer_text": None,
+                "topic": "other",
+            },
+            {
+                "id": "oq-refine-capacity",
+                "text": "Should I bump capacity penalty?",
+                "status": "open",
+                "answer_text": None,
+                "topic": "other",
+            },
+        ],
+        "replace_open_questions": True,
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="waterfall",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="Run #1 just completed - cost -55.78...",
+        is_run_acknowledgement=True,
+        suppress_runack_invariant=True,
+    )
+    oq_ids = {q.get("id") for q in out.get("open_questions") or [] if isinstance(q, dict)}
+    assert "oq-existing" in oq_ids, oq_ids
+    assert "oq-refine-capacity" not in oq_ids, oq_ids
+
+
+def test_apply_brief_patch_runack_strip_agile_drops_new_assumptions_and_goal_terms():
+    """Tutorial Runs 1+2 in agile: a post-run patch trying to add new
+    assumption rows or new goal_terms keys is stripped server-side.
+    Existing assumption edits + retunes survive."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    base = default_problem_brief("knapsack")
+    base["items"] = [
+        {
+            "id": "item-existing-assumption",
+            "text": "Existing assumption row.",
+            "kind": "assumption",
+            "source": "agent",
+        }
+    ]
+    base["goal_terms"] = {
+        "value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1},
+    }
+    patch_payload = {
+        "items": [
+            # Existing assumption: should survive
+            {
+                "id": "item-existing-assumption",
+                "text": "Existing assumption row, refined.",
+                "kind": "assumption",
+                "source": "agent",
+            },
+            # NEW assumption: should be stripped
+            {
+                "id": "item-new-assumption",
+                "text": "Lateness penalty seems worth trying next.",
+                "kind": "assumption",
+                "source": "agent",
+            },
+        ],
+        "goal_terms": {
+            # Existing goal-term update: should survive
+            "value_emphasis": {"weight": 2.0, "type": "objective", "rank": 1},
+            # NEW goal-term: should be stripped
+            "selection_sparsity": {"weight": 0.5, "type": "soft", "rank": 2},
+        },
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="agile",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="Run #1 just completed - cost -55.78...",
+        is_run_acknowledgement=True,
+        suppress_runack_invariant=True,
+    )
+    item_ids = {it.get("id") for it in out.get("items") or [] if isinstance(it, dict)}
+    assert "item-existing-assumption" in item_ids, item_ids
+    assert "item-new-assumption" not in item_ids, item_ids
+    gt = out.get("goal_terms") or {}
+    assert "value_emphasis" in gt, gt
+    # New goal_terms keys stripped:
+    assert "selection_sparsity" not in gt, gt
+    # The retune of value_emphasis weight came through:
+    assert gt["value_emphasis"]["weight"] == 2.0, gt
+
+
+def test_apply_brief_patch_runack_strip_off_lets_new_entries_through():
+    """When suppress_runack_invariant=False (default — Run 3+ or non-tutorial),
+    the strip doesn't fire and new OQs/assumptions pass through normally."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    base = default_problem_brief("knapsack")
+    base["goal_terms"] = {
+        "value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1},
+    }
+    patch_payload = {
+        "open_questions": [
+            {
+                "id": "oq-new",
+                "text": "Want to bump the penalty?",
+                "status": "open",
+                "answer_text": None,
+                "topic": "other",
+            }
+        ],
+        "replace_open_questions": True,
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="waterfall",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="Run #3 just completed.",
+        is_run_acknowledgement=True,
+        suppress_runack_invariant=False,
+    )
+    oq_ids = {q.get("id") for q in out.get("open_questions") or [] if isinstance(q, dict)}
+    assert "oq-new" in oq_ids, oq_ids
+
+
+def test_apply_brief_patch_strips_non_vocab_goal_term_keys():
+    """LLM-hallucinated goal_term keys (e.g. ``total_value`` paraphrasing
+    ``value_emphasis`` for knapsack) must be stripped before they reach the
+    anchor filter or panel-derive — otherwise S5 reports ``missing_in_panel``
+    drift in a loop on every retry."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    base = default_problem_brief("knapsack")
+    patch_payload = {
+        "items": [
+            {
+                "id": "item-user-1",
+                "text": "Maximize total packed value.",
+                "kind": "gathered",
+                "source": "user",
+            }
+        ],
+        "goal_terms": {
+            # Real knapsack key — should survive.
+            "value_emphasis": {
+                "weight": 1.0,
+                "type": "objective",
+                "evidence_item_ids": ["item-user-1"],
+            },
+            # Hallucinated paraphrase — must be stripped.
+            "total_value": {
+                "weight": 1.0,
+                "type": "objective",
+                "evidence_item_ids": ["item-user-1"],
+            },
+            # Another hallucination.
+            "efficient_packing": {
+                "weight": 1.0,
+                "type": "soft",
+                "evidence_item_ids": ["item-user-1"],
+            },
+        },
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="agile",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="Maximize total packed value.",
+    )
+    out_keys = set((out.get("goal_terms") or {}).keys())
+    assert "value_emphasis" in out_keys, out_keys
+    assert "total_value" not in out_keys, out_keys
+    assert "efficient_packing" not in out_keys, out_keys
+
+
 def test_monitor_inserts_upload_oq_when_warm_and_no_upload(monkeypatch):
     """Server-side state machine: warm conversation, no upload item yet →
     insert the upload OQ with the stable monitor id. Idempotent across

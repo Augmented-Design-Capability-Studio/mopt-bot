@@ -1348,6 +1348,10 @@ output narrow and the flow predictable so they can follow along:
 - **Stay scriptable.** If the participant's chat doesn't match the bubble's
   step, follow the bubble — gently nudge them toward the action it suggests
   rather than branching into a parallel discussion.
+- **Post-run turns (Runs 1 + 2):** read out what happened in 1–2 sentences and
+  stop. Do NOT add new `open_questions`, new `kind: "assumption"` rows, or
+  new `goal_terms` entries. The bubble drives the next action. Run 3's ack is
+  back to normal.
 """.strip()
 
 

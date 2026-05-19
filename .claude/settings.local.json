@@ -177,7 +177,8 @@
       "Bash(./.venv/Scripts/python.exe *)",
       "Bash(.\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests knapsack_problem/tests vrptw_problem/tests -x --deselect backend/tests/test_live_gemini.py -q)",
       "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe -m pytest backend/tests knapsack_problem/tests vrptw_problem/tests -x --deselect backend/tests/test_live_gemini.py -q 2>&1 | Select-Object -Last 80)",
-      "PowerShell(Set-Location frontend; npx tsc --noEmit -p tsconfig.json; $code = $LASTEXITCODE; Set-Location ..; \"Exit: $code\")"
+      "PowerShell(Set-Location frontend; npx tsc --noEmit -p tsconfig.json; $code = $LASTEXITCODE; Set-Location ..; \"Exit: $code\")",
+      "Bash(wc *)"
     ]
   }
 }

@@ -78,6 +78,7 @@ def verify_brief_consistency(
     test_problem_id: str | None = None,
     is_change_intent: bool = True,
     is_run_acknowledgement: bool = False,
+    suppress_runack_invariant: bool = False,
 ) -> list[PipelineIssue]:
     """Run deterministic S2 checks against the freshly-merged brief.
 
@@ -155,7 +156,11 @@ def verify_brief_consistency(
             )
 
     # ---- Run-acknowledgement invariants ----
-    if is_run_acknowledgement:
+    # Tutorial Runs 1+2 (any mode): the bubble drives the next step, so the
+    # agent doesn't need to add a new assumption (agile) or OQ (waterfall).
+    # Caller sets ``suppress_runack_invariant`` for those turns; we skip the
+    # mode-specific check below. Demo always skipped (see comment further down).
+    if is_run_acknowledgement and not suppress_runack_invariant:
         new_items = _new_items(base_brief, merged_brief)
         new_oqs = _new_open_questions(base_brief, merged_brief)
         if mode == "agile":

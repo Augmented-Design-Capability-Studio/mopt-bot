@@ -351,6 +351,34 @@ class StudyProblemPort(Protocol):
     def problem_brief_template_fields(self) -> dict[str, str]:
         """solver_scope, backend_template, etc. for new sessions."""
 
+    def goal_term_extraction_schema(self) -> dict[str, Any] | None:
+        """Gemini ``response_json_schema`` for the canonical goal-term
+        extraction LLM call (see ``app.services.goal_term_extraction``).
+
+        Returned schema must describe a top-level object with a ``concepts``
+        map whose keys are the port's canonical weight keys; each entry is
+        ``{"named": bool, "rationale_phrase": str}``. Only keys with
+        ``named=true`` get seeded into ``brief.goal_terms`` from the extractor.
+
+        Returning ``None`` (default) skips extraction entirely — the
+        cold-start seed step is a no-op for that port.
+        """
+        return None
+
+    def seed_goal_term_defaults(self, key: str) -> dict[str, Any] | None:
+        """Given a canonical goal-term key the extractor identified as
+        ``named``, return the seed entry written into ``brief.goal_terms[key]``.
+
+        The shape must satisfy the brief-merge contract: at minimum
+        ``weight`` (numeric), ``type`` (one of objective/soft/hard/custom),
+        and ``rank`` (positive int). The extractor service tacks on
+        ``ambiguity_note.chosen_rationale`` from the LLM's response.
+
+        Return ``None`` (default) when the key is unknown to the port — the
+        extractor service treats that as "skip this concept".
+        """
+        return None
+
 
 def all_synthesized_id_prefixes(port: Any) -> frozenset[str]:
     """Aggregate of every id-prefix the given port's synthesizer owns.

@@ -278,6 +278,27 @@ def _run_chat_pipeline_thread(
     """
     from app.services import llm  # local import to avoid cycles
 
+    # Tutorial Runs 1 + 2: drop the symmetric "must add a new assumption (agile)
+    # or new OQ (waterfall)" run-ack invariant so the bubble-driven flow isn't
+    # blocked by a freshly-raised OQ or by retries hunting for an assumption
+    # row. Re-engages naturally on Run 3 once 2 successful runs are on record.
+    suppress_runack_invariant = False
+    if is_tutorial_active and is_run_acknowledgement:
+        from app.models import OptimizationRun
+        from sqlalchemy import func as _sa_func
+
+        with SessionLocal() as _db:
+            completed_runs = (
+                _db.query(_sa_func.count(OptimizationRun.id))
+                .filter(
+                    OptimizationRun.session_id == session_id,
+                    OptimizationRun.ok == True,  # noqa: E712 — SQL truthy compare
+                )
+                .scalar()
+                or 0
+            )
+        suppress_runack_invariant = int(completed_runs) <= 2
+
     try:
         # ---- Resume guard: jump straight to the late stages ----
         # Retrying from a `deriving_config` or `verifying_config` pause used
@@ -299,6 +320,7 @@ def _run_chat_pipeline_thread(
                 "is_upload_context": is_upload_context,
                 "is_answered_open_question": is_answered_open_question,
                 "is_tutorial_active": is_tutorial_active,
+                "suppress_runack_invariant": suppress_runack_invariant,
                 "gate_status": gate_status,
             }
             with SessionLocal() as db:
@@ -464,6 +486,7 @@ def _run_chat_pipeline_thread(
                 is_upload_context=is_upload_context,
                 is_answered_open_question=is_answered_open_question,
                 is_tutorial_active=is_tutorial_active,
+                suppress_runack_invariant=suppress_runack_invariant,
                 test_problem_id=test_problem_id,
                 gate_status=gate_status,
             )
@@ -485,6 +508,7 @@ def _run_chat_pipeline_thread(
             is_run_acknowledgement=is_run_acknowledgement,
             user_text=user_text,
             test_problem_id=test_problem_id,
+            suppress_runack_invariant=suppress_runack_invariant,
         )
         if applied_brief is None:
             return  # already marked paused / failed by _apply_stage
@@ -506,6 +530,7 @@ def _run_chat_pipeline_thread(
             "is_upload_context": is_upload_context,
             "is_answered_open_question": is_answered_open_question,
             "is_tutorial_active": is_tutorial_active,
+            "suppress_runack_invariant": suppress_runack_invariant,
             "gate_status": gate_status,
         }
         if skip_derive_config or is_config_save:
@@ -831,6 +856,7 @@ def _run_verify_brief_stage(
     is_upload_context: bool,
     is_answered_open_question: bool,
     is_tutorial_active: bool,
+    suppress_runack_invariant: bool,
     test_problem_id: str | None,
     gate_status: dict[str, Any] | None,
 ) -> None:
@@ -858,6 +884,7 @@ def _run_verify_brief_stage(
         test_problem_id=test_problem_id,
         is_change_intent=bool(turn.is_change_intent),
         is_run_acknowledgement=is_run_acknowledgement,
+        suppress_runack_invariant=suppress_runack_invariant,
     )
     if not issues:
         _persist_turn_for_resume(message_id, turn)
@@ -925,6 +952,7 @@ def _run_verify_brief_stage(
         test_problem_id=test_problem_id,
         is_change_intent=bool(retry.is_change_intent),
         is_run_acknowledgement=is_run_acknowledgement,
+        suppress_runack_invariant=suppress_runack_invariant,
     )
     if retry_issues:
         pipeline_status.update_stage(
@@ -965,6 +993,7 @@ def _apply_stage(
     is_run_acknowledgement: bool,
     user_text: str,
     test_problem_id: str | None,
+    suppress_runack_invariant: bool = False,
 ) -> dict[str, Any] | None:
     """S3 — deterministic patch apply + workflow coercion + monitors +
     assumption_actions. Returns the merged-and-coerced brief, or None
@@ -992,6 +1021,8 @@ def _apply_stage(
                 cleanup_mode=turn.cleanup_mode,
                 user_text=user_text,
                 api_key=api_key,
+                model_name=model_name,
+                suppress_runack_invariant=suppress_runack_invariant,
             )
         else:
             effective_brief = dict(base_problem_brief)
@@ -1008,7 +1039,9 @@ def _apply_stage(
                 [a.model_dump() for a in turn.assumption_actions],
             )
             effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
-        effective_brief = derivation._enforce_session_monitors(effective_brief, workflow_mode)
+        effective_brief = derivation._enforce_session_monitors(
+            effective_brief, workflow_mode, test_problem_id=test_problem_id
+        )
 
         # Persist the merged brief on the session row.
         with SessionLocal() as db:
@@ -1101,6 +1134,25 @@ def _run_derive_and_verify_stages(
     pipeline_status.update_stage(
         message_id=message_id, stage_name="deriving_config", state="success"
     )
+
+    # Auto-anchored goal-term backfill (brief ← panel). Ports that opt into
+    # `auto_anchored_goal_term_keys()` declare their full canonical key set
+    # safe to mirror from panel without an items[] anchor — knapsack's three
+    # keys (`value_emphasis`, `capacity_overflow`, `selection_sparsity`) are
+    # the live case. Without this step, a clear first-turn user prompt
+    # ("maximize value without exceeding capacity") commits weights into the
+    # panel via S4 but leaves brief.goal_terms empty, so S5 reports drift in
+    # a loop and the canonical goal-term monitor OQ fires with stale
+    # examples. Mirroring auto-anchored keys keeps brief authoritative on
+    # creation/removal while preventing the first-turn drift.
+    backfilled_brief = _backfill_auto_anchored_from_panel(
+        session_id=session_id,
+        revision=revision,
+        workflow_mode=workflow_mode,
+        test_problem_id=test_problem_id,
+    )
+    if backfilled_brief is not None:
+        brief = backfilled_brief
 
     _run_verify_config_stage(
         message_id=message_id,
@@ -1366,9 +1418,13 @@ def _retry_brief_from_panel(
                 cleanup_mode=bool(retry_turn.cleanup_mode),
                 user_text=user_text,
                 api_key=api_key,
+                model_name=model_name,
+                suppress_runack_invariant=bool(retry_context.get("suppress_runack_invariant")),
             )
             applied = coerce_problem_brief_for_workflow(applied, workflow_mode)
-            applied = derivation._enforce_session_monitors(applied, workflow_mode)
+            applied = derivation._enforce_session_monitors(
+                applied, workflow_mode, test_problem_id=test_problem_id
+            )
             with SessionLocal() as db:
                 row = db.get(StudySession, session_id)
                 if row is not None and row.processing_revision == revision:
@@ -1478,6 +1534,136 @@ def _derive_panel_once(
     except Exception:
         log.exception("Config derivation failed for session %s", session_id)
         return None
+
+
+def _backfill_auto_anchored_from_panel(
+    *,
+    session_id: str,
+    revision: int,
+    workflow_mode: str,
+    test_problem_id: str | None,
+) -> dict[str, Any] | None:
+    """Mirror panel.goal_terms keys declared as auto-anchored back into brief.
+
+    Runs between S4 (derive panel from brief) and S5 (verify brief↔panel
+    parity). The brief stays the canonical source of truth for goal-term
+    *membership*; this helper only fires when:
+
+    - The active port declares one or more goal-term keys as auto-anchored
+      via ``StudyProblemPort.auto_anchored_goal_term_keys()`` (i.e. its
+      closed key set is small and intrinsic enough that an items[] anchor
+      would be friction without signal). Knapsack opts in for all three of
+      its weight keys; VRPTW keeps the default empty set.
+    - Panel.goal_terms holds at least one such key that brief.goal_terms is
+      missing — typically because the participant's first message stated a
+      canonical objective unambiguously, the V2 brief patch committed only
+      prose items, and S4 produced the matching panel weights anyway.
+
+    Mirrors the entry's ``weight``, ``type``, and ``rank`` from the panel,
+    re-runs the canonical config-weight items synthesizer, and re-runs the
+    monitor pass so ``oq-monitor-goal`` clears now that goal_terms is
+    populated. Persists the updated brief on the session row.
+
+    **Only fires when brief.goal_terms is currently empty.** Once any goal
+    term has been committed, the brief is authoritative — user/agent
+    retirement of a key must not be silently reverted by mirroring from
+    panel. This narrows the helper to its real use case: first-turn
+    cold-start, when the participant's prompt is explicit but the V2 brief
+    patch commits only prose. Subsequent turns flow through the normal
+    LLM-driven brief-edit path with strict-subset enforcement.
+
+    Returns the new brief dict on a change, ``None`` when there's nothing
+    to backfill or the session revision has moved on.
+    """
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id) if test_problem_id is not None else None
+        auto = port.auto_anchored_goal_term_keys() if port else frozenset()
+    except Exception:  # pragma: no cover — defensive
+        port = None
+        auto = frozenset()
+    if not auto:
+        return None
+
+    with SessionLocal() as db:
+        row = db.get(StudySession, session_id)
+        if row is None or row.processing_revision != revision:
+            return None
+        brief = helpers.problem_brief_dict(row)
+        panel = helpers.panel_dict(row)
+
+    if not isinstance(brief, dict) or not isinstance(panel, dict):
+        return None
+    inner = panel.get("problem") if isinstance(panel.get("problem"), dict) else {}
+    panel_gt_raw = inner.get("goal_terms") if isinstance(inner.get("goal_terms"), dict) else {}
+    if not isinstance(panel_gt_raw, dict) or not panel_gt_raw:
+        return None
+
+    brief_gt_raw = brief.get("goal_terms") if isinstance(brief.get("goal_terms"), dict) else {}
+    if not isinstance(brief_gt_raw, dict):
+        brief_gt_raw = {}
+    # Cold-start guard: only mirror when brief.goal_terms is empty. Once any
+    # goal term is in the brief, it owns membership — letting panel push new
+    # keys would silently revert user/agent retirements on subsequent turns.
+    if brief_gt_raw:
+        return None
+    missing = [
+        k for k in panel_gt_raw.keys()
+        if isinstance(k, str) and k in auto
+    ]
+    if not missing:
+        return None
+
+    next_brief = dict(brief)
+    next_gt: dict[str, Any] = dict(brief_gt_raw)
+    existing_ranks = [
+        v.get("rank") for v in next_gt.values()
+        if isinstance(v, dict) and isinstance(v.get("rank"), int)
+    ]
+    next_rank = (max(existing_ranks) + 1) if existing_ranks else 1
+    for key in missing:
+        src = panel_gt_raw.get(key)
+        if not isinstance(src, dict):
+            continue
+        entry: dict[str, Any] = {}
+        weight_val = src.get("weight")
+        if isinstance(weight_val, (int, float)) and not isinstance(weight_val, bool):
+            entry["weight"] = float(weight_val)
+        type_val = src.get("type")
+        entry["type"] = type_val if type_val in {"objective", "soft", "hard", "custom"} else "objective"
+        rank_val = src.get("rank")
+        if isinstance(rank_val, int) and rank_val > 0:
+            entry["rank"] = rank_val
+        else:
+            entry["rank"] = next_rank
+            next_rank += 1
+        next_gt[key] = entry
+    next_brief["goal_terms"] = next_gt
+
+    from app.problem_brief import coerce_problem_brief_for_workflow
+    from app.routers.sessions import derivation as _derivation
+
+    next_brief = _derivation._synthesize_canonical_weight_items(next_brief, test_problem_id)
+    next_brief = coerce_problem_brief_for_workflow(next_brief, workflow_mode)
+    next_brief = _derivation._enforce_session_monitors(
+        next_brief, workflow_mode, test_problem_id=test_problem_id
+    )
+
+    with SessionLocal() as db:
+        row = db.get(StudySession, session_id)
+        if row is None or row.processing_revision != revision:
+            return None
+        row.problem_brief_json = json.dumps(next_brief, ensure_ascii=False)
+        helpers.touch_session(row)
+        db.commit()
+        db.refresh(row)
+    log.info(
+        "Backfilled auto-anchored goal_terms from panel into brief: %s (session %s)",
+        missing,
+        session_id,
+    )
+    return next_brief
 
 
 class _PipelinePaused(Exception):

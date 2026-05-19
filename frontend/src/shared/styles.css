@@ -2408,6 +2408,14 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   align-items: center;
 }
 
+/* Keep the Run optimization button width stable across label swaps
+   (Run optimization ↔ Updating… while the chat pipeline is mid-flight) so
+   the surrounding actions row doesn't reflow on every chat turn. */
+.results-main-action-btn[data-tutorial-anchor="run-optimize"] {
+  min-width: 11rem;
+  justify-content: center;
+}
+
 .participant-tutorial-bubble {
   position: fixed;
   width: min(24rem, calc(100vw - 2rem));
