@@ -6,7 +6,7 @@
 
 - \[ \] Add a section to the participant Google doc
 - \[ \] Consent form ready (link or PDF)
-- \[ \] Pre-task ackground self-report ready (Part 1)
+- \[ \] Pre-task background self-report ready (Part 1)
 - \[ \] Knapsack orientation video queued
 - \[ \] VRPTW task-briefing video queued
 - \[ \] One-page VRPTW reference document on hand
