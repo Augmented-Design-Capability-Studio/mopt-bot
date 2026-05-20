@@ -122,6 +122,33 @@ def verify_brief_consistency(
             )
         )
 
+    # ---- replace_open_questions intent ambiguity ----
+    # Catches the P_l7 failure: the LLM set the flag but omitted the
+    # `open_questions` field entirely, leaving the merge to defensively
+    # preserve the existing list (problem_brief.py: "common on cleanup
+    # turns that only replace items"). The flag without a list is
+    # genuinely ambiguous — force the LLM to either drop the flag or
+    # commit to a survivor list (empty array is fine).
+    if (
+        isinstance(patch, dict)
+        and patch.get("replace_open_questions") is True
+        and "open_questions" not in patch
+    ):
+        issues.append(
+            PipelineIssue(
+                category="oq_replace_without_list",
+                severity="error",
+                subject="problem_brief_patch",
+                message=(
+                    "You set `replace_open_questions=true` but didn't include "
+                    "the `open_questions` field. Either drop the flag and use "
+                    "`oq_actions` for per-row decisions, or include the full "
+                    "survivor list (empty array `[]` if every OQ should be "
+                    "dropped)."
+                ),
+            )
+        )
+
     # ---- Algorithm carrier consistency ----
     # Removed: the previous NL-substring detector ("uses GA" / "let's try PSO")
     # produced false positives on question phrasings like "would you prefer

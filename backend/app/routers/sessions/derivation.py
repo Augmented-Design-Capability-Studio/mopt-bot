@@ -244,6 +244,221 @@ def _apply_assumption_actions(
     return {**brief, "items": items}
 
 
+def _apply_oq_actions(
+    brief: dict[str, Any], actions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Apply per-row OQ lifecycle decisions emitted by the main-turn LLM.
+
+    Symmetric to ``_apply_assumption_actions``. Actions:
+
+    - ``keep``: no-op.
+    - ``rephrase``: update only ``text`` to ``rephrased_text``; preserve
+      status/topic/anchor.
+    - ``drop``: remove the OQ entirely. Use when the answer is already
+      represented elsewhere (e.g. a committed ``goal_terms[K]`` plus a
+      synthesized ``config-weight-K`` row).
+    - ``mark_answered``: write ``status="answered" + answer_text``. The
+      next normalize pass folds the row into a gathered item via
+      ``_promote_answered_open_questions_to_gathered``.
+
+    Unknown ids / unknown actions are silently ignored — the same
+    permissiveness as the assumption-action sibling, so stale state
+    can't pause a turn. Foundational-topic OQs are not protected here
+    on purpose: the server's monitor state machine re-adds them on the
+    next pass if they were dropped prematurely.
+    """
+    if not actions:
+        return brief
+    questions = list(brief.get("open_questions") or [])
+    by_id: dict[str, int] = {}
+    for index, question in enumerate(questions):
+        if not isinstance(question, dict):
+            continue
+        qid = str(question.get("id") or "").strip()
+        if qid:
+            by_id[qid] = index
+
+    drop_ids: set[str] = set()
+    for raw_action in actions:
+        if not isinstance(raw_action, dict):
+            continue
+        qid = str(raw_action.get("id") or "").strip()
+        action = str(raw_action.get("action") or "").strip().lower()
+        if not qid or action not in {"keep", "rephrase", "drop", "mark_answered"}:
+            continue
+        if qid not in by_id:
+            continue
+        idx = by_id[qid]
+        target = questions[idx]
+        if not isinstance(target, dict):
+            continue
+        if action == "keep":
+            continue
+        if action == "drop":
+            drop_ids.add(qid)
+            continue
+        if action == "rephrase":
+            rephrased = str(raw_action.get("rephrased_text") or "").strip()
+            if not rephrased:
+                continue
+            new_q = dict(target)
+            new_q["text"] = rephrased
+            questions[idx] = new_q
+            continue
+        if action == "mark_answered":
+            answer_text = str(raw_action.get("answer_text") or "").strip()
+            if not answer_text:
+                # No answer to record — treat as a no-op rather than
+                # silently flipping status without content.
+                continue
+            new_q = dict(target)
+            new_q["status"] = "answered"
+            new_q["answer_text"] = answer_text
+            questions[idx] = new_q
+
+    if drop_ids:
+        questions = [
+            q
+            for q in questions
+            if not (
+                isinstance(q, dict)
+                and str(q.get("id") or "").strip() in drop_ids
+            )
+        ]
+
+    return {**brief, "open_questions": questions}
+
+
+def _resolve_anchored_provisional_rows(
+    brief: dict[str, Any], workflow_mode: str | None
+) -> dict[str, Any]:
+    """Drop provisional rows whose anchored goal_term key is now committed.
+
+    Both carriers — OQs (waterfall's primary elicitation) and
+    ``kind: "assumption"`` items (agile's provisional carrier) — can be
+    tagged with ``proposes_goal_term_key=K``. This deterministic pass:
+
+    - **Waterfall / all modes:** open OQ with ``proposes_goal_term_key=K``
+      AND ``K in brief.goal_terms`` → drop the OQ. The canonical
+      ``config-weight-K`` row synthesized just before this call is the
+      structured answer; keeping the OQ open contradicts the brief.
+    - **Agile / demo:** ``kind: "assumption"`` item with
+      ``proposes_goal_term_key=K`` AND ``K in brief.goal_terms`` AND any
+      other ``kind: "gathered"`` items[] row carries the same anchor
+      (or a ``source: "user"`` confirmation already landed for the key) →
+      drop the assumption row. Conservative on purpose: an assumption
+      stays put on weak signals; only an explicit user-confirmation
+      flips the goal_term to gathered evidence and triggers the drop.
+
+    Idempotent: a row already dropped on a prior turn just isn't there
+    to drop again. Foundational-topic OQs (server-managed) are skipped
+    so the monitor state machine retains exclusive ownership.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    from app.problem_brief import FOUNDATIONAL_OQ_TOPICS
+
+    goal_terms = brief.get("goal_terms")
+    goal_term_keys: set[str] = set()
+    if isinstance(goal_terms, dict):
+        for key in goal_terms.keys():
+            if isinstance(key, str):
+                goal_term_keys.add(key)
+    if not goal_term_keys:
+        return brief
+
+    mode = str(workflow_mode or "").strip().lower()
+    next_brief = dict(brief)
+
+    # Waterfall + agile + demo: drop committed-key OQs uniformly.
+    questions = list(next_brief.get("open_questions") or [])
+    kept_questions: list[dict[str, Any]] = []
+    dropped_oq_ids: list[str] = []
+    for q in questions:
+        if not isinstance(q, dict):
+            kept_questions.append(q)
+            continue
+        topic = str(q.get("topic") or "other").strip() or "other"
+        if topic in FOUNDATIONAL_OQ_TOPICS:
+            kept_questions.append(q)
+            continue
+        anchor = q.get("proposes_goal_term_key")
+        anchor_key = anchor.strip() if isinstance(anchor, str) else ""
+        if not anchor_key:
+            kept_questions.append(q)
+            continue
+        status = str(q.get("status") or "open").strip().lower()
+        if status != "open":
+            # Already answered — let the answered→gathered promoter handle it.
+            kept_questions.append(q)
+            continue
+        if anchor_key in goal_term_keys:
+            dropped_oq_ids.append(str(q.get("id") or ""))
+            continue
+        kept_questions.append(q)
+    if dropped_oq_ids:
+        log.info(
+            "Anchored-OQ resolver dropped %d OQ(s) whose goal_term landed: %s",
+            len(dropped_oq_ids),
+            dropped_oq_ids,
+        )
+        next_brief["open_questions"] = kept_questions
+
+    # Agile / demo: also drop assumption rows once the anchored key has
+    # user-gathered evidence in items[]. We look for a gathered+user item
+    # (the structural signal the LLM emits on explicit confirmation) that
+    # references the same anchor key — either via ``proposes_goal_term_key``
+    # OR via the canonical ``config-weight-<key>`` id our synthesizer uses.
+    if mode in {"agile", "demo"}:
+        items = list(next_brief.get("items") or [])
+        keys_with_user_gathered_evidence: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("kind") or "").strip().lower() != "gathered":
+                continue
+            if str(item.get("source") or "").strip().lower() != "user":
+                continue
+            anchor = item.get("proposes_goal_term_key")
+            if isinstance(anchor, str) and anchor.strip():
+                keys_with_user_gathered_evidence.add(anchor.strip())
+        # Conservative: require an explicit user-source gathered row whose
+        # anchor matches. The canonical synthesized `config-weight-K` row has
+        # `source: "agent"`, so it does NOT trigger a drop on its own — the
+        # user has to confirm via an items[] row the LLM emits with
+        # source=user (the same shape used when the user answers an OQ).
+        if keys_with_user_gathered_evidence:
+            dropped_assumption_ids: list[str] = []
+            kept_items: list[dict[str, Any]] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    kept_items.append(item)
+                    continue
+                if str(item.get("kind") or "").strip().lower() != "assumption":
+                    kept_items.append(item)
+                    continue
+                anchor = item.get("proposes_goal_term_key")
+                anchor_key = anchor.strip() if isinstance(anchor, str) else ""
+                if (
+                    anchor_key
+                    and anchor_key in goal_term_keys
+                    and anchor_key in keys_with_user_gathered_evidence
+                ):
+                    dropped_assumption_ids.append(str(item.get("id") or ""))
+                    continue
+                kept_items.append(item)
+            if dropped_assumption_ids:
+                log.info(
+                    "Anchored-assumption resolver dropped %d row(s) whose "
+                    "key has user-gathered evidence: %s",
+                    len(dropped_assumption_ids),
+                    dropped_assumption_ids,
+                )
+                next_brief["items"] = kept_items
+
+    return next_brief
+
+
 def apply_brief_patch_with_cleanup(
     *,
     base_problem_brief: dict[str, Any],
@@ -388,6 +603,14 @@ def apply_brief_patch_with_cleanup(
     # reconciler, which drops any LLM-authored row that collides with the
     # synthesized one.
     merged = _synthesize_canonical_weight_items(merged, test_problem_id)
+
+    # Drop provisional rows (OQs in any mode, assumption items in
+    # agile/demo) whose anchored goal_term key has now been committed —
+    # the deterministic safety net for "LLM committed the key but forgot
+    # to drop the OQ / promote the assumption" turns. Runs after canonical
+    # weight items have been synthesized so the resolver sees the final
+    # goal_terms state for this turn.
+    merged = _resolve_anchored_provisional_rows(merged, workflow_mode)
 
     # ``goal_summary`` fallback: when the LLM commits a primary objective
     # but forgets to populate the headline ``goal_summary`` field, derive
@@ -790,6 +1013,7 @@ def _enforce_session_monitors(
             "status": "open",
             "answer_text": None,
             "topic": topic,
+            "proposes_goal_term_key": None,
         })
 
     # Monitor 1: upload

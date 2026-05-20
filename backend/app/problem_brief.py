@@ -400,12 +400,19 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
             answer_text = None
+        proposes_key_raw = raw.get("proposes_goal_term_key")
+        proposes_key: str | None = None
+        if isinstance(proposes_key_raw, str):
+            candidate = proposes_key_raw.strip()
+            if candidate:
+                proposes_key = candidate
         return {
             "id": question_id,
             "text": text,
             "status": status,
             "answer_text": answer_text,
             "topic": _normalize_question_topic(raw.get("topic")),
+            "proposes_goal_term_key": proposes_key,
         }
     if raw is None:
         return None
@@ -418,6 +425,7 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         "status": "open",
         "answer_text": None,
         "topic": "other",
+        "proposes_goal_term_key": None,
     }
 
 
@@ -507,6 +515,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
         topic = normalized.get("topic", "other")
         status = normalized.get("status", "open")
         answer_text = normalized.get("answer_text")
+        proposes_key = normalized.get("proposes_goal_term_key")
         if len(fragments) == 1:
             out.append(
                 {
@@ -515,6 +524,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
                     "status": status,
                     "answer_text": answer_text,
                     "topic": topic,
+                    "proposes_goal_term_key": proposes_key,
                 }
             )
             continue
@@ -526,6 +536,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
                     "status": status,
                     "answer_text": answer_text,
                     "topic": topic,
+                    "proposes_goal_term_key": proposes_key,
                 }
             )
     return out
@@ -1066,11 +1077,24 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
         source = "agent"
     if source not in {"user", "upload", "agent"}:
         source = "agent"
+    proposes_key_raw = raw.get("proposes_goal_term_key")
+    proposes_key: str | None = None
+    if isinstance(proposes_key_raw, str):
+        candidate = proposes_key_raw.strip()
+        if candidate:
+            # The field semantically anchors the row to a goal_term — set
+            # on assumption rows to invite the deterministic resolver to
+            # clean them up, and on gathered+user rows to signal "user
+            # confirmation of this key landed". The resolver dispatches on
+            # kind; the field itself rides through normalize on any row
+            # type so the link isn't silently severed mid-pipeline.
+            proposes_key = candidate
     return {
         "id": str(raw.get("id") or _new_item_id(kind)),
         "text": text,
         "kind": kind,
         "source": source,
+        "proposes_goal_term_key": proposes_key,
     }
 
 
@@ -1467,6 +1491,7 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
                     "text": new_text,
                     "status": "open",
                     "answer_text": None,
+                    "proposes_goal_term_key": item.get("proposes_goal_term_key"),
                 }
             )
             seen_oq_texts.add(normalized_new_text)

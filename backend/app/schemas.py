@@ -62,6 +62,14 @@ class ProblemBriefItem(BaseModel):
     text: str
     kind: Literal["gathered", "assumption"]
     source: Literal["user", "upload", "agent"]
+    # Anchor a `kind: "assumption"` row to a canonical goal_term key. The
+    # deterministic resolver in `derivation._resolve_anchored_provisional_rows`
+    # drops the row once that key has user-gathered evidence — so the chat
+    # doesn't have to remember to emit a separate `promote_to_gathered`
+    # action on confirmation turns. Ignored on `kind: "gathered"` rows. Same
+    # Pydantic-strip caveat as `ProblemBriefQuestion.topic` — listing the
+    # field here keeps it from being silently dropped on PATCH round-trips.
+    proposes_goal_term_key: str | None = None
 
 
 class ProblemBriefQuestion(BaseModel):
@@ -79,6 +87,13 @@ class ProblemBriefQuestion(BaseModel):
     # missing line was the reason router-generated `*-followup` OQs lost
     # their inherited topic and slipped past the foundational-topic strip.
     topic: Literal["upload", "primary_goal", "search_strategy", "other"] = "other"
+    # Anchor this OQ to a canonical goal_term key (e.g. "capacity_penalty"
+    # for *"Should I add a capacity penalty?"*). The resolver drops the OQ
+    # once the key lands in `brief.goal_terms`, so the LLM doesn't have to
+    # remember to drop the row via `replace_open_questions=true`. Foundational
+    # OQs (topic != "other") use the existing monitor state machine instead.
+    # Same Pydantic-strip caveat as `topic`.
+    proposes_goal_term_key: str | None = None
 
 
 class ProblemBrief(BaseModel):
@@ -322,6 +337,32 @@ class AssumptionMaintenanceItem(BaseModel):
     rephrased_text: str | None = None
 
 
+class OQMaintenanceItem(BaseModel):
+    """One open-question lifecycle decision returned by the main-turn LLM.
+
+    Symmetric to ``AssumptionMaintenanceItem`` — gives the model a per-row
+    way to express OQ lifecycle instead of round-tripping the full
+    survivor list via ``replace_open_questions=true``. The flag/list path
+    remains supported for genuine cleanup-mode re-authoring; routine
+    "user answered X, drop X" turns should use this carrier instead.
+
+    - ``keep``: no-op.
+    - ``rephrase``: update only ``text`` to ``rephrased_text`` (e.g. tighten
+      a question after partial info). Preserves status/topic/anchor.
+    - ``drop``: remove the OQ entirely. Use when the answer is already
+      represented elsewhere (e.g. a `config-weight-K` row was just
+      synthesized for the proposed key).
+    - ``mark_answered``: write ``status="answered" + answer_text``; the
+      existing ``_promote_answered_open_questions_to_gathered`` normalizer
+      folds it into a gathered row on the next pass.
+    """
+
+    id: str
+    action: Literal["keep", "rephrase", "drop", "mark_answered"]
+    rephrased_text: str | None = None
+    answer_text: str | None = None
+
+
 # ============================================================================
 # Chat-pipeline schemas
 # ============================================================================
@@ -354,6 +395,7 @@ class PipelineIssue(BaseModel):
         "port_companion",
         "brief_panel_mismatch",
         "brief_panel_algorithm_mismatch",
+        "oq_replace_without_list",
     ]
     severity: Literal["error", "warn"] = "error"
     subject: str = ""
@@ -467,12 +509,14 @@ class ChatTurnResponse(BaseModel):
     replace_open_questions: bool = False
     cleanup_mode: bool = False
 
-    # --- Maintenance (agile/demo only) --------------------------------------
-    # The maintenance fields are optional inputs to the merge: the patch
-    # carries items[] and open_questions[] directly, and the LLM expresses
-    # OQ lifecycle by including the full new OQ list when ``replace_open_questions``
-    # is true. The dedicated assumption_actions list is for agile/demo since
-    # assumption row identity (id) needs structured routing.
+    # --- Maintenance --------------------------------------------------------
+    # The maintenance fields are optional inputs to the merge. ``oq_actions``
+    # is the per-row OQ lifecycle carrier (all modes) — symmetric to
+    # ``assumption_actions``. Prefer it for routine turns; only set
+    # ``replace_open_questions=true`` when re-authoring the full list as part
+    # of a cleanup. ``assumption_actions`` covers per-row assumption-item
+    # decisions in agile/demo (waterfall has no assumption rows).
+    oq_actions: list[OQMaintenanceItem] = Field(default_factory=list)
     assumption_actions: list[AssumptionMaintenanceItem] = Field(default_factory=list)
 
 

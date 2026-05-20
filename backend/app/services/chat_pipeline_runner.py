@@ -1029,6 +1029,16 @@ def _apply_stage(
         from app.problem_brief import coerce_problem_brief_for_workflow
 
         effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
+        # Apply per-row OQ actions (all modes) before assumption actions so
+        # the OQ list reflects the LLM's lifecycle decisions before the
+        # workflow coercion re-evaluates assumption→OQ conversion (waterfall)
+        # or the agile assumption handling kicks in.
+        if turn.oq_actions:
+            effective_brief = derivation._apply_oq_actions(
+                effective_brief,
+                [a.model_dump() for a in turn.oq_actions],
+            )
+            effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
         # Apply assumption_actions if any.
         if turn.assumption_actions and str(workflow_mode or "").strip().lower() in (
             "agile",

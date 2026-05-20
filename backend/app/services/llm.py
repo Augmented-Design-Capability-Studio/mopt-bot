@@ -172,6 +172,18 @@ def _build_problem_brief_item_schema(
             "text": {"type": "string"},
             "kind": {"type": "string", "enum": ["gathered", "assumption"]},
             "source": {"type": "string", "enum": ["user", "upload", "agent"]},
+            "proposes_goal_term_key": {
+                "type": "string",
+                "description": (
+                    "Optional. Set to the canonical goal_term key (e.g. "
+                    "`capacity_penalty`) when this `kind: \"assumption\"` row "
+                    "stands in for that goal_term. The server drops the row "
+                    "automatically once a `kind: \"gathered\"` item lands for "
+                    "the same key (user confirmation). Ignored on "
+                    "`kind: \"gathered\"` rows. Omit for assumption rows that "
+                    "don't propose a specific goal_term."
+                ),
+            },
         },
         "required": ["id", "text", "kind", "source"],
     }
@@ -208,6 +220,21 @@ _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
                 "surfaces and removes its own canonical row). For every other "
                 "clarifying question (driver count, shift length, term "
                 "meaning, etc.) set `other`. Always populated; never null."
+            ),
+        },
+        "proposes_goal_term_key": {
+            "type": "string",
+            "description": (
+                "Optional. Set to the canonical goal_term key (e.g. "
+                "`capacity_penalty`, `lateness_penalty`) when this OQ "
+                "proposes adding or tuning that specific term — common for "
+                "*\"Should I add a capacity penalty?\"*-style post-run asks. "
+                "The server resolves the OQ automatically once the key "
+                "lands in `brief.goal_terms`, so you don't have to remember "
+                "to drop it via `replace_open_questions=true`. Omit for "
+                "scenario clarifications that don't propose a specific "
+                "goal_term, and for foundational-topic OQs (those use the "
+                "server monitor state machine instead)."
             ),
         },
     },
@@ -893,9 +920,13 @@ def _build_main_turn_schema(test_problem_id: str | None) -> dict[str, Any]:
                 "description": (
                     "Per-row decisions on existing kind:`assumption` items. "
                     "Agile/demo only — leave empty in waterfall (no assumption rows "
-                    "exist there). Use `promote_to_gathered` when the user "
-                    "confirmed the assumption; `drop` when the user invalidated "
-                    "it; `rephrase` for wording corrections; `keep` is the default."
+                    "exist there). Use `promote_to_gathered` ONLY when the user "
+                    "explicitly locked the assumption in (named the term, said "
+                    "*\"lock that in\"* or equivalent unambiguous confirmation); "
+                    "`drop` when the user invalidated it; `rephrase` for wording "
+                    "corrections; `keep` is the default. Ambiguous *\"yes / sure "
+                    "/ sounds good\"* replies are NOT a promotion signal — leave "
+                    "the assumption as `keep` and let the user lock it in later."
                 ),
                 "items": {
                     "type": "object",
@@ -915,6 +946,41 @@ def _build_main_turn_schema(test_problem_id: str | None) -> dict[str, Any]:
                     "required": ["id", "action"],
                 },
             },
+            "oq_actions": {
+                "type": "array",
+                "description": (
+                    "Per-row OQ lifecycle decisions. Symmetric to "
+                    "`assumption_actions`. Use this for routine "
+                    "*\"keep / drop / rephrase / mark this OQ answered\"* "
+                    "turns instead of round-tripping the full survivor list "
+                    "via `replace_open_questions=true`. `drop` removes the "
+                    "OQ outright — pair with the committed `goal_terms` / "
+                    "items[] delta when the answer is now structurally "
+                    "represented (e.g. a `config-weight-K` row was just "
+                    "synthesized). `mark_answered` writes `answer_text` and "
+                    "the server folds it into a gathered row. `rephrase` "
+                    "updates the text in place. `keep` is the default; you "
+                    "may omit OQs you don't need to touch."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "keep",
+                                "rephrase",
+                                "drop",
+                                "mark_answered",
+                            ],
+                        },
+                        "rephrased_text": {"type": "string"},
+                        "answer_text": {"type": "string"},
+                    },
+                    "required": ["id", "action"],
+                },
+            },
         },
         "required": ["assistant_message"],
     }
@@ -923,9 +989,9 @@ def _build_main_turn_schema(test_problem_id: str | None) -> dict[str, Any]:
 _MAIN_TURN_OUTPUT_RULES = (
     "## Output rules\n\n"
     "You emit ONE structured response: visible reply, intent flags, brief "
-    "patch, and (agile/demo only) per-row assumption decisions. Plan the "
-    "patch in lockstep with the visible reply — the server's verification "
-    "will flag mismatches and force a retry.\n\n"
+    "patch, per-row OQ decisions, and (agile/demo only) per-row assumption "
+    "decisions. Plan the patch in lockstep with the visible reply — the "
+    "server's verification will flag mismatches and force a retry.\n\n"
     "**Goal summary.** When committing the FIRST primary objective and "
     "`current_problem_brief.goal_summary` is empty, set "
     "`problem_brief_patch.goal_summary` to a short qualitative sentence "
@@ -941,12 +1007,26 @@ _MAIN_TURN_OUTPUT_RULES = (
     "any OQ you tag with one of those topics is dropped at merge. For your "
     "own clarifications (driver count, term meaning, ambiguity forks, etc.) "
     "set `topic: \"other\"`. ADD an `other` OQ when your visible reply "
-    "asks a question; DROP one when the user has answered, deferred, or "
-    "the topic has resolved; KEEP otherwise (echo the existing id). Never "
-    "emit an OQ for permission-to-run.\n\n"
-    "Set `replace_open_questions=true` only when you're sending the full "
-    "new list. Use `assumption_actions` for per-row decisions on existing "
-    "assumption rows (agile/demo)."
+    "asks a question; DROP / MARK ANSWERED via `oq_actions` when the user "
+    "has answered, deferred, or the topic has resolved; KEEP otherwise. "
+    "Never emit an OQ for permission-to-run.\n\n"
+    "**OQ lifecycle (preferred path).** Use `oq_actions` for routine "
+    "per-row decisions on existing OQs: `drop` once the answer is "
+    "structurally represented elsewhere (e.g. you just committed the "
+    "proposed `goal_terms[K]` plus its items[] row), `mark_answered` with "
+    "`answer_text` when the user's reply is the answer, `rephrase` to "
+    "tighten wording. `replace_open_questions=true` is for genuine cleanup "
+    "turns that re-author the full list — not for routine drops.\n\n"
+    "**Goal-term anchor (safety net).** When an OQ or `kind: \"assumption\"` "
+    "item proposes a specific goal_term, tag the row with "
+    "`proposes_goal_term_key` set to the canonical key. The server "
+    "auto-resolves the row when the key lands (OQ) or when the key has "
+    "user-gathered evidence (assumption), so the lifecycle stays correct "
+    "even if you forget to emit an action.\n\n"
+    "Use `assumption_actions` for per-row decisions on existing assumption "
+    "rows (agile/demo). Reserve `promote_to_gathered` for unambiguous "
+    "lock-in language; ambiguous *\"yes / sure\"* replies should leave the "
+    "assumption as `keep`."
 )
 
 
