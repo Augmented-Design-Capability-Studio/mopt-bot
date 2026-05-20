@@ -424,6 +424,97 @@ def _run_with_timeout(callable_obj, timeout_sec: float):
         executor.shutdown(wait=False)
 
 
+def _mirror_canonical_scalars_from_brief(
+    next_problem: dict[str, Any],
+    problem_brief: dict[str, Any] | None,
+) -> None:
+    """Deterministic brief → panel mirror for the canonical scalar fields.
+
+    The brief is authoritative for ``goal_terms[K].{weight, type, rank}`` on
+    chat-origin flows — those values are set by the chat LLM in the brief
+    patch (which goes through S2 verification and is committed) before the
+    panel-derive LLM ever runs. The panel-derive LLM is supposed to translate
+    the brief into panel shape, not redecide those scalars; but its
+    structured-output schema lets it emit any value in the enum, and it
+    occasionally produces a value that disagrees with the brief (P_l7 msg
+    1688 / 1690 — ``travel_time.type='objective'`` in brief but ``'soft'``
+    in the derived panel). The S5 retry path re-runs the same LLM with
+    feedback; the LLM can drift the same way twice and pause the pipeline.
+
+    This helper closes that loop by overwriting the LLM's scalar emission
+    with the brief's values immediately after derivation and before
+    validation. Symmetric with the algorithm carrier mirror at
+    ``sync_panel_from_problem_brief`` (which mirrors
+    ``goal_terms.search_strategy.properties.{algorithm,epochs,pop_size}``
+    deterministically from brief to panel) — same pattern, broader scope.
+
+    Leaves alone:
+    - ``properties``: legitimate per-rule structured translation owned by
+      the LLM (e.g. VRPTW's ``driver_preferences`` list). Real drift here
+      surfaces via ``port_companion`` mirror-mismatch checks.
+    - ``locked``: researcher/panel-managed; owned by
+      ``_canonicalize_locked_goal_terms``.
+    - ``search_strategy``: carrier-only, already mirrored separately.
+    - Any field the brief doesn't carry — the LLM/seed value wins when
+      the brief has no opinion.
+
+    The ``weights`` top-level field, when present, is kept in sync with
+    ``goal_terms[K].weight`` so the drift check sees a coherent panel.
+    """
+    if not isinstance(problem_brief, dict):
+        return
+    brief_goal_terms = problem_brief.get("goal_terms")
+    if not isinstance(brief_goal_terms, dict) or not brief_goal_terms:
+        return
+    panel_goal_terms = next_problem.get("goal_terms")
+    if not isinstance(panel_goal_terms, dict) or not panel_goal_terms:
+        return
+    overrides: list[tuple[str, str, Any]] = []
+    for key, brief_entry in brief_goal_terms.items():
+        if not isinstance(key, str) or key in CARRIER_ONLY_GOAL_TERM_KEYS:
+            continue
+        if not isinstance(brief_entry, dict):
+            continue
+        panel_entry = panel_goal_terms.get(key)
+        if not isinstance(panel_entry, dict):
+            continue
+        for field in ("weight", "type", "rank"):
+            if field not in brief_entry:
+                continue
+            brief_val = brief_entry.get(field)
+            if brief_val is None:
+                continue
+            if field == "weight":
+                if not isinstance(brief_val, (int, float)) or isinstance(brief_val, bool):
+                    continue
+                brief_val = float(brief_val)
+            elif field == "rank":
+                if not isinstance(brief_val, int) or isinstance(brief_val, bool):
+                    continue
+            elif field == "type":
+                if not isinstance(brief_val, str) or not brief_val.strip():
+                    continue
+                brief_val = brief_val.strip()
+            if panel_entry.get(field) == brief_val:
+                continue
+            overrides.append((key, field, brief_val))
+            panel_entry[field] = brief_val
+    # Keep the top-level `weights` dict (if used by the port) in sync with
+    # the mirrored goal_terms weights, so downstream consumers — including
+    # the drift check — see a coherent panel.
+    if overrides:
+        weights = next_problem.get("weights")
+        if isinstance(weights, dict) and weights:
+            for key, field, value in overrides:
+                if field == "weight" and key in weights:
+                    weights[key] = float(value)
+        log.info(
+            "Brief→panel scalar mirror overrode %d goal_term field(s): %s",
+            len(overrides),
+            [{"key": k, "field": f, "value": v} for k, f, v in overrides],
+        )
+
+
 def _canonicalize_locked_goal_terms(
     current_problem: dict,
     derived_problem: dict,
@@ -979,6 +1070,18 @@ def sync_panel_from_problem_brief(
                         and current_val in (None, "", 0)
                     ):
                         next_problem[carrier_key] = carrier_val
+
+    # Brief → panel deterministic mirror for `goal_terms[K].{weight, type,
+    # rank}`. The brief is authoritative for those scalars on chat-origin
+    # flows; the LLM panel-derive occasionally emits values that disagree
+    # with the brief (P_l7 msg 1688 / 1690 — travel_time.type='objective'
+    # in brief vs 'soft' in derived panel), which paused the pipeline at
+    # S5 because the S5 chat-origin retry path re-runs the same LLM with
+    # the same input and can drift the same way twice. The mirror runs
+    # after the LLM derive and locked/managed-field merges and before the
+    # validator, so the persisted panel always agrees with the brief on
+    # the canonical scalars. See ``_mirror_canonical_scalars_from_brief``.
+    _mirror_canonical_scalars_from_brief(next_problem, problem_brief)
 
     # Drop stale `goal_term_order` entries whose keys were filtered out of
     # `goal_terms` above (unauthorized/unanchored sweeps) or that were carried

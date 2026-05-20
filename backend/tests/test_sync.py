@@ -369,3 +369,249 @@ def test_drift_detector_returns_empty_when_aligned():
     }
     drift = sync.compute_brief_panel_drift(brief, panel, test_problem_id="vrptw")
     assert drift == []
+
+
+# ---------------------------------------------------------------------------
+# Brief → panel canonical-scalar mirror (P_l7 regression)
+# ---------------------------------------------------------------------------
+
+
+def test_mirror_canonical_scalars_overrides_panel_with_brief_values():
+    """Brief is authoritative for goal_terms[K].{weight,type,rank} on
+    chat-origin flows. The panel-derive LLM occasionally emits values that
+    disagree with the brief (P_l7 msg 1688: travel_time.type='objective' in
+    brief, 'soft' in derived panel). The mirror rewrites the panel scalars
+    from the brief before validation."""
+    next_problem = {
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "soft", "rank": 3},
+            "capacity_penalty": {"weight": 1.0, "type": "soft", "rank": 2},
+        },
+        "weights": {"travel_time": 1.0, "capacity_penalty": 1.0},
+    }
+    brief = {
+        "goal_terms": {
+            "travel_time": {"weight": 7.66, "type": "objective", "rank": 1},
+            "capacity_penalty": {"weight": 10.0, "type": "hard", "rank": 2},
+        }
+    }
+    sync._mirror_canonical_scalars_from_brief(next_problem, brief)
+    tt = next_problem["goal_terms"]["travel_time"]
+    assert tt["type"] == "objective"
+    assert tt["weight"] == 7.66
+    assert tt["rank"] == 1
+    cp = next_problem["goal_terms"]["capacity_penalty"]
+    assert cp["type"] == "hard"
+    assert cp["weight"] == 10.0
+    # Top-level weights dict stays consistent with the mirrored scalars.
+    assert next_problem["weights"]["travel_time"] == 7.66
+    assert next_problem["weights"]["capacity_penalty"] == 10.0
+
+
+def test_mirror_canonical_scalars_does_not_touch_properties():
+    """Properties (per-rule structured data) belong to the LLM's
+    translation job. The mirror covers scalars only."""
+    rule = {
+        "vehicle_idx": 0,
+        "condition": "avoid_zone",
+        "penalty": 50,
+        "zone": 4,
+    }
+    next_problem = {
+        "goal_terms": {
+            "worker_preference": {
+                "weight": 1.0,
+                "type": "soft",
+                "rank": 4,
+                "properties": {"driver_preferences": [rule]},
+            },
+        },
+    }
+    brief = {
+        "goal_terms": {
+            "worker_preference": {
+                "weight": 1.0,
+                "type": "soft",
+                "rank": 4,
+                # brief carries a different (older) rule set; mirror must NOT
+                # touch the panel's properties.
+                "properties": {"driver_preferences": []},
+            }
+        }
+    }
+    sync._mirror_canonical_scalars_from_brief(next_problem, brief)
+    assert next_problem["goal_terms"]["worker_preference"]["properties"] == {
+        "driver_preferences": [rule]
+    }
+
+
+def test_mirror_canonical_scalars_skips_locked_field():
+    """Locked is panel/researcher-owned. Mirror leaves it alone."""
+    next_problem = {
+        "goal_terms": {
+            "travel_time": {
+                "weight": 1.0,
+                "type": "soft",
+                "rank": 3,
+                "locked": True,
+            },
+        },
+    }
+    brief = {
+        "goal_terms": {
+            "travel_time": {
+                "weight": 7.66,
+                "type": "objective",
+                "rank": 1,
+                "locked": False,  # brief disagrees
+            }
+        }
+    }
+    sync._mirror_canonical_scalars_from_brief(next_problem, brief)
+    assert next_problem["goal_terms"]["travel_time"]["locked"] is True
+
+
+def test_mirror_canonical_scalars_skips_search_strategy_carrier():
+    """`search_strategy` is a carrier-only key — already handled by the
+    algorithm/epochs/pop_size mirror block. The scalar mirror must skip it
+    so the two mirrors don't fight over the same entry."""
+    next_problem = {
+        "goal_terms": {
+            "search_strategy": {
+                "weight": 1.0,
+                "type": "custom",
+                "rank": 2,
+                "properties": {"algorithm": "PSO"},
+            },
+        },
+    }
+    brief = {
+        "goal_terms": {
+            "search_strategy": {
+                "weight": 1.0,
+                "type": "objective",  # would be wrong to mirror this
+                "rank": 1,
+                "properties": {"algorithm": "GA"},
+            }
+        }
+    }
+    sync._mirror_canonical_scalars_from_brief(next_problem, brief)
+    # Scalar mirror left the panel's search_strategy alone.
+    ss = next_problem["goal_terms"]["search_strategy"]
+    assert ss["type"] == "custom"
+    assert ss["rank"] == 2
+
+
+def test_mirror_canonical_scalars_no_op_when_brief_lacks_key():
+    """If the brief doesn't carry a key the panel has, the mirror leaves
+    it alone — strict-subset enforcement is the responsibility of
+    `_merge_non_destructive_managed_fields`."""
+    next_problem = {
+        "goal_terms": {
+            "travel_time": {"weight": 5.0, "type": "soft"},
+        },
+    }
+    brief = {"goal_terms": {}}
+    sync._mirror_canonical_scalars_from_brief(next_problem, brief)
+    assert next_problem["goal_terms"]["travel_time"]["type"] == "soft"
+    assert next_problem["goal_terms"]["travel_time"]["weight"] == 5.0
+
+
+def test_p_l7_replay_panel_derive_yields_no_brief_panel_mismatch(monkeypatch):
+    """End-to-end P_l7 msg-1688 replay through sync_panel_from_problem_brief.
+
+    Fixture: brief has travel_time.type='objective' (the user's stated
+    primary objective). The panel-derive LLM is mocked to (incorrectly)
+    emit travel_time.type='soft' — the exact divergence that paused
+    P_l7. After the deterministic scalar mirror runs, the persisted
+    panel agrees with the brief; `verify_panel_consistency` reports no
+    `brief_panel_mismatch` on travel_time.
+    """
+    from app.services import pipeline_verification as verifier
+    from app.services import llm as llm_module
+
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {},
+                    "goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}},
+                    "algorithm": "GA",
+                }
+            }
+        ),
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        id="p_l7_replay",
+        updated_at=None,
+    )
+    brief = {
+        "goal_summary": "Minimize total travel time across all routes.",
+        "items": [
+            {
+                "id": "config-weight-travel_time",
+                "text": "Travel time (primary objective, weight 7.66) — minimize driving minutes.",
+                "kind": "gathered",
+                "source": "agent",
+            },
+            {
+                "id": "item-gathered-algorithm-ga",
+                "text": "Search strategy is genetic search (GA).",
+                "kind": "gathered",
+                "source": "user",
+            },
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "travel_time": {"weight": 7.66, "type": "objective", "rank": 1},
+            "search_strategy": {
+                "weight": 1.0,
+                "type": "custom",
+                "rank": 2,
+                "properties": {"algorithm": "GA"},
+            },
+        },
+    }
+
+    def _faulty_derive(**kwargs):
+        # Mimic the bug: LLM emits travel_time.type='soft' (wrong) plus the
+        # full goal_terms entry the brief carries.
+        return {
+            "problem": {
+                "goal_terms": {
+                    "travel_time": {"weight": 1.0, "type": "soft", "rank": 3},
+                },
+                "weights": {"travel_time": 1.0},
+                "algorithm": "GA",
+            }
+        }
+
+    monkeypatch.setattr(llm_module, "generate_config_from_brief", _faulty_derive)
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief=brief,
+        api_key="test",
+        model_name="test",
+        workflow_mode="waterfall",
+        commit=False,
+    )
+
+    assert panel is not None
+    tt = panel["problem"]["goal_terms"]["travel_time"]
+    assert tt["type"] == "objective", tt
+    assert tt["weight"] == 7.66, tt
+    assert tt["rank"] == 1, tt
+
+    issues = verifier.verify_panel_consistency(
+        brief=brief,
+        panel=panel,
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+    )
+    travel_time_drifts = [
+        i for i in issues
+        if i.category == "brief_panel_mismatch" and "travel_time" in (i.subject or "")
+    ]
+    assert travel_time_drifts == [], [i.message for i in travel_time_drifts]

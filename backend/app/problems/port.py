@@ -60,6 +60,22 @@ class StudyProblemPort(Protocol):
         """
         return {}
 
+    def supported_algorithm_names(self) -> tuple[str, ...]:
+        """Canonical algorithm acronyms surfaced as choices for this problem.
+
+        Drives the participant-facing option list in the canonical
+        search-strategy OQ (waterfall) and the default-algorithm assumption
+        row (agile/demo). Order matters: the **first** entry is treated as
+        the agile-mode default that the assumption row commits.
+
+        Default: all of ``CANONICAL_ALGORITHM_NAMES``. Ports override to
+        restrict the option set when a solver doesn't make sense for this
+        problem (e.g. a problem whose encoding rules out PSO).
+        """
+        from app.algorithm_catalog import CANONICAL_ALGORITHM_NAMES
+
+        return CANONICAL_ALGORITHM_NAMES
+
     def weight_display_keys(self) -> list[str]:
         """Ordered weight keys used for the agile-mode gate check and config-panel display order.
 

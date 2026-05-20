@@ -79,6 +79,7 @@ def verify_brief_consistency(
     is_change_intent: bool = True,
     is_run_acknowledgement: bool = False,
     suppress_runack_invariant: bool = False,
+    question_clause: str | None = None,
 ) -> list[PipelineIssue]:
     """Run deterministic S2 checks against the freshly-merged brief.
 
@@ -157,6 +158,63 @@ def verify_brief_consistency(
     # single source of truth for algorithm choice; S5 verifies it against the
     # panel structurally (see ``verify_panel_consistency``). Trust the
     # carrier; don't grep the visible reply.
+
+    # ---- Reply asks a clarification → brief must carry an OQ ----
+    # When the LLM self-tags the visible reply as containing a clarifying
+    # question (`question_clause` non-empty), the brief must reflect it.
+    # Satisfied by either (a) an OQ would land this turn (post-S3 monitor
+    # enforcement — see below) or (b) the LLM explicitly retargeted an
+    # existing OQ via `oq_actions` (`rephrase` or `mark_answered`). No NL
+    # classification on the server side — we trust the LLM's self-tag.
+    clause_text = (question_clause or "").strip() if isinstance(question_clause, str) else ""
+    if is_change_intent and clause_text:
+        # Preview what `_enforce_session_monitors` will add at S3 so the
+        # check sees the brief as the participant will see it. Foundational-
+        # topic OQs (upload / primary_goal / search_strategy) are owned by
+        # the monitor state machine and aren't in the LLM's patch — without
+        # this preview, the verifier would falsely flag the cold-start
+        # primary-goal ask and pause the pipeline (Bug C in the plan).
+        # Local import to dodge the circular module dependency that
+        # derivation has on schemas/services already loaded.
+        try:
+            from app.routers.sessions.derivation import _enforce_session_monitors
+            preview_brief = _enforce_session_monitors(
+                merged_brief, workflow_mode, test_problem_id=test_problem_id
+            )
+        except Exception:  # pragma: no cover — defensive
+            log.exception("Monitor preview raised; treating as no-op for ask_without_oq check")
+            preview_brief = merged_brief
+        new_oqs = _new_open_questions(base_brief, preview_brief)
+        oq_actions = patch.get("oq_actions") if isinstance(patch, dict) else None
+        retargets_existing = False
+        if isinstance(oq_actions, list):
+            for a in oq_actions:
+                if not isinstance(a, dict):
+                    continue
+                action = str(a.get("action") or "").strip().lower()
+                if action in {"rephrase", "mark_answered"}:
+                    retargets_existing = True
+                    break
+        if not new_oqs and not retargets_existing:
+            issues.append(
+                PipelineIssue(
+                    category="ask_without_oq",
+                    severity="error",
+                    subject="open_questions",
+                    message=(
+                        "Your visible reply asks the participant a clarifying "
+                        f"question (\"{clause_text}\") but the brief carries no "
+                        "matching open_question. Either add an OQ for the "
+                        "question (set `proposes_goal_term_key` if it proposes "
+                        "a specific goal_term), use `oq_actions` to "
+                        "`rephrase`/`mark_answered` an existing OQ that "
+                        "already covers it, or rephrase the reply to commit "
+                        "a default instead of asking. Foundational-topic asks "
+                        "(primary_goal / upload / search_strategy) are "
+                        "server-managed — leave `question_clause` empty for those."
+                    ),
+                )
+            )
 
     # ---- Workflow invariants ----
     if mode == "waterfall":

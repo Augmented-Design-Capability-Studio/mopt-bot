@@ -251,26 +251,18 @@ def _route_oq_answers_through_classifier(
                             and not isinstance(entry.get("rank"), bool)
                         ]
                         next_rank = (max(existing_ranks) + 1) if existing_ranks else 1
-                        # Complete entry: weight (default 1.0), type, rank,
-                        # evidence_item_ids (the gathered row we just added),
-                        # and ambiguity_note.chosen_rationale (so downstream
-                        # synthesize_canonical_goal_term_items can render a
-                        # complete "<Label> (<role>, weight N) — <rationale>."
-                        # row instead of the bare fallback).
-                        question_text = str(q.get("text") or "").strip()
-                        rationale = (
-                            f"endorsed via answered question: {question_text}"
-                            if question_text
-                            else "endorsed via answered open question"
-                        )
+                        # No `ambiguity_note.chosen_rationale` — the synthesizer
+                        # falls back to the port's per-key rationale
+                        # (`goal_term_rationales()`), which is a short clause
+                        # like "to minimize total driving minutes across all
+                        # routes". Setting a verbose "endorsed via answered
+                        # question: <full OQ text>" rationale here used to
+                        # produce a long, hard-to-scan items[] row.
                         goal_terms[key] = {
                             "weight": 1.0,
                             "type": proposal.type,
                             "rank": next_rank,
                             "evidence_item_ids": [gathered_item_id],
-                            "ambiguity_note": {
-                                "chosen_rationale": rationale,
-                            },
                         }
                         incoming_brief["goal_terms"] = goal_terms
             continue

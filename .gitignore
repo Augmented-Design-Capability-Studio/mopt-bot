@@ -1,6 +1,13 @@
 venv/
 .DS_Store
 
+# Stray DB stubs from running the server with the wrong CWD. The real
+# study DB lives at backend/data/mopt_study.db (gitignored by
+# backend/.gitignore). The server os.chdir's to backend/ before opening
+# the sqlite URL, so anything under /data/ at the repo root is an
+# accident and should not be tracked.
+/data/
+
 # Python bytecode / caches
 __pycache__/
 *.py[cod]

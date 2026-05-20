@@ -396,6 +396,7 @@ class PipelineIssue(BaseModel):
         "brief_panel_mismatch",
         "brief_panel_algorithm_mismatch",
         "oq_replace_without_list",
+        "ask_without_oq",
     ]
     severity: Literal["error", "warn"] = "error"
     subject: str = ""

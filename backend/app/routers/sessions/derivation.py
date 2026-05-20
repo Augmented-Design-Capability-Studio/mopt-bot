@@ -329,48 +329,109 @@ def _apply_oq_actions(
     return {**brief, "open_questions": questions}
 
 
+def _has_gathered_evidence_for_key(items: list[Any], key: str) -> bool:
+    """True iff some ``kind: "gathered"`` row in ``items`` represents ``key``.
+
+    Two structural matches count as evidence:
+    - the row's id is exactly ``config-weight-<key>`` (the canonical row
+      ``_synthesize_canonical_weight_items`` synthesizes from goal_terms);
+    - the row carries ``proposes_goal_term_key=<key>`` (an LLM-authored
+      gathered item that explicitly anchors to the same key, e.g. a
+      ``item-gathered-capacity-penalty`` row).
+
+    The OQ resolver gates its drop on this — the participant must already
+    see the answer in their Definition tab's gathered info before the
+    question disappears.
+    """
+    if not key:
+        return False
+    canonical_id = f"config-weight-{key}"
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "").strip().lower() != "gathered":
+            continue
+        if str(item.get("id") or "") == canonical_id:
+            return True
+        anchor = item.get("proposes_goal_term_key")
+        if isinstance(anchor, str) and anchor.strip() == key:
+            return True
+    return False
+
+
 def _resolve_anchored_provisional_rows(
-    brief: dict[str, Any], workflow_mode: str | None
+    brief: dict[str, Any],
+    workflow_mode: str | None,
+    base_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Drop provisional rows whose anchored goal_term key is now committed.
+    """Drop OQs whose anchored goal_term just landed AND is visible in gathered info.
 
-    Both carriers — OQs (waterfall's primary elicitation) and
-    ``kind: "assumption"`` items (agile's provisional carrier) — can be
-    tagged with ``proposes_goal_term_key=K``. This deterministic pass:
+    The OQ resolver answers two questions:
 
-    - **Waterfall / all modes:** open OQ with ``proposes_goal_term_key=K``
-      AND ``K in brief.goal_terms`` → drop the OQ. The canonical
-      ``config-weight-K`` row synthesized just before this call is the
-      structured answer; keeping the OQ open contradicts the brief.
-    - **Agile / demo:** ``kind: "assumption"`` item with
-      ``proposes_goal_term_key=K`` AND ``K in brief.goal_terms`` AND any
-      other ``kind: "gathered"`` items[] row carries the same anchor
-      (or a ``source: "user"`` confirmation already landed for the key) →
-      drop the assumption row. Conservative on purpose: an assumption
-      stays put on weak signals; only an explicit user-confirmation
-      flips the goal_term to gathered evidence and triggers the drop.
+    1. *Did the user just answer the OQ?* — proxied structurally by
+       *"the OQ's anchored key is committed in ``goal_terms`` this turn
+       but wasn't in the base brief"*. Tuning OQs (e.g. *"bump weight from
+       1 to 2?"*) on already-committed keys survive — the key was in base,
+       so the drop gate doesn't fire.
+    2. *Does the brief actually surface the answer to the participant?* —
+       checked via ``_has_gathered_evidence_for_key``. The canonical
+       ``config-weight-K`` row that ``_synthesize_canonical_weight_items``
+       emits immediately before this resolver runs satisfies the check on
+       the normal path; an LLM-authored gathered row anchored to the same
+       key also counts. This gate makes the contract explicit so future
+       code paths that bypass synthesis can't silently delete OQs whose
+       answers aren't yet visible.
 
-    Idempotent: a row already dropped on a prior turn just isn't there
-    to drop again. Foundational-topic OQs (server-managed) are skipped
-    so the monitor state machine retains exclusive ownership.
+    Both gates AND together with the existing skips:
+
+    - Foundational-topic OQs (``topic`` in ``upload`` / ``primary_goal`` /
+      ``search_strategy``) — server monitor state machine owns those.
+    - OQs without ``proposes_goal_term_key`` — LLM owns lifecycle via
+      ``oq_actions``.
+    - Already-answered OQs (``status: "answered"``) — handled by
+      ``_promote_answered_open_questions_to_gathered``.
+
+    Assumption rows are intentionally NOT auto-resolved here. Promotion
+    (``kind: "assumption" → "gathered"``) happens only via explicit
+    ``assumption_actions: promote_to_gathered`` (already wired in
+    ``_apply_assumption_actions``). An auto-trigger based on goal_term
+    state was the wrong action (drop instead of promote) and the wrong
+    trigger (relied on a parallel gathered+user item that mostly only
+    lands when the LLM also remembers to emit ``assumption_actions``).
+    A forgotten promotion leaves the row as ``kind: "assumption"`` —
+    provisional but not wrong; the participant can still see it.
+
+    Idempotent: rows already dropped on a prior turn just aren't there to
+    drop again. ``base_brief=None`` is treated as "no keys in base" so
+    legacy callers without the diff context get the previous behavior
+    (every committed key counts as newly committed).
     """
     if not isinstance(brief, dict):
         return brief
     from app.problem_brief import FOUNDATIONAL_OQ_TOPICS
 
     goal_terms = brief.get("goal_terms")
-    goal_term_keys: set[str] = set()
+    merged_goal_term_keys: set[str] = set()
     if isinstance(goal_terms, dict):
         for key in goal_terms.keys():
             if isinstance(key, str):
-                goal_term_keys.add(key)
-    if not goal_term_keys:
+                merged_goal_term_keys.add(key)
+    if not merged_goal_term_keys:
         return brief
 
-    mode = str(workflow_mode or "").strip().lower()
-    next_brief = dict(brief)
+    base_goal_term_keys: set[str] = set()
+    if isinstance(base_brief, dict):
+        base_gt = base_brief.get("goal_terms")
+        if isinstance(base_gt, dict):
+            for key in base_gt.keys():
+                if isinstance(key, str):
+                    base_goal_term_keys.add(key)
+    newly_committed_keys = merged_goal_term_keys - base_goal_term_keys
+    if not newly_committed_keys:
+        return brief
 
-    # Waterfall + agile + demo: drop committed-key OQs uniformly.
+    next_brief = dict(brief)
+    items = list(next_brief.get("items") or [])
     questions = list(next_brief.get("open_questions") or [])
     kept_questions: list[dict[str, Any]] = []
     dropped_oq_ids: list[str] = []
@@ -392,69 +453,24 @@ def _resolve_anchored_provisional_rows(
             # Already answered — let the answered→gathered promoter handle it.
             kept_questions.append(q)
             continue
-        if anchor_key in goal_term_keys:
-            dropped_oq_ids.append(str(q.get("id") or ""))
+        if anchor_key not in newly_committed_keys:
+            # Anchored key was already in base — this is a tuning OQ.
+            kept_questions.append(q)
             continue
-        kept_questions.append(q)
+        if not _has_gathered_evidence_for_key(items, anchor_key):
+            # Key landed but the participant doesn't see it yet — keep the OQ.
+            kept_questions.append(q)
+            continue
+        dropped_oq_ids.append(str(q.get("id") or ""))
+
     if dropped_oq_ids:
         log.info(
-            "Anchored-OQ resolver dropped %d OQ(s) whose goal_term landed: %s",
+            "Anchored-OQ resolver dropped %d OQ(s) whose goal_term landed "
+            "with visible gathered evidence: %s",
             len(dropped_oq_ids),
             dropped_oq_ids,
         )
         next_brief["open_questions"] = kept_questions
-
-    # Agile / demo: also drop assumption rows once the anchored key has
-    # user-gathered evidence in items[]. We look for a gathered+user item
-    # (the structural signal the LLM emits on explicit confirmation) that
-    # references the same anchor key — either via ``proposes_goal_term_key``
-    # OR via the canonical ``config-weight-<key>`` id our synthesizer uses.
-    if mode in {"agile", "demo"}:
-        items = list(next_brief.get("items") or [])
-        keys_with_user_gathered_evidence: set[str] = set()
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("kind") or "").strip().lower() != "gathered":
-                continue
-            if str(item.get("source") or "").strip().lower() != "user":
-                continue
-            anchor = item.get("proposes_goal_term_key")
-            if isinstance(anchor, str) and anchor.strip():
-                keys_with_user_gathered_evidence.add(anchor.strip())
-        # Conservative: require an explicit user-source gathered row whose
-        # anchor matches. The canonical synthesized `config-weight-K` row has
-        # `source: "agent"`, so it does NOT trigger a drop on its own — the
-        # user has to confirm via an items[] row the LLM emits with
-        # source=user (the same shape used when the user answers an OQ).
-        if keys_with_user_gathered_evidence:
-            dropped_assumption_ids: list[str] = []
-            kept_items: list[dict[str, Any]] = []
-            for item in items:
-                if not isinstance(item, dict):
-                    kept_items.append(item)
-                    continue
-                if str(item.get("kind") or "").strip().lower() != "assumption":
-                    kept_items.append(item)
-                    continue
-                anchor = item.get("proposes_goal_term_key")
-                anchor_key = anchor.strip() if isinstance(anchor, str) else ""
-                if (
-                    anchor_key
-                    and anchor_key in goal_term_keys
-                    and anchor_key in keys_with_user_gathered_evidence
-                ):
-                    dropped_assumption_ids.append(str(item.get("id") or ""))
-                    continue
-                kept_items.append(item)
-            if dropped_assumption_ids:
-                log.info(
-                    "Anchored-assumption resolver dropped %d row(s) whose "
-                    "key has user-gathered evidence: %s",
-                    len(dropped_assumption_ids),
-                    dropped_assumption_ids,
-                )
-                next_brief["items"] = kept_items
 
     return next_brief
 
@@ -604,13 +620,16 @@ def apply_brief_patch_with_cleanup(
     # synthesized one.
     merged = _synthesize_canonical_weight_items(merged, test_problem_id)
 
-    # Drop provisional rows (OQs in any mode, assumption items in
-    # agile/demo) whose anchored goal_term key has now been committed —
-    # the deterministic safety net for "LLM committed the key but forgot
-    # to drop the OQ / promote the assumption" turns. Runs after canonical
-    # weight items have been synthesized so the resolver sees the final
-    # goal_terms state for this turn.
-    merged = _resolve_anchored_provisional_rows(merged, workflow_mode)
+    # Drop OQs whose anchored goal_term key was newly committed this turn
+    # AND whose answer is already visible in gathered info. Runs after
+    # canonical weight items have been synthesized so the resolver sees
+    # the final goal_terms state and the canonical `config-weight-K` rows
+    # that satisfy the gathered-evidence gate. Assumption-row promotion
+    # is not auto-resolved — see the docstring of
+    # _resolve_anchored_provisional_rows for the rationale.
+    merged = _resolve_anchored_provisional_rows(
+        merged, workflow_mode, base_brief=base_problem_brief
+    )
 
     # ``goal_summary`` fallback: when the LLM commits a primary objective
     # but forgets to populate the headline ``goal_summary`` field, derive
@@ -894,54 +913,77 @@ _MONITOR_OQ_UPLOAD_TEXT = (
     "Please use the **Upload file(s)...** button in the chat footer to share "
     "your data so we can set up a baseline run."
 )
-_MONITOR_OQ_GOAL_TEXT_FALLBACK = (
+_MONITOR_OQ_GOAL_TEXT = (
     "What's your primary optimization goal? Tell me which priority should drive "
     "the search."
 )
-_MONITOR_OQ_ALGORITHM_TEXT = (
-    "Which search strategy should we use? Common choices: genetic search "
-    "(GA), particle swarm (PSO), or simulated annealing (SA)."
-)
-_MONITOR_ITEM_ALGORITHM_TEXT = (
-    "Search strategy is set to genetic search (GA) as a starting point — "
-    "change anytime."
-)
+def _port_supported_algorithms(test_problem_id: str | None) -> tuple[str, ...]:
+    """Resolve the active port's algorithm option list.
+
+    StudyProblemPort is a structural Protocol, so default methods on the
+    Protocol class are *not* inherited by concrete port classes that don't
+    subclass it. We defensively ``getattr`` the hook and fall back to the
+    catalog-wide canonical names — that keeps the change additive: existing
+    ports get the full algorithm list for free, and ports that want to
+    restrict the choices just define the method.
+    """
+    from app.algorithm_catalog import CANONICAL_ALGORITHM_NAMES
+    from app.problems.registry import get_study_port
+
+    port = get_study_port(test_problem_id)
+    fn = getattr(port, "supported_algorithm_names", None)
+    if callable(fn):
+        try:
+            result = fn()
+        except Exception:  # pragma: no cover — defensive
+            return CANONICAL_ALGORITHM_NAMES
+        if isinstance(result, (tuple, list)) and result:
+            return tuple(result)
+    return CANONICAL_ALGORITHM_NAMES
+
+
+def _monitor_algorithm_oq_text(test_problem_id: str | None) -> str:
+    """Canonical waterfall OQ text, listing whatever algorithms the active
+    port surfaces. Hardcoding the option list here would drift the moment a
+    new port restricted the set (or the canonical catalog grew); deriving it
+    keeps the participant prompt aligned with the actual choices the
+    optimizer will accept."""
+    from app.algorithm_catalog import format_algorithm_choices_phrase
+
+    phrase = format_algorithm_choices_phrase(_port_supported_algorithms(test_problem_id))
+    if not phrase:
+        return "Which search strategy should we use?"
+    return f"Which search strategy should we use? Options include {phrase}."
+
+
+def _monitor_algorithm_item_text(test_problem_id: str | None) -> str:
+    """Agile/demo assumption-row text. Names the port's first supported
+    algorithm as the starting point; falls back to GA if the port returns
+    an empty list (defensive — shouldn't happen with the default impl)."""
+    from app.algorithm_catalog import ALGORITHM_PARTICIPANT_NICKNAMES_MAP
+
+    supported = _port_supported_algorithms(test_problem_id)
+    default = supported[0] if supported else "GA"
+    nickname = ALGORITHM_PARTICIPANT_NICKNAMES_MAP.get(default, default)
+    return f"Search strategy is set to {nickname} as a starting point — change anytime."
 
 
 def _monitor_goal_oq_text(test_problem_id: str | None) -> str:
-    """Build the canonical goal-term OQ text from the active port's labels.
+    """Generic canonical goal-term OQ text.
 
-    Per-port `weight_item_labels()` are the natural-language names the
-    participant already sees in the Definition tab. Pulling examples from
-    them keeps the monitor OQ aligned with the active benchmark instead of
-    hardcoding one problem's vocabulary (which previously leaked VRPTW
-    examples like "minimize total travel time" into knapsack sessions).
+    Previously this enumerated every weight label the active port exposed
+    (``weight_item_labels()``), which for VRPTW produced a 7-item dump
+    ("travel time, shift limit, workload balance, …") — too revealing for a
+    cold-start participant who hasn't yet seen the Definition tab. The
+    generic phrasing avoids leaking the full benchmark vocabulary while
+    still asking the question. Per-port specifics surface naturally in the
+    LLM-driven chat reply that prompts this OQ.
+
+    ``test_problem_id`` is retained on the signature for backwards
+    compatibility with existing call sites; the text itself is now
+    problem-agnostic.
     """
-    try:
-        from app.problems.registry import get_study_port
-
-        port = get_study_port(test_problem_id) if test_problem_id is not None else None
-        labels_map = port.weight_item_labels() if port else {}
-        display_keys = port.weight_display_keys() if port else []
-    except Exception:  # pragma: no cover — defensive
-        labels_map = {}
-        display_keys = []
-    ordered = [labels_map[k] for k in display_keys if k in labels_map and labels_map[k]]
-    if not ordered:
-        ordered = [v for v in (labels_map or {}).values() if v]
-    if not ordered:
-        return _MONITOR_OQ_GOAL_TEXT_FALLBACK
-    if len(ordered) == 1:
-        examples = ordered[0]
-    elif len(ordered) == 2:
-        examples = f"{ordered[0]} or {ordered[1]}"
-    else:
-        head = ", ".join(ordered[:-1])
-        examples = f"{head}, or {ordered[-1]}"
-    return (
-        "What's your primary optimization goal? For example, you could prioritize "
-        f"{examples}, or name another priority."
-    )
+    return _MONITOR_OQ_GOAL_TEXT
 
 def _enforce_session_monitors(
     brief: dict[str, Any],
@@ -1057,7 +1099,7 @@ def _enforce_session_monitors(
         elif not _has_item(_MONITOR_ITEM_ALGORITHM_ID):
             items.append({
                 "id": _MONITOR_ITEM_ALGORITHM_ID,
-                "text": _MONITOR_ITEM_ALGORITHM_TEXT,
+                "text": _monitor_algorithm_item_text(test_problem_id),
                 "kind": "assumption",
                 "source": "agent",
             })
@@ -1067,7 +1109,11 @@ def _enforce_session_monitors(
         if has_algorithm:
             _drop_oq(_MONITOR_OQ_ALGORITHM_ID)
         elif not _has_oq(_MONITOR_OQ_ALGORITHM_ID):
-            _append_oq(_MONITOR_OQ_ALGORITHM_ID, _MONITOR_OQ_ALGORITHM_TEXT, "search_strategy")
+            _append_oq(
+                _MONITOR_OQ_ALGORITHM_ID,
+                _monitor_algorithm_oq_text(test_problem_id),
+                "search_strategy",
+            )
         # Drop any agile-mode assumption that may be lingering.
         _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
 

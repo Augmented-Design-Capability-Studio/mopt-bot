@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 # Defaults for top-level search configuration.
 DEFAULT_EPOCHS = 100
@@ -66,16 +66,49 @@ ALGORITHM_BRIEF_ALIAS_MAP: dict[str, str] = {
 }
 
 
-# Participant-facing nicknames for the five algorithms — used in prompts
-# that need to surface the option list to the LLM (e.g. waterfall OQ
-# phrasing, agile "starting from GA — say if you'd prefer …" lines).
-ALGORITHM_NICKNAMES_PARTICIPANT: tuple[str, ...] = (
-    "genetic search (GA)",
-    "swarm search (PSO)",
-    "annealing search (SA)",
-    "swarm-based simulated annealing (SwarmSA)",
-    "ant colony (ACOR)",
+# Participant-facing nickname per canonical algorithm. Single source of truth
+# for option-listing in prompts (waterfall OQ phrasing, agile "starting from
+# GA — say if you'd prefer …" lines). Add a new entry here when the canonical
+# set grows.
+ALGORITHM_PARTICIPANT_NICKNAMES_MAP: dict[str, str] = {
+    "GA": "genetic search (GA)",
+    "PSO": "swarm search (PSO)",
+    "SA": "annealing search (SA)",
+    "SwarmSA": "swarm-based simulated annealing (SwarmSA)",
+    "ACOR": "ant colony (ACOR)",
+}
+
+# Ordered tuple, kept for compatibility with callers that want a positional
+# list aligned with ``CANONICAL_ALGORITHM_NAMES``.
+ALGORITHM_NICKNAMES_PARTICIPANT: tuple[str, ...] = tuple(
+    ALGORITHM_PARTICIPANT_NICKNAMES_MAP[name] for name in CANONICAL_ALGORITHM_NAMES
 )
+
+
+def format_algorithm_choices_phrase(algorithms: Sequence[str]) -> str:
+    """Render an Oxford-comma list of participant-facing algorithm names.
+
+    Unknown / unrecognized acronyms are dropped (they have no participant
+    nickname). Returns ``""`` when the resulting list is empty — callers
+    should fall back to a generic phrasing in that case.
+
+    Examples:
+        ``("GA", "PSO", "SA")`` → ``"genetic search (GA), swarm search (PSO),
+        or annealing search (SA)"``
+    """
+    nicknames = [
+        ALGORITHM_PARTICIPANT_NICKNAMES_MAP[name]
+        for name in algorithms
+        if name in ALGORITHM_PARTICIPANT_NICKNAMES_MAP
+    ]
+    if not nicknames:
+        return ""
+    if len(nicknames) == 1:
+        return nicknames[0]
+    if len(nicknames) == 2:
+        return f"{nicknames[0]} or {nicknames[1]}"
+    head = ", ".join(nicknames[:-1])
+    return f"{head}, or {nicknames[-1]}"
 
 # Allowed algorithm_params keys per algorithm — same filter sets as optimizer model construction.
 ALLOWED_ALGORITHM_PARAMS: dict[str, frozenset[str]] = {

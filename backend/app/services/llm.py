@@ -899,7 +899,26 @@ def _build_main_turn_schema(test_problem_id: str | None) -> dict[str, Any]:
                 ),
             },
             "change_clause": {"type": "string"},
-            "question_clause": {"type": "string"},
+            "question_clause": {
+                "type": "string",
+                "description": (
+                    "Populate with the question portion of your visible reply "
+                    "WHEN the reply asks the participant a clarifying question "
+                    "proposing a NON-FOUNDATIONAL brief change (e.g. *\"Would "
+                    "you like me to add a capacity penalty?\"*, weight tuning, "
+                    "optional constraint). The server uses this signal to "
+                    "enforce that the brief carries a matching OQ — if you "
+                    "populate this field but emit no new OQ (and don't "
+                    "`rephrase`/`mark_answered` an existing one via "
+                    "`oq_actions`), the turn is paused for retry. **Leave "
+                    "empty/null for foundational-topic asks** (primary_goal "
+                    "/ upload / search_strategy) — the server-managed monitor "
+                    "state machine surfaces those OQs automatically; "
+                    "populating `question_clause` for them is incorrect. Also "
+                    "leave empty on commit-only turns, concept-question turns, "
+                    "and replies that don't actually ask for a brief change."
+                ),
+            },
             "problem_brief_patch": {
                 "anyOf": [
                     _build_problem_brief_patch_schema(goal_terms_sub, forbidden_prefixes),
@@ -1017,12 +1036,24 @@ _MAIN_TURN_OUTPUT_RULES = (
     "`answer_text` when the user's reply is the answer, `rephrase` to "
     "tighten wording. `replace_open_questions=true` is for genuine cleanup "
     "turns that re-author the full list — not for routine drops.\n\n"
-    "**Goal-term anchor (safety net).** When an OQ or `kind: \"assumption\"` "
-    "item proposes a specific goal_term, tag the row with "
-    "`proposes_goal_term_key` set to the canonical key. The server "
-    "auto-resolves the row when the key lands (OQ) or when the key has "
-    "user-gathered evidence (assumption), so the lifecycle stays correct "
-    "even if you forget to emit an action.\n\n"
+    "**Goal-term anchor (safety net).** When an OQ proposes a specific "
+    "goal_term (e.g. *\"Should I add a capacity penalty?\"*), tag the row "
+    "with `proposes_goal_term_key` set to the canonical key. The server "
+    "auto-resolves the OQ when (a) the key is newly committed to "
+    "`goal_terms` this turn and (b) the brief carries gathered info for "
+    "the key. Tuning OQs on keys that were already committed survive "
+    "automatically. The same field on a `kind: \"assumption\"` row is "
+    "informational metadata only — assumption promotion stays explicit "
+    "via `assumption_actions: promote_to_gathered`.\n\n"
+    "**Clarification asks.** When your visible reply asks the participant "
+    "a clarifying question proposing a non-foundational brief change "
+    "(weights, optional constraints, tunables), populate `question_clause` "
+    "with the question portion of your reply. The server uses it to verify "
+    "a matching OQ landed; missing this when you asked will pause the turn. "
+    "Leave empty for foundational-topic asks (primary_goal / upload / "
+    "search_strategy) — the server-managed monitor state machine surfaces "
+    "those OQs automatically. Also leave empty on commit-only and "
+    "concept-question turns.\n\n"
     "Use `assumption_actions` for per-row decisions on existing assumption "
     "rows (agile/demo). Reserve `promote_to_gathered` for unambiguous "
     "lock-in language; ambiguous *\"yes / sure\"* replies should leave the "

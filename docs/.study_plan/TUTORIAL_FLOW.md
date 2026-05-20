@@ -75,9 +75,11 @@ is not a sparsity ask.
 - **Waterfall — exactly two canonical monitor OQs:**
   1. `oq-monitor-upload` — *Please use the Upload file(s)... button in the
      chat footer to share your data so we can set up a baseline run.*
-  2. `oq-monitor-algorithm` — *Which search strategy should we use? Common
-     choices: genetic search (GA), particle swarm (PSO), or simulated
-     annealing (SA).*
+  2. `oq-monitor-algorithm` — *Which search strategy should we use? Options
+     include {nicknames}.* The nickname list is rendered from the active
+     port's `supported_algorithm_names()` — for the default port set that's
+     all five canonical algorithms (genetic search, swarm search, annealing
+     search, swarm-based simulated annealing, ant colony).
 
   The `oq-monitor-goal` row **must not** appear: `brief.goal_terms` is
   non-empty after this turn, so the goal-term monitor in
@@ -89,8 +91,10 @@ is not a sparsity ask.
   1. `oq-monitor-upload` — same text as above.
 
   Plus one canonical assumption items[] row:
-  - `item-monitor-algorithm-default` — *Search strategy is set to genetic
-     search (GA) as a starting point — change anytime.*
+  - `item-monitor-algorithm-default` — *Search strategy is set to
+     {first-supported-nickname} as a starting point — change anytime.* The
+     algorithm named is the first entry the active port returns from
+     `supported_algorithm_names()` (default ports: genetic search (GA)).
 
 ### Pipeline verification (S2 + S5)
 
@@ -108,14 +112,15 @@ is not a sparsity ask.
 ### Canonical goal-term OQ wording
 
 When the goal-term monitor OQ does fire — which it should not, on this
-canonical first turn — the text comes from `_monitor_goal_oq_text` in
-[`backend/app/routers/sessions/derivation.py`](../../backend/app/routers/sessions/derivation.py)
-and derives its examples from the active port's `weight_item_labels()` plus
-`weight_display_keys()`. For knapsack that produces "Total packed value /
-Knapsack capacity overflow / Number of selected items" — not VRPTW vocabulary.
-If you see *"minimize total travel time, meet customer time windows, balance
-driver workload"* on a knapsack session, the helper isn't being called with
-the active `test_problem_id`.
+canonical first turn — the text is a generic, problem-agnostic ask:
+*"What's your primary optimization goal? Tell me which priority should drive
+the search."* The wording lives in `_MONITOR_OQ_GOAL_TEXT` in
+[`backend/app/routers/sessions/derivation.py`](../../backend/app/routers/sessions/derivation.py).
+We intentionally do **not** enumerate the port's `weight_item_labels()` here
+— a 7-item label dump (the VRPTW case) is too revealing for a participant
+who hasn't yet seen the Definition tab. The participant gets per-problem
+context from the LLM-driven chat reply that surrounds this OQ, not from the
+OQ text itself.
 
 ## Step 2 — Upload knapsack data
 
@@ -250,11 +255,12 @@ Common bug shapes:
    in `chat_pipeline_runner.py` and confirm
    `KnapsackStudyPort.auto_anchored_goal_term_keys()` still returns all
    three keys.
-2. **`oq-monitor-goal` fires on Step 1 with VRPTW-flavoured examples.**
-   Cause: `brief.goal_terms` is empty after Step 1 (auto-anchored backfill
-   didn't fire) **and** `_monitor_goal_oq_text` is using its fallback string
-   instead of the port's labels. Pass `test_problem_id` through every call
-   site of `_enforce_session_monitors`.
+2. **`oq-monitor-goal` fires on Step 1.** Cause: `brief.goal_terms` is empty
+   after Step 1 (auto-anchored backfill didn't fire). The monitor OQ wording
+   itself is now generic ("What's your primary optimization goal? Tell me
+   which priority should drive the search.") so its presence — not its text
+   — is the symptom. Check `KnapsackStudyPort.auto_anchored_goal_term_keys()`
+   and the order of stages in `_run_derive_and_verify_stages`.
 3. **`missing_in_panel` drift on a non-canonical key** (e.g. `total_value`,
    `efficient_packing`). Cause: the LLM paraphrased a canonical key and
    the strip in `_strip_unknown_goal_term_keys` didn't fire — either

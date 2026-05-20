@@ -875,17 +875,21 @@ def _run_verify_brief_stage(
             return merge_problem_brief_patch(base_problem_brief, t.problem_brief_patch)
         return dict(base_problem_brief)
 
-    issues = pipeline_verification.verify_brief_consistency(
-        merged_brief=_merged(turn),
-        base_brief=base_problem_brief,
-        patch=turn.problem_brief_patch,
-        visible_reply=turn.assistant_message,
-        workflow_mode=workflow_mode,
-        test_problem_id=test_problem_id,
-        is_change_intent=bool(turn.is_change_intent),
-        is_run_acknowledgement=is_run_acknowledgement,
-        suppress_runack_invariant=suppress_runack_invariant,
-    )
+    def _verify(t: ChatTurnResponse) -> list[Any]:
+        return pipeline_verification.verify_brief_consistency(
+            merged_brief=_merged(t),
+            base_brief=base_problem_brief,
+            patch=t.problem_brief_patch,
+            visible_reply=t.assistant_message,
+            workflow_mode=workflow_mode,
+            test_problem_id=test_problem_id,
+            is_change_intent=bool(t.is_change_intent),
+            is_run_acknowledgement=is_run_acknowledgement,
+            suppress_runack_invariant=suppress_runack_invariant,
+            question_clause=t.question_clause,
+        )
+
+    issues = _verify(turn)
     if not issues:
         _persist_turn_for_resume(message_id, turn)
         pipeline_status.update_stage(
@@ -893,87 +897,88 @@ def _run_verify_brief_stage(
         )
         return
 
-    # First failure → retry S1 with feedback.
+    # Up to MAX_S2_RETRIES retry attempts. Each attempt resubmits S1 with
+    # the previous verification issues as feedback and re-runs S2. On the
+    # final failure (after all retries are exhausted), pause the pipeline.
+    # A single retry sometimes isn't enough — particularly for nuanced
+    # contracts like `ask_without_oq` where the LLM needs two passes to
+    # reconcile the visible reply with the brief carrier.
+    MAX_S2_RETRIES = 2
+    latest_turn = turn
+    latest_issues = issues
+    for attempt in range(MAX_S2_RETRIES):
+        pipeline_status.update_stage(
+            message_id=message_id,
+            stage_name="verifying_brief",
+            state="failed",
+            issues=pipeline_verification.issues_to_audit_payload(latest_issues),
+            bump_retried=True,
+        )
+        pipeline_status.update_stage(
+            message_id=message_id, stage_name="drafting", state="in_progress"
+        )
+        retry = llm.generate_main_turn(
+            user_text=user_text,
+            history_lines=history_lines,
+            api_key=api_key,
+            model_name=model_name,
+            current_problem_brief=base_problem_brief,
+            workflow_mode=workflow_mode,
+            current_panel=base_panel,
+            recent_runs_summary=recent_runs_summary,
+            researcher_steers=researcher_steers,
+            is_run_acknowledgement=is_run_acknowledgement,
+            is_brief_edit_ack=is_brief_edit_ack,
+            is_config_save=is_config_save,
+            is_upload_context=is_upload_context,
+            is_answered_open_question=is_answered_open_question,
+            is_tutorial_active=is_tutorial_active,
+            test_problem_id=test_problem_id,
+            gate_status=gate_status,
+            verification_issues=pipeline_verification.issues_to_audit_payload(latest_issues),
+        )
+        if retry is None:
+            # LLM failure — give up retrying; pause with the last known
+            # verification issues so the participant sees a useful message.
+            pipeline_status.update_stage(
+                message_id=message_id,
+                stage_name="verifying_brief",
+                state="paused",
+                issues=pipeline_verification.issues_to_audit_payload(latest_issues),
+            )
+            pipeline_status.fail_pipeline(message_id=message_id, paused_stage="verifying_brief")
+            raise _PipelinePaused("verifying_brief")
+        _persist_assistant_message(
+            message_id=message_id,
+            visible_reply=retry.assistant_message,
+            inline_followup=retry.inline_followup,
+            is_run_invitation=bool(retry.is_run_invitation),
+        )
+        pipeline_status.update_stage(
+            message_id=message_id, stage_name="drafting", state="success"
+        )
+        latest_turn = retry
+        latest_issues = _verify(retry)
+        if not latest_issues:
+            _persist_turn_for_resume(message_id, latest_turn)
+            pipeline_status.update_stage(
+                message_id=message_id, stage_name="verifying_brief", state="success"
+            )
+            # Replace the bound `turn` reference for caller via persisted snapshot.
+            # The caller re-reads from _read_persisted_turn in subsequent stages.
+            turn.__dict__.update(latest_turn.__dict__)
+            return
+
+    # All retries exhausted with issues still present — pause.
     pipeline_status.update_stage(
         message_id=message_id,
         stage_name="verifying_brief",
-        state="failed",
-        issues=pipeline_verification.issues_to_audit_payload(issues),
-        bump_retried=True,
+        state="paused",
+        issues=pipeline_verification.issues_to_audit_payload(latest_issues),
     )
-    pipeline_status.update_stage(
-        message_id=message_id, stage_name="drafting", state="in_progress"
-    )
-    retry = llm.generate_main_turn(
-        user_text=user_text,
-        history_lines=history_lines,
-        api_key=api_key,
-        model_name=model_name,
-        current_problem_brief=base_problem_brief,
-        workflow_mode=workflow_mode,
-        current_panel=base_panel,
-        recent_runs_summary=recent_runs_summary,
-        researcher_steers=researcher_steers,
-        is_run_acknowledgement=is_run_acknowledgement,
-        is_brief_edit_ack=is_brief_edit_ack,
-        is_config_save=is_config_save,
-        is_upload_context=is_upload_context,
-        is_answered_open_question=is_answered_open_question,
-        is_tutorial_active=is_tutorial_active,
-        test_problem_id=test_problem_id,
-        gate_status=gate_status,
-        verification_issues=pipeline_verification.issues_to_audit_payload(issues),
-    )
-    if retry is None:
-        pipeline_status.update_stage(
-            message_id=message_id,
-            stage_name="verifying_brief",
-            state="paused",
-            issues=pipeline_verification.issues_to_audit_payload(issues),
-        )
-        pipeline_status.fail_pipeline(message_id=message_id, paused_stage="verifying_brief")
-        raise _PipelinePaused("verifying_brief")
-    _persist_assistant_message(
-        message_id=message_id,
-        visible_reply=retry.assistant_message,
-        inline_followup=retry.inline_followup,
-        is_run_invitation=bool(retry.is_run_invitation),
-    )
-    pipeline_status.update_stage(
-        message_id=message_id, stage_name="drafting", state="success"
-    )
-    # Verify again.
-    retry_issues = pipeline_verification.verify_brief_consistency(
-        merged_brief=_merged(retry),
-        base_brief=base_problem_brief,
-        patch=retry.problem_brief_patch,
-        visible_reply=retry.assistant_message,
-        workflow_mode=workflow_mode,
-        test_problem_id=test_problem_id,
-        is_change_intent=bool(retry.is_change_intent),
-        is_run_acknowledgement=is_run_acknowledgement,
-        suppress_runack_invariant=suppress_runack_invariant,
-    )
-    if retry_issues:
-        pipeline_status.update_stage(
-            message_id=message_id,
-            stage_name="verifying_brief",
-            state="paused",
-            issues=pipeline_verification.issues_to_audit_payload(retry_issues),
-        )
-        pipeline_status.fail_pipeline(message_id=message_id, paused_stage="verifying_brief")
-        # Stash the latest turn for resume
-        _persist_turn_for_resume(message_id, retry)
-        raise _PipelinePaused("verifying_brief")
-    _persist_turn_for_resume(message_id, retry)
-    pipeline_status.update_stage(
-        message_id=message_id, stage_name="verifying_brief", state="success"
-    )
-    # Replace the bound `turn` reference for caller via persisted snapshot.
-    # The caller re-reads from _read_persisted_turn in subsequent stages.
-    # We mutate by writing to the message's meta only — no need to
-    # propagate through the function signature.
-    turn.__dict__.update(retry.__dict__)
+    pipeline_status.fail_pipeline(message_id=message_id, paused_stage="verifying_brief")
+    _persist_turn_for_resume(message_id, latest_turn)
+    raise _PipelinePaused("verifying_brief")
 
 
 def _apply_stage(
