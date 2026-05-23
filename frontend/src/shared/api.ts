@@ -318,9 +318,28 @@ export type ProblemBriefQuestion = {
   topic: "upload" | "primary_goal" | "search_strategy" | "other";
 };
 
+/** One structured entry per completed run. Server-managed end-to-end —
+ *  filled by `derivation.consolidate_runs` on every run-acknowledgement
+ *  turn from the matching `OptimizationRun` row plus the previous entry
+ *  for the deterministic delta. The LLM never writes here. */
+export type RunSummaryEntry = {
+  run_number: number;
+  cost: number | null;
+  ok: boolean;
+  algorithm: string;
+  /** Plain-English summary of any violations, rendered by the active port.
+   *  Empty when the run had none. */
+  violations_summary: string;
+  /** Cost delta vs. the previous entry (e.g. `"−150.00 cost vs Run #1"`).
+   *  Empty on the first run. */
+  delta_from_prev: string;
+};
+
 export type ProblemBrief = {
   goal_summary: string;
-  run_summary: string;
+  /** Server-managed per-run history. Replaces the legacy `run_summary`
+   *  rolling string. One entry per completed run; ordered by `run_number`. */
+  runs: RunSummaryEntry[];
   items: ProblemBriefItem[];
   open_questions: ProblemBriefQuestion[];
   /** Structured per-goal-term carrier (weight, type, properties,
@@ -331,6 +350,11 @@ export type ProblemBrief = {
   goal_terms?: Record<string, unknown>;
   unmodeled_requests?: unknown[];
   topic_engaged?: boolean;
+  /** Server-rendered priority-order line built from ``goal_terms[K].rank``.
+   *  Shape: ``"Priority order: 1) key1, 2) key2, ..."`` using raw goal-term
+   *  keys. Empty when there are no ranked entries. The frontend may
+   *  substitute display labels via the weight catalog before rendering. */
+  priority_line?: string;
   solver_scope: string;
   backend_template: string;
 };

@@ -190,6 +190,7 @@ def filter_unanchored_new_goal_terms(
     api_key: str | None = None,
     test_problem_id: str | None = None,
     embedding_model: str | None = None,
+    pending_oq_keys: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Drop newly-introduced goal_term keys that have no evidence anchor.
 
@@ -197,12 +198,20 @@ def filter_unanchored_new_goal_terms(
     through unchanged — enforcement only applies to keys this patch / derive
     pass would *add*. Returns ``(filtered_goal_terms, dropped_keys)``.
 
-    Anchor priority:
+    Anchor priority (for new keys):
     1. Key declared in port.auto_anchored_goal_term_keys() (closed-vocabulary
        opt-out for problems whose key set is too small/intrinsic to misuse).
     2. Explicit ``evidence_item_ids`` resolves to a valid items[] id.
     3. Self-anchored properties (e.g. worker_preference + driver_preferences).
     4. Embedding cosine ≥ threshold against any item text (if api_key given).
+
+    Premature-commit rule (``pending_oq_keys``): when a new key K has no
+    self-anchor / cite AND the brief carries an open question with
+    ``goal_key=K``, the LLM is ASKING about K (not committing). Drop the
+    goal_term commit silently — the OQ is the canonical record of the
+    open ask, and the term can re-commit cleanly when the user answers.
+    Skips the embedding fallback (which would otherwise rescue noisy
+    cases and contaminate the brief with a half-baked goal_term).
     """
     if not isinstance(proposed_goal_terms, dict):
         return {}, []
@@ -219,15 +228,29 @@ def filter_unanchored_new_goal_terms(
             from app.problems.registry import get_study_port
 
             port = get_study_port(test_problem_id)
-            auto_anchored = port.auto_anchored_goal_term_keys()
         except Exception:  # pragma: no cover — defensive, never gate on registry hiccups
             port = None
-            auto_anchored = frozenset()
+        # ``auto_anchored_goal_term_keys`` is on the ``StudyProblemPort``
+        # Protocol but isn't required for runtime — some ports (VRPTW)
+        # don't define it, in which case ``getattr`` falls through to the
+        # empty default. Catching the lookup separately from the registry
+        # lookup keeps ``port`` available for ``is_goal_term_self_anchored``
+        # even when ``auto_anchored_goal_term_keys`` is missing.
+        if port is not None:
+            try:
+                fn = getattr(port, "auto_anchored_goal_term_keys", None)
+                if callable(fn):
+                    result = fn()
+                    if isinstance(result, (frozenset, set)):
+                        auto_anchored = frozenset(result)
+            except Exception:  # pragma: no cover — defensive
+                auto_anchored = frozenset()
 
     kinds = evidence_kinds_for_workflow(workflow_mode)
     valid_ids = _valid_item_ids({"items": items}, kinds)
 
     cheap_anchored: dict[str, bool] = {}
+    premature_oq_drop: set[str] = set()
     needs_embedding: list[tuple[str, dict[str, Any]]] = []
     for key, entry in proposed_goal_terms.items():
         if not isinstance(key, str) or not isinstance(entry, dict):
@@ -239,6 +262,13 @@ def filter_unanchored_new_goal_terms(
             key=key, entry=entry, valid_item_ids=valid_ids, port=port
         ):
             cheap_anchored[key] = True
+            continue
+        if key in pending_oq_keys:
+            # Premature commit: the LLM is asking about K via an OQ AND
+            # committing K in the same patch with no self-anchor. Drop the
+            # commit; the OQ stands as the open ask.
+            cheap_anchored[key] = False
+            premature_oq_drop.add(key)
             continue
         cheap_anchored[key] = False
         needs_embedding.append((key, entry))
@@ -259,10 +289,18 @@ def filter_unanchored_new_goal_terms(
             filtered[key] = entry
         else:
             dropped.append(key)
-    if dropped:
+    deferred = sorted(premature_oq_drop & set(dropped))
+    plain_dropped = sorted(set(dropped) - premature_oq_drop)
+    if plain_dropped:
         log.info(
             "Goal-term anchoring dropped unanchored new keys: %s (workflow=%s)",
-            dropped,
+            plain_dropped,
+            workflow_mode,
+        )
+    if deferred:
+        log.info(
+            "Goal-term commit deferred to pending OQ (premature-commit drop): %s (workflow=%s)",
+            deferred,
             workflow_mode,
         )
     return filtered, dropped

@@ -287,11 +287,25 @@ class VrptwStudyPort:
                 and str(it.get("id") or "").startswith("config-driver-pref-")
                 for it in items
             )
-            if not has_rules:
+            # A pending OQ that anchors back to ``worker_preference`` is the
+            # third acceptable exit — the LLM has parked the question with the
+            # participant. Don't double-fire while we're waiting on a human.
+            open_questions = brief.get("open_questions") if isinstance(brief.get("open_questions"), list) else []
+            has_pending_oq = any(
+                isinstance(q, dict)
+                and q.get("goal_key") == "worker_preference"
+                and str(q.get("status") or "open").strip().lower() == "open"
+                for q in open_questions
+            )
+            if not has_rules and not has_pending_oq:
                 out.append(
                     {
                         "category": "port_companion",
-                        "severity": "error" if has_prose_rule else "warn",
+                        # Severity is now error in both branches — the bare-empty
+                        # case used to be warn and slipped past the verifier,
+                        # letting the LLM ship "I've added worker preferences"
+                        # while the structured carrier was empty.
+                        "severity": "error",
                         "subject": "worker_preference.driver_preferences",
                         "message": (
                             "The brief commits a `worker_preference` goal term but the structured "
@@ -299,9 +313,12 @@ class VrptwStudyPort:
                             "explicit vehicle/condition/penalty rules."
                             if has_prose_rule
                             else
-                            "The `worker_preference` goal term is present without any structured "
-                            "rules; the panel will have nothing to read. Either remove the goal "
-                            "term or add at least one rule under `properties.driver_preferences`."
+                            "`worker_preference` goal term is present without structured rules. "
+                            "Pick one of: (a) populate `properties.driver_preferences` with explicit "
+                            "vehicle/condition/penalty rules; (b) drop the goal term; (c) add an "
+                            "`open_questions` row with "
+                            "`goal_key: \"worker_preference\"` asking the user for "
+                            "specific rules."
                         ),
                     }
                 )

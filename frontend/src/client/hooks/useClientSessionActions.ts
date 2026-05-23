@@ -522,8 +522,18 @@ export function useClientSessionActions({
         // post entirely on no-op saves so the chat doesn't accumulate
         // "you changed nothing" turns when the participant clicks Save
         // without editing anything.
+        //
+        // ``configChangeDetailedSummary`` now returns either a leading
+        // bullet block (``\n- a\n- b``) or — when no goal_terms changed —
+        // a single inline phrase. Both compose cleanly under the
+        // "Config edited:" header without a trailing period (bullets are
+        // self-terminating; matches the "Answered N open questions:"
+        // chat-note style).
+        const startsWithBullet = detailedChanges.startsWith("\n-");
         void postContextMessage(
-          `Config edited: ${detailedChanges}.`,
+          startsWithBullet
+            ? `Config edited:${detailedChanges}`
+            : `Config edited: ${detailedChanges}.`,
           true,
           { skipHiddenBriefUpdate: false, contextKind: "config_save" },
         );
@@ -691,7 +701,7 @@ export function useClientSessionActions({
             otherChanges.push("assumptions");
           }
           if (delta.goalSummaryChanged) otherChanges.push("goal summary");
-          if (delta.runSummaryChanged) otherChanges.push("run summary");
+          // ``runs`` is server-managed — no user-edit notification needed.
           const tail = otherChanges.length > 0
             ? `\n\nAlso edited: ${otherChanges.join(", ")}.`
             : "";

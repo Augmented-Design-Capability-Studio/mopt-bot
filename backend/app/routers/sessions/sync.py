@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import StudySession
-from app.problem_brief import coerce_problem_brief_for_workflow, sync_problem_brief_from_panel as merge_brief_from_panel
+from app.problem_brief import (
+    CARRIER_ONLY_GOAL_TERM_KEYS,
+    coerce_problem_brief_for_workflow,
+    sync_problem_brief_from_panel as merge_brief_from_panel,
+)
 from app.problems.registry import DEFAULT_PROBLEM_ID
 
 from . import helpers
@@ -164,15 +168,6 @@ def _apply_weight_overrides_to_goal_terms(problem: dict[str, Any], overrides: di
         entry = goal_terms.get(key)
         if isinstance(entry, dict):
             entry["weight"] = float(value)
-
-
-# Carrier-only goal-term keys: their values live at top-level panel fields
-# (e.g. ``search_strategy.properties.algorithm`` → ``panel.problem.algorithm``)
-# rather than at ``panel.goal_terms.<key>``. Excluded from the bidirectional
-# key-set check so a session with an algorithm choice doesn't show up as
-# brief↔panel drift on every config-derive turn. Genuine value drift on the
-# carrier surfaces via ``kind="algorithm_mismatch"`` instead.
-CARRIER_ONLY_GOAL_TERM_KEYS: frozenset[str] = frozenset({"search_strategy"})
 
 
 def _drift_message(entry: dict[str, Any]) -> str:
@@ -684,6 +679,18 @@ def _merge_non_destructive_managed_fields(
             from app.services.goal_term_anchoring import filter_unanchored_new_goal_terms
 
             base_for_filter = {"goal_terms": current_goal_terms}
+            # Same premature-commit drop as in apply_brief_patch_with_cleanup —
+            # when the LLM derives a goal_term commit that's still answered
+            # by an open OQ in the brief, defer it to the OQ.
+            pending_oq_keys: set[str] = set()
+            for q in (problem_brief or {}).get("open_questions") or []:
+                if not isinstance(q, dict):
+                    continue
+                if str(q.get("status") or "open").strip().lower() != "open":
+                    continue
+                gk = q.get("goal_key")
+                if isinstance(gk, str) and gk.strip():
+                    pending_oq_keys.add(gk.strip())
             filtered, dropped = filter_unanchored_new_goal_terms(
                 base_brief=base_for_filter,
                 proposed_goal_terms=merged_goal_terms,
@@ -692,6 +699,7 @@ def _merge_non_destructive_managed_fields(
                 api_key=api_key,
                 test_problem_id=test_problem_id,
                 embedding_model=embedding_model,
+                pending_oq_keys=pending_oq_keys,
             )
             if dropped:
                 log.warning(
@@ -1120,11 +1128,20 @@ def sync_problem_brief_from_panel(
     row: StudySession,
     db: Session,
     panel_config: dict,
+    *,
+    origin: str = "user",
 ) -> dict:
+    """Mirror a saved panel back into the brief.
+
+    Default ``origin`` is ``"user"`` because this router-level wrapper is
+    only called from the PATCH /panel handler — the path participants take
+    when they click Save in the Config tab. LLM-driven re-derivations go
+    through ``sync_panel_from_problem_brief`` (the opposite direction).
+    """
     current_problem_brief = helpers.problem_brief_dict(row)
     tpid = getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
     next_problem_brief = merge_brief_from_panel(
-        current_problem_brief, panel_config, test_problem_id=tpid
+        current_problem_brief, panel_config, test_problem_id=tpid, origin=origin
     )
     next_problem_brief = coerce_problem_brief_for_workflow(next_problem_brief, row.workflow_mode)
     if next_problem_brief == current_problem_brief:

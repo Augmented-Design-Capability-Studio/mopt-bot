@@ -9,6 +9,15 @@ from uuid import uuid4
 log = logging.getLogger(__name__)
 
 CONFIG_ITEM_PREFIX = "config-"
+
+# Carrier-only goal-term keys: their values live at top-level panel fields
+# (e.g. ``search_strategy.properties.algorithm`` → ``panel.problem.algorithm``)
+# rather than at ``panel.goal_terms.<key>``. The brief is the only place these
+# entries are stored — panel→brief sync MUST preserve them when overwriting
+# ``goal_terms`` from the panel, otherwise a user save silently drops them.
+# Re-exported from ``routers/sessions/sync.py`` so existing callers there keep
+# their original import path.
+CARRIER_ONLY_GOAL_TERM_KEYS: frozenset[str] = frozenset({"search_strategy"})
 _OPEN_QUESTION_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPEN_QUESTION_STOPWORDS = {
     "a",
@@ -226,7 +235,9 @@ def default_problem_brief(test_problem_id: str | None = None) -> dict[str, Any]:
     tmpl = port.problem_brief_template_fields()
     return {
         "goal_summary": "",
-        "run_summary": "",
+        # ``runs`` is server-managed structured per-run history. See
+        # ``derivation.consolidate_runs`` for the writer.
+        "runs": [],
         "items": [],
         "open_questions": [],
         "goal_terms": {},
@@ -278,6 +289,121 @@ def _normalize_unmodeled_request(raw: Any) -> dict[str, Any] | None:
         if at:
             out["at"] = at
     return out
+
+
+def _refresh_referenced_goal_term_text(
+    items: list[dict[str, Any]], goal_terms: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Re-render the structured prefix of items that reference a goal term.
+
+    Why: the LLM occasionally emits assumption rows with forward-looking
+    weight values it's *about to suggest* ("weight 15") that never become
+    real, leaving stale numbers in the brief. Server-synthesized
+    ``config-weight-K`` rows use ``_weight_item_text`` which always reads
+    live state; this helper extends that liveness to LLM-authored rows
+    that opt in via ``goal_key``.
+
+    Format expected: ``"<Label> (<role>, weight N) — <rationale>"`` — the
+    same canonical shape ``_weight_item_text`` produces. We split on the
+    structured delimiters (``" ("`` and ``") — "``), preserve the LLM's
+    chosen label phrasing and rationale clause, and rebuild the
+    parenthesized middle from live ``goal_terms[K].{type, weight}``.
+
+    If the item's text doesn't follow the canonical shape, leave it alone
+    — partial parsing would be fragile and the loss of livestate is
+    survivable for non-conforming text.
+    """
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return items
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ref = item.get("goal_key")
+        if not isinstance(ref, str) or ref not in goal_terms:
+            continue
+        entry = goal_terms[ref]
+        if not isinstance(entry, dict):
+            continue
+        text = item.get("text") or ""
+        if not isinstance(text, str):
+            continue
+        # Canonical delimiters used by ``_weight_item_text``. If either is
+        # absent, the text isn't in canonical form — skip rather than guess.
+        if " (" not in text or ") — " not in text:
+            continue
+        label_part, _, rest = text.partition(" (")
+        _middle, _, rationale_part = rest.partition(") — ")
+        label = label_part.strip()
+        rationale = rationale_part.strip().rstrip(".").strip()
+        if not label:
+            continue
+        weight_val = entry.get("weight")
+        if isinstance(weight_val, bool) or not isinstance(weight_val, (int, float)):
+            continue
+        type_val = entry.get("type") if isinstance(entry.get("type"), str) else None
+        item["text"] = _weight_item_text(
+            label, float(weight_val), type_val, rationale or None
+        )
+    return items
+
+
+def _render_goal_term_priority_line(goal_terms: dict[str, Any] | None) -> str:
+    """Render the brief's priority-order line from ``goal_terms[K].rank``.
+
+    Output shape: ``"Priority order: 1) K1, 2) K2, ..."``.
+    Uses raw goal-term keys; the frontend can substitute display labels via
+    its weight-definitions catalog. Returns ``""`` when there are no ranked
+    entries.
+
+    Server-managed: this string is overwritten on every normalize pass —
+    the LLM never owns it. Display data, not LLM-emitted prose.
+    """
+    if not isinstance(goal_terms, dict) or not goal_terms:
+        return ""
+    ranked: list[tuple[int, str]] = []
+    for key, entry in goal_terms.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        rank = entry.get("rank")
+        if isinstance(rank, bool) or not isinstance(rank, int) or rank <= 0:
+            continue
+        ranked.append((rank, key))
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda x: (x[0], x[1]))
+    parts = [f"{i + 1}) {key}" for i, (_, key) in enumerate(ranked)]
+    return "Priority order: " + ", ".join(parts) + "."
+
+
+def _drop_unmodeled_requests_resolved_by_goal_terms(
+    unmodeled: list[dict[str, Any]],
+    goal_terms: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Filter ``unmodeled_requests`` against the active ``goal_terms`` map.
+
+    An entry whose ``closest_match`` names a key now in ``goal_terms`` is a
+    self-contradiction — we declared the request unmodeled but we're actually
+    modeling it. Drop the stale row so the brief stops disagreeing with
+    itself. Compares ``closest_match`` (a structured field the LLM already
+    emits) against ``goal_terms`` keys — no text matching.
+    """
+    if not isinstance(unmodeled, list):
+        return []
+    active: set[str] = set()
+    if isinstance(goal_terms, dict):
+        for key in goal_terms.keys():
+            if isinstance(key, str):
+                active.add(key)
+    if not active:
+        return list(unmodeled)
+    return [
+        entry for entry in unmodeled
+        if not (
+            isinstance(entry, dict)
+            and isinstance(entry.get("closest_match"), str)
+            and entry["closest_match"] in active
+        )
+    ]
 
 
 CHAT_PROMPT_COLD_BACKEND_TEMPLATE = "deferred"
@@ -400,19 +526,24 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         answer_text = _normalize_question_answer_text(raw.get("answer_text"))
         if status == "open":
             answer_text = None
-        proposes_key_raw = raw.get("proposes_goal_term_key")
-        proposes_key: str | None = None
-        if isinstance(proposes_key_raw, str):
-            candidate = proposes_key_raw.strip()
-            if candidate:
-                proposes_key = candidate
+        # Read ``goal_key`` (new unified anchor), fall back to legacy
+        # ``proposes_goal_term_key`` so prior briefs deserialize correctly.
+        # Write only ``goal_key``.
+        goal_key: str | None = None
+        for candidate_field in ("goal_key", "proposes_goal_term_key"):
+            raw_value = raw.get(candidate_field)
+            if isinstance(raw_value, str):
+                candidate = raw_value.strip()
+                if candidate:
+                    goal_key = candidate
+                    break
         return {
             "id": question_id,
             "text": text,
             "status": status,
             "answer_text": answer_text,
             "topic": _normalize_question_topic(raw.get("topic")),
-            "proposes_goal_term_key": proposes_key,
+            "goal_key": goal_key,
         }
     if raw is None:
         return None
@@ -425,7 +556,7 @@ def _normalize_question(raw: Any) -> dict[str, Any] | None:
         "status": "open",
         "answer_text": None,
         "topic": "other",
-        "proposes_goal_term_key": None,
+        "goal_key": None,
     }
 
 
@@ -515,7 +646,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
         topic = normalized.get("topic", "other")
         status = normalized.get("status", "open")
         answer_text = normalized.get("answer_text")
-        proposes_key = normalized.get("proposes_goal_term_key")
+        goal_key = normalized.get("goal_key")
         if len(fragments) == 1:
             out.append(
                 {
@@ -524,7 +655,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
                     "status": status,
                     "answer_text": answer_text,
                     "topic": topic,
-                    "proposes_goal_term_key": proposes_key,
+                    "goal_key": goal_key,
                 }
             )
             continue
@@ -536,7 +667,7 @@ def _coerce_question_list(value: Any) -> list[dict[str, Any]]:
                     "status": status,
                     "answer_text": answer_text,
                     "topic": topic,
-                    "proposes_goal_term_key": proposes_key,
+                    "goal_key": goal_key,
                 }
             )
     return out
@@ -581,12 +712,47 @@ def _sanitize_goal_summary(text: Any) -> str:
     return _ensure_terminator(" ".join(clean_clauses))
 
 
-def _sanitize_run_summary(text: Any) -> str:
-    raw = str(text or "").strip()
-    if not raw:
-        return ""
-    one_line = " ".join(raw.split())
-    return _ensure_terminator(one_line)
+def _normalize_runs_list(raw: Any) -> list[dict[str, Any]]:
+    """Coerce ``brief.runs`` into a list of well-shaped entries.
+
+    Server-managed: ``derivation.consolidate_runs`` is the sole writer. This
+    normalizer just validates the shape on every read (snapshots, PATCH
+    round-trips, legacy briefs with no ``runs`` field). Entries with no
+    ``run_number`` are dropped; the rest get defensive type coercion on
+    each field. Duplicate ``run_number`` entries are de-duped, keeping
+    the most recent occurrence (idempotency for resume/retry paths).
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen_run_numbers: set[int] = set()
+    for entry in reversed(raw):
+        if not isinstance(entry, dict):
+            continue
+        run_number = entry.get("run_number")
+        if not isinstance(run_number, int) or isinstance(run_number, bool):
+            continue
+        if run_number in seen_run_numbers:
+            continue
+        seen_run_numbers.add(run_number)
+        cost_raw = entry.get("cost")
+        cost: float | None
+        if isinstance(cost_raw, (int, float)) and not isinstance(cost_raw, bool):
+            cost = float(cost_raw)
+        else:
+            cost = None
+        normalized: dict[str, Any] = {
+            "run_number": run_number,
+            "cost": cost,
+            "ok": bool(entry.get("ok", True)),
+            "algorithm": str(entry.get("algorithm") or "").strip(),
+            "violations_summary": str(entry.get("violations_summary") or "").strip(),
+            "delta_from_prev": str(entry.get("delta_from_prev") or "").strip(),
+        }
+        out.append(normalized)
+    out.reverse()  # Restore original insertion order (we walked in reverse for dedup).
+    out.sort(key=lambda r: r["run_number"])
+    return out
 
 
 def _format_answered_open_question_gathered(question: str, answer: str) -> str:
@@ -597,6 +763,161 @@ def _format_answered_open_question_gathered(question: str, answer: str) -> str:
     q = (question or "").strip()
     combined = f"{q} — {a}" if q else a
     return _ensure_terminator(combined)
+
+
+def reconcile_companion_oqs(
+    brief: dict[str, Any], test_problem_id: str | None
+) -> dict[str, Any]:
+    """Auto-park an OQ for any goal_term whose port-declared required
+    companion is empty (and drop the OQ when the companion is populated).
+
+    Why structural, not a verifier nag: when the participant clears a
+    companion via the panel (e.g. removes every ``driver_preferences``
+    rule) but keeps the goal_term, the term is now an "empty carrier"
+    with no solver effect. Earlier we dropped the goal_term outright;
+    that was destructive — the participant may want to keep the term
+    as a placeholder and add rules back later. Instead, surface an open
+    question that:
+      - silences the ``port_companion`` verifier check (it accepts a
+        pending OQ with matching ``goal_key`` as the third exit, per
+        Fix 5),
+      - lives in ``open_questions`` so the LLM sees it in context and
+        can naturally ask the participant in its visible reply, and
+      - auto-drops once the companion gets populated (idempotent).
+
+    Mode-agnostic — both agile and waterfall benefit from making the
+    question visible. Generic — any port that declares conditional
+    companions via ``gate_conditional_companions`` opts in.
+    """
+    if test_problem_id is None or not isinstance(brief, dict):
+        return brief
+    try:
+        from app.problems.registry import get_study_port
+
+        port = get_study_port(test_problem_id)
+        gate_companions = port.gate_conditional_companions()
+    except Exception:  # pragma: no cover — never block the brief on registry hiccups
+        return brief
+    if not gate_companions:
+        return brief
+
+    goal_terms = brief.get("goal_terms") if isinstance(brief.get("goal_terms"), dict) else {}
+    open_questions = list(brief.get("open_questions") or [])
+
+    def _companion_missing(key: str, companion_field: str) -> bool:
+        entry = goal_terms.get(key) if isinstance(goal_terms, dict) else None
+        if not isinstance(entry, dict):
+            # Goal_term not present — no companion needed.
+            return False
+        props = entry.get("properties") if isinstance(entry.get("properties"), dict) else None
+        companion_value = props.get(companion_field) if isinstance(props, dict) else None
+        try:
+            return not port.companion_present(key, companion_value)
+        except Exception:  # pragma: no cover — safe default
+            return False
+
+    mutated = False
+    for key, companion_field in gate_companions.items():
+        oq_id = f"auto-oq-companion-{key}"
+        existing_auto_idx = next(
+            (
+                idx
+                for idx, q in enumerate(open_questions)
+                if isinstance(q, dict) and str(q.get("id") or "") == oq_id
+            ),
+            None,
+        )
+        needs_question = _companion_missing(key, companion_field)
+        if needs_question:
+            # If ANY open OQ already covers this goal_key (auto OR LLM-emitted),
+            # don't double up. The existing OQ already satisfies the
+            # port_companion silencer and the LLM's "ask about this" context.
+            already_covered = any(
+                isinstance(q, dict)
+                and q.get("goal_key") == key
+                and str(q.get("status") or "open").strip().lower() == "open"
+                for q in open_questions
+            )
+            if not already_covered:
+                open_questions.append(
+                    {
+                        "id": oq_id,
+                        "text": (
+                            f"`{key}` is in the setup but `{companion_field}` is empty — "
+                            f"would you like to add specific rules, or remove this goal term?"
+                        ),
+                        "status": "open",
+                        "answer_text": None,
+                        "topic": "other",
+                        "goal_key": key,
+                    }
+                )
+                mutated = True
+        else:
+            # Companion is populated OR goal_term gone → drop our auto-OQ.
+            # Don't touch any LLM-emitted OQ for the same key — that's the
+            # LLM's lifecycle to manage.
+            if existing_auto_idx is not None:
+                open_questions.pop(existing_auto_idx)
+                mutated = True
+
+    if not mutated:
+        return brief
+    out = dict(brief)
+    out["open_questions"] = open_questions
+    return out
+
+
+def _auto_close_oqs_for_panel_edited_keys(
+    questions: list[dict[str, Any]], changed_keys: set[str]
+) -> list[dict[str, Any]]:
+    """Honor the `schemas.py:90-94` docstring contract on the panel-save path:
+    an open question that proposes a specific goal-term key is auto-closed
+    once the user acts on that key by editing the panel.
+
+    Why this lives on the panel-save event (not the normalize pass) and uses
+    the *changed* keys (not the *present* keys):
+
+    - LLM-driven adds are already handled by
+      ``_resolve_anchored_provisional_rows`` (chat-pipeline path), which
+      compares pre/post goal_terms and drops the OQ when its anchored key is
+      newly committed AND visible in gathered evidence.
+    - Tuning OQs (e.g. *"reduce capacity weight to 50?"*) on already-committed
+      keys must NOT close on a normalize-time presence check — the key was
+      already in goal_terms when the OQ was created.
+    - But when the user *edits* the panel for that key, the OQ is moot — the
+      user side-stepped the LLM's question by acting. Closing here mirrors
+      that user action.
+
+    Foundational-topic OQs (``topic`` ∈ {upload, primary_goal, search_strategy})
+    use the monitor state machine — leave them alone.
+
+    The closed row's ``status="answered" + answer_text`` gets folded into a
+    ``gathered / source: user`` items[] row by
+    ``_promote_answered_open_questions_to_gathered`` on the next normalize.
+    """
+    if not changed_keys:
+        return questions
+    out: list[dict[str, Any]] = []
+    for q in questions:
+        if not isinstance(q, dict):
+            out.append(q)
+            continue
+        if str(q.get("status") or "open").strip().lower() != "open":
+            out.append(q)
+            continue
+        if str(q.get("topic") or "other").strip().lower() != "other":
+            out.append(q)
+            continue
+        key = q.get("goal_key")
+        if isinstance(key, str) and key in changed_keys:
+            new_q = dict(q)
+            new_q["status"] = "answered"
+            new_q["answer_text"] = "Resolved by config edit."
+            out.append(new_q)
+            continue
+        out.append(q)
+    return out
 
 
 def _promote_answered_open_questions_to_gathered(
@@ -1077,25 +1398,27 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
         source = "agent"
     if source not in {"user", "upload", "agent"}:
         source = "agent"
-    proposes_key_raw = raw.get("proposes_goal_term_key")
-    proposes_key: str | None = None
-    if isinstance(proposes_key_raw, str):
-        candidate = proposes_key_raw.strip()
-        if candidate:
-            # The field semantically anchors the row to a goal_term — set
-            # on assumption rows to invite the deterministic resolver to
-            # clean them up, and on gathered+user rows to signal "user
-            # confirmation of this key landed". The resolver dispatches on
-            # kind; the field itself rides through normalize on any row
-            # type so the link isn't silently severed mid-pipeline.
-            proposes_key = candidate
-    return {
+    # ``goal_key`` is the unified anchor (Fix B). Read the new name first;
+    # fall back to legacy ``proposes_goal_term_key`` / ``references_goal_term_key``
+    # so prior briefs in the DB don't silently lose their anchors during the
+    # rollout. Write only the unified field. Remove the legacy fallback once
+    # session snapshots have been re-normalized.
+    goal_key: str | None = None
+    for candidate_field in ("goal_key", "proposes_goal_term_key", "references_goal_term_key"):
+        raw_value = raw.get(candidate_field)
+        if isinstance(raw_value, str):
+            candidate = raw_value.strip()
+            if candidate:
+                goal_key = candidate
+                break
+    out: dict[str, Any] = {
         "id": str(raw.get("id") or _new_item_id(kind)),
         "text": text,
         "kind": kind,
         "source": source,
-        "proposes_goal_term_key": proposes_key,
+        "goal_key": goal_key,
     }
+    return out
 
 
 _GOAL_SUMMARY_PREFIXES: tuple[str, ...] = (
@@ -1163,7 +1486,13 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
         return base
 
     goal_summary = _sanitize_goal_summary(raw.get("goal_summary", ""))
-    run_summary = _sanitize_run_summary(raw.get("run_summary", ""))
+    # Legacy ``run_summary`` string (LLM-maintained rolling paragraph) is
+    # silently dropped — replaced by the structured ``runs`` array, which is
+    # server-managed via ``derivation.consolidate_runs``. The canonical run
+    # data lives in the ``OptimizationRun`` table, so no migration of the old
+    # string is needed; on the next run-ack ``consolidate_runs`` will refill
+    # ``brief.runs`` from that source of truth.
+    runs = _normalize_runs_list(raw.get("runs", []))
     solver_scope = str(raw.get("solver_scope") or base["solver_scope"]).strip() or base["solver_scope"]
     backend_template = (
         str(raw.get("backend_template") or base["backend_template"]).strip() or base["backend_template"]
@@ -1203,14 +1532,26 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
                 continue
             seen_texts.add(key)
             unmodeled_requests.append(normalized)
+    # Drop entries whose ``closest_match`` is now an active goal_term key —
+    # cleans up historical contradictions (e.g. capacity logged as unmodeled
+    # early, capacity_penalty added later).
+    unmodeled_requests = _drop_unmodeled_requests_resolved_by_goal_terms(
+        unmodeled_requests, goal_terms
+    )
+    # Re-render any item that references a goal-term key so weight/type
+    # values shown in item text match live ``goal_terms`` state — kills
+    # hallucinated or stale numbers in LLM-authored assumption rows.
+    promoted_items = _refresh_referenced_goal_term_text(promoted_items, goal_terms)
     return {
         "goal_summary": goal_summary,
-        "run_summary": run_summary,
+        "runs": runs,
         "items": promoted_items,
         "open_questions": questions,
         "goal_terms": goal_terms,
         "unmodeled_requests": unmodeled_requests,
         "topic_engaged": bool(raw.get("topic_engaged")),
+        # Server-derived display field — overwrites any LLM-emitted value.
+        "priority_line": _render_goal_term_priority_line(goal_terms),
         "solver_scope": solver_scope,
         "backend_template": backend_template,
     }
@@ -1237,8 +1578,10 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
         # is left with a Definition that no longer explains the goal.
         if sanitized_goal:
             merged["goal_summary"] = sanitized_goal
-    if "run_summary" in patch:
-        merged["run_summary"] = _sanitize_run_summary(patch.get("run_summary") or "")
+    # ``runs`` is server-managed end-to-end (see ``derivation.consolidate_runs``).
+    # The LLM never writes here, so the merge layer has no handler — any
+    # ``runs`` field on an incoming patch is ignored. Legacy ``run_summary``
+    # strings on prior briefs are silently dropped by ``normalize_problem_brief``.
     # If the model sets replace_open_questions but omits open_questions (common on cleanup
     # turns that only replace items), keep the existing list — do not wipe it.
     if "open_questions" in patch:
@@ -1351,6 +1694,12 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
                     continue
                 seen_unmodeled.add(key)
                 existing_unmodeled.append(normalized_entry)
+        # Drop stale entries whose ``closest_match`` is now an active
+        # goal_term key. Mirrors the same filter in ``normalize_problem_brief``
+        # so the accumulator emits a coherent state to downstream callers.
+        existing_unmodeled = _drop_unmodeled_requests_resolved_by_goal_terms(
+            existing_unmodeled, merged.get("goal_terms")
+        )
         merged["unmodeled_requests"] = existing_unmodeled
 
     # Sticky rows that must survive `replace_editable_items: true`. Currently
@@ -1491,7 +1840,7 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
                     "text": new_text,
                     "status": "open",
                     "answer_text": None,
-                    "proposes_goal_term_key": item.get("proposes_goal_term_key"),
+                    "goal_key": item.get("goal_key"),
                 }
             )
             seen_oq_texts.add(normalized_new_text)
@@ -1503,7 +1852,11 @@ def coerce_problem_brief_for_workflow(brief: Any, workflow_mode: str | None) -> 
 
 
 def sync_problem_brief_from_panel(
-    base_brief: Any, panel_config: Any, test_problem_id: str | None = None
+    base_brief: Any,
+    panel_config: Any,
+    test_problem_id: str | None = None,
+    *,
+    origin: str = "agent",
 ) -> dict[str, Any]:
     """Mirror saved config choices back into the editable problem brief.
 
@@ -1512,6 +1865,15 @@ def sync_problem_brief_from_panel(
     kind/source. Without this, an agent's proposed assumption would be silently
     promoted to `kind: "gathered"` on every panel round-trip, erasing the
     distinction between agent-proposed defaults and participant-confirmed facts.
+
+    ``origin`` identifies who triggered this sync:
+    - ``"agent"`` (default) — LLM-derived panel changes (e.g. brief→panel
+      derivation after a chat turn). Synthesized rows tagged
+      ``source: "agent"``, matching back-compat behavior.
+    - ``"user"`` — participant clicked Save in the panel. Synthesized rows
+      get ``source: "user"`` and prior assumption rows about the keys the
+      user materially changed (type only — rank cascades, weight is
+      tuning) are promoted to ``gathered/user``.
     """
     base = normalize_problem_brief(base_brief)
     merged = deepcopy(base)
@@ -1529,7 +1891,12 @@ def sync_problem_brief_from_panel(
         source = str(item.get("source") or "").strip().lower()
         existing_slot_provenance[slot] = (kind, source)
 
-    panel_items = _brief_items_from_panel(panel_config, test_problem_id=test_problem_id)
+    # ``origin`` flows through to ``_config_item`` so synthesized rows carry
+    # the right ``source`` (user-driven panel save → ``source: "user"``;
+    # LLM-driven panel derivation → ``source: "agent"``).
+    panel_items = _brief_items_from_panel(
+        panel_config, test_problem_id=test_problem_id, origin=origin
+    )
     for item in panel_items:
         slot = _problem_brief_item_slot(item, test_problem_id=test_problem_id)
         if slot is None:
@@ -1566,8 +1933,14 @@ def sync_problem_brief_from_panel(
         prior_goal_terms = base.get("goal_terms")
         if not isinstance(prior_goal_terms, dict):
             prior_goal_terms = {}
+        # Carrier-only keys (e.g. ``search_strategy``) live only in the brief —
+        # never treat their absence from the panel as a "removed" goal-term, or
+        # the per-port strip cascade would clean up their evidence rows on
+        # every panel save.
         removed_keys = {
-            key for key in prior_goal_terms.keys() if key not in panel_goal_terms
+            key
+            for key in prior_goal_terms.keys()
+            if key not in panel_goal_terms and key not in CARRIER_ONLY_GOAL_TERM_KEYS
         }
         if removed_keys and test_problem_id is not None:
             try:
@@ -1590,7 +1963,89 @@ def sync_problem_brief_from_panel(
                         and str(item.get("id") or "") in strip_ids
                     )
                 ]
-        merged["goal_terms"] = panel_goal_terms
+        # Preserve carrier-only entries (e.g. ``search_strategy``) — these live
+        # in the brief only; the panel doesn't carry them, so a blind overwrite
+        # would silently drop them on every user save and cascade into the
+        # panel-side algorithm strip via ``brief_mentions_search_strategy``.
+        preserved_carriers = {
+            key: deepcopy(value)
+            for key, value in (
+                prior_goal_terms.items() if isinstance(prior_goal_terms, dict) else ()
+            )
+            if key in CARRIER_ONLY_GOAL_TERM_KEYS
+        }
+        merged["goal_terms"] = {**panel_goal_terms, **preserved_carriers}
+
+        # Diff classification for user-triggered panel saves.
+        #
+        # Rerank gotcha: the frontend's ``handleReorder`` rewrites the
+        # weights of affected terms to suggested values for the new
+        # positions (see ``suggestedWeightForType`` in
+        # ``ProblemConfigBlocks.tsx``). That means a pure rerank produces
+        # a diff with BOTH rank AND weight changed on every cascaded key.
+        # The naive "weight changed → user acted on K" rule false-positives
+        # on those cascade keys.
+        #
+        # Active-edit detection (excluded from rank cascades):
+        # - ``oq_close_keys`` — keys where the user actively edited (not
+        #   a side effect of rerank). Used to auto-close OQs proposing K.
+        #   A weight change only counts as active when the key's rank
+        #   DIDN'T change in the same save (otherwise it's a cascade).
+        # - ``promotion_keys`` — narrower lock-in subset. Includes
+        #   newly-added keys AND ``type`` changes only; rank-only and
+        #   weight-only changes never promote (matches the Fix 8 rule).
+        oq_close_keys: set[str] = set()
+        promotion_keys: set[str] = set()
+        for key, new_entry in panel_goal_terms.items():
+            if not isinstance(key, str):
+                continue
+            prior_entry = prior_goal_terms.get(key) if isinstance(prior_goal_terms, dict) else None
+            if not isinstance(prior_entry, dict):
+                # Newly added by the user → user action on this key.
+                oq_close_keys.add(key)
+                promotion_keys.add(key)
+                continue
+            if not isinstance(new_entry, dict):
+                continue
+            type_changed = prior_entry.get("type") != new_entry.get("type")
+            rank_changed = prior_entry.get("rank") != new_entry.get("rank")
+            weight_changed = prior_entry.get("weight") != new_entry.get("weight")
+            # Active edit signals only: type change, or a weight change
+            # that ISN'T a rerank cascade. A bare rank change is never
+            # an active edit on K — the user actively moved some other
+            # key and K got shifted.
+            if type_changed or (weight_changed and not rank_changed):
+                oq_close_keys.add(key)
+            if type_changed:
+                promotion_keys.add(key)
+        if oq_close_keys:
+            merged["open_questions"] = _auto_close_oqs_for_panel_edited_keys(
+                list(merged.get("open_questions") or []), oq_close_keys
+            )
+        # Promote prior LLM-assumption rows whose referenced key was a
+        # genuine user lock-in (type changed or newly-added). Per
+        # [[feedback_provenance_origin_not_phrasing]], origin trumps
+        # phrasing — once the user has acted, the row is gathered/user.
+        # ``origin == "user"`` gate: only fires on participant-driven saves.
+        if origin == "user" and promotion_keys:
+            for item in merged.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                ref = item.get("goal_key")
+                if (
+                    isinstance(ref, str)
+                    and ref in promotion_keys
+                    and str(item.get("kind") or "").strip().lower() == "assumption"
+                ):
+                    item["kind"] = "gathered"
+                    item["source"] = "user"
+
+    # Reconcile auto-OQs for goal_terms with missing/present companions.
+    # Adds OQs for orphan goal_terms (e.g. ``worker_preference`` with empty
+    # ``driver_preferences``) so the participant sees the open question
+    # and the LLM can incorporate it into its next reply. Drops the auto-OQ
+    # when the companion gets populated. Idempotent.
+    merged = reconcile_companion_oqs(merged, test_problem_id)
 
     return normalize_problem_brief(merged)
 
@@ -1609,6 +2064,20 @@ def _panel_goal_terms(panel_config: Any) -> dict[str, Any] | None:
 
 
 def _detect_algorithm_text(text: str) -> str | None:
+    # FRAGILE: closed-vocabulary substring/regex scan over item text. Safe today
+    # because the only items that flow through here come from the panel→brief
+    # synthesizer (``_brief_items_from_panel``), which writes the "Search
+    # strategy: <ALGO> (...)." canonical shape. Becomes fragile if an
+    # LLM-authored items[] row happens to mention an algorithm name in its
+    # rationale clause — e.g. *"this run looks like SA convergence"* would
+    # mis-classify as a search-strategy slot.
+    #
+    # Future cleanup (deferred — out of scope for the current rename pass):
+    # add a structured ``panel_slot_key`` field on items (analogous to
+    # ``goal_key`` but for panel-side slots like ``algorithm``, ``pop_size``,
+    # ``epochs``, ``only_active_terms``) and have ``_slot_from_text`` /
+    # ``_problem_brief_item_slot`` read the field first, falling back to this
+    # text scan only on legacy rows.
     lowered = text.lower()
     if "swarmsa" in lowered or "swarm sa" in lowered or "swarm-based simulated annealing" in lowered:
         return "SwarmSA"
@@ -1623,12 +2092,23 @@ def _detect_algorithm_text(text: str) -> str | None:
     return None
 
 
-def _config_item(item_id: str, text: str) -> dict[str, Any]:
+def _config_item(item_id: str, text: str, *, source: str = "agent") -> dict[str, Any]:
+    """Build a synthesized ``config-*`` gathered item.
+
+    ``source`` controls provenance: ``"agent"`` for LLM-driven panel
+    derivations (the default), ``"user"`` for items synthesized in
+    response to a participant clicking Save in the panel. The panel→brief
+    sync at ``sync_problem_brief_from_panel`` threads its ``origin`` arg
+    into here so user-driven config edits get a truthful ``source: "user"``
+    trail instead of being silently relabelled as agent proposals.
+    """
+    if source not in {"user", "upload", "agent"}:
+        source = "agent"
     return {
         "id": item_id,
         "text": text,
         "kind": "gathered",
-        "source": "agent",
+        "source": source,
     }
 
 
@@ -1830,6 +2310,21 @@ def _slot_from_item_id(item_id: str) -> str | None:
 
 
 def _slot_from_text(text: str) -> str | None:
+    # FRAGILE: text-driven slot detection for panel-side concepts (algorithm,
+    # algorithm_param:*, pop_size, epochs, only_active_terms). Reads items
+    # synthesized by ``_brief_items_from_panel`` which emit known formats
+    # ("Search strategy: <ALGO> ...", "<Label> ({type}, weight N)..."), so
+    # the matchers stay accurate on the canonical path. Becomes fragile when
+    # an LLM-authored items[] row uses the same words in passing — e.g. a
+    # rationale clause mentioning "population size" with a number would
+    # mis-classify as a pop_size slot row.
+    #
+    # Goal-term slots are NOT scanned here anymore: `_problem_brief_item_slot`
+    # reads the structured `goal_key` field first (introduced by Fix B in
+    # PR Schema-Cleanup). The remaining text scans cover panel-side slots
+    # that don't have a structured carrier on items today. Future cleanup
+    # (deferred): add a ``panel_slot_key`` field analogous to `goal_key`
+    # and have the slot resolver prefer it over these text matchers.
     lowered = text.lower()
     if lowered.startswith("search strategy:"):
         return "search_strategy"
@@ -1918,7 +2413,12 @@ def _weights_and_types_from_problem(
     return weights, constraint_types
 
 
-def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = None) -> list[dict[str, Any]]:
+def _brief_items_from_panel(
+    panel_config: Any,
+    test_problem_id: str | None = None,
+    *,
+    origin: str = "agent",
+) -> list[dict[str, Any]]:
     from app.algorithm_catalog import (
         DEFAULT_ALGORITHM_PARAMS,
         DEFAULT_EPOCHS,
@@ -1970,17 +2470,20 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             ctype = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
             rationale = weight_rationales.get(str(key)) if isinstance(weight_rationales, dict) else None
-            items.append(
-                _config_item(
-                    f"config-weight-{key}",
-                    _weight_item_text(
-                        label,
-                        float(value),
-                        str(ctype) if isinstance(ctype, str) else None,
-                        rationale=str(rationale).strip() if isinstance(rationale, str) else None,
-                    ),
-                )
+            row = _config_item(
+                f"config-weight-{key}",
+                _weight_item_text(
+                    label,
+                    float(value),
+                    str(ctype) if isinstance(ctype, str) else None,
+                    rationale=str(rationale).strip() if isinstance(rationale, str) else None,
+                ),
+                source=origin,
             )
+            # Stamp the canonical goal-term anchor so the resolver/renderer
+            # find this row by key without parsing text.
+            row["goal_key"] = str(key)
+            items.append(row)
 
     algorithm_params = problem.get("algorithm_params")
     algo_key = canonical_algorithm_stored(algorithm) if algorithm else None
@@ -2029,6 +2532,7 @@ def _brief_items_from_panel(panel_config: Any, test_problem_id: str | None = Non
             _config_item(
                 "config-search-strategy",
                 f"Search strategy: {algorithm} ({', '.join(strategy_details)}).",
+                source=origin,
             )
         )
 

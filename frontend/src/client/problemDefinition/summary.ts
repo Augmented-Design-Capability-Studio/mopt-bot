@@ -17,7 +17,8 @@ export function cleanProblemBriefForCompare(brief: ProblemBrief): ProblemBrief {
   return {
     ...brief,
     goal_summary: brief.goal_summary.trim(),
-    run_summary: brief.run_summary.trim(),
+    // ``runs`` is server-managed structured data — no trim/normalize needed
+    // on the client; passes through unchanged.
     items: brief.items
       .map((item) => ({ ...item, text: item.text.trim() }))
       .filter((item) => {
@@ -132,19 +133,18 @@ export type BriefChangeDelta = {
   assumptions: KindDelta;
   questions: QuestionDelta;
   goalSummaryChanged: boolean;
-  runSummaryChanged: boolean;
 };
 
 export function computeBriefChangeDelta(
   previous: ProblemBrief,
   next: ProblemBrief,
 ): BriefChangeDelta {
+  // ``runs`` is server-managed; no participant edits to detect here.
   return {
     facts: kindDelta(previous.items, next.items, "gathered"),
     assumptions: kindDelta(previous.items, next.items, "assumption"),
     questions: questionDelta(previous.open_questions, next.open_questions),
     goalSummaryChanged: previous.goal_summary.trim() !== next.goal_summary.trim(),
-    runSummaryChanged: previous.run_summary.trim() !== next.run_summary.trim(),
   };
 }
 
@@ -180,7 +180,6 @@ export function problemBriefChangeSummary(previous: ProblemBrief, next: ProblemB
     ...formatQuestionParts(delta.questions),
   ];
   if (delta.goalSummaryChanged) parts.push("goal summary edited");
-  if (delta.runSummaryChanged) parts.push("run summary edited");
   if (parts.length === 0) return "no material changes";
   return parts.join(", ");
 }

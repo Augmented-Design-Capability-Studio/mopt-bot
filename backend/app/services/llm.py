@@ -172,16 +172,22 @@ def _build_problem_brief_item_schema(
             "text": {"type": "string"},
             "kind": {"type": "string", "enum": ["gathered", "assumption"]},
             "source": {"type": "string", "enum": ["user", "upload", "agent"]},
-            "proposes_goal_term_key": {
+            "goal_key": {
                 "type": "string",
                 "description": (
-                    "Optional. Set to the canonical goal_term key (e.g. "
-                    "`capacity_penalty`) when this `kind: \"assumption\"` row "
-                    "stands in for that goal_term. The server drops the row "
-                    "automatically once a `kind: \"gathered\"` item lands for "
-                    "the same key (user confirmation). Ignored on "
-                    "`kind: \"gathered\"` rows. Omit for assumption rows that "
-                    "don't propose a specific goal_term."
+                    "Optional. Canonical goal_term key (e.g. `travel_time`, "
+                    "`capacity_penalty`) when this row anchors to that "
+                    "goal_term. Two server-side consumers act on it: "
+                    "(1) **Lifecycle** — on `kind: \"assumption\"` rows, the "
+                    "resolver drops the row once `K` has user-gathered "
+                    "evidence in the brief. (2) **Display** — on rows whose "
+                    "text follows `<Label> (<role>, weight N) — <rationale>`, "
+                    "the server keeps the parenthesized middle in sync with "
+                    "live `goal_terms[K].{type, weight}`, so just write the "
+                    "rationale honestly and the numbers will stay current. "
+                    "Both behaviors compose; set the field whenever either "
+                    "applies. Omit on qualitative rows that don't anchor "
+                    "to a specific goal_term."
                 ),
             },
         },
@@ -222,19 +228,21 @@ _PROBLEM_BRIEF_QUESTION_SCHEMA: dict[str, Any] = {
                 "meaning, etc.) set `other`. Always populated; never null."
             ),
         },
-        "proposes_goal_term_key": {
+        "goal_key": {
             "type": "string",
             "description": (
-                "Optional. Set to the canonical goal_term key (e.g. "
-                "`capacity_penalty`, `lateness_penalty`) when this OQ "
-                "proposes adding or tuning that specific term — common for "
-                "*\"Should I add a capacity penalty?\"*-style post-run asks. "
-                "The server resolves the OQ automatically once the key "
-                "lands in `brief.goal_terms`, so you don't have to remember "
-                "to drop it via `replace_open_questions=true`. Omit for "
-                "scenario clarifications that don't propose a specific "
-                "goal_term, and for foundational-topic OQs (those use the "
-                "server monitor state machine instead)."
+                "Optional. Canonical goal_term key (e.g. `capacity_penalty`, "
+                "`lateness_penalty`) when this OQ proposes adding or tuning "
+                "that specific term — common for *\"Should I add a capacity "
+                "penalty?\"*-style post-run asks. The server resolves the "
+                "OQ automatically once `K` lands in `brief.goal_terms` (or "
+                "the user edits its weight/type/rank via the panel), so you "
+                "don't have to remember to drop it via "
+                "`replace_open_questions=true`. Omit for scenario "
+                "clarifications that don't propose a specific goal_term, "
+                "and for foundational-topic OQs (those use the server "
+                "monitor state machine instead). Same vocabulary as "
+                "`ProblemBriefItem.goal_key`."
             ),
         },
     },
@@ -289,7 +297,9 @@ def _build_problem_brief_patch_schema(
         "type": "object",
         "properties": {
             "goal_summary": {"type": "string"},
-            "run_summary": {"type": "string"},
+            # ``runs`` is server-managed (filled by ``derivation.consolidate_runs``
+            # on every run-ack). The LLM never writes here — anything it emits
+            # would be overwritten by the normalizer on the next pass.
             "items": {"type": "array", "items": item_schema},
             "open_questions": {
                 "type": "array",
@@ -898,7 +908,23 @@ def _build_main_turn_schema(test_problem_id: str | None) -> dict[str, Any]:
                     "a request for confirmation)."
                 ),
             },
-            "change_clause": {"type": "string"},
+            "change_clause": {
+                "type": "string",
+                "description": (
+                    "Populate with the commit/change portion of your visible "
+                    "reply WHEN the reply commits to a brief change (e.g. "
+                    "*\"I've added a lateness penalty.\"*, *\"Bumped capacity "
+                    "weight to 30.\"*, *\"Switched algorithm to GA.\"*). The "
+                    "server uses this signal to enforce that "
+                    "`problem_brief_patch` carries a matching delta — if you "
+                    "populate this field but emit an empty patch, the turn is "
+                    "paused for retry with a `claim_without_delta` issue. "
+                    "Leave empty on question turns, concept-question replies, "
+                    "and any reply that doesn't actually commit a brief "
+                    "change (in those cases the reply has nothing to back "
+                    "with structured delta)."
+                ),
+            },
             "question_clause": {
                 "type": "string",
                 "description": (
@@ -1038,12 +1064,13 @@ _MAIN_TURN_OUTPUT_RULES = (
     "turns that re-author the full list — not for routine drops.\n\n"
     "**Goal-term anchor (safety net).** When an OQ proposes a specific "
     "goal_term (e.g. *\"Should I add a capacity penalty?\"*), tag the row "
-    "with `proposes_goal_term_key` set to the canonical key. The server "
-    "auto-resolves the OQ when (a) the key is newly committed to "
-    "`goal_terms` this turn and (b) the brief carries gathered info for "
-    "the key. Tuning OQs on keys that were already committed survive "
-    "automatically. The same field on a `kind: \"assumption\"` row is "
-    "informational metadata only — assumption promotion stays explicit "
+    "with `goal_key` set to the canonical key. The server auto-resolves "
+    "the OQ when (a) the key is newly committed to `goal_terms` this turn "
+    "and (b) the brief carries gathered info for the key. Tuning OQs on "
+    "keys that were already committed survive automatically. The same "
+    "`goal_key` field on a `kind: \"assumption\"` row also drives the "
+    "live-text refresh (server keeps the parenthesized weight/type in "
+    "sync with `goal_terms[K]`). Assumption promotion stays explicit "
     "via `assumption_actions: promote_to_gathered`.\n\n"
     "**Clarification asks.** When your visible reply asks the participant "
     "a clarifying question proposing a non-foundational brief change "

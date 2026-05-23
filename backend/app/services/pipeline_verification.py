@@ -80,6 +80,7 @@ def verify_brief_consistency(
     is_run_acknowledgement: bool = False,
     suppress_runack_invariant: bool = False,
     question_clause: str | None = None,
+    change_clause: str | None = None,
 ) -> list[PipelineIssue]:
     """Run deterministic S2 checks against the freshly-merged brief.
 
@@ -107,7 +108,14 @@ def verify_brief_consistency(
         return issues  # Bail out — nothing else makes sense if the shape is broken.
 
     # ---- Claim ↔ delta consistency ----
-    claims_change = _reply_claims_change(visible_reply)
+    # ``change_clause`` is the LLM's own structured tag for "the visible reply
+    # commits to a change" — symmetric to ``question_clause`` for asks. Reading
+    # the structured field is the canonical signal; the previous NL keyword
+    # matcher (``_reply_claims_change``) is gone — false negatives on phrasings
+    # outside the keyword list silently shipped claim-without-delta turns and
+    # false positives flagged question-only replies that happened to mention
+    # *"I've added similar before"*.
+    claims_change = bool((change_clause or "").strip()) if isinstance(change_clause, str) else False
     patch_empty = _patch_is_empty(patch)
     if is_change_intent and claims_change and patch_empty:
         issues.append(
@@ -205,8 +213,8 @@ def verify_brief_consistency(
                         "Your visible reply asks the participant a clarifying "
                         f"question (\"{clause_text}\") but the brief carries no "
                         "matching open_question. Either add an OQ for the "
-                        "question (set `proposes_goal_term_key` if it proposes "
-                        "a specific goal_term), use `oq_actions` to "
+                        "question (set `goal_key` if it proposes a specific "
+                        "goal_term), use `oq_actions` to "
                         "`rephrase`/`mark_answered` an existing OQ that "
                         "already covers it, or rephrase the reply to commit "
                         "a default instead of asking. Foundational-topic asks "
@@ -312,46 +320,6 @@ def verify_brief_consistency(
     return issues
 
 
-def _reply_claims_change(text: str | None) -> bool:
-    """Detect commit-language in the visible reply.
-
-    Used by S2 to decide whether to require a non-empty patch. Conservative:
-    favours false positives (treating "I've considered…" as a claim) only
-    where the language is unambiguous. The LLM gets the issue in plain
-    English and can either soften the reply or add the missing delta.
-    """
-    if not text or not isinstance(text, str):
-        return False
-    lowered = text.lower()
-    commit_phrases = (
-        "i've added",
-        "i've removed",
-        "i've updated",
-        "i've set",
-        "i've changed",
-        "i've bumped",
-        "i've increased",
-        "i've decreased",
-        "i've locked",
-        "i've turned",
-        "i added",
-        "i removed",
-        "i updated",
-        "i set",
-        "i changed",
-        "i bumped",
-        "i increased",
-        "i decreased",
-        "i've made the following change",
-        "changes i made",
-        "here's what i did",
-        "added the",
-        "removed the",
-        "switched to",
-    )
-    return any(p in lowered for p in commit_phrases)
-
-
 def _new_items(
     base_brief: dict[str, Any] | None,
     merged_brief: dict[str, Any] | None,
@@ -408,12 +376,30 @@ def _check_goal_term_anchoring(
     base_keys: set[str] = set()
     if isinstance(base_brief, dict) and isinstance(base_brief.get("goal_terms"), dict):
         base_keys = {k for k in base_brief["goal_terms"].keys() if isinstance(k, str)}
-    try:
-        port = get_study_port(test_problem_id) if test_problem_id is not None else None
-        auto_anchored = port.auto_anchored_goal_term_keys() if port else frozenset()
-    except Exception:  # pragma: no cover — defensive
-        port = None
-        auto_anchored = frozenset()
+    port: Any | None = None
+    auto_anchored: frozenset[str] = frozenset()
+    if test_problem_id is not None:
+        try:
+            port = get_study_port(test_problem_id)
+        except Exception:  # pragma: no cover — defensive
+            port = None
+        # ``auto_anchored_goal_term_keys`` is on the ``StudyProblemPort``
+        # Protocol but isn't a runtime requirement — VRPTW doesn't define
+        # it, in which case ``getattr`` falls through to the empty default.
+        # Catching the lookup separately from the registry lookup keeps
+        # ``port`` available for ``is_goal_term_self_anchored`` (e.g.
+        # ``worker_preference`` with non-empty rules, ``shift_limit`` with
+        # ``max_shift_hours``) even when ``auto_anchored_goal_term_keys``
+        # is missing. Same split as ``filter_unanchored_new_goal_terms``.
+        if port is not None:
+            try:
+                fn = getattr(port, "auto_anchored_goal_term_keys", None)
+                if callable(fn):
+                    result = fn()
+                    if isinstance(result, (frozenset, set)):
+                        auto_anchored = frozenset(result)
+            except Exception:  # pragma: no cover — defensive
+                auto_anchored = frozenset()
     kinds = evidence_kinds_for_workflow(workflow_mode)
     items = merged_brief.get("items") if isinstance(merged_brief.get("items"), list) else []
     valid_ids = {
@@ -423,10 +409,27 @@ def _check_goal_term_anchoring(
         and str(it.get("kind") or "").strip().lower() in kinds
         and str(it.get("id") or "").strip()
     }
+    # Keys with a pending OQ asking about K are treated as "deferred to OQ" —
+    # the apply layer (``filter_unanchored_new_goal_terms``) drops the
+    # premature goal_term commit and lets the OQ stand alone. Don't double-
+    # fire ``unanchored_goal_term`` on those keys; the LLM's intent of
+    # "I'm asking, not committing" is already captured by the OQ row.
+    pending_oq_keys: set[str] = set()
+    open_questions = merged_brief.get("open_questions") if isinstance(merged_brief.get("open_questions"), list) else []
+    for q in open_questions:
+        if not isinstance(q, dict):
+            continue
+        if str(q.get("status") or "open").strip().lower() != "open":
+            continue
+        gk = q.get("goal_key")
+        if isinstance(gk, str) and gk.strip():
+            pending_oq_keys.add(gk.strip())
     for key, entry in goal_terms.items():
         if not isinstance(key, str) or not isinstance(entry, dict):
             continue
         if key in base_keys or key in auto_anchored:
+            continue
+        if key in pending_oq_keys:
             continue
         if not is_goal_term_anchored(key=key, entry=entry, valid_item_ids=valid_ids, port=port):
             issues.append(

@@ -62,14 +62,21 @@ class ProblemBriefItem(BaseModel):
     text: str
     kind: Literal["gathered", "assumption"]
     source: Literal["user", "upload", "agent"]
-    # Anchor a `kind: "assumption"` row to a canonical goal_term key. The
-    # deterministic resolver in `derivation._resolve_anchored_provisional_rows`
-    # drops the row once that key has user-gathered evidence — so the chat
-    # doesn't have to remember to emit a separate `promote_to_gathered`
-    # action on confirmation turns. Ignored on `kind: "gathered"` rows. Same
+    # Canonical anchor to a `goal_terms[K]` entry. Two server-side consumers
+    # act on this:
+    #   1. Lifecycle (on `kind: "assumption"` rows): the resolver at
+    #      `derivation._resolve_anchored_provisional_rows` drops the row once
+    #      `K` has user-gathered evidence.
+    #   2. Display (on rows whose text follows the canonical
+    #      `<Label> (<role>, weight N) — <rationale>` shape): the normalizer at
+    #      `problem_brief._refresh_referenced_goal_term_text` keeps the
+    #      parenthesized middle in sync with live `goal_terms[K].{type, weight}`
+    #      so hallucinated or stale weight values can't survive.
+    # Both behaviors compose; set the field whenever either applies. Omit on
+    # qualitative rows that don't reference a specific goal term. Same
     # Pydantic-strip caveat as `ProblemBriefQuestion.topic` — listing the
-    # field here keeps it from being silently dropped on PATCH round-trips.
-    proposes_goal_term_key: str | None = None
+    # field here keeps it from being dropped on PATCH round-trips.
+    goal_key: str | None = None
 
 
 class ProblemBriefQuestion(BaseModel):
@@ -87,18 +94,59 @@ class ProblemBriefQuestion(BaseModel):
     # missing line was the reason router-generated `*-followup` OQs lost
     # their inherited topic and slipped past the foundational-topic strip.
     topic: Literal["upload", "primary_goal", "search_strategy", "other"] = "other"
-    # Anchor this OQ to a canonical goal_term key (e.g. "capacity_penalty"
-    # for *"Should I add a capacity penalty?"*). The resolver drops the OQ
-    # once the key lands in `brief.goal_terms`, so the LLM doesn't have to
-    # remember to drop the row via `replace_open_questions=true`. Foundational
-    # OQs (topic != "other") use the existing monitor state machine instead.
-    # Same Pydantic-strip caveat as `topic`.
-    proposes_goal_term_key: str | None = None
+    # Canonical anchor to a `goal_terms[K]` entry (e.g. "capacity_penalty" for
+    # *"Should I add a capacity penalty?"*). The resolver at
+    # `derivation._resolve_anchored_provisional_rows` drops the OQ once the
+    # key lands in `brief.goal_terms`, so the LLM doesn't have to remember to
+    # drop the row via `replace_open_questions=true`. The same resolver path
+    # also runs from `sync_problem_brief_from_panel` when the user edits the
+    # matching weight/type/rank via the panel. Foundational-topic OQs
+    # (topic != "other") use the monitor state machine instead — leave this
+    # empty on those. Same Pydantic-strip caveat as `topic`. Field name
+    # matches `ProblemBriefItem.goal_key` so both anchor types share one
+    # vocabulary.
+    goal_key: str | None = None
+
+
+class RunSummaryEntry(BaseModel):
+    """One structured entry per completed run.
+
+    Server-managed: every field is filled deterministically by
+    ``derivation.consolidate_runs`` on each run-ack from the freshly-loaded
+    ``OptimizationRun`` row plus the previous entry for ``delta_from_prev``.
+    The LLM never writes here — the rolling-prose ``run_summary`` field this
+    replaces was an LLM-maintained string and drifted (stale numbers, hand-
+    written deltas that disagreed with the actual cost diff).
+
+    The frontend Run Summary section renders one collapsed accordion item
+    per entry. The LLM receives the full array in its prompt context, so
+    cross-run reasoning ("how did Run #3 compare to Run #5?") works without
+    re-fetching from the runs table.
+    """
+
+    run_number: int
+    cost: float | None = None
+    ok: bool = True
+    algorithm: str = ""
+    # Plain-English summary of any violations, rendered by the active port via
+    # ``format_run_context_violation_details``. Empty when the run had none.
+    violations_summary: str = ""
+    # Comparison vs. the previous entry's cost / violations. Empty on the
+    # first run (nothing to compare to). Single short line.
+    delta_from_prev: str = ""
 
 
 class ProblemBrief(BaseModel):
     goal_summary: str = ""
-    run_summary: str = ""
+    # ``runs`` is the structured per-run history. Replaces the legacy
+    # ``run_summary`` rolling-string field (which the LLM had to maintain
+    # turn-by-turn and routinely drifted from actual cost/violation numbers).
+    # Server-managed end-to-end: ``derivation.consolidate_runs`` appends
+    # an entry on every run-ack from the matching ``OptimizationRun`` row.
+    # The legacy ``run_summary`` field on PATCHed briefs is silently dropped
+    # by ``normalize_problem_brief`` — no migration needed because the
+    # canonical data lives in the ``OptimizationRun`` table.
+    runs: list[RunSummaryEntry] = Field(default_factory=list)
     items: list[ProblemBriefItem] = Field(default_factory=list)
     # Accept legacy string questions; normalize_problem_brief coerces to {id, text}.
     open_questions: list[ProblemBriefQuestion | str] = Field(default_factory=list)
@@ -120,6 +168,13 @@ class ProblemBrief(BaseModel):
     # main-turn patch). Stripped here would cause the brief to
     # silently regress to cold-start framing on every PATCH save.
     topic_engaged: bool = False
+    # ``priority_line`` is SERVER-managed — recomputed from
+    # ``goal_terms[K].rank`` on every normalize pass. The LLM never writes
+    # it (anything emitted is overwritten). Pydantic field exists so the
+    # value survives PATCH round-trips for the frontend to render.
+    # Stored as ``"Priority order: 1) K1, 2) K2, ..."`` using raw goal-term
+    # keys; the frontend prettifies via its weight-label catalog.
+    priority_line: str = ""
     solver_scope: str = ""
     backend_template: str = ""
 

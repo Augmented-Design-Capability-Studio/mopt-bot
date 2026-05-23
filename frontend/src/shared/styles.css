@@ -1768,18 +1768,40 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   color: #3d5a45;
 }
 
-/* ---- Lock button color differentiation ---- */
+/* ---- Lock button: locked vs. unlocked visual distinction ----
+   The 🔒 and 🔓 emojis look near-identical at small sizes, so the button
+   state has to read at a glance from depth + tone (NOT the emoji shape).
+   Locked = pressed-in dark-grey chip with inset shadow (looks "engaged").
+   Unlocked = flat, dashed outline, transparent (looks "open / not engaged"). */
 
 .definition-icon-btn--locked {
-  color: #1b5e20;
-  background: rgba(76, 175, 80, 0.18);
-  border-color: rgba(27, 94, 32, 0.5) !important;
+  color: var(--fg, #333);
+  /* Greyish fill + strong inset top shadow = recessed/pressed-in look.
+     The fill is lighter than the page bg so the inset shadow reads as
+     "carved-in", which is the desired affordance. No hover variant —
+     the recessed state IS the resting state. No transform either, so
+     the button stays vertically aligned with the X (remove) button
+     sitting next to it. */
+  background: #d0d0d0;
+  border-color: #9a9a9a !important;
+  box-shadow:
+    inset 0 2px 3px rgba(0, 0, 0, 0.25),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .definition-icon-btn--unlocked {
   color: var(--fg-muted, #999);
   background: transparent;
+  border-style: dashed !important;
   border-color: var(--border, #ddd) !important;
+  /* Subtle outer shadow keeps it visually "raised" — opposite of the
+     locked state's pressed-in inset shadow. */
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+}
+
+.definition-icon-btn--unlocked:hover:not(:disabled) {
+  color: var(--fg, #333);
+  border-color: var(--fg-muted, #999) !important;
 }
 
 .definition-item-removed {
@@ -1908,6 +1930,15 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* The 🔒 / 🔓 glyphs render larger than the X character at the same
+   font-size (emojis ignore most font-size shrinkage). Drop the lock
+   button's content font-size so the locked / unlocked emoji visually
+   matches the X-remove button next to it inside the same 1.32rem box. */
+.definition-icon-btn--locked,
+.definition-icon-btn--unlocked {
+  font-size: 0.5rem;
 }
 
 .definition-add-btn {

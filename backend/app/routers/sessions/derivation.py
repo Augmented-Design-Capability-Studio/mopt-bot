@@ -20,133 +20,134 @@ from app.problem_brief import (
 from . import helpers
 
 log = logging.getLogger(__name__)
-_RUN_BOOKKEEPING_TEXT_SNIPPETS: tuple[str, ...] = (
-    "run #",
-    "just completed",
-    "finished run",
-    "previous run",
-    "latest run",
-    "this run",
-    "after this run",
-    "upload file",
-    "uploaded file",
-)
+def _format_run_violations_summary(
+    violations: Any, test_problem_id: str | None
+) -> str:
+    """Render a one-line plain-English violations summary via the port.
+
+    Returns empty string when there are no violations or the port can't
+    render them. The port returns a list of short clauses (e.g.
+    ``["1 time-window stops late", "6 units over capacity"]``); we join
+    with "; " for a single display line.
+    """
+    if not isinstance(violations, dict) or test_problem_id is None:
+        return ""
+    try:
+        from app.problems.registry import get_study_port
+
+        extras = get_study_port(test_problem_id).format_run_context_violation_details(
+            violations
+        )
+    except Exception:  # pragma: no cover — defensive
+        return ""
+    if not isinstance(extras, list):
+        return ""
+    parts = [str(line).strip() for line in extras if isinstance(line, str) and line.strip()]
+    return "; ".join(parts)
 
 
-def _is_run_related_text(text: str) -> bool:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
-        return False
-    if any(snippet in lowered for snippet in _RUN_BOOKKEEPING_TEXT_SNIPPETS):
-        return True
-    return False
+def _compute_delta_from_prev(
+    latest_cost: Any, prev_entry: dict[str, Any] | None
+) -> str:
+    """Render a single-line cost delta vs. the previous run, or empty when
+    there's nothing comparable. Uses raw arithmetic on the structured cost
+    fields — no NL parsing."""
+    if not isinstance(prev_entry, dict):
+        return ""
+    if not (isinstance(latest_cost, (int, float)) and not isinstance(latest_cost, bool)):
+        return ""
+    prev_cost = prev_entry.get("cost")
+    if not (isinstance(prev_cost, (int, float)) and not isinstance(prev_cost, bool)):
+        return ""
+    prev_n = prev_entry.get("run_number")
+    if not isinstance(prev_n, int):
+        return ""
+    diff = float(latest_cost) - float(prev_cost)
+    if diff == 0:
+        return f"same cost as Run #{prev_n}"
+    sign = "+" if diff > 0 else "−"
+    return f"{sign}{abs(diff):.2f} cost vs Run #{prev_n}"
 
 
-def _format_run_context_line(run: dict[str, Any], test_problem_id: str | None = None) -> str:
-    run_number = run.get("run_number")
-    algorithm = str(run.get("algorithm") or "").strip()
-    cost = run.get("cost")
-    ok = bool(run.get("ok"))
-    status = "succeeded" if ok else "failed"
-    details: list[str] = [f"Run #{run_number}" if run_number else "Latest run", status]
-    if isinstance(cost, (int, float)):
-        details.append(f"cost {cost:.2f}")
-    if algorithm:
-        details.append(f"algorithm {algorithm}")
-    violations = run.get("violations")
-    if isinstance(violations, dict) and test_problem_id is not None:
-        try:
-            from app.problems.registry import get_study_port
+def _build_run_summary_entry(
+    latest: dict[str, Any],
+    prev_entry: dict[str, Any] | None,
+    test_problem_id: str | None,
+) -> dict[str, Any] | None:
+    """Build one ``RunSummaryEntry``-shaped dict from a ``recent_runs_summary``
+    record + the previous structured entry for delta computation. Returns
+    ``None`` when the input record lacks a usable ``run_number``."""
+    run_number = latest.get("run_number")
+    if not isinstance(run_number, int) or isinstance(run_number, bool):
+        return None
+    cost_raw = latest.get("cost")
+    cost: float | None
+    if isinstance(cost_raw, (int, float)) and not isinstance(cost_raw, bool):
+        cost = float(cost_raw)
+    else:
+        cost = None
+    return {
+        "run_number": run_number,
+        "cost": cost,
+        "ok": bool(latest.get("ok")),
+        "algorithm": str(latest.get("algorithm") or "").strip(),
+        "violations_summary": _format_run_violations_summary(
+            latest.get("violations"), test_problem_id
+        ),
+        "delta_from_prev": _compute_delta_from_prev(cost, prev_entry),
+    }
 
-            extras = get_study_port(test_problem_id).format_run_context_violation_details(
-                violations
-            )
-        except Exception:  # pragma: no cover — defensive
-            extras = []
-        for line in extras:
-            if isinstance(line, str) and line.strip():
-                details.append(line.strip())
-    return ", ".join(details) + "."
 
-
-def consolidate_run_summary(
+def consolidate_runs(
     brief: dict[str, Any],
     *,
     recent_runs_summary: list[dict[str, Any]] | None = None,
-    cleanup_mode: bool = False,
     is_run_acknowledgement: bool = False,
     test_problem_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
-    """
-    Maintain a single rolling run summary. On cleanup, migrate run-related noisy rows/questions
-    into this summary and remove them from their sections.
+    """Append (or replace) the latest run's structured entry in ``brief.runs``.
+
+    Server-managed end-to-end: the LLM never writes to ``brief.runs`` — this
+    is the sole canonical writer. Replaces the legacy ``consolidate_run_summary``
+    rolling-string path (which drifted because the LLM had to maintain prose).
+
+    Fires only on run-acknowledgement turns. No-op when ``is_run_acknowledgement``
+    is false or when ``recent_runs_summary`` is empty. Idempotent on the same
+    ``run_number`` (resume / retry paths just overwrite the entry).
     """
     normalized = normalize_problem_brief(brief)
-    existing = str(normalized.get("run_summary") or "").strip()
-    moved_items = 0
-    moved_questions = 0
-    notes: list[str] = []
-    items = list(normalized.get("items") or [])
-    questions = list(normalized.get("open_questions") or [])
+    if not is_run_acknowledgement or not recent_runs_summary:
+        return normalized, {"appended": 0}
+    latest = recent_runs_summary[-1]
+    if not isinstance(latest, dict):
+        return normalized, {"appended": 0}
 
-    if cleanup_mode:
-        kept_items: list[dict[str, Any]] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            kind = str(item.get("kind") or "").strip().lower()
-            text = str(item.get("text") or "").strip()
-            if kind in {"gathered", "assumption"} and _is_run_related_text(text):
-                moved_items += 1
-                if text:
-                    notes.append(text)
-                continue
-            kept_items.append(item)
-        items = kept_items
+    existing_runs = list(normalized.get("runs") or [])
+    latest_run_number = latest.get("run_number")
+    # Previous entry for delta calc: most recent existing entry with a
+    # different run_number.
+    prev_entry = next(
+        (
+            r
+            for r in reversed(existing_runs)
+            if isinstance(r, dict) and r.get("run_number") != latest_run_number
+        ),
+        None,
+    )
+    new_entry = _build_run_summary_entry(latest, prev_entry, test_problem_id)
+    if new_entry is None:
+        return normalized, {"appended": 0}
 
-        kept_questions: list[dict[str, Any]] = []
-        for question in questions:
-            if not isinstance(question, dict):
-                continue
-            text = str(question.get("text") or "").strip()
-            if _is_run_related_text(text):
-                moved_questions += 1
-                if text:
-                    notes.append(text)
-                continue
-            kept_questions.append(question)
-        questions = kept_questions
+    # Replace any existing entry with the same run_number (resume/retry), else append.
+    out_runs = [
+        r
+        for r in existing_runs
+        if not (isinstance(r, dict) and r.get("run_number") == new_entry["run_number"])
+    ]
+    out_runs.append(new_entry)
 
-    recent_line = ""
-    if recent_runs_summary:
-        latest = recent_runs_summary[-1]
-        if isinstance(latest, dict):
-            recent_line = _format_run_context_line(latest, test_problem_id=test_problem_id).strip()
-    parts: list[str] = []
-    if existing:
-        parts.append(existing)
-    if recent_line and (is_run_acknowledgement or cleanup_mode):
-        parts.append(recent_line)
-    if notes and cleanup_mode:
-        unique = list(dict.fromkeys(n for n in notes if n.strip()))
-        if unique:
-            parts.append(f"Cleanup consolidated run notes: {'; '.join(unique[:2])}.")
-
-    next_summary = " ".join(parts).strip()
-    if next_summary:
-        next_summary = next_summary[-420:]
-        if next_summary[0].islower():
-            next_summary = next_summary[0].upper() + next_summary[1:]
-        if next_summary[-1] not in ".!?":
-            next_summary += "."
-
-    updated = {
-        **normalized,
-        "items": items,
-        "open_questions": questions,
-        "run_summary": next_summary,
-    }
-    return normalize_problem_brief(updated), {"moved_items": moved_items, "moved_questions": moved_questions}
+    updated = {**normalized, "runs": out_runs}
+    return normalize_problem_brief(updated), {"appended": 1}
 
 
 def _apply_assumption_actions(
@@ -335,8 +336,8 @@ def _has_gathered_evidence_for_key(items: list[Any], key: str) -> bool:
     Two structural matches count as evidence:
     - the row's id is exactly ``config-weight-<key>`` (the canonical row
       ``_synthesize_canonical_weight_items`` synthesizes from goal_terms);
-    - the row carries ``proposes_goal_term_key=<key>`` (an LLM-authored
-      gathered item that explicitly anchors to the same key, e.g. a
+    - the row carries ``goal_key=<key>`` (an LLM-authored gathered item
+      that explicitly anchors to the same key, e.g. a
       ``item-gathered-capacity-penalty`` row).
 
     The OQ resolver gates its drop on this — the participant must already
@@ -353,7 +354,7 @@ def _has_gathered_evidence_for_key(items: list[Any], key: str) -> bool:
             continue
         if str(item.get("id") or "") == canonical_id:
             return True
-        anchor = item.get("proposes_goal_term_key")
+        anchor = item.get("goal_key")
         if isinstance(anchor, str) and anchor.strip() == key:
             return True
     return False
@@ -386,8 +387,7 @@ def _resolve_anchored_provisional_rows(
 
     - Foundational-topic OQs (``topic`` in ``upload`` / ``primary_goal`` /
       ``search_strategy``) — server monitor state machine owns those.
-    - OQs without ``proposes_goal_term_key`` — LLM owns lifecycle via
-      ``oq_actions``.
+    - OQs without ``goal_key`` — LLM owns lifecycle via ``oq_actions``.
     - Already-answered OQs (``status: "answered"``) — handled by
       ``_promote_answered_open_questions_to_gathered``.
 
@@ -443,7 +443,7 @@ def _resolve_anchored_provisional_rows(
         if topic in FOUNDATIONAL_OQ_TOPICS:
             kept_questions.append(q)
             continue
-        anchor = q.get("proposes_goal_term_key")
+        anchor = q.get("goal_key")
         anchor_key = anchor.strip() if isinstance(anchor, str) else ""
         if not anchor_key:
             kept_questions.append(q)
@@ -583,6 +583,21 @@ def apply_brief_patch_with_cleanup(
                     "source": "user",
                 }
             )
+        # Pending-OQ map for the premature-commit drop: when the LLM emits
+        # both a new goal_term commit AND an OQ asking about that same key
+        # (vague user input like *"there also are some driver preferences"*),
+        # the commit is unfinished — drop it so the OQ stands alone as the
+        # canonical open ask. The goal_term re-commits cleanly once the user
+        # answers with specific rules.
+        pending_oq_keys: set[str] = set()
+        for q in merged.get("open_questions") or []:
+            if not isinstance(q, dict):
+                continue
+            if str(q.get("status") or "open").strip().lower() != "open":
+                continue
+            gk = q.get("goal_key")
+            if isinstance(gk, str) and gk.strip():
+                pending_oq_keys.add(gk.strip())
         filtered, dropped = filter_unanchored_new_goal_terms(
             base_brief=base_problem_brief,
             proposed_goal_terms=proposed_goal_terms,
@@ -590,6 +605,7 @@ def apply_brief_patch_with_cleanup(
             workflow_mode=workflow_mode,
             api_key=api_key,
             test_problem_id=test_problem_id,
+            pending_oq_keys=pending_oq_keys,
         )
         if dropped:
             log.warning(
@@ -610,6 +626,16 @@ def apply_brief_patch_with_cleanup(
     merged = _drop_redundant_goal_term_anchors(
         base_brief=base_problem_brief, merged=merged
     )
+
+    # Reconcile auto-OQs for goal_terms with missing/present companions.
+    # Mirrors the same call inside ``sync_problem_brief_from_panel`` so the
+    # auto-OQ stays in lockstep on BOTH the user-edit path (panel save) and
+    # the LLM-edit path (this chat-turn apply). Also catches legacy state
+    # — sessions that entered an orphan-companion state before this fix
+    # was in place get their auto-OQ added on the next chat turn.
+    from app.problem_brief import reconcile_companion_oqs
+
+    merged = reconcile_companion_oqs(merged, test_problem_id)
 
     # Canonical goal-term rows: synthesize a ``config-weight-<key>`` items[]
     # row for every surviving goal_terms key, with text in the canonical
@@ -638,10 +664,9 @@ def apply_brief_patch_with_cleanup(
     # LLM-set value wins.
     merged = _autofill_goal_summary_from_objective(merged, test_problem_id)
 
-    consolidated, run_meta = consolidate_run_summary(
+    consolidated, run_meta = consolidate_runs(
         merged,
         recent_runs_summary=recent_runs_summary,
-        cleanup_mode=cleanup_mode,
         is_run_acknowledgement=is_run_acknowledgement,
         test_problem_id=test_problem_id,
     )
@@ -1055,7 +1080,7 @@ def _enforce_session_monitors(
             "status": "open",
             "answer_text": None,
             "topic": topic,
-            "proposes_goal_term_key": None,
+            "goal_key": None,
         })
 
     # Monitor 1: upload

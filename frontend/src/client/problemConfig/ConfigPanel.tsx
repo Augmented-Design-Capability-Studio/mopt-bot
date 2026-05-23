@@ -218,6 +218,32 @@ export function ConfigPanel({
     prevConfigPending.current = backgroundConfigPending;
   }, [backgroundConfigPending, activeTab]);
 
+  // Escape cancels whichever edit mode is currently active in this panel.
+  // Dispatches by ``editMode`` (not ``activeTab``) so the user is always
+  // cancelling the mode they actually entered, even if they've since
+  // clicked a different tab. Falls back to ``onSetEditMode("none")`` when
+  // ``onCancelConfigEdit`` isn't provided (matches the Cancel button's
+  // existing fallback at the JSX site).
+  useEffect(() => {
+    if (editMode !== "definition" && editMode !== "config") return;
+    if (busy || sessionTerminated) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      // Don't fight native escape on dialogs / menus that handle it
+      // themselves (e.g. snapshot dropdown). If something else stopped
+      // propagation upstream we won't see the event.
+      event.preventDefault();
+      if (editMode === "definition") {
+        onCancelDefinitionEdit();
+      } else if (editMode === "config") {
+        if (onCancelConfigEdit) onCancelConfigEdit();
+        else onSetEditMode("none");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [editMode, busy, sessionTerminated, onCancelDefinitionEdit, onCancelConfigEdit, onSetEditMode]);
+
   const definitionCleanupEnabled = !sessionTerminated && !busy;
   const definitionCleanupDisabledTitle = sessionTerminated
     ? "Session has ended."

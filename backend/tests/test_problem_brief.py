@@ -397,6 +397,348 @@ def _well_formed_alice_zone_d_rule():
     }
 
 
+def test_unmodeled_request_drops_when_closest_match_becomes_active_goal_term():
+    """PILOT_5 contradiction reproducer: agent logs "Capacity limit..." as
+    unmodeled with closest_match=capacity_penalty, then later capacity_penalty
+    is added to goal_terms (e.g. via panel save). The stale unmodeled row
+    must drop so the brief doesn't simultaneously say "we don't model X"
+    and "we're tuning X"."""
+    base = normalize_problem_brief(
+        _minimal_brief_payload(
+            unmodeled_requests=[
+                {
+                    "user_text": "Capacity limit: trucks loaded once at depot",
+                    "closest_match": "capacity_penalty",
+                    "rationale": "Vehicle capacity is a structural hard constraint.",
+                },
+                {
+                    "user_text": "Driver gossip preferences",
+                    "rationale": "Out of scope — social dynamics aren't tunable.",
+                },
+            ],
+        )
+    )
+    # Goal term capacity_penalty lands via a panel save.
+    patch = {
+        "goal_terms": {
+            "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1},
+        }
+    }
+    out = merge_problem_brief_patch(base, patch)
+    rows = out["unmodeled_requests"]
+    texts = [r["user_text"] for r in rows]
+    assert "Capacity limit: trucks loaded once at depot" not in texts, (
+        "Stale unmodeled row must drop once capacity_penalty is in goal_terms"
+    )
+    # Unrelated rows (no closest_match, or closest_match not in goal_terms) survive.
+    assert "Driver gossip preferences" in texts
+
+
+def test_goal_key_legacy_field_names_still_deserialize():
+    """Legacy briefs in the DB store anchors under ``proposes_goal_term_key``
+    (on items + OQs) or ``references_goal_term_key`` (on items only). The
+    normalizer must read those during the rollout and emit the unified
+    ``goal_key`` field, so prior sessions don't lose their anchors when the
+    new code reads them."""
+    raw = _minimal_brief_payload(
+        items=[
+            {
+                "id": "legacy-proposes",
+                "text": "Capacity penalty (soft, weight 5.0) — agent suggestion.",
+                "kind": "assumption",
+                "source": "agent",
+                "proposes_goal_term_key": "capacity_penalty",
+            },
+            {
+                "id": "legacy-references",
+                "text": "Travel time (objective, weight 1.0) — gathered.",
+                "kind": "gathered",
+                "source": "user",
+                "references_goal_term_key": "travel_time",
+            },
+            {
+                "id": "fresh",
+                "text": "Workload balance (soft, weight 1.0) — fresh row.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "workload_balance",
+            },
+        ],
+        open_questions=[
+            {
+                "id": "legacy-oq",
+                "text": "Add lateness penalty?",
+                "topic": "other",
+                "proposes_goal_term_key": "lateness_penalty",
+            }
+        ],
+    )
+    out = normalize_problem_brief(raw)
+    items_by_id = {i["id"]: i for i in out["items"]}
+    assert items_by_id["legacy-proposes"]["goal_key"] == "capacity_penalty"
+    assert items_by_id["legacy-references"]["goal_key"] == "travel_time"
+    assert items_by_id["fresh"]["goal_key"] == "workload_balance"
+    # Old field names must NOT survive — the normalizer writes only the new name.
+    for item in out["items"]:
+        assert "proposes_goal_term_key" not in item
+        assert "references_goal_term_key" not in item
+    oq = out["open_questions"][0]
+    assert oq["goal_key"] == "lateness_penalty"
+    assert "proposes_goal_term_key" not in oq
+
+
+def test_referenced_goal_term_text_rerendered_live():
+    """PILOT_5 reproducer: LLM emits an assumption item describing
+    travel_time with weight 15 in the text — but live weight is 20. With
+    ``goal_key`` set, the normalizer re-renders the
+    parenthesized middle from live ``goal_terms`` state, preserving the
+    LLM's label phrasing and rationale."""
+    raw = _minimal_brief_payload(
+        items=[
+            {
+                "id": "assumption-rebalance-travel-time",
+                "text": "Travel time efficiency (custom locked, weight 15.0) — adjusting slightly to balance against punctuality.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "travel_time",
+            },
+        ],
+        goal_terms={
+            "travel_time": {"weight": 20.0, "type": "custom", "rank": 1},
+        },
+    )
+    out = normalize_problem_brief(raw)
+    item = next(i for i in out["items"] if i["id"] == "assumption-rebalance-travel-time")
+    assert "weight 20" in item["text"], item["text"]
+    assert "weight 15" not in item["text"], item["text"]
+    # Label and rationale preserved.
+    assert item["text"].startswith("Travel time efficiency ("), item["text"]
+    assert "adjusting slightly to balance against punctuality" in item["text"]
+
+
+def test_referenced_goal_term_text_no_op_when_key_missing():
+    """If the referenced key isn't in goal_terms (LLM proposing something
+    not yet committed), leave text alone — don't strip information."""
+    raw = _minimal_brief_payload(
+        items=[
+            {
+                "id": "assumption-future-shift-limit",
+                "text": "Max shift hours (custom locked, weight 5.0) — proposed.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "shift_limit",
+            },
+        ],
+        goal_terms={},
+    )
+    out = normalize_problem_brief(raw)
+    item = next(i for i in out["items"] if i["id"] == "assumption-future-shift-limit")
+    assert "weight 5" in item["text"]
+
+
+def test_referenced_goal_term_text_skips_non_canonical_shape():
+    """Free-form item text that doesn't follow ``<Label> (<role>, weight N)
+    — <rationale>`` is left untouched. Partial parsing would be fragile."""
+    raw = _minimal_brief_payload(
+        items=[
+            {
+                "id": "assumption-prose",
+                "text": "The solver hit a plateau on travel_time tuning.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "travel_time",
+            },
+        ],
+        goal_terms={
+            "travel_time": {"weight": 20.0, "type": "custom", "rank": 1},
+        },
+    )
+    out = normalize_problem_brief(raw)
+    item = next(i for i in out["items"] if i["id"] == "assumption-prose")
+    assert item["text"] == "The solver hit a plateau on travel_time tuning."
+
+
+def test_normalize_drops_legacy_run_summary_string_silently():
+    """Legacy briefs in the DB store a ``run_summary`` rolling string. The
+    structured ``runs`` array replaces it; normalize must silently drop the
+    string field without crashing. Canonical run data lives in the
+    OptimizationRun table, so no migration of the string is required —
+    ``consolidate_runs`` refills ``brief.runs`` from there on the next
+    run-acknowledgement turn."""
+    raw = _minimal_brief_payload(
+        run_summary="Run #3 cost 1500, 2 violations.",
+    )
+    out = normalize_problem_brief(raw)
+    assert "run_summary" not in out
+    assert out["runs"] == []
+
+
+def test_normalize_coerces_runs_with_dedup_and_sort():
+    """``runs`` is server-written but ``normalize_problem_brief`` runs every
+    read (snapshots, PATCH round-trips). Defensive coercion: drop entries
+    missing a usable ``run_number``, de-dup duplicates by ``run_number``
+    (keep the most recent occurrence), and sort by ``run_number``."""
+    raw = _minimal_brief_payload(
+        runs=[
+            # Out-of-order, duplicate run #2 (second one wins), and a junk row.
+            {"run_number": 2, "cost": 100.0, "ok": True, "algorithm": "GA",
+             "violations_summary": "", "delta_from_prev": ""},
+            {"junk": True},
+            {"run_number": 1, "cost": 200.0, "ok": False, "algorithm": "PSO",
+             "violations_summary": "5 over capacity", "delta_from_prev": ""},
+            {"run_number": 2, "cost": 99.0, "ok": True, "algorithm": "GA",
+             "violations_summary": "", "delta_from_prev": "−1.00 cost vs Run #1"},
+        ],
+    )
+    out = normalize_problem_brief(raw)
+    assert [r["run_number"] for r in out["runs"]] == [1, 2]
+    # The later #2 entry wins.
+    assert out["runs"][1]["cost"] == 99.0
+    assert out["runs"][1]["delta_from_prev"] == "−1.00 cost vs Run #1"
+
+
+def test_consolidate_runs_appends_entry_on_run_ack():
+    """On a run-acknowledgement turn, ``consolidate_runs`` builds a structured
+    entry from ``recent_runs_summary[-1]`` and appends it to ``brief.runs``."""
+    from app.routers.sessions.derivation import consolidate_runs
+
+    base = normalize_problem_brief(_minimal_brief_payload())
+    recent = [{
+        "run_id": 42,
+        "run_number": 1,
+        "ok": True,
+        "cost": 353.98,
+        "algorithm": "GA",
+        "violations": None,
+    }]
+    out, meta = consolidate_runs(
+        base,
+        recent_runs_summary=recent,
+        is_run_acknowledgement=True,
+        test_problem_id="vrptw",
+    )
+    assert meta["appended"] == 1
+    assert len(out["runs"]) == 1
+    entry = out["runs"][0]
+    assert entry["run_number"] == 1
+    assert entry["cost"] == 353.98
+    assert entry["algorithm"] == "GA"
+    assert entry["delta_from_prev"] == ""  # No previous run to compare against.
+
+
+def test_consolidate_runs_computes_delta_from_prev():
+    """Second run-ack: the entry's ``delta_from_prev`` carries the cost diff
+    versus the previous structured entry. Deterministic arithmetic, no LLM."""
+    from app.routers.sessions.derivation import consolidate_runs
+
+    brief = normalize_problem_brief(_minimal_brief_payload(
+        runs=[{
+            "run_number": 1, "cost": 500.0, "ok": True, "algorithm": "GA",
+            "violations_summary": "", "delta_from_prev": "",
+        }],
+    ))
+    recent = [{
+        "run_id": 99,
+        "run_number": 2,
+        "ok": True,
+        "cost": 350.0,
+        "algorithm": "GA",
+        "violations": None,
+    }]
+    out, _ = consolidate_runs(
+        brief, recent_runs_summary=recent, is_run_acknowledgement=True,
+        test_problem_id="vrptw",
+    )
+    assert len(out["runs"]) == 2
+    assert out["runs"][1]["delta_from_prev"] == "−150.00 cost vs Run #1"
+
+
+def test_consolidate_runs_idempotent_on_same_run_number():
+    """Resume/retry paths can call ``consolidate_runs`` twice for the same
+    run. The second call replaces the entry in place (no duplicate row)."""
+    from app.routers.sessions.derivation import consolidate_runs
+
+    brief = normalize_problem_brief(_minimal_brief_payload())
+    recent = [{
+        "run_id": 7, "run_number": 1, "ok": True, "cost": 100.0,
+        "algorithm": "GA", "violations": None,
+    }]
+    out_a, _ = consolidate_runs(
+        brief, recent_runs_summary=recent, is_run_acknowledgement=True,
+        test_problem_id="vrptw",
+    )
+    out_b, _ = consolidate_runs(
+        out_a, recent_runs_summary=recent, is_run_acknowledgement=True,
+        test_problem_id="vrptw",
+    )
+    assert len(out_b["runs"]) == 1
+
+
+def test_consolidate_runs_noop_when_not_run_ack():
+    """Non-run-ack turns must not touch ``brief.runs`` (no false appends from
+    chat / config_edit_ack / brief_edit_ack flavors)."""
+    from app.routers.sessions.derivation import consolidate_runs
+
+    brief = normalize_problem_brief(_minimal_brief_payload())
+    recent = [{
+        "run_id": 7, "run_number": 1, "ok": True, "cost": 100.0,
+        "algorithm": "GA", "violations": None,
+    }]
+    out, meta = consolidate_runs(
+        brief, recent_runs_summary=recent, is_run_acknowledgement=False,
+        test_problem_id="vrptw",
+    )
+    assert meta["appended"] == 0
+    assert out["runs"] == []
+
+
+def test_priority_line_renders_from_ranks():
+    """``priority_line`` is server-managed — recomputed from
+    ``goal_terms[K].rank`` on every normalize pass and ignored if the LLM
+    tries to emit a value."""
+    raw = _minimal_brief_payload(
+        goal_terms={
+            "lateness_penalty": {"weight": 5.0, "type": "soft", "rank": 2},
+            "travel_time": {"weight": 10.0, "type": "objective", "rank": 1},
+            "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 3},
+        },
+        # LLM tries to emit a bogus priority line — must be overwritten.
+        priority_line="Priority order: 1) gossip, 2) magic, 3) vibes.",
+    )
+    out = normalize_problem_brief(raw)
+    assert out["priority_line"] == (
+        "Priority order: 1) travel_time, 2) lateness_penalty, 3) capacity_penalty."
+    )
+
+
+def test_priority_line_empty_when_no_ranks():
+    """Brief with no ranked goal terms → empty priority line (frontend hides
+    the section). No spurious "Priority order: ." rendering."""
+    raw = _minimal_brief_payload(goal_terms={})
+    out = normalize_problem_brief(raw)
+    assert out["priority_line"] == ""
+
+
+def test_normalize_drops_unmodeled_rows_resolved_by_existing_goal_terms():
+    """Even without a fresh patch, normalize_problem_brief cleans up stale
+    unmodeled rows whose closest_match is already in goal_terms — fixes
+    sessions where the contradiction predates the fix."""
+    raw = _minimal_brief_payload(
+        goal_terms={
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+        },
+        unmodeled_requests=[
+            {
+                "user_text": "Traffic during peak",
+                "closest_match": "travel_time",
+                "rationale": "Covered by travel_time via traffic profile.",
+            },
+        ],
+    )
+    out = normalize_problem_brief(raw)
+    assert out["unmodeled_requests"] == []
+
+
 def test_merge_appends_unmodeled_requests_with_dedupe():
     """``unmodeled_requests`` is an append-only audit trail of participant
     asks the panel can't model. Subsequent turns must accumulate new rows
@@ -610,6 +952,255 @@ def test_sync_problem_brief_from_panel_mirrors_goal_terms():
     rules = out["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
     assert rules == [_well_formed_alice_zone_d_rule()]
     assert out["goal_terms"]["worker_preference"]["weight"] == 5.0
+
+
+def test_sync_problem_brief_from_panel_user_origin_tags_config_rows_source_user():
+    """User-triggered panel save → synthesized config-weight-K rows must
+    carry ``source: "user"`` (not "agent"). LLM-triggered re-derivations
+    keep the default ``source: "agent"``."""
+    base = default_problem_brief("vrptw")
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 2},
+            }
+        }
+    }
+    out_user = sync_problem_brief_from_panel(
+        base, panel, test_problem_id="vrptw", origin="user"
+    )
+    config_rows_user = [i for i in out_user["items"] if i["id"].startswith("config-weight-")]
+    assert config_rows_user, "Expected config-weight-* rows from panel sync"
+    assert all(i["source"] == "user" for i in config_rows_user)
+
+    out_agent = sync_problem_brief_from_panel(
+        base, panel, test_problem_id="vrptw"
+    )  # default origin="agent"
+    config_rows_agent = [i for i in out_agent["items"] if i["id"].startswith("config-weight-")]
+    assert all(i["source"] == "agent" for i in config_rows_agent)
+
+
+def test_sync_problem_brief_from_panel_promotes_assumption_on_type_change():
+    """User changing ``type`` (soft → hard) for K is a structural lock-in →
+    prior assumption row about K is promoted to ``gathered / source: user``."""
+    base = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [
+            {
+                "id": "assumption-capacity-soft-default",
+                "text": "Capacity penalty (soft constraint, weight 100.0) — keep loads safe.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "capacity_penalty",
+            },
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "capacity_penalty": {"weight": 100.0, "type": "soft", "rank": 1},
+        },
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    # User flips type to hard via panel.
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    promoted = next(i for i in out["items"] if i["id"] == "assumption-capacity-soft-default")
+    assert promoted["kind"] == "gathered"
+    assert promoted["source"] == "user"
+
+
+def test_sync_problem_brief_from_panel_does_not_promote_on_weight_only_change():
+    """Weight tuning isn't a lock-in signal — prior assumption rows survive
+    as-is. The user is exploring values, not committing to framing."""
+    base = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [
+            {
+                "id": "assumption-cap-tune",
+                "text": "Capacity penalty (soft constraint, weight 100.0) — tuning.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "capacity_penalty",
+            },
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "capacity_penalty": {"weight": 100.0, "type": "soft", "rank": 1},
+        },
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    # User changes weight only.
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "capacity_penalty": {"weight": 50.0, "type": "soft", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    unchanged = next(i for i in out["items"] if i["id"] == "assumption-cap-tune")
+    assert unchanged["kind"] == "assumption"
+    assert unchanged["source"] == "agent"
+
+
+def test_sync_problem_brief_from_panel_does_not_promote_on_rank_cascade():
+    """Reordering ranks cascade: moving one term shifts ranks for others.
+    Per Fix 8 rule, we can't tell which key the user actively moved from
+    the diff alone, so no prior assumption rows are promoted."""
+    base = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [
+            {
+                "id": "assumption-travel-pref",
+                "text": "Travel time (primary objective, weight 1.0) — agent suggestion.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "travel_time",
+            },
+            {
+                "id": "assumption-cap-pref",
+                "text": "Capacity penalty (soft constraint, weight 5.0) — agent suggestion.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "capacity_penalty",
+            },
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+            "capacity_penalty": {"weight": 5.0, "type": "soft", "rank": 2},
+        },
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    # User reorders (swap ranks). No weight/type changes.
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 2},
+                "capacity_penalty": {"weight": 5.0, "type": "soft", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    travel_item = next(i for i in out["items"] if i["id"] == "assumption-travel-pref")
+    cap_item = next(i for i in out["items"] if i["id"] == "assumption-cap-pref")
+    assert travel_item["kind"] == "assumption", "rank cascade must NOT promote"
+    assert cap_item["kind"] == "assumption", "rank cascade must NOT promote"
+
+
+def test_sync_problem_brief_from_panel_promotes_on_newly_added_key():
+    """User adds a brand-new goal_term via panel → user took the suggestion.
+    Prior assumption row about K is promoted."""
+    base = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [
+            {
+                "id": "assumption-add-lateness",
+                "text": "Lateness penalty (soft constraint, weight 10.0) — proposed.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "lateness_penalty",
+            },
+        ],
+        "open_questions": [],
+        "goal_terms": {},
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "lateness_penalty": {"weight": 10.0, "type": "soft", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    promoted = next(i for i in out["items"] if i["id"] == "assumption-add-lateness")
+    assert promoted["kind"] == "gathered"
+    assert promoted["source"] == "user"
+
+
+def test_sync_problem_brief_from_panel_agent_origin_does_not_promote():
+    """LLM-driven re-derivation (origin=agent) must NEVER promote prior
+    assumption rows — the user wasn't involved."""
+    base = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [
+            {
+                "id": "assumption-cap-pref",
+                "text": "Capacity penalty (soft constraint, weight 100.0) — agent.",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "capacity_penalty",
+            },
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "capacity_penalty": {"weight": 100.0, "type": "soft", "rank": 1},
+        },
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1},
+            }
+        }
+    }
+    # Even though type changed, origin=agent → no promotion.
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    unchanged = next(i for i in out["items"] if i["id"] == "assumption-cap-pref")
+    assert unchanged["kind"] == "assumption"
+
+
+def test_sync_problem_brief_from_panel_preserves_search_strategy_carrier():
+    """``search_strategy`` lives only in the brief — the panel never carries it.
+    A user panel save must not drop the brief's ``goal_terms.search_strategy``
+    entry even though the panel's ``goal_terms`` map omits it. Lock-in for the
+    PILOT_5 wipe (snap 293→294)."""
+    base = default_problem_brief("vrptw")
+    base["goal_terms"] = {
+        "search_strategy": {
+            "weight": 1.0,
+            "type": "custom",
+            "rank": 2,
+            "evidence_item_ids": ["item-search-strategy"],
+            "properties": {"algorithm": "GA"},
+        },
+        "travel_time": {
+            "weight": 1.0,
+            "type": "objective",
+            "rank": 1,
+        },
+    }
+    # Panel save adds a new term (capacity_penalty) — the panel's goal_terms
+    # never includes search_strategy. Pre-fix, this overwrite dropped it.
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 4},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    assert "search_strategy" in out["goal_terms"], (
+        "search_strategy must survive panel→brief sync (carrier-only key)"
+    )
+    assert out["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+    # Other panel-side terms still mirror correctly.
+    assert "capacity_penalty" in out["goal_terms"]
+    assert "travel_time" in out["goal_terms"]
 
 
 def test_sync_problem_brief_from_panel_strips_supporting_items_on_removal():

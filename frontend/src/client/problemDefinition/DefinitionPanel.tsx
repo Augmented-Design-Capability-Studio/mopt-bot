@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 
-import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion } from "@shared/api";
+import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion, RunSummaryEntry } from "@shared/api";
 
 import { DEFINITION_NEW_ROW_PLACEHOLDER } from "./constants";
 import { useDefinitionExternalFlash } from "./useDefinitionExternalFlash";
@@ -469,10 +469,7 @@ export function DefinitionPanel({
   function updateGoalSummary(value: string) {
     persist({ ...problemBrief, goal_summary: value });
   }
-
-  function updateRunSummary(value: string) {
-    persist({ ...problemBrief, run_summary: value });
-  }
+  // Run history is server-managed via ``brief.runs``; no participant editor.
 
   function updateOpenQuestionAnswer(questionId: string, answer: string) {
     const nextQuestions = openQuestions.map((row) =>
@@ -503,7 +500,7 @@ export function DefinitionPanel({
       textarea.style.height = "auto";
       textarea.style.height = `${textarea.scrollHeight}px`;
     }
-  }, [editable, problemBrief.goal_summary, problemBrief.run_summary, problemBrief.items, problemBrief.open_questions]);
+  }, [editable, problemBrief.goal_summary, problemBrief.runs, problemBrief.items, problemBrief.open_questions]);
 
   return (
     <div className="definition-panel" ref={rootRef}>
@@ -539,6 +536,21 @@ export function DefinitionPanel({
                 onInput={autoGrowTextarea}
                 placeholder="Summarize what a good plan should prioritize."
               />
+              {/* Server-rendered priority-order line — derived from
+                  goal_terms[K].rank on every brief save. Read-only by design;
+                  changing rank order happens in the Config tab. */}
+              {problemBrief.priority_line ? (
+                <p
+                  className="muted definition-goal-priority"
+                  style={{
+                    fontSize: "0.78rem",
+                    marginTop: "0.35rem",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {problemBrief.priority_line}
+                </p>
+              ) : null}
             </div>
           </div>
         )}
@@ -555,38 +567,7 @@ export function DefinitionPanel({
           <span className="definition-section-chevron" aria-hidden="true">{collapsedSections.runSummary ? "▶" : "▼"}</span>
         </button>
         {!collapsedSections.runSummary && (
-          <div className="definition-item">
-            <div className="definition-item-content definition-item-content-goal">
-              {editable ? (
-                <textarea
-                  id="definition-run-summary"
-                  className="definition-inline-textarea definition-inline-textarea-bare definition-inline-textarea-goal"
-                  value={problemBrief.run_summary}
-                  disabled={sessionTerminated}
-                  rows={1}
-                  onFocus={() => onEnsureDefinitionEditing()}
-                  onChange={(e) => updateRunSummary(e.target.value)}
-                  onInput={autoGrowTextarea}
-                  placeholder="Rolling summary of recent run outcomes and implications."
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="definition-inline-display definition-inline-display-bare definition-inline-display-goal"
-                  title="Edit..."
-                  disabled={sessionTerminated}
-                  onClick={(e) =>
-                    ensureDefinitionEditingFromLocked(
-                      "#definition-run-summary",
-                      estimatedCaretIndexFromClick(problemBrief.run_summary || "", e),
-                    )
-                  }
-                >
-                  {problemBrief.run_summary || "Rolling summary of recent run outcomes and implications."}
-                </button>
-              )}
-            </div>
-          </div>
+          <RunSummaryAccordion runs={problemBrief.runs ?? []} />
         )}
       </section>
 
@@ -754,6 +735,122 @@ export function DefinitionPanel({
         onToggle={() => toggleSection("gatheredInfo")}
       />
 
+    </div>
+  );
+}
+
+
+/**
+ * Per-run accordion for the Run Summary section. One collapsed row per
+ * entry in `brief.runs`. Newest run at the top. Header shows the
+ * deterministic at-a-glance facts (Run #N · cost · ok/violations);
+ * expanded body shows algorithm + delta-from-previous.
+ *
+ * Server-managed read-only display — there is no editor surface here.
+ * The entries are filled by `derivation.consolidate_runs` on every
+ * run-acknowledgement turn; the LLM never writes to them.
+ */
+function RunSummaryAccordion({ runs }: { runs: RunSummaryEntry[] }) {
+  // Newest first so the most recent run is the first thing the participant sees.
+  const ordered = [...runs].sort((a, b) => b.run_number - a.run_number);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(() => {
+    // Default-expand the latest run; collapse the rest.
+    return ordered.length > 0 ? new Set([ordered[0].run_number]) : new Set();
+  });
+
+  if (ordered.length === 0) {
+    return (
+      <div className="definition-item">
+        <div className="definition-item-content definition-item-content-goal">
+          <p className="muted" style={{ fontSize: "0.82rem", padding: "0.35rem 0" }}>
+            No runs yet. Each completed run gets a structured entry here with
+            cost, violations, and the delta versus the previous run.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function toggle(runNumber: number) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runNumber)) next.delete(runNumber);
+      else next.add(runNumber);
+      return next;
+    });
+  }
+
+  return (
+    <div className="definition-item">
+      <div className="definition-item-content definition-item-content-goal">
+        {ordered.map((run) => {
+          const expanded = expandedIds.has(run.run_number);
+          const costText = run.cost == null ? "—" : run.cost.toFixed(2);
+          // At-a-glance row (always visible): Run #N · cost · search method.
+          // Outcome / violation detail / delta moves into the expanded body so
+          // the collapsed view scans cleanly at a list of many runs.
+          const algoText = run.algorithm || "—";
+          const outcomeText = run.ok
+            ? (run.violations_summary
+                ? `Completed with violations: ${run.violations_summary}.`
+                : "Completed with no violations.")
+            : "Run failed.";
+          return (
+            <div
+              key={run.run_number}
+              className="definition-run-row"
+              style={{ borderTop: "1px solid var(--border-muted, #2a2a2a)", padding: "0.4rem 0" }}
+            >
+              <button
+                type="button"
+                onClick={() => toggle(run.run_number)}
+                aria-expanded={expanded}
+                style={{
+                  display: "flex",
+                  width: "100%",
+                  alignItems: "baseline",
+                  gap: "0.5rem",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontSize: "0.85rem",
+                  padding: 0,
+                  color: "inherit",
+                }}
+              >
+                <span aria-hidden="true" style={{ width: "0.75rem", display: "inline-block" }}>
+                  {expanded ? "▼" : "▶"}
+                </span>
+                <strong>Run #{run.run_number}</strong>
+                <span className="muted">·</span>
+                <span>cost {costText}</span>
+                <span className="muted">·</span>
+                <span className="muted">{algoText}</span>
+              </button>
+              {expanded && (
+                <div
+                  style={{
+                    paddingLeft: "1.25rem",
+                    paddingTop: "0.3rem",
+                    fontSize: "0.78rem",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <p className="muted" style={{ margin: "0.1rem 0" }}>
+                    {outcomeText}
+                  </p>
+                  {run.delta_from_prev && (
+                    <p className="muted" style={{ margin: "0.1rem 0" }}>
+                      {run.delta_from_prev}.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

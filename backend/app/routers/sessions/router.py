@@ -1755,10 +1755,14 @@ def cleanup_participant_open_questions(
 
     current_problem_brief = helpers.problem_brief_dict(row)
     cleaned_brief, meta = cleanup_open_questions(current_problem_brief)
-    cleaned_brief, run_meta = derivation.consolidate_run_summary(
+    # The brief-cleanup endpoint used to migrate run-related items[] rows
+    # into the legacy ``run_summary`` rolling string. ``brief.runs`` is now
+    # server-managed via ``consolidate_runs`` and doesn't need a cleanup hook;
+    # this call is now a no-op on a non-run-ack turn. Kept for symmetry with
+    # the brief-cleanup flow (any future per-turn invariants ride here).
+    cleaned_brief, run_meta = derivation.consolidate_runs(
         cleaned_brief,
         recent_runs_summary=[],
-        cleanup_mode=True,
         is_run_acknowledgement=False,
         test_problem_id=row.test_problem_id,
     )

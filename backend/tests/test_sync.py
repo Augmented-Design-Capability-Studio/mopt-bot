@@ -323,7 +323,7 @@ def test_drift_detector_empty_starter_panel_is_drift_free():
     no drift should surface."""
     cold_brief = {
         "goal_summary": "",
-        "run_summary": "",
+        "runs": [],
         "items": [],
         "open_questions": [],
         "goal_terms": {},

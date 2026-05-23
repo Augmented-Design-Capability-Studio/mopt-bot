@@ -235,6 +235,23 @@ export function ResultsPanel({
   const isScheduleDirty = editMode === "results" && editorBaseText !== "" && !routesTextEqual(scheduleText, editorBaseText);
   const canSaveSchedule = Boolean(!sessionTerminated && scheduleText.trim().length > 0);
 
+  // Escape cancels the schedule editor — mirrors the inline Cancel button at
+  // the bottom of the editor (revert scheduleText to editorBaseRoutes, then
+  // exit edit mode). Listener only attaches while we're actually editing.
+  useEffect(() => {
+    if (editMode !== "results" || sessionTerminated) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      if (editorBaseRoutes) {
+        onScheduleTextChange(JSON.stringify(editorBaseRoutes, null, 2));
+      }
+      onSetEditMode("none");
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [editMode, sessionTerminated, editorBaseRoutes, onScheduleTextChange, onSetEditMode]);
+
   return (
     <section className={className}>
       <div className="panel-header panel-header-with-action">

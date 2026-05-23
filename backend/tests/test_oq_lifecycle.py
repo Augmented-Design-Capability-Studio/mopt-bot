@@ -131,14 +131,14 @@ def test_gathered_evidence_matches_canonical_id():
     assert not _has_gathered_evidence_for_key(items, "lateness_penalty")
 
 
-def test_gathered_evidence_matches_proposes_goal_term_key():
+def test_gathered_evidence_matches_goal_key():
     items = [
         {
             "id": "item-gathered-cap",
             "text": "Capacity penalty (soft, weight 10.0).",
             "kind": "gathered",
             "source": "user",
-            "proposes_goal_term_key": "capacity_penalty",
+            "goal_key": "capacity_penalty",
         }
     ]
     assert _has_gathered_evidence_for_key(items, "capacity_penalty")
@@ -151,7 +151,7 @@ def test_gathered_evidence_ignores_assumption_rows():
             "text": "Capacity penalty (soft, weight 10.0).",
             "kind": "assumption",
             "source": "agent",
-            "proposes_goal_term_key": "capacity_penalty",
+            "goal_key": "capacity_penalty",
         }
     ]
     assert not _has_gathered_evidence_for_key(items, "capacity_penalty")
@@ -172,7 +172,7 @@ def test_anchored_oq_dropped_on_first_commit_with_gathered_evidence_waterfall():
                     "id": "q-cap",
                     "text": "Should I add a capacity penalty?",
                     "topic": "other",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
                 {
                     "id": "q-unrelated",
@@ -205,7 +205,7 @@ def test_anchored_tuning_oq_survives_when_key_already_in_base():
                     "id": "oq-capacity-tuning",
                     "text": "Tighten capacity weight to 2.0?",
                     "topic": "other",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
             ],
             goal_terms={"capacity_penalty": {"weight": 1.0, "type": "soft"}},
@@ -228,7 +228,7 @@ def test_anchored_oq_survives_when_first_commit_lacks_gathered_evidence():
                     "id": "q-cap",
                     "text": "Should I add a capacity penalty?",
                     "topic": "other",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
             ],
             goal_terms={"capacity_penalty": {"weight": 10.0, "type": "soft"}},
@@ -239,7 +239,7 @@ def test_anchored_oq_survives_when_first_commit_lacks_gathered_evidence():
 
 
 def test_anchored_oq_dropped_when_evidence_comes_via_items_anchor():
-    """Gathered evidence detection via `proposes_goal_term_key` on a
+    """Gathered evidence detection via `goal_key` on a
     user-authored gathered row — covers the path where the LLM emits an
     items[] row anchored to the key without the canonical id pattern."""
     base = normalize_problem_brief(_minimal_brief())
@@ -251,7 +251,7 @@ def test_anchored_oq_dropped_when_evidence_comes_via_items_anchor():
                     "text": "Capacity penalty (soft, weight 10.0) — user confirmed.",
                     "kind": "gathered",
                     "source": "user",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
             ],
             open_questions=[
@@ -259,7 +259,7 @@ def test_anchored_oq_dropped_when_evidence_comes_via_items_anchor():
                     "id": "q-cap",
                     "text": "Should I add a capacity penalty?",
                     "topic": "other",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
             ],
             goal_terms={"capacity_penalty": {"weight": 10.0, "type": "soft"}},
@@ -281,7 +281,7 @@ def test_foundational_oq_with_anchor_is_not_dropped_by_resolver():
                     "id": "oq-monitor-algorithm",
                     "text": "Which search method?",
                     "topic": "search_strategy",
-                    "proposes_goal_term_key": "search_strategy",
+                    "goal_key": "search_strategy",
                 },
             ],
             goal_terms={
@@ -295,6 +295,218 @@ def test_foundational_oq_with_anchor_is_not_dropped_by_resolver():
     )
     after = _resolve_anchored_provisional_rows(merged, "waterfall", base_brief=base)
     assert [q["id"] for q in after["open_questions"]] == ["oq-monitor-algorithm"]
+
+
+# ---------------------------------------------------------------------------
+# Layer 2b: panel-save auto-close (sync_problem_brief_from_panel).
+# Complements the LLM-driven resolver above with the panel-edit event path:
+# when the user side-steps an OQ by editing the panel for the same key, the
+# OQ becomes moot. Reproducer: PILOT_5 ``oq-reduce-capacity-weight`` /
+# ``oq-re-tune-capacity`` — both proposed ``capacity_penalty`` tweaks the
+# user instead made via the Config tab.
+# ---------------------------------------------------------------------------
+
+
+def test_panel_edit_closes_tuning_oq_on_changed_weight():
+    """Tuning OQ asks to change capacity weight. User edits the weight via
+    panel. OQ auto-closes (folded into a gathered/user row by the next
+    normalize pass — see _promote_answered_open_questions_to_gathered)."""
+    from app.problem_brief import sync_problem_brief_from_panel
+
+    base = normalize_problem_brief(
+        _minimal_brief(
+            items=[_canonical_weight_item("capacity_penalty")],
+            open_questions=[
+                {
+                    "id": "oq-reduce-capacity-weight",
+                    "text": "Reduce capacity weight to 50?",
+                    "topic": "other",
+                    "goal_key": "capacity_penalty",
+                }
+            ],
+            goal_terms={"capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1}},
+        )
+    )
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "capacity_penalty": {"weight": 50.0, "type": "hard", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    # The OQ should no longer be open. Either it was dropped entirely (no
+    # longer present) or it survived only as a gathered row.
+    open_ids = [q["id"] for q in out.get("open_questions") or [] if q.get("status") == "open"]
+    assert "oq-reduce-capacity-weight" not in open_ids
+
+
+def test_panel_edit_leaves_untouched_oqs_alone():
+    """OQ about ``travel_time`` survives a panel edit that only touches
+    ``capacity_penalty`` — different key, user hasn't acted on it yet."""
+    from app.problem_brief import sync_problem_brief_from_panel
+
+    base = normalize_problem_brief(
+        _minimal_brief(
+            items=[
+                _canonical_weight_item("travel_time"),
+                _canonical_weight_item("capacity_penalty"),
+            ],
+            open_questions=[
+                {
+                    "id": "oq-travel-tune",
+                    "text": "Raise travel time weight?",
+                    "topic": "other",
+                    "goal_key": "travel_time",
+                }
+            ],
+            goal_terms={
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 2},
+            },
+        )
+    )
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "capacity_penalty": {"weight": 80.0, "type": "hard", "rank": 2},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    open_ids = [q["id"] for q in out.get("open_questions") or [] if q.get("status") == "open"]
+    assert "oq-travel-tune" in open_ids
+
+
+def test_panel_rerank_does_not_close_oqs_about_cascade_shifted_keys():
+    """Real bug reported: user reranks goal terms in the panel; the frontend's
+    ``handleReorder`` auto-rewrites the weights of cascade-affected keys to
+    suggested values for their new rank positions. The naive "weight changed
+    → user acted on K" rule false-closed OQs about keys the user never
+    actively touched (e.g. the LLM had asked *"Would you like to adjust the
+    weight of travel_time (currently 1.0)?"*, then the user reranked OTHER
+    terms; travel_time's weight was auto-shifted to 7.13 and the OQ closed).
+    A weight change that's coincident with a rank change is a cascade — only
+    treat it as an active edit when the rank did NOT change."""
+    from app.problem_brief import sync_problem_brief_from_panel
+
+    base = normalize_problem_brief(
+        _minimal_brief(
+            items=[
+                _canonical_weight_item("travel_time"),
+                _canonical_weight_item("lateness_penalty"),
+                _canonical_weight_item("capacity_penalty"),
+            ],
+            open_questions=[
+                {
+                    "id": "oq-tt-tune",
+                    "text": "Would you like to adjust the weight of travel_time (currently 1.0)?",
+                    "topic": "other",
+                    "goal_key": "travel_time",
+                }
+            ],
+            goal_terms={
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "lateness_penalty": {"weight": 50.0, "type": "soft", "rank": 2},
+                "capacity_penalty": {"weight": 20.0, "type": "hard", "rank": 3},
+            },
+        )
+    )
+    # User reranks (drags capacity to rank 1). The frontend rewrites all the
+    # cascade weights too — so every key's rank+weight both shift in the diff.
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "capacity_penalty": {"weight": 2.59, "type": "hard", "rank": 1},
+                "lateness_penalty": {"weight": 3.89, "type": "soft", "rank": 2},
+                "travel_time": {"weight": 7.13, "type": "objective", "rank": 3},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    open_ids = [q["id"] for q in out.get("open_questions") or [] if q.get("status") == "open"]
+    assert "oq-tt-tune" in open_ids, (
+        "OQ about travel_time must survive a pure rerank — the user didn't "
+        "actively touch travel_time, only the rerank cascade did."
+    )
+
+
+def test_panel_weight_only_edit_still_closes_oq():
+    """Inverse of the rerank-cascade test: a standalone weight edit (no rank
+    change) IS a user action on K and should still close OQs about K. Locks
+    the active-edit case so the cascade fix doesn't over-shoot."""
+    from app.problem_brief import sync_problem_brief_from_panel
+
+    base = normalize_problem_brief(
+        _minimal_brief(
+            items=[_canonical_weight_item("travel_time")],
+            open_questions=[
+                {
+                    "id": "oq-tt-tune",
+                    "text": "Adjust travel_time weight?",
+                    "topic": "other",
+                    "goal_key": "travel_time",
+                }
+            ],
+            goal_terms={
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+            },
+        )
+    )
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "travel_time": {"weight": 5.0, "type": "objective", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    open_ids = [q["id"] for q in out.get("open_questions") or [] if q.get("status") == "open"]
+    assert "oq-tt-tune" not in open_ids, (
+        "Standalone weight edit (no rank change) must still close OQs about K."
+    )
+
+
+def test_panel_edit_does_not_close_foundational_oq():
+    """Foundational-topic OQs (e.g. search_strategy) are owned by the
+    monitor state machine, never touched by the panel-edit auto-closer."""
+    from app.problem_brief import sync_problem_brief_from_panel
+
+    base = normalize_problem_brief(
+        _minimal_brief(
+            items=[_canonical_weight_item("capacity_penalty")],
+            open_questions=[
+                {
+                    "id": "oq-monitor-algorithm",
+                    "text": "Which search method?",
+                    "topic": "search_strategy",
+                    "goal_key": "search_strategy",
+                }
+            ],
+            goal_terms={
+                "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1},
+                "search_strategy": {
+                    "weight": 1.0,
+                    "type": "custom",
+                    "rank": 2,
+                    "properties": {"algorithm": "GA"},
+                },
+            },
+        )
+    )
+    # User edits a weight — search_strategy is not in the panel's goal_terms
+    # (carrier-only) and even if it were, foundational topic should survive.
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "capacity_penalty": {"weight": 80.0, "type": "hard", "rank": 1},
+            }
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw")
+    open_ids = [q["id"] for q in out.get("open_questions") or [] if q.get("status") == "open"]
+    assert "oq-monitor-algorithm" in open_ids
 
 
 # ---------------------------------------------------------------------------
@@ -317,14 +529,14 @@ def test_anchored_assumption_never_auto_dropped_agile():
                     "text": "Capacity penalty (soft, weight 10.0).",
                     "kind": "assumption",
                     "source": "agent",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
                 {
                     "id": "item-gathered-cap",
                     "text": "Capacity penalty (soft, weight 10.0) — user-confirmed.",
                     "kind": "gathered",
                     "source": "user",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
             ],
             goal_terms={"capacity_penalty": {"weight": 10.0, "type": "soft"}},
@@ -353,7 +565,7 @@ def test_anchored_assumption_survives_tuning_case_agile():
                     "text": "Tuning capacity penalty up to 2.0 as a working setting.",
                     "kind": "assumption",
                     "source": "agent",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
             ],
             goal_terms={"capacity_penalty": {"weight": 2.0, "type": "soft"}},
@@ -400,7 +612,7 @@ def test_ask_without_oq_raised_when_no_new_oq_lands():
     issues = verify_brief_consistency(
         merged_brief={"items": [], "goal_terms": {}, "open_questions": []},
         base_brief={"items": [], "goal_terms": {}, "open_questions": []},
-        patch={"run_summary": "Run #2 cost 310."},
+        patch={},
         visible_reply=(
             "Would you like me to increase the workload balance weight, or "
             "explore a different search strategy?"
@@ -419,7 +631,7 @@ def test_ask_without_oq_silent_when_oq_lands_in_merged():
         "id": "q-workload",
         "text": "Increase workload balance weight?",
         "topic": "other",
-        "proposes_goal_term_key": "workload_balance",
+        "goal_key": "workload_balance",
     }
     issues = verify_brief_consistency(
         merged_brief={"items": [], "goal_terms": {}, "open_questions": [new_oq]},
@@ -458,7 +670,7 @@ def test_ask_without_oq_silent_when_question_clause_empty():
     issues = verify_brief_consistency(
         merged_brief={"items": [], "goal_terms": {}, "open_questions": []},
         base_brief={"items": [], "goal_terms": {}, "open_questions": []},
-        patch={"run_summary": "Run #2 cost 310."},
+        patch={},
         visible_reply="What's the cost trend? Just checking.",
         workflow_mode="waterfall",
         question_clause=None,
@@ -546,13 +758,13 @@ def test_p_l7_yes_to_both_drops_both_oqs_via_resolver():
                     "id": "question-capacity-penalty",
                     "text": "Should I add a capacity penalty (soft, weight 10.0)?",
                     "topic": "other",
-                    "proposes_goal_term_key": "capacity_penalty",
+                    "goal_key": "capacity_penalty",
                 },
                 {
                     "id": "question-punctuality-penalty",
                     "text": "Should I add a lateness penalty (soft, weight 10.0)?",
                     "topic": "other",
-                    "proposes_goal_term_key": "lateness_penalty",
+                    "goal_key": "lateness_penalty",
                 },
             ],
             goal_terms={
@@ -576,14 +788,14 @@ def test_p_l7_yes_to_both_drops_both_oqs_via_resolver():
                 "text": "Capacity penalty (soft, weight 10.0).",
                 "kind": "gathered",
                 "source": "user",
-                "proposes_goal_term_key": "capacity_penalty",
+                "goal_key": "capacity_penalty",
             },
             {
                 "id": "item-gathered-punctuality-penalty",
                 "text": "Lateness penalty (soft, weight 10.0).",
                 "kind": "gathered",
                 "source": "user",
-                "proposes_goal_term_key": "lateness_penalty",
+                "goal_key": "lateness_penalty",
             },
         ],
         "goal_terms": {
@@ -641,7 +853,7 @@ def test_p_l7_msg_1630_tuning_oq_survives():
                 "id": "oq-capacity-tuning",
                 "text": "Tighten the capacity penalty weight to 2.0?",
                 "topic": "other",
-                "proposes_goal_term_key": "capacity_penalty",
+                "goal_key": "capacity_penalty",
             },
         ],
         "replace_open_questions": True,
@@ -672,7 +884,7 @@ def test_p_l7_msg_1632_ask_without_oq_raised():
     issues = verify_brief_consistency(
         merged_brief=base_brief,
         base_brief=base_brief,
-        patch={"run_summary": "Run #2 cost 310 with 1 unit over capacity."},
+        patch={},
         visible_reply=(
             "What specific adjustment would you like to make next — for "
             "instance, should we increase the weight on workload balance "

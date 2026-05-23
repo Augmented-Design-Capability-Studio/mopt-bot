@@ -283,11 +283,15 @@ export function ProblemConfigBlocks({
         delete currentConstraintTypes[key]; // "objective" is implicit; "soft" stored below
         if (type === "soft") currentConstraintTypes[key] = "soft";
       } else if (type === "hard") {
+        // Hard weights are fixed to HARD_WEIGHT and ``handleReorder`` already
+        // skips ``hard``-typed terms when cascading suggested weights, so the
+        // lock flag has no functional effect here. Don't auto-lock — leave
+        // the existing lock state alone (user can lock manually if they want).
         newWeight = suggestedWeightForType(key, type, rankIndex);
-        if (!newLocked.includes(key)) newLocked = [...newLocked, key];
         currentConstraintTypes[key] = "hard";
       } else {
-        // custom: weight unchanged, lock it
+        // custom: weight unchanged, lock it (custom = user-managed weight,
+        // and the lock flag protects it from any future automation paths).
         if (!newLocked.includes(key)) newLocked = [...newLocked, key];
         currentConstraintTypes[key] = "custom";
       }

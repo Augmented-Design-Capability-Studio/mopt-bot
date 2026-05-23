@@ -114,7 +114,7 @@ def test_main_turn_emits_structured_driver_preference_for_alice_zone_d(
     model = get_settings().default_gemini_model
     warm_brief = {
         "goal_summary": "Schedule fleet routes within shift limits.",
-        "run_summary": "",
+        "runs": [],
         "items": [
             {"id": "item-gathered-1", "text": "Fleet size: 5 drivers.", "kind": "gathered", "source": "user"},
             {"id": "item-gathered-2", "text": "Total orders: 30.", "kind": "gathered", "source": "user"},

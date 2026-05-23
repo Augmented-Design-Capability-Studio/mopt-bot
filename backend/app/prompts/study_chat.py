@@ -85,7 +85,7 @@ guidance tied to visible settings and results. Still keep internal aliases and h
   and retire the question via `oq_actions` (`drop` once the answer is structurally represented
   elsewhere, e.g. a committed `goal_terms[K]` plus its synthesized `config-weight-K` row; or
   `mark_answered` with `answer_text` so the server folds it into a gathered row). Tag the OQ
-  with `proposes_goal_term_key` when it proposes a specific goal_term — the server then
+  with `goal_key` when it proposes a specific goal_term — the server then
   auto-resolves it once the key lands, so the lifecycle stays correct even on turns you
   forget to emit an action. Reserve `replace_open_questions=true` (with the full survivor
   list — empty array if all are dropped) for genuine cleanup turns that re-author the whole
@@ -305,8 +305,8 @@ OQ.
 - Phase order: scope/objectives → trade-offs/weights (one at a time) →
   search strategy.
 - When an OQ proposes a specific goal_term (e.g. *"Should I add a
-  capacity penalty?"*), tag the row with `proposes_goal_term_key` set
-  to that key. Once the user confirms and you commit the key plus its
+  capacity penalty?"*), tag the row with `goal_key` set to that key.
+  Once the user confirms and you commit the key plus its
   items[] row, the server auto-resolves the OQ — you don't need a
   separate `oq_actions` drop in that case.
 - For routine answered/moot OQs, use `oq_actions` (`drop` /
@@ -359,9 +359,10 @@ stated objectives motivate a change (e.g. time-window violations →
 - `kind: "assumption"`, `source: "agent"`, with an `evidence_item_ids`
   cite to a justifying items[] row.
 - When the assumption stands in for a specific goal_term, set the
-  row's `proposes_goal_term_key` to its canonical key (e.g.
-  `lateness_penalty`). The server uses it as the safety net that
-  cleans the row up once the user confirms.
+  row's `goal_key` to its canonical key (e.g. `lateness_penalty`).
+  The server uses it as both the lifecycle safety net (cleans the
+  row up once the user confirms) and the display anchor (keeps
+  weight/type text in sync with live `goal_terms[K]`).
 - Visible reply names the change as already done. The two-turn
   "Would you like me to add X?" → "sure!" → "added X" anti-pattern
   is FORBIDDEN — collapse to one turn.
@@ -932,20 +933,15 @@ Reply as **JSON only** (no markdown fences) with exactly these keys:
   domain. For greetings, stay brief and domain-neutral.
 - `"problem_brief_patch"`: object or null. Use this when you want to update the
   middle layer (goal summary, gathered facts, assumptions, open questions).
-  Use `run_summary` for one concise rolling run-context entry.
   If `replace_editable_items` is true, emit a coherent full replacement `items` array.
 - If you claim that you removed or corrected conflicting definition facts, emit a non-null
   `problem_brief_patch` that includes the corrected fact for that setting.
 - Keep `goal_summary` qualitative only: no explicit numeric weights, penalties, algorithm params,
   or run-budget numbers. Put those details in `items` (`gathered`/`assumption`) instead.
-- Keep `run_summary` as **one rolling paragraph** that evolves with each run:
-  - **Single run so far:** one sentence naming the agreed goal(s) and key outcome.
-  - **Two or more runs:** open with one sentence describing the overall progression (what
-    changed, what improved across runs), then one sentence on the most recent run's key
-    outcome and the next open question. Total: 2 sentences max.
-  - **Selective revelation:** only name goal terms the participant **explicitly agreed to**.
-    Do not mention internal penalty terms or constraints the participant did not state (e.g.
-    capacity feasibility, time-window adherence, shift limits) unless they brought them up.
+- **Run history is server-managed.** ``brief.runs`` carries one structured entry per
+  completed run (cost, violations summary, delta from previous). You receive it in
+  context for cross-run reasoning, but you do not write to it — anything you emit
+  in ``runs`` is overwritten by the server on the next run-acknowledgement turn.
 - `"replace_editable_items"`: boolean. Set true only when performing holistic cleanup or
   reorganization of gathered/assumption rows.
 - `"replace_open_questions"`: boolean. Set **true** when `problem_brief_patch.open_questions`
@@ -1168,7 +1164,8 @@ Rules:
 - Keep `goal_summary` qualitative and short. Never encode explicit weights, penalties,
   algorithm parameters, or run-budget numbers in `goal_summary`; store those details in
   `items` (`gathered` or `assumption`) only.
-- Keep `run_summary` as one concise rolling entry for run context; avoid per-run chronology rows.
+- Run history is server-managed via the structured ``brief.runs`` array — do not
+  emit per-run chronology rows in ``items``.
 - Prefer **one gathered row per objective or constraint-handling term** (each weight or
   penalty line), aligned with how goal terms are configured. **Never** pack several terms into
   one comma-separated `Constraint handling:` or objective list line when separate rows would work.

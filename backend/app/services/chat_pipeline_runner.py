@@ -452,11 +452,13 @@ def _run_chat_pipeline_thread(
 
         # Concept-question fast path: empty patch + is_change_intent=false
         # → mark verifying/applying/derive/verify_config as skipped and settle.
+        # Read the structured ``change_clause`` field instead of keyword-matching
+        # the visible reply — the LLM's own tag is canonical.
         patch_empty = pipeline_verification._patch_is_empty(turn.problem_brief_patch)
         if (
             not turn.is_change_intent
             and patch_empty
-            and not _reply_commits(turn.assistant_message)
+            and not (turn.change_clause or "").strip()
         ):
             for sname in ("verifying_brief", "applying", "deriving_config", "verifying_config"):
                 pipeline_status.update_stage(
@@ -506,6 +508,7 @@ def _run_chat_pipeline_thread(
             researcher_steers=researcher_steers,
             recent_runs_summary=recent_runs_summary,
             is_run_acknowledgement=is_run_acknowledgement,
+            is_config_save=is_config_save,
             user_text=user_text,
             test_problem_id=test_problem_id,
             suppress_runack_invariant=suppress_runack_invariant,
@@ -833,10 +836,6 @@ def _settle_session_state(session_id: str, revision: int) -> None:
         db.commit()
 
 
-def _reply_commits(text: str | None) -> bool:
-    return pipeline_verification._reply_claims_change(text)
-
-
 def _run_verify_brief_stage(
     *,
     message_id: int,
@@ -887,13 +886,21 @@ def _run_verify_brief_stage(
             is_run_acknowledgement=is_run_acknowledgement,
             suppress_runack_invariant=suppress_runack_invariant,
             question_clause=t.question_clause,
+            change_clause=t.change_clause,
         )
 
     issues = _verify(turn)
     if not issues:
         _persist_turn_for_resume(message_id, turn)
+        # Pass issues=[] (not None) so any leftover failure issues from a prior
+        # attempt are cleared — otherwise the stage record reads
+        # ``state=success retried=True issues=[…non-empty…]``, which looks
+        # like a verifier bypass when it's actually clean.
         pipeline_status.update_stage(
-            message_id=message_id, stage_name="verifying_brief", state="success"
+            message_id=message_id,
+            stage_name="verifying_brief",
+            state="success",
+            issues=[],
         )
         return
 
@@ -961,8 +968,14 @@ def _run_verify_brief_stage(
         latest_issues = _verify(retry)
         if not latest_issues:
             _persist_turn_for_resume(message_id, latest_turn)
+            # Pass issues=[] to clear the failure issues recorded by the prior
+            # attempt's failed-state transition; otherwise the success row
+            # carries stale issues (display-only artifact).
             pipeline_status.update_stage(
-                message_id=message_id, stage_name="verifying_brief", state="success"
+                message_id=message_id,
+                stage_name="verifying_brief",
+                state="success",
+                issues=[],
             )
             # Replace the bound `turn` reference for caller via persisted snapshot.
             # The caller re-reads from _read_persisted_turn in subsequent stages.
@@ -981,6 +994,32 @@ def _run_verify_brief_stage(
     raise _PipelinePaused("verifying_brief")
 
 
+def _strip_owned_fields_from_config_save_patch(
+    patch_payload: dict[str, Any], is_config_save: bool
+) -> dict[str, Any]:
+    """Drop fields the panel owns on a ``config_edit_ack`` turn.
+
+    ``goal_terms`` is the only such field today. On a config-save turn the
+    participant just saved the panel, ``sync_problem_brief_from_panel`` has
+    already mirrored ``panel.goal_terms`` into the brief, and the LLM has
+    no business writing ``goal_terms`` — anything it emits there can only
+    either match the panel (no-op) or diverge (causes brief↔panel drift
+    that S5 then surfaces as a noisy "(retried)" + drift-error pipeline
+    status the participant sees).
+
+    Other patch fields (``items``, ``goal_summary``, ``open_questions``,
+    ``assumption_actions``) are still honored — the LLM may legitimately
+    want to record the user's edit as a gathered row or refine the goal
+    summary.
+
+    No-op when ``is_config_save`` is false; otherwise mutates and returns
+    the dict.
+    """
+    if is_config_save:
+        patch_payload.pop("goal_terms", None)
+    return patch_payload
+
+
 def _apply_stage(
     *,
     message_id: int,
@@ -996,6 +1035,7 @@ def _apply_stage(
     researcher_steers: list[str] | None,
     recent_runs_summary: list[dict[str, Any]] | None,
     is_run_acknowledgement: bool,
+    is_config_save: bool,
     user_text: str,
     test_problem_id: str | None,
     suppress_runack_invariant: bool = False,
@@ -1016,6 +1056,7 @@ def _apply_stage(
                 patch_payload["replace_editable_items"] = True
             if turn.replace_open_questions:
                 patch_payload["replace_open_questions"] = True
+            _strip_owned_fields_from_config_save_patch(patch_payload, is_config_save)
             effective_brief, _meta = derivation.apply_brief_patch_with_cleanup(
                 base_problem_brief=base_problem_brief,
                 patch_payload=patch_payload,
@@ -1423,6 +1464,9 @@ def _retry_brief_from_panel(
                 patch_payload["replace_editable_items"] = True
             if retry_turn.replace_open_questions:
                 patch_payload["replace_open_questions"] = True
+            _strip_owned_fields_from_config_save_patch(
+                patch_payload, bool(retry_context.get("is_config_save"))
+            )
             applied, _meta = derivation.apply_brief_patch_with_cleanup(
                 base_problem_brief=base_problem_brief,
                 patch_payload=patch_payload,
