@@ -135,7 +135,6 @@ function DefinitionSection({
                 +
               </button>
             ) : null}
-            <span className="definition-count">{items.length}</span>
           </div>
         </div>
         <div className="definition-list">
@@ -605,7 +604,6 @@ export function DefinitionPanel({
                   +
                 </button>
               ) : null}
-              <span className="definition-count">{openQuestions.length}</span>
             </div>
           </div>
           <div className="definition-list">

@@ -330,6 +330,167 @@ def _apply_oq_actions(
     return {**brief, "open_questions": questions}
 
 
+def _validated_algorithm_name(text: Any) -> str | None:
+    """Return a canonical algorithm name if ``text`` names one, else None.
+
+    Closed-vocabulary check only — never an open NL match. Accepts both a
+    bare canonical token ("GA") and a phrase the user might type
+    ("genetic search (GA)") by deferring to the same alias scanner the
+    brief→panel seeds use. See [[feedback_no_regex_for_nl]]: this is an
+    enum membership test against the fixed algorithm catalog, not keyword
+    matching on free text.
+    """
+    from app.algorithm_catalog import normalize_algorithm_name
+    from app.services.goal_term_anchoring import extract_algorithm_from_brief
+
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    direct = normalize_algorithm_name(raw)
+    if direct:
+        return direct
+    return extract_algorithm_from_brief([{"text": raw}])
+
+
+def gate_unauthorized_search_strategy_commit(
+    *,
+    effective_brief: dict[str, Any],
+    base_brief: dict[str, Any],
+    oq_actions: list[dict[str, Any]],
+    workflow_mode: str | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Waterfall-only structural gate: block algorithm commits the user
+    never authorized.
+
+    The search-strategy choice is one of the four canonical waterfall axes
+    (see [[project_workflow_axes]]): in waterfall the algorithm lives as an
+    open question until the **user** answers it. The main-turn LLM is not
+    permitted to silently pick one. The prompt says so, but a prompt rule
+    can't enforce ownership — observed in P_0529, where the upload turn
+    forged ``goal_terms.search_strategy.properties.algorithm = "GA"``, added
+    a ``source: user`` row, and dropped the open question, all without the
+    participant ever choosing. See [[feedback_no_prompt_bandages]].
+
+    Authorization (any one suffices):
+
+    - the **base** (pre-turn) brief already carries a search-strategy signal
+      (carrier or a gathered algorithm row). Because this gate runs every
+      turn, a forged carrier never survives into base — so a base mention
+      can only have come from a legitimate prior answer (the participant's
+      OQ-textarea answer is promoted to a gathered row, which counts). This
+      lets re-affirmations and tuning turns flow untouched; and
+    - the LLM marks the OQ answered THIS turn via ``oq_actions`` with an
+      ``answer_text`` that names a real algorithm — the *loose* chat-answer
+      path the user explicitly wanted (answering OQs through chat is a
+      feature). A forged-but-valid name can still slip through; that
+      residual risk is accepted as the cost of chat answers.
+
+    A bare ``drop`` is never authorization — dropping the question without
+    an answer is exactly the forgery we're guarding against.
+
+    When unauthorized, strip the algorithm carrier + any algorithm-bearing
+    items the patch introduced, and refuse the ``drop`` / ``mark_answered``
+    OQ actions targeting the search-strategy question. The downstream
+    session monitor then re-adds the canonical OQ (the carrier is gone, so
+    ``brief_mentions_search_strategy`` reads False again). Returns the
+    possibly-stripped brief plus the OQ actions the caller should still
+    apply.
+    """
+    if str(workflow_mode or "").strip().lower() != "waterfall":
+        return effective_brief, oq_actions
+    if not isinstance(effective_brief, dict):
+        return effective_brief, oq_actions
+
+    # Resolve which OQ ids are the search-strategy question. The canonical
+    # monitor id is the usual case; topic is the robust signal in case a
+    # legacy/renamed row carries a different id.
+    def _search_strategy_oq_ids(brief: dict[str, Any]) -> set[str]:
+        ids: set[str] = set()
+        for q in brief.get("open_questions") or []:
+            if not isinstance(q, dict):
+                continue
+            qid = str(q.get("id") or "").strip()
+            if not qid:
+                continue
+            if qid == _MONITOR_OQ_ALGORITHM_ID or str(q.get("topic") or "").strip().lower() == "search_strategy":
+                ids.add(qid)
+        return ids
+
+    ss_ids = _search_strategy_oq_ids(base_brief) | _search_strategy_oq_ids(effective_brief)
+
+    # Already-authorized: the base brief carries a legitimate search-strategy
+    # signal. Since this gate runs on every turn, a forged carrier can never
+    # persist into base — so a base mention means the participant answered on
+    # a prior turn (their OQ-textarea answer was promoted to a gathered row).
+    from app.services.goal_term_anchoring import brief_mentions_search_strategy
+
+    base_authorized = brief_mentions_search_strategy(
+        base_brief, workflow_mode="waterfall"
+    )
+
+    loose_ok = False
+    for action in oq_actions or []:
+        if not isinstance(action, dict):
+            continue
+        if str(action.get("id") or "").strip() not in ss_ids:
+            continue
+        if str(action.get("action") or "").strip().lower() != "mark_answered":
+            continue
+        if _validated_algorithm_name(action.get("answer_text")):
+            loose_ok = True
+            break
+
+    if base_authorized or loose_ok:
+        return effective_brief, oq_actions
+
+    # Unauthorized — strip the carrier and any algorithm-bearing item the
+    # patch just introduced (preserve pre-existing rows by id, defensively).
+    from app.services.goal_term_anchoring import extract_algorithm_from_brief
+
+    gated = deepcopy(effective_brief)
+    goal_terms = gated.get("goal_terms")
+    if isinstance(goal_terms, dict) and "search_strategy" in goal_terms:
+        goal_terms = {k: v for k, v in goal_terms.items() if k != "search_strategy"}
+        gated["goal_terms"] = goal_terms
+
+    base_item_ids = {
+        str(i.get("id") or "")
+        for i in (base_brief.get("items") or [])
+        if isinstance(i, dict)
+    }
+    kept_items: list[Any] = []
+    for item in gated.get("items") or []:
+        if not isinstance(item, dict):
+            kept_items.append(item)
+            continue
+        anchor = item.get("goal_key")
+        is_ss_anchor = isinstance(anchor, str) and anchor.strip() == "search_strategy"
+        is_new_algo_row = (
+            str(item.get("id") or "") not in base_item_ids
+            and extract_algorithm_from_brief([item]) is not None
+        )
+        if is_ss_anchor or is_new_algo_row:
+            continue
+        kept_items.append(item)
+    gated["items"] = kept_items
+
+    filtered_actions = [
+        a
+        for a in (oq_actions or [])
+        if not (
+            isinstance(a, dict)
+            and str(a.get("id") or "").strip() in ss_ids
+            and str(a.get("action") or "").strip().lower() in {"drop", "mark_answered"}
+        )
+    ]
+    log.warning(
+        "Waterfall search-strategy gate: stripped unauthorized algorithm "
+        "commit (carrier + items) and refused %d OQ action(s)",
+        len(oq_actions or []) - len(filtered_actions),
+    )
+    return gated, filtered_actions
+
+
 def _has_gathered_evidence_for_key(items: list[Any], key: str) -> bool:
     """True iff some ``kind: "gathered"`` row in ``items`` represents ``key``.
 

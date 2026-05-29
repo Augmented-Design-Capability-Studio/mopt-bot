@@ -20,8 +20,10 @@ from app.problem_brief import (
 )
 from app.routers.sessions.derivation import (
     _apply_oq_actions,
+    _enforce_session_monitors,
     _has_gathered_evidence_for_key,
     _resolve_anchored_provisional_rows,
+    gate_unauthorized_search_strategy_commit,
 )
 from app.services.pipeline_verification import verify_brief_consistency
 
@@ -898,3 +900,179 @@ def test_p_l7_msg_1632_ask_without_oq_raised():
         ),
     )
     assert any(i.category == "ask_without_oq" for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# Waterfall search-strategy authorization gate (P_0529 regression)
+# ---------------------------------------------------------------------------
+
+
+def _ss_carrier_brief(**kwargs):
+    """Merged brief shape after an upload turn that FORGED a GA carrier:
+    travel_time committed, search_strategy carrier populated, and the
+    canonical algorithm OQ already gone (the LLM dropped it)."""
+    base = _minimal_brief(
+        items=[
+            {"id": "upload-marker", "text": "Uploaded ORDERS.csv", "kind": "gathered", "source": "upload"},
+            {
+                "id": "config-search-strategy-ga",
+                "text": "Search strategy: genetic search (GA).",
+                "kind": "gathered",
+                "source": "user",
+                "goal_key": "search_strategy",
+            },
+        ],
+        goal_terms={
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+            "search_strategy": {
+                "weight": 1.0,
+                "type": "custom",
+                "rank": 2,
+                "properties": {"algorithm": "GA"},
+            },
+        },
+        topic_engaged=True,
+    )
+    base.update(kwargs)
+    return normalize_problem_brief(base)
+
+
+def test_waterfall_gate_strips_forged_algorithm_and_refuses_drop():
+    """P_0529 replay: upload turn forged a GA carrier and dropped the
+    still-open search-strategy OQ. Waterfall gate must strip the carrier +
+    the source:user algorithm row and veto the drop action; the monitor
+    then re-adds the canonical OQ."""
+    base_brief = normalize_problem_brief(
+        _minimal_brief(
+            items=[{"id": "upload-marker", "text": "Uploaded ORDERS.csv", "kind": "gathered", "source": "upload"}],
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=[
+                {
+                    "id": "oq-monitor-algorithm",
+                    "text": "Which search strategy should we use?",
+                    "topic": "search_strategy",
+                    "status": "open",
+                }
+            ],
+            topic_engaged=True,
+        )
+    )
+    effective = _ss_carrier_brief()
+    oq_actions = [{"id": "oq-monitor-algorithm", "action": "drop", "answer_text": None}]
+
+    gated, gated_actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=base_brief,
+        oq_actions=oq_actions,
+        workflow_mode="waterfall",
+    )
+    # Carrier + forged row gone; real objective survives.
+    assert "search_strategy" not in gated["goal_terms"]
+    assert "travel_time" in gated["goal_terms"]
+    assert not any(i.get("goal_key") == "search_strategy" for i in gated["items"])
+    # Drop action vetoed.
+    assert gated_actions == []
+    # Monitor re-adds the canonical OQ now the carrier reads absent.
+    restored = _enforce_session_monitors(gated, "waterfall", test_problem_id="vrptw")
+    assert any(q["id"] == "oq-monitor-algorithm" for q in restored["open_questions"])
+
+
+def test_waterfall_gate_allows_loose_chat_answer():
+    """Loose path: when the participant answers in chat and the LLM marks
+    the search-strategy OQ answered with a real algorithm name, the carrier
+    is authorized and survives."""
+    base_brief = normalize_problem_brief(
+        _minimal_brief(
+            items=[{"id": "upload-marker", "text": "Uploaded ORDERS.csv", "kind": "gathered", "source": "upload"}],
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=[
+                {
+                    "id": "oq-monitor-algorithm",
+                    "text": "Which search strategy should we use?",
+                    "topic": "search_strategy",
+                    "status": "open",
+                }
+            ],
+            topic_engaged=True,
+        )
+    )
+    effective = _ss_carrier_brief()
+    oq_actions = [
+        {"id": "oq-monitor-algorithm", "action": "mark_answered", "answer_text": "genetic search (GA)"}
+    ]
+    gated, gated_actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=base_brief,
+        oq_actions=oq_actions,
+        workflow_mode="waterfall",
+    )
+    assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+    assert gated_actions == oq_actions  # untouched
+
+
+def test_waterfall_gate_honors_prior_answered_oq():
+    """If the participant already answered the OQ on a prior turn (textarea
+    save → status answered), later carrier writes are authorized."""
+    base_brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=[
+                {
+                    "id": "oq-monitor-algorithm",
+                    "text": "Which search strategy should we use?",
+                    "topic": "search_strategy",
+                    "status": "answered",
+                    "answer_text": "GA",
+                }
+            ],
+            topic_engaged=True,
+        )
+    )
+    effective = _ss_carrier_brief()
+    gated, gated_actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=base_brief,
+        oq_actions=[],
+        workflow_mode="waterfall",
+    )
+    assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+
+
+def test_waterfall_gate_noop_in_agile():
+    """Agile commits the algorithm as a fait-accompli assumption — the gate
+    must never fire outside waterfall."""
+    effective = _ss_carrier_brief()
+    gated, gated_actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=_minimal_brief(),
+        oq_actions=[{"id": "oq-monitor-algorithm", "action": "drop"}],
+        workflow_mode="agile",
+    )
+    assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+    assert gated_actions == [{"id": "oq-monitor-algorithm", "action": "drop"}]
+
+
+def test_foundational_ask_warms_brief_same_turn():
+    """Fix B: the agent's first 'what's your primary goal?' reply carries a
+    foundational-topic OQ in its patch. We strip the LLM's copy but flip
+    topic_engaged so the canonical goal monitor fires the SAME turn."""
+    base_brief = normalize_problem_brief(
+        _minimal_brief(goal_summary="", goal_terms={}, open_questions=[], topic_engaged=False)
+    )
+    merged = merge_problem_brief_patch(
+        base_brief,
+        {
+            "open_questions": [
+                {
+                    "id": "question-primary-goal",
+                    "text": "What is your primary goal for the fleet?",
+                    "topic": "primary_goal",
+                    "status": "open",
+                }
+            ],
+        },
+    )
+    assert merged["topic_engaged"] is True
+    # Warm + empty goal_terms → monitor surfaces the canonical goal OQ.
+    after = _enforce_session_monitors(merged, "waterfall", test_problem_id="vrptw")
+    assert any(q["id"] == "oq-monitor-goal" for q in after["open_questions"])

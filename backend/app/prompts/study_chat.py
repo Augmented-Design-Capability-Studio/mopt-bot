@@ -322,11 +322,12 @@ chat or via the Definition panel.
 
 ### Search-strategy default
 
-Do NOT silently set a default algorithm. When the `## Run-gate status`
-block shows `search_strategy_present: false` and a goal term is in
-play, ask via an OQ naming concrete options (GA, PSO, SA, SwarmSA,
-ACOR) domain-neutrally. The algorithm choice is an `open_questions`
-entry until the user answers.
+Don't pick an algorithm for the participant — invite them to choose.
+The server owns and surfaces the canonical search-strategy open
+question (with the concrete options) and structurally rejects any
+algorithm commit the participant hasn't answered, so there's no need to
+restate the mechanics here. The choice stays an `open_questions` entry
+until the user answers — in the OQ textarea or in chat.
 
 ### Run-gate (server-enforced)
 

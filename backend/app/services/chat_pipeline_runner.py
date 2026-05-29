@@ -1074,15 +1074,30 @@ def _apply_stage(
             effective_brief = dict(base_problem_brief)
         from app.problem_brief import coerce_problem_brief_for_workflow
 
+        # Waterfall structural gate: refuse algorithm commits the participant
+        # never authorized (forged carrier + dropped OQ). Runs before the OQ
+        # actions are applied so the gate can also veto the LLM's drop/
+        # mark_answered of the search-strategy question. The downstream
+        # monitor re-adds the canonical OQ once the carrier is stripped.
+        oq_actions_payload = [a.model_dump() for a in (turn.oq_actions or [])]
+        effective_brief, oq_actions_payload = (
+            derivation.gate_unauthorized_search_strategy_commit(
+                effective_brief=effective_brief,
+                base_brief=base_problem_brief,
+                oq_actions=oq_actions_payload,
+                workflow_mode=workflow_mode,
+            )
+        )
+
         effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
         # Apply per-row OQ actions (all modes) before assumption actions so
         # the OQ list reflects the LLM's lifecycle decisions before the
         # workflow coercion re-evaluates assumption→OQ conversion (waterfall)
         # or the agile assumption handling kicks in.
-        if turn.oq_actions:
+        if oq_actions_payload:
             effective_brief = derivation._apply_oq_actions(
                 effective_brief,
-                [a.model_dump() for a in turn.oq_actions],
+                oq_actions_payload,
             )
             effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
         # Apply assumption_actions if any.

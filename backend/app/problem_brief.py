@@ -1604,6 +1604,15 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
                 len(dropped_foundational),
                 dropped_foundational,
             )
+            # Asking a foundational question (primary goal / upload / search
+            # strategy) IS topic engagement — the agent has clearly arrived at
+            # the problem. Flip warmth here so the matching canonical monitor
+            # OQ surfaces the SAME turn the agent asks it, rather than a turn
+            # later once ``topic_engaged_next`` finally lands. Without this the
+            # agent's first "what's your primary goal?" reply left the
+            # Definition panel with no goal OQ (the monitor stayed dormant on a
+            # still-cold brief, then the user answered before warmth flipped).
+            merged["topic_engaged"] = True
         incoming_questions = [
             q for q in incoming_questions
             if str(q.get("topic") or "") not in FOUNDATIONAL_OQ_TOPICS
