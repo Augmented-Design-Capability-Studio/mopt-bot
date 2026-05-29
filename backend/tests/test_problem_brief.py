@@ -695,12 +695,15 @@ def test_consolidate_runs_noop_when_not_run_ack():
 def test_priority_line_renders_from_ranks():
     """``priority_line`` is server-managed — recomputed from
     ``goal_terms[K].rank`` on every normalize pass and ignored if the LLM
-    tries to emit a value."""
+    tries to emit a value. Carrier-only keys (``search_strategy``) are
+    excluded even when they carry a rank, since they are not objectives."""
     raw = _minimal_brief_payload(
         goal_terms={
             "lateness_penalty": {"weight": 5.0, "type": "soft", "rank": 2},
             "travel_time": {"weight": 10.0, "type": "objective", "rank": 1},
             "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 3},
+            # Carrier-only — algorithm holder, not a goal. Must not appear.
+            "search_strategy": {"weight": 1.0, "type": "custom", "rank": 4},
         },
         # LLM tries to emit a bogus priority line — must be overwritten.
         priority_line="Priority order: 1) gossip, 2) magic, 3) vibes.",

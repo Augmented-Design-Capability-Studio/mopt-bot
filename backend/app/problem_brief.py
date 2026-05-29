@@ -364,6 +364,8 @@ def _render_goal_term_priority_line(goal_terms: dict[str, Any] | None) -> str:
     for key, entry in goal_terms.items():
         if not isinstance(key, str) or not isinstance(entry, dict):
             continue
+        if key in CARRIER_ONLY_GOAL_TERM_KEYS:
+            continue
         rank = entry.get("rank")
         if isinstance(rank, bool) or not isinstance(rank, int) or rank <= 0:
             continue
