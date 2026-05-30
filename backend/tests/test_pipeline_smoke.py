@@ -497,6 +497,48 @@ def test_reconcile_companion_oqs_drops_oq_when_goal_term_removed():
     assert auto_oqs == []
 
 
+def test_reconcile_defers_new_underspecified_term_but_keeps_preexisting():
+    """A companion-having goal term the agent introduces THIS turn without its
+    specifics is deferred — dropped, with an OQ asking for the specifics (so the
+    participant never sees a hollow term). A PRE-EXISTING term whose companion
+    is empty is kept (non-destructive placeholder) and only gets the OQ. The OQ
+    text is participant-friendly (no raw schema keys)."""
+    from app.problem_brief import reconcile_companion_oqs
+
+    def _brief():
+        return {
+            "goal_summary": "",
+            "items": [],
+            "open_questions": [],
+            "goal_terms": {
+                "worker_preference": {
+                    "weight": 1.0, "type": "soft", "rank": 1,
+                    "properties": {"driver_preferences": []},
+                },
+            },
+            "solver_scope": "general_metaheuristic_translation",
+            "backend_template": "routing_time_windows",
+        }
+
+    # New this turn (key absent from base) → dropped + OQ.
+    out_new = reconcile_companion_oqs(_brief(), "vrptw", base_brief={"goal_terms": {}})
+    assert "worker_preference" not in out_new["goal_terms"], "hollow new term must be deferred"
+    auto = [q for q in out_new["open_questions"] if str(q.get("id") or "").startswith("auto-oq-companion-")]
+    assert len(auto) == 1 and auto[0]["goal_key"] == "worker_preference"
+    assert "`" not in auto[0]["text"] and "driver_preferences" not in auto[0]["text"], (
+        "participant-facing OQ must not leak raw schema keys"
+    )
+
+    # Pre-existing (key in base) → kept + OQ (non-destructive).
+    out_old = reconcile_companion_oqs(
+        _brief(), "vrptw",
+        base_brief={"goal_terms": {"worker_preference": {"weight": 1.0, "type": "soft"}}},
+    )
+    assert "worker_preference" in out_old["goal_terms"], "pre-existing term must be kept"
+    auto2 = [q for q in out_old["open_questions"] if str(q.get("id") or "").startswith("auto-oq-companion-")]
+    assert len(auto2) == 1
+
+
 def test_unanchored_goal_term_silenced_by_pending_oq():
     """Real user-reported case: LLM commits ``worker_preference`` with empty
     rules AND emits a clarifying question. Three checks used to fire in

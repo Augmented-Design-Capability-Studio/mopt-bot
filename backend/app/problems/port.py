@@ -120,6 +120,19 @@ class StudyProblemPort(Protocol):
             return len(value) > 0
         return bool(value)
 
+    def companion_open_question_text(self, goal_term_key: str) -> str | None:
+        """Participant-facing question asking for a companion-having goal
+        term's missing specifics.
+
+        When the agent commits a companion-having goal term but its companion
+        carrier isn't populated yet (per ``companion_present``), the server
+        defers the term — it is NOT shown — and raises this open question so
+        the participant supplies the specifics. Returns ``None`` when the port
+        has no tailored phrasing (the server then skips the OQ and simply
+        drops the under-specified term). Default: ``None``.
+        """
+        return None
+
     def study_prompt_appendix(self) -> str | None:
         """Extra structured-prompt text for the study chat model (problem-specific)."""
 

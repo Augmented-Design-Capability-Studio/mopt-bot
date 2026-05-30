@@ -100,6 +100,18 @@ class VrptwStudyPort:
             return len(value) > 0
         return bool(value)
 
+    def companion_open_question_text(self, goal_term_key: str) -> str | None:
+        # Asked when the agent recognises one of these terms but doesn't yet
+        # have the specifics. Plain, participant-facing wording (no raw keys).
+        if goal_term_key == meta_worker_preference_key():
+            return (
+                "Which drivers have preferences, and what should each one avoid "
+                "or stick to (for example, a specific zone)?"
+            )
+        if goal_term_key == "shift_limit":
+            return "What is the longest shift a driver should work, in hours?"
+        return None
+
     def visualization_capabilities(self) -> list[str]:
         return [
             "Convergence trend across iterations",

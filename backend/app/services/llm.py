@@ -31,6 +31,7 @@ from app.prompts.study_chat import (
     STUDY_CHAT_SANDBOX_RULES,
     STUDY_CHAT_SEARCH_STRATEGY_ANCHORING,
     STUDY_CHAT_SYSTEM_PROMPT,
+    STUDY_CHAT_SYSTEM_PROMPT_WARM,
     STUDY_CHAT_VISIBLE_REPLY_TASK,
     STUDY_CHAT_VISUALIZATION_GUIDANCE,
     STUDY_CHAT_WORKFLOW_AGILE,
@@ -506,6 +507,9 @@ def _system_prompt_openers(
     parts = [STUDY_CHAT_SYSTEM_PROMPT]
     if is_chat_cold_start(current_problem_brief):
         return parts
+    # Warm-only guidance (run results, run-button, algorithm/weight Q&A) +
+    # benchmark vocabulary. Cold turns are pure goal-elicitation and shed both.
+    parts.append(STUDY_CHAT_SYSTEM_PROMPT_WARM)
     apx = _study_benchmark_appendix(test_problem_id)
     if apx:
         parts.append(apx)
@@ -528,7 +532,6 @@ def _build_visible_chat_system_instruction(
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
-    commit_audit_note: str | None = None,
 ) -> str:
     cold = is_chat_cold_start(current_problem_brief)
     brief_for_prompt = surface_problem_brief_for_chat_prompt(
@@ -672,27 +675,6 @@ def _build_visible_chat_system_instruction(
                 "- Transition naturally from the recent conversation instead of sounding abrupt.\n"
                 f"{steer_blob}"
             )
-    # Pre-release gate audit (retry-only): when an earlier draft of this turn
-    # committed to a run-CTA but the deterministic post-commit gate check
-    # showed the Run button would still be DISABLED, the router rejects the
-    # draft and re-prompts the LLM with this audit block. Two valid
-    # resolutions: (1) fix the structural gap so the gate actually opens, or
-    # (2) soften the visible reply so it stops inviting the participant to
-    # click Run.
-    if commit_audit_note and commit_audit_note.strip():
-        parts.append(
-            "## Pre-release gate audit (revise this draft)\n\n"
-            + commit_audit_note.strip()
-            + "\n\n"
-            "Pick exactly one resolution:\n"
-            "- **Fix the gap**: emit the missing structured carrier in `problem_brief_patch` "
-            "(the items[] row that anchors the commitment, plus the matching "
-            "`goal_terms` / algorithm assumption as the gap requires).\n"
-            "- **Soften the visible reply**: do not invite the participant to click "
-            "**Run optimization**; instead, state what's still missing and ask one focused "
-            "question (or commit the missing piece on this turn).\n"
-            "Do NOT keep the run-invitation phrasing while leaving the gap open."
-        )
     return "\n\n".join(parts)
 
 
@@ -1088,11 +1070,9 @@ _MAIN_TURN_OUTPUT_RULES = (
 )
 
 
-def generate_main_turn(
+def build_main_turn_system_instruction(
+    *,
     user_text: str,
-    history_lines: list[tuple[str, str]],
-    api_key: str,
-    model_name: str,
     current_problem_brief: dict[str, Any] | None,
     workflow_mode: str = "waterfall",
     current_panel: dict[str, Any] | None = None,
@@ -1106,26 +1086,23 @@ def generate_main_turn(
     is_answered_open_question: bool = False,
     is_tutorial_active: bool = False,
     test_problem_id: str | None = None,
+    api_key: str | None = None,
+    model_name: str | None = None,
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
     verification_issues: list[dict[str, Any]] | None = None,
-):
-    """Main-turn LLM. ONE call returning everything needed for
-    the turn: visible reply, intents, brief patch, assumption actions.
+) -> str:
+    """Assemble the full main-turn system instruction string.
 
-    Returns ``ChatTurnResponse`` or ``None`` on failure (callers should
-    treat ``None`` as a transient transport/parse error and surface the
-    paused state through the pipeline status, not silently no-op).
-
-    ``verification_issues`` is non-empty on a retry — the issues are
-    appended as an audit block so the model can fix specific problems.
+    Pure (no network) except for the optional LLM sub-calls inside
+    ``_build_visible_chat_system_instruction`` (temperature classify, doc
+    retrieval), which are skipped when ``api_key`` is falsy. Extracted from
+    ``generate_main_turn`` so prompt assembly can be snapshot-tested without
+    a live API call — the safety net for the prompt-reduction work (see
+    ``docs/.implementation/USER_FLOW_AUDIT.md``). Behaviour is identical to
+    the inline assembly it replaced.
     """
-    from app.schemas import ChatTurnResponse
-
-    if not api_key or not model_name:
-        return None
-
     base_system = _build_visible_chat_system_instruction(
         user_text=user_text,
         current_problem_brief=current_problem_brief,
@@ -1213,7 +1190,69 @@ def generate_main_turn(
             + "\n".join(issue_lines)
         )
 
-    system_instruction = "\n\n".join(parts)
+    return "\n\n".join(parts)
+
+
+def generate_main_turn(
+    user_text: str,
+    history_lines: list[tuple[str, str]],
+    api_key: str,
+    model_name: str,
+    current_problem_brief: dict[str, Any] | None,
+    workflow_mode: str = "waterfall",
+    current_panel: dict[str, Any] | None = None,
+    recent_runs_summary: list[dict[str, Any]] | None = None,
+    researcher_steers: list[str] | None = None,
+    cleanup_mode: bool = False,
+    is_run_acknowledgement: bool = False,
+    is_brief_edit_ack: bool = False,
+    is_config_save: bool = False,
+    is_upload_context: bool = False,
+    is_answered_open_question: bool = False,
+    is_tutorial_active: bool = False,
+    test_problem_id: str | None = None,
+    run_button_enabled: bool | None = None,
+    run_disabled_reason: str | None = None,
+    gate_status: dict[str, Any] | None = None,
+    verification_issues: list[dict[str, Any]] | None = None,
+):
+    """Main-turn LLM. ONE call returning everything needed for
+    the turn: visible reply, intents, brief patch, assumption actions.
+
+    Returns ``ChatTurnResponse`` or ``None`` on failure (callers should
+    treat ``None`` as a transient transport/parse error and surface the
+    paused state through the pipeline status, not silently no-op).
+
+    ``verification_issues`` is non-empty on a retry — the issues are
+    appended as an audit block so the model can fix specific problems.
+    """
+    from app.schemas import ChatTurnResponse
+
+    if not api_key or not model_name:
+        return None
+
+    system_instruction = build_main_turn_system_instruction(
+        user_text=user_text,
+        current_problem_brief=current_problem_brief,
+        workflow_mode=workflow_mode,
+        current_panel=current_panel,
+        recent_runs_summary=recent_runs_summary,
+        researcher_steers=researcher_steers,
+        cleanup_mode=cleanup_mode,
+        is_run_acknowledgement=is_run_acknowledgement,
+        is_brief_edit_ack=is_brief_edit_ack,
+        is_config_save=is_config_save,
+        is_upload_context=is_upload_context,
+        is_answered_open_question=is_answered_open_question,
+        is_tutorial_active=is_tutorial_active,
+        test_problem_id=test_problem_id,
+        api_key=api_key,
+        model_name=model_name,
+        run_button_enabled=run_button_enabled,
+        run_disabled_reason=run_disabled_reason,
+        gate_status=gate_status,
+        verification_issues=verification_issues,
+    )
     schema = _build_main_turn_schema(test_problem_id)
 
     client = genai.Client(api_key=api_key)

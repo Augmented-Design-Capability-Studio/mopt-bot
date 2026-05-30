@@ -862,7 +862,7 @@ def _run_verify_brief_stage(
     """S2 — verify; on first failure retry S1 once with feedback; on
     second failure pause. Updates the brief on the persisted turn
     snapshot so Stage 3 (apply) sees the corrected patch."""
-    from app.problem_brief import merge_problem_brief_patch
+    from app.problem_brief import merge_problem_brief_patch, reconcile_companion_oqs
     from app.services import llm
 
     pipeline_status.update_stage(
@@ -870,9 +870,15 @@ def _run_verify_brief_stage(
     )
 
     def _merged(t: ChatTurnResponse) -> dict[str, Any]:
-        if t.problem_brief_patch:
-            return merge_problem_brief_patch(base_problem_brief, t.problem_brief_patch)
-        return dict(base_problem_brief)
+        if not t.problem_brief_patch:
+            return dict(base_problem_brief)
+        merged = merge_problem_brief_patch(base_problem_brief, t.problem_brief_patch)
+        # Park the companion OQ the same way apply (S3) will, so the verifier
+        # sees the pending-OQ exit and doesn't retry the LLM over a missing
+        # carrier the server is about to handle. No base_brief here: S2 keeps
+        # the term visible (so the grounding check stays consistent with the
+        # reply); S3's reconcile, with base_brief, does the actual defer/drop.
+        return reconcile_companion_oqs(merged, test_problem_id)
 
     def _verify(t: ChatTurnResponse) -> list[Any]:
         return pipeline_verification.verify_brief_consistency(

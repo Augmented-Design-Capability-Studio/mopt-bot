@@ -85,8 +85,11 @@ def test_system_prompt_openers_skip_appendix_when_cold_knapsack():
 def test_system_prompt_openers_includes_appendix_when_warm_knapsack():
     b = {**default_problem_brief("knapsack"), "topic_engaged": True}
     parts = llm._system_prompt_openers("knapsack", b)
-    assert len(parts) == 2
-    assert "0/1 knapsack" in parts[1]
+    # Warm openers: core system prompt + warm-only block + benchmark appendix.
+    assert len(parts) == 3
+    joined = "\n\n".join(parts)
+    assert "0/1 knapsack" in joined
+    assert "## Configuration changes and run results" in joined  # warm block present
 
 
 def test_main_turn_schema_forbids_synthesized_id_prefix_for_vrptw():

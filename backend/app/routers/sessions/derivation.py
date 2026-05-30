@@ -796,7 +796,12 @@ def apply_brief_patch_with_cleanup(
     # was in place get their auto-OQ added on the next chat turn.
     from app.problem_brief import reconcile_companion_oqs
 
-    merged = reconcile_companion_oqs(merged, test_problem_id)
+    # Pass base_problem_brief so a goal term the agent introduces THIS turn
+    # without its companion specifics is deferred (dropped + OQ) rather than
+    # shown as a hollow carrier; pre-existing terms stay put (non-destructive).
+    merged = reconcile_companion_oqs(
+        merged, test_problem_id, base_brief=base_problem_brief
+    )
 
     # Canonical goal-term rows: synthesize a ``config-weight-<key>`` items[]
     # row for every surviving goal_terms key, with text in the canonical

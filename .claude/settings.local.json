@@ -185,7 +185,8 @@
       "Bash(sqlite3 frontend/data/mopt_study.db \".schema sessions\")",
       "Bash(rm -f data/mopt_study.db)",
       "Bash(rmdir data *)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(grep *)"
     ]
   }
 }

@@ -768,28 +768,37 @@ def _format_answered_open_question_gathered(question: str, answer: str) -> str:
 
 
 def reconcile_companion_oqs(
-    brief: dict[str, Any], test_problem_id: str | None
+    brief: dict[str, Any],
+    test_problem_id: str | None,
+    base_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Auto-park an OQ for any goal_term whose port-declared required
     companion is empty (and drop the OQ when the companion is populated).
 
-    Why structural, not a verifier nag: when the participant clears a
-    companion via the panel (e.g. removes every ``driver_preferences``
-    rule) but keeps the goal_term, the term is now an "empty carrier"
-    with no solver effect. Earlier we dropped the goal_term outright;
-    that was destructive — the participant may want to keep the term
-    as a placeholder and add rules back later. Instead, surface an open
-    question that:
-      - silences the ``port_companion`` verifier check (it accepts a
-        pending OQ with matching ``goal_key`` as the third exit, per
-        Fix 5),
-      - lives in ``open_questions`` so the LLM sees it in context and
-        can naturally ask the participant in its visible reply, and
+    Why structural, not a verifier nag: a companion-having goal term with an
+    empty carrier has no solver effect, and the LLM populates the carrier only
+    ~half the time. So the server makes the outcome deterministic instead of
+    retrying the model. The parked OQ:
+      - silences the ``port_companion`` verifier check (it accepts a pending
+        OQ with matching ``goal_key`` as the third exit),
+      - lives in ``open_questions`` so the LLM sees it and asks naturally, and
       - auto-drops once the companion gets populated (idempotent).
 
-    Mode-agnostic — both agile and waterfall benefit from making the
-    question visible. Generic — any port that declares conditional
-    companions via ``gate_conditional_companions`` opts in.
+    **Show-vs-hide the term (``base_brief``):**
+      - **New this turn** (key NOT in ``base_brief.goal_terms``) — the agent
+        recognised the concept but has no specifics yet. Showing an empty
+        carrier confuses the participant, so we DROP the term and let the OQ
+        carry the ask ("be smart: ask, don't show a hollow term"). Requires
+        ``base_brief`` to identify newness.
+      - **Pre-existing** (key already in base, or ``base_brief`` not supplied —
+        e.g. the panel-save path) — the participant may be keeping the term as
+        a placeholder while they edit rules. Non-destructive: KEEP the term,
+        just park the OQ.
+
+    OQ wording comes from ``port.companion_open_question_text`` (participant-
+    friendly, no raw keys); falls back to neutral phrasing if the port has none.
+    Mode-agnostic — both agile and waterfall make the question visible. Generic
+    — any port that declares ``gate_conditional_companions`` opts in.
     """
     if test_problem_id is None or not isinstance(brief, dict):
         return brief
@@ -805,6 +814,9 @@ def reconcile_companion_oqs(
 
     goal_terms = brief.get("goal_terms") if isinstance(brief.get("goal_terms"), dict) else {}
     open_questions = list(brief.get("open_questions") or [])
+    base_keys: set[str] = set()
+    if isinstance(base_brief, dict) and isinstance(base_brief.get("goal_terms"), dict):
+        base_keys = {k for k in base_brief["goal_terms"].keys() if isinstance(k, str)}
 
     def _companion_missing(key: str, companion_field: str) -> bool:
         entry = goal_terms.get(key) if isinstance(goal_terms, dict) else None
@@ -818,7 +830,19 @@ def reconcile_companion_oqs(
         except Exception:  # pragma: no cover — safe default
             return False
 
+    def _oq_text(key: str, companion_field: str) -> str:
+        try:
+            text = port.companion_open_question_text(key)
+        except Exception:  # pragma: no cover — safe default
+            text = None
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        # Neutral fallback that does NOT leak raw schema keys to the participant.
+        return "Could you share the specifics for this part of the setup?"
+
+    next_goal_terms = dict(goal_terms)
     mutated = False
+    goal_terms_mutated = False
     for key, companion_field in gate_companions.items():
         oq_id = f"auto-oq-companion-{key}"
         existing_auto_idx = next(
@@ -831,6 +855,11 @@ def reconcile_companion_oqs(
         )
         needs_question = _companion_missing(key, companion_field)
         if needs_question:
+            # New agent commit with no specifics yet → don't show a hollow term.
+            is_new_this_turn = base_brief is not None and key not in base_keys
+            if is_new_this_turn and key in next_goal_terms:
+                del next_goal_terms[key]
+                goal_terms_mutated = True
             # If ANY open OQ already covers this goal_key (auto OR LLM-emitted),
             # don't double up. The existing OQ already satisfies the
             # port_companion silencer and the LLM's "ask about this" context.
@@ -844,10 +873,7 @@ def reconcile_companion_oqs(
                 open_questions.append(
                     {
                         "id": oq_id,
-                        "text": (
-                            f"`{key}` is in the setup but `{companion_field}` is empty — "
-                            f"would you like to add specific rules, or remove this goal term?"
-                        ),
+                        "text": _oq_text(key, companion_field),
                         "status": "open",
                         "answer_text": None,
                         "topic": "other",
@@ -863,10 +889,12 @@ def reconcile_companion_oqs(
                 open_questions.pop(existing_auto_idx)
                 mutated = True
 
-    if not mutated:
+    if not mutated and not goal_terms_mutated:
         return brief
     out = dict(brief)
     out["open_questions"] = open_questions
+    if goal_terms_mutated:
+        out["goal_terms"] = next_goal_terms
     return out
 
 
