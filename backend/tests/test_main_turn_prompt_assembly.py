@@ -1,13 +1,15 @@
 """Golden snapshots of the assembled main-turn system instruction.
 
 Phase 0 of the prompt-reduction work (see
-``docs/.implementation/USER_FLOW_AUDIT.md``). The main turn is a
-single ~7k-word instruction; these tests pin (a) which named blocks are
-present per turn type and (b) the exact word budget per turn type, so any
-prompt refactor surfaces as an explicit, reviewed diff instead of silent
-drift. When a change is intentional, update the manifest in the same PR —
-the word-count delta is the per-step reduction measurement the plan asks
-for.
+``docs/.implementation/USER_FLOW_AUDIT.md``). Two guards on the assembled
+main-turn instruction:
+
+(a) **block presence** — which named blocks load per turn type. This is the
+    behavioural contract (e.g. cold turns shed the warm-only guidance); the
+    expected sets encode intent, so a block loading in the wrong state fails.
+(b) **word ceiling** — the prompt must not silently grow past budget. A
+    ceiling (not an exact `==` snapshot) so reductions pass freely while
+    growth trips the test for review — avoids self-fulfilling churn.
 
 Assembly is exercised API-free (``api_key=None`` skips the optional
 temperature-classify / doc-retrieval sub-calls), so these run in CI with
@@ -151,24 +153,21 @@ EXPECTED_BLOCKS: dict[str, set[str]] = {
     "retry": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization"},
 }
 
-# Exact per-scenario word budget at Phase 0. This is BOTH a drift tripwire
-# and the reduction measurement: every prompt PR updates these numbers and
-# the diff IS the savings. Update deliberately, never blindly.
-WORD_BUDGET: dict[str, int] = {
-    # Phase-0 baseline (warm_waterfall 7330) lives in git history. Reductions:
-    #  • SYSTEM_PROMPT L5 compress 1564→1053 (−511 every turn, rules preserved)
-    #  • HARD_CONSTRAINT 478→302, OUT_OF_SCOPE 363→241 (−298 every turn)
-    #  • BRIEF_UPDATE 623→299 (dedup vs items), GROUNDING 300→216,
-    #    ITEMS 336→242 (−502 every turn)
-    #  • SYSTEM_PROMPT split: warm-only block (run/run-button/Q&A, 384 w)
-    #    extracted → cold turns shed it; warm turns unchanged (content moved)
+# Per-scenario word CEILINGS, not exact snapshots. The intent this encodes is
+# "the main-turn prompt must not silently grow past budget" — the actual goal of
+# keeping prompts short for accuracy. Asymmetric on purpose: a reduction passes
+# freely (stays under the cap), but GROWTH trips the test and must be reviewed +
+# the cap bumped deliberately. Set at the current word counts (no headroom) so
+# any regrowth is caught immediately. A ceiling avoids the self-fulfilling churn
+# of an exact `==` snapshot, which would have to be re-pasted on every edit.
+WORD_BUDGET_CEILING: dict[str, int] = {
     "cold_waterfall": 4133,
     "warm_waterfall": 6019,
     "warm_agile": 6259,
     "warm_demo": 6343,
     "config_save": 6331,
     "upload_context": 6066,
-    "retry": 6051,
+    "retry": 6110,
 }
 
 
@@ -185,12 +184,14 @@ def test_main_turn_block_presence(scenario):
 
 
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
-def test_main_turn_word_budget(scenario):
-    """Exact word-count snapshot per turn type. A failure here means the
-    prompt size changed — review the diff and update WORD_BUDGET in the
-    same PR, recording the reduction (or flagging accidental growth)."""
+def test_main_turn_stays_under_word_ceiling(scenario):
+    """The main-turn prompt must not silently grow past its budget. Reductions
+    pass freely; growth fails — review the new content, then bump the ceiling in
+    WORD_BUDGET_CEILING deliberately (and ideally tighten it back down)."""
     words = len(_build(scenario).split())
-    assert words == WORD_BUDGET[scenario], (
-        f"[{scenario}] word count = {words}, snapshot = {WORD_BUDGET[scenario]} "
-        f"(delta {words - WORD_BUDGET[scenario]:+d}). Update WORD_BUDGET if intended."
+    ceiling = WORD_BUDGET_CEILING[scenario]
+    assert words <= ceiling, (
+        f"[{scenario}] main-turn prompt grew to {words} words, over the "
+        f"{ceiling} ceiling (+{words - ceiling}). Review the added content; if "
+        f"intended, raise the ceiling in WORD_BUDGET_CEILING."
     )

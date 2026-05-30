@@ -1086,6 +1086,24 @@ def _apply_stage(
         # mark_answered of the search-strategy question. The downstream
         # monitor re-adds the canonical OQ once the carrier is stripped.
         oq_actions_payload = [a.model_dump() for a in (turn.oq_actions or [])]
+        # On an OQ-answer turn the per-answer classifier already finalized OQ
+        # lifecycle (kept counter-questions like "tell me why" open; resolved
+        # genuine answers). The main turn is only here to explain/acknowledge,
+        # so its resolving oq_actions are at best redundant and at worst the
+        # over-reach seen in P_0529 (it dropped a counter-question OQ on retry).
+        # Drop the resolving actions; keep cosmetic `rephrase`/`keep`.
+        if is_answered_open_question and oq_actions_payload:
+            kept = [
+                a for a in oq_actions_payload
+                if str((a or {}).get("action") or "").strip().lower() not in {"drop", "mark_answered"}
+            ]
+            if len(kept) != len(oq_actions_payload):
+                log.info(
+                    "Answer-save turn: ignored %d main-turn OQ drop/mark_answered "
+                    "action(s); classifier owns OQ lifecycle this turn",
+                    len(oq_actions_payload) - len(kept),
+                )
+            oq_actions_payload = kept
         effective_brief, oq_actions_payload = (
             derivation.gate_unauthorized_search_strategy_commit(
                 effective_brief=effective_brief,

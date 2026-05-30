@@ -1187,6 +1187,13 @@ def build_main_turn_system_instruction(
             "Your previous response had the issues listed below. Regenerate the "
             "structured response with these specific corrections — don't redo "
             "the whole turn from scratch.\n\n"
+            "**Least-damage rule:** fix ONLY the flagged issue(s) and preserve "
+            "everything else. Do not newly drop or wholesale-replace "
+            "`open_questions`, and do not commit goal_terms or `oq_actions` "
+            "the flagged issue doesn't require. When a fix can be made either "
+            "by deleting/committing or by softening the visible reply, prefer "
+            "softening the reply — never resolve a question the participant "
+            "hasn't actually answered.\n\n"
             + "\n".join(issue_lines)
         )
 

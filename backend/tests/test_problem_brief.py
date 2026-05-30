@@ -30,25 +30,31 @@ def _minimal_brief_payload(**kwargs):
     return base
 
 
-def test_merge_replace_open_questions_true_prunes_stale_questions():
-    base = normalize_problem_brief(
-        _minimal_brief_payload(
-            open_questions=[
-                {"id": "q-a", "text": "Stale?", "status": "open", "answer_text": None},
-                {"id": "q-b", "text": "Still matters?", "status": "open", "answer_text": None},
-            ],
+def test_merge_replace_open_questions_only_prunes_on_cleanup():
+    """`replace_open_questions=True` wholesale-prunes ONLY on a cleanup turn.
+    Outside cleanup it's ignored (merged incrementally) so a normal turn can't
+    silently delete questions the participant hasn't resolved (P_0529)."""
+    def _base():
+        return normalize_problem_brief(
+            _minimal_brief_payload(
+                open_questions=[
+                    {"id": "q-a", "text": "Stale?", "status": "open", "answer_text": None},
+                    {"id": "q-b", "text": "Still matters?", "status": "open", "answer_text": None},
+                ],
+            )
         )
-    )
-    merged = merge_problem_brief_patch(
-        base,
-        {
-            "replace_open_questions": True,
-            "open_questions": [
-                {"id": "q-b", "text": "Still matters?", "status": "open", "answer_text": None},
-            ],
-        },
-    )
-    assert [q["id"] for q in merged["open_questions"]] == ["q-b"]
+    patch = {
+        "replace_open_questions": True,
+        "open_questions": [
+            {"id": "q-b", "text": "Still matters?", "status": "open", "answer_text": None},
+        ],
+    }
+    # Outside cleanup: the wipe is refused — both questions survive (incremental).
+    merged_no_cleanup = merge_problem_brief_patch(_base(), patch)
+    assert {q["id"] for q in merged_no_cleanup["open_questions"]} == {"q-a", "q-b"}
+    # On a cleanup turn: the wholesale replace is honored — q-a is pruned.
+    merged_cleanup = merge_problem_brief_patch(_base(), patch, cleanup_mode_override=True)
+    assert [q["id"] for q in merged_cleanup["open_questions"]] == ["q-b"]
 
 
 def test_merge_keeps_prior_goal_summary_when_patch_sanitizes_to_empty():

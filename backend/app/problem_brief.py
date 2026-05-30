@@ -1587,8 +1587,23 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     }
 
 
-def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
-    """Merge partial model brief patches without dropping prior gathered facts."""
+def merge_problem_brief_patch(
+    base_brief: Any,
+    patch: Any,
+    *,
+    cleanup_mode_override: bool | None = None,
+) -> dict[str, Any]:
+    """Merge partial model brief patches without dropping prior gathered facts.
+
+    ``cleanup_mode_override`` lets the caller supply the turn-level cleanup
+    flag (``turn.cleanup_mode``) explicitly. It gates the wholesale
+    ``replace_open_questions`` wipe: outside a genuine cleanup turn that wipe
+    is refused and the OQ list is merged incrementally instead, so a normal
+    turn can't silently delete questions the participant hasn't resolved
+    (observed in P_0529: an answer-save turn set ``replace_open_questions``
+    with an empty list and erased a still-open counter-question). Per-OQ
+    ``oq_actions`` remain the surgical path for intentional single removals.
+    """
     base = normalize_problem_brief(base_brief)
     if not isinstance(patch, dict):
         return base
@@ -1597,6 +1612,15 @@ def merge_problem_brief_patch(base_brief: Any, patch: Any) -> dict[str, Any]:
     replace_editable_items = bool(patch.get("replace_editable_items"))
     replace_open_questions = bool(patch.get("replace_open_questions"))
     cleanup_mode = bool(patch.get("cleanup_mode"))
+    # Cleanup intent for the OQ-replace gate: prefer the explicit turn-level
+    # override when supplied, else fall back to the patch field.
+    oq_cleanup = cleanup_mode_override if cleanup_mode_override is not None else cleanup_mode
+    if replace_open_questions and not oq_cleanup:
+        log.debug(
+            "Ignoring replace_open_questions=true outside cleanup_mode; merging "
+            "open_questions incrementally to protect unresolved questions"
+        )
+        replace_open_questions = False
 
     if "goal_summary" in patch:
         raw_goal = patch.get("goal_summary") or ""

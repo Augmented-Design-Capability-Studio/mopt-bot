@@ -672,7 +672,12 @@ def apply_brief_patch_with_cleanup(
     """
     from app.services.goal_term_anchoring import filter_unanchored_new_goal_terms
 
-    merged = merge_problem_brief_patch(base_problem_brief, patch_payload)
+    # Pass the turn-level cleanup flag so the wholesale ``replace_open_questions``
+    # wipe is only honored on genuine cleanup turns (else it merges incrementally
+    # and unresolved questions survive).
+    merged = merge_problem_brief_patch(
+        base_problem_brief, patch_payload, cleanup_mode_override=cleanup_mode
+    )
     # Tutorial Runs 1+2 run-ack strip: the bubble drives the next step, so a
     # post-run agent reply that adds new OQs (waterfall) or new assumption
     # rows / goal_term keys (agile) is exactly the noise we want to suppress.
