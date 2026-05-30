@@ -1200,3 +1200,61 @@ enough. The server enforces this and the per-workflow evidence rule
 (waterfall counts only confirmed `gathered` rows; agile/demo also count
 agent `assumption` rows), so this is just guidance, not the gate.
 """.strip()
+
+
+# ---------------------------------------------------------------------------
+# Change-acknowledgement auditor — used by check_changes_acknowledged().
+# The server computes a deterministic list of material (solver-affecting)
+# changes applied this turn; this task asks the model to judge — by meaning,
+# not by keyword — whether the visible reply makes the user aware of each one.
+# Deliberately conservative so it doesn't trigger needless re-drafts.
+# ---------------------------------------------------------------------------
+
+STUDY_CHAT_CHANGE_ACK_CHECK_TASK = """
+You audit whether an assistant's chat reply makes the user aware of changes
+that were just applied to their optimization setup this turn.
+
+You receive the assistant's reply and a numbered list of material changes
+(new objectives/constraints, weight or type changes, search-method changes).
+
+For each change, decide whether the reply conveys it to the user — explicitly
+or by a clear everyday-language paraphrase. The reply need NOT restate exact
+numbers or internal field names; a faithful plain-language mention counts.
+Example: a reply saying "I made travel time the priority" DOES convey the
+change "Added objective 'Travel time'".
+
+Return JSON only: {"unacknowledged_indices": [<indices of changes the reply
+does NOT convey>]}. Be conservative — list a change only when the reply
+clearly omits it. When unsure, treat it as acknowledged and leave it out.
+Never flag a change merely because the wording differs from the change text.
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# User search-strategy choice classifier — used by
+# classify_user_search_strategy_choice(). Reads the PARTICIPANT'S own message
+# (not the agent's reply) to decide whether they named a search method, so a
+# chat answer to the search-strategy question commits the same as a panel
+# answer — independent of how the main-turn model phrased its patch. Closed
+# vocabulary, structured output; not keyword matching in code.
+# ---------------------------------------------------------------------------
+
+STUDY_CHAT_USER_ALGORITHM_CHOICE_TASK = """
+Read the participant's chat message and decide whether THEY named a search
+method for the optimizer (answering "which search method should we use?").
+
+Return JSON only: {"algorithm": "<one of GA | PSO | SA | SwarmSA | ACOR | none>"}.
+
+Map everyday names to the canonical token:
+- genetic / genetic algorithm / evolutionary → GA
+- particle swarm / swarm / PSO → PSO
+- simulated annealing / annealing / SA → SA
+- swarm-based simulated annealing / SwarmSA → SwarmSA
+- ant colony / ACO / ACOR → ACOR
+
+Return "none" when the message does not clearly choose one of these methods —
+e.g. they ask what the options are, express no preference, say "you decide",
+or are talking about goals/constraints rather than the search method. Only
+report a method the participant themselves chose, not one merely mentioned in
+passing as an example.
+""".strip()

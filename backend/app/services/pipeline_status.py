@@ -17,9 +17,9 @@ Shape (mirrors ``app.schemas.PipelineStatus``):
         "stages": [
           {"name": "drafting",         "state": "success", "label": "Drafting reply"},
           {"name": "verifying_brief",  "state": "in_progress", "label": "Verifying intent & definition"},
-          {"name": "applying",         "state": "pending",     "label": "Applying patch"},
-          {"name": "deriving_config",  "state": "pending",     "label": "Deriving config",
-           "substages": ["goal terms", "algorithm"]},
+          {"name": "applying",         "state": "pending",     "label": "Applying patch",
+           "details": ["Added objective 'Travel time' (weight 1)."]},
+          {"name": "deriving_config",  "state": "pending",     "label": "Deriving config"},
           {"name": "verifying_config", "state": "pending",     "label": "Verifying config"}
         ],
         "paused_stage": null
@@ -70,57 +70,29 @@ _STAGE_TEMPLATES: dict[PipelineFlavor, list[dict[str, Any]]] = {
         {"name": "drafting", "label": "Drafting reply"},
         {"name": "verifying_brief", "label": "Verifying intent & definition"},
         {"name": "applying", "label": "Applying changes"},
-        {
-            "name": "deriving_config",
-            "label": "Deriving config",
-            "substages": ["goal terms", "algorithm"],
-        },
-        {
-            "name": "verifying_config",
-            "label": "Verifying config",
-            "substages": ["goal terms", "algorithm"],
-        },
+        {"name": "deriving_config", "label": "Deriving config"},
+        {"name": "verifying_config", "label": "Verifying config"},
     ],
     "brief_edit_ack": [
         {"name": "drafting", "label": "Acknowledging edit"},
         {"name": "verifying_brief", "label": "Verifying definition"},
         {"name": "applying", "label": "Applying changes"},
-        {
-            "name": "deriving_config",
-            "label": "Deriving config",
-            "substages": ["goal terms", "algorithm"],
-        },
-        {
-            "name": "verifying_config",
-            "label": "Verifying config",
-            "substages": ["goal terms", "algorithm"],
-        },
+        {"name": "deriving_config", "label": "Deriving config"},
+        {"name": "verifying_config", "label": "Verifying config"},
     ],
     "config_edit_ack": [
         {"name": "drafting", "label": "Acknowledging config edit"},
         {"name": "verifying_brief", "label": "Verifying brief ↔ config"},
         {"name": "applying", "label": "Applying changes"},
         # Config-edit skips derive_config since the config IS ground truth.
-        {
-            "name": "verifying_config",
-            "label": "Verifying brief ↔ config",
-            "substages": ["goal terms", "algorithm"],
-        },
+        {"name": "verifying_config", "label": "Verifying brief ↔ config"},
     ],
     "run_ack": [
         {"name": "drafting", "label": "Acknowledging run"},
         {"name": "verifying_brief", "label": "Verifying intent & definition"},
         {"name": "applying", "label": "Applying changes"},
-        {
-            "name": "deriving_config",
-            "label": "Deriving config",
-            "substages": ["goal terms", "algorithm"],
-        },
-        {
-            "name": "verifying_config",
-            "label": "Verifying config",
-            "substages": ["goal terms", "algorithm"],
-        },
+        {"name": "deriving_config", "label": "Deriving config"},
+        {"name": "verifying_config", "label": "Verifying config"},
     ],
 }
 
@@ -142,8 +114,6 @@ def initial_pipeline_status(flavor: PipelineFlavor) -> dict[str, Any]:
             "retried": False,
             "issues": [],
         }
-        if "substages" in entry:
-            stage["substages"] = list(entry["substages"])
         stages.append(stage)
     return {
         "flavor": flavor,
@@ -204,6 +174,7 @@ def update_stage(
     stage_name: StageName,
     state: StageState,
     issues: list[dict[str, Any]] | None = None,
+    details: list[str] | None = None,
     bump_retried: bool = False,
 ) -> None:
     """Update one stage row on the message's pipeline status.
@@ -213,6 +184,9 @@ def update_stage(
       can render plain-English failure reasons. Passing ``None`` leaves
       existing issues untouched; passing ``[]`` clears them (e.g. after
       a successful retry).
+    - ``details`` (if non-empty) is an informational sub-list rendered as a
+      nested collapsible (e.g. the "what changed" list on ``applying``).
+      ``None`` leaves existing details untouched.
     - ``bump_retried`` marks the stage as having used its single retry.
 
     When a stage transitions to ``paused``, also sets
@@ -234,6 +208,8 @@ def update_stage(
         stage["state"] = state
         if issues is not None:
             stage["issues"] = list(issues)
+        if details is not None:
+            stage["details"] = list(details)
         if bump_retried:
             stage["retried"] = True
         if state == "paused":

@@ -1065,17 +1065,27 @@ def sync_panel_from_problem_brief(
         if isinstance(ss_carrier, dict):
             for carrier_key in ("algorithm", "epochs", "pop_size"):
                 carrier_val = ss_carrier.get(carrier_key)
-                current_val = next_problem.get(carrier_key)
                 if carrier_key == "algorithm":
-                    if isinstance(carrier_val, str) and carrier_val.strip() and not (
-                        isinstance(current_val, str) and current_val.strip()
-                    ):
+                    # The carrier is canonical for the algorithm choice — it
+                    # WINS over a default/stale panel value (the seed's GA
+                    # default, or an LLM-derive that ignored the carrier), not
+                    # just fills an empty slot. A chat answer commits the
+                    # carrier (e.g. ACOR); without overriding, the panel keeps
+                    # its default GA and S5 reports a permanent ACOR↔GA drift
+                    # the participant can't clear. Safe against clobbering a
+                    # user's panel edit: a panel save runs the reverse mirror
+                    # (panel→brief) first, so the carrier already matches.
+                    if isinstance(carrier_val, str) and carrier_val.strip():
                         next_problem[carrier_key] = carrier_val.strip()
                 else:
+                    # epochs / pop_size: same authoritative rule as algorithm —
+                    # when the carrier carries a real positive number it WINS
+                    # over a default/stale panel value, not just fills an empty
+                    # slot. (A falsy 0 is treated as "unset" and left alone.)
                     if (
                         isinstance(carrier_val, (int, float))
                         and not isinstance(carrier_val, bool)
-                        and current_val in (None, "", 0)
+                        and carrier_val
                     ):
                         next_problem[carrier_key] = carrier_val
 

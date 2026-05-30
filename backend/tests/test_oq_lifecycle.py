@@ -271,6 +271,61 @@ def test_anchored_oq_dropped_when_evidence_comes_via_items_anchor():
     assert after["open_questions"] == []
 
 
+def test_tuning_oq_resolves_when_its_key_is_retuned():
+    """P_0529 follow-up: answering "yes" to *"adjust the travel time weight?"*
+    in chat bumps the weight, but the OQ lingered because the main turn's
+    `drop` is stripped on answered-OQ turns and the resolver only closed
+    NEWLY-committed keys. A tuning OQ must close when its already-committed
+    key is actually retuned this turn (mirrors the panel-edit path)."""
+    tuning_oq = {
+        "id": "oq-travel-tuning",
+        "text": "Would you like to adjust the travel time weight (currently 1.0)?",
+        "topic": "other",
+        "goal_key": "travel_time",
+    }
+    base = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=[dict(tuning_oq)],
+        )
+    )
+    merged = normalize_problem_brief(
+        _minimal_brief(
+            items=[_canonical_weight_item("travel_time")],
+            goal_terms={"travel_time": {"weight": 3.0, "type": "objective", "rank": 1}},  # retuned
+            open_questions=[dict(tuning_oq)],
+        )
+    )
+    after = _resolve_anchored_provisional_rows(merged, "waterfall", base_brief=base)
+    assert after["open_questions"] == []
+
+
+def test_tuning_oq_survives_when_key_untouched():
+    """Negative: a tuning OQ whose key is NOT changed this turn stays open —
+    the close fires on a real retune, not merely on the key being present."""
+    tuning_oq = {
+        "id": "oq-travel-tuning",
+        "text": "Adjust the travel time weight?",
+        "topic": "other",
+        "goal_key": "travel_time",
+    }
+    base = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=[dict(tuning_oq)],
+        )
+    )
+    merged = normalize_problem_brief(
+        _minimal_brief(
+            items=[_canonical_weight_item("travel_time")],
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},  # unchanged
+            open_questions=[dict(tuning_oq)],
+        )
+    )
+    after = _resolve_anchored_provisional_rows(merged, "waterfall", base_brief=base)
+    assert [q["id"] for q in after["open_questions"]] == ["oq-travel-tuning"]
+
+
 def test_foundational_oq_with_anchor_is_not_dropped_by_resolver():
     """Foundational-topic OQs are owned by the server monitor state
     machine; the resolver must never touch them, even with an anchor."""
@@ -1050,6 +1105,70 @@ def test_waterfall_gate_noop_in_agile():
     )
     assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
     assert gated_actions == [{"id": "oq-monitor-algorithm", "action": "drop"}]
+
+
+def test_waterfall_gate_commits_user_chat_choice_even_without_carrier():
+    """P_0529 recurrence: the participant answered the search-strategy OQ in
+    chat ("ant colony" / "ACOR") but the algorithm never committed and the OQ
+    stayed. Now the main turn reports the participant's choice via
+    ``user_search_strategy_choice``; the gate commits the carrier
+    deterministically (even if the LLM forgot to set it) and the monitor
+    clears the OQ."""
+    base_brief = normalize_problem_brief(
+        _minimal_brief(
+            items=[{"id": "upload-marker", "text": "Uploaded ORDERS.csv", "kind": "gathered", "source": "upload"}],
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=[
+                {
+                    "id": "oq-monitor-algorithm",
+                    "text": "Which search strategy should we use?",
+                    "topic": "search_strategy",
+                    "status": "open",
+                }
+            ],
+            topic_engaged=True,
+        )
+    )
+    # Effective brief has NO carrier — the LLM only reported the user's choice.
+    effective = normalize_problem_brief(
+        _minimal_brief(
+            items=list(base_brief["items"]),
+            goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            open_questions=list(base_brief["open_questions"]),
+            topic_engaged=True,
+        )
+    )
+
+    for user_words in ("ant colony", "ACOR"):
+        gated, _actions = gate_unauthorized_search_strategy_commit(
+            effective_brief=effective,
+            base_brief=base_brief,
+            oq_actions=[],
+            workflow_mode="waterfall",
+            user_search_strategy_choice=user_words,
+        )
+        # Carrier committed (canonical), regardless of how the user phrased it.
+        assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "ACOR"
+        # Monitor now reads the carrier present → clears the search-strategy OQ.
+        restored = _enforce_session_monitors(gated, "waterfall", test_problem_id="vrptw")
+        assert not any(q["id"] == "oq-monitor-algorithm" for q in restored["open_questions"])
+
+
+def test_waterfall_gate_ignores_invalid_user_choice():
+    """An unrecognized ``user_search_strategy_choice`` must NOT authorize a
+    commit — it falls through to the normal forgery guard (no carrier present,
+    nothing to authorize)."""
+    base_brief = normalize_problem_brief(_minimal_brief(topic_engaged=True))
+    effective = _ss_carrier_brief()  # carries a forged GA, no real answer
+    gated, _actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=base_brief,
+        oq_actions=[{"id": "oq-monitor-algorithm", "action": "drop"}],
+        workflow_mode="waterfall",
+        user_search_strategy_choice="please just pick something good",
+    )
+    # Not a real algorithm name → no authorization → forged carrier stripped.
+    assert "search_strategy" not in gated["goal_terms"]
 
 
 def test_foundational_ask_warms_brief_same_turn():

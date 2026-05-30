@@ -352,12 +352,37 @@ def _validated_algorithm_name(text: Any) -> str | None:
     return extract_algorithm_from_brief([{"text": raw}])
 
 
+def _set_search_strategy_algorithm(
+    brief: dict[str, Any], algorithm: str
+) -> dict[str, Any]:
+    """Return a copy of ``brief`` with the search-strategy carrier set to
+    ``algorithm`` (creating the nested containers as needed). Used to commit a
+    participant's chat answer deterministically, so the choice doesn't depend
+    on the LLM also having emitted the carrier itself."""
+    out = deepcopy(brief)
+    goal_terms = out.get("goal_terms")
+    if not isinstance(goal_terms, dict):
+        goal_terms = {}
+        out["goal_terms"] = goal_terms
+    entry = goal_terms.get("search_strategy")
+    if not isinstance(entry, dict):
+        entry = {}
+        goal_terms["search_strategy"] = entry
+    props = entry.get("properties")
+    if not isinstance(props, dict):
+        props = {}
+        entry["properties"] = props
+    props["algorithm"] = algorithm
+    return out
+
+
 def gate_unauthorized_search_strategy_commit(
     *,
     effective_brief: dict[str, Any],
     base_brief: dict[str, Any],
     oq_actions: list[dict[str, Any]],
     workflow_mode: str | None,
+    user_search_strategy_choice: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Waterfall-only structural gate: block algorithm commits the user
     never authorized.
@@ -400,6 +425,18 @@ def gate_unauthorized_search_strategy_commit(
         return effective_brief, oq_actions
     if not isinstance(effective_brief, dict):
         return effective_brief, oq_actions
+
+    # Authorization by explicit participant choice: when the main-turn LLM
+    # reports that the PARTICIPANT named an algorithm this turn (their answer to
+    # the search-strategy question, as a structured field — not parsed from the
+    # reply), commit it deterministically. The server, not the LLM, sets the
+    # carrier, so a chat answer no longer depends on the model also emitting a
+    # `mark_answered` OQ action it was told not to touch. The downstream monitor
+    # then clears the OQ because the carrier now reads present. This is the
+    # chat-side twin of the panel answer path (`classify_answered_open_questions`).
+    user_choice = _validated_algorithm_name(user_search_strategy_choice)
+    if user_choice:
+        return _set_search_strategy_algorithm(effective_brief, user_choice), oq_actions
 
     # Resolve which OQ ids are the search-strategy question. The canonical
     # monitor id is the usual case; topic is the robust signal in case a
@@ -530,11 +567,13 @@ def _resolve_anchored_provisional_rows(
 
     The OQ resolver answers two questions:
 
-    1. *Did the user just answer the OQ?* — proxied structurally by
-       *"the OQ's anchored key is committed in ``goal_terms`` this turn
-       but wasn't in the base brief"*. Tuning OQs (e.g. *"bump weight from
-       1 to 2?"*) on already-committed keys survive — the key was in base,
-       so the drop gate doesn't fire.
+    1. *Did the user just answer the OQ?* — proxied structurally by either
+       *"the OQ's anchored key is committed in ``goal_terms`` this turn but
+       wasn't in the base brief"* (a fresh commit) OR *"the anchored key's
+       weight/type changed this turn"* (a tuning OQ the user answered by
+       retuning — mirrors the panel-edit path's "user acted on the key, so
+       the question is moot"). A tuning OQ whose key is untouched this turn
+       still survives.
     2. *Does the brief actually surface the answer to the participant?* —
        checked via ``_has_gathered_evidence_for_key``. The canonical
        ``config-weight-K`` row that ``_synthesize_canonical_weight_items``
@@ -569,7 +608,6 @@ def _resolve_anchored_provisional_rows(
     """
     if not isinstance(brief, dict):
         return brief
-    from app.problem_brief import FOUNDATIONAL_OQ_TOPICS
 
     goal_terms = brief.get("goal_terms")
     merged_goal_term_keys: set[str] = set()
@@ -580,44 +618,52 @@ def _resolve_anchored_provisional_rows(
     if not merged_goal_term_keys:
         return brief
 
+    base_gt: dict[str, Any] = {}
     base_goal_term_keys: set[str] = set()
     if isinstance(base_brief, dict):
-        base_gt = base_brief.get("goal_terms")
-        if isinstance(base_gt, dict):
-            for key in base_gt.keys():
-                if isinstance(key, str):
-                    base_goal_term_keys.add(key)
+        bgt = base_brief.get("goal_terms")
+        if isinstance(bgt, dict):
+            base_gt = bgt
+            base_goal_term_keys = {k for k in bgt.keys() if isinstance(k, str)}
     newly_committed_keys = merged_goal_term_keys - base_goal_term_keys
-    if not newly_committed_keys:
+
+    # Tuning OQs (anchored to a key already in base) resolve when the user's
+    # answer RETUNES that key this turn — the same "the user acted on the key,
+    # so the question is moot" rule the panel-edit path already applies
+    # (`_auto_close_oqs_for_panel_edited_keys`). Without this, answering "yes"
+    # to *"adjust the travel time weight?"* in chat bumped the weight but left
+    # the OQ open (the main turn's `drop` is stripped on answered-OQ turns, so
+    # the structural close has to happen here, not via the LLM action).
+    def _scalar(entry: Any, field: str) -> Any:
+        return entry.get(field) if isinstance(entry, dict) else None
+
+    changed_keys: set[str] = set()
+    for key in merged_goal_term_keys & base_goal_term_keys:
+        m_entry, b_entry = goal_terms.get(key), base_gt.get(key)
+        if _scalar(m_entry, "weight") != _scalar(b_entry, "weight") or _scalar(
+            m_entry, "type"
+        ) != _scalar(b_entry, "type"):
+            changed_keys.add(key)
+
+    if not newly_committed_keys and not changed_keys:
         return brief
 
+    from app.problem_brief import is_goal_key_oq_resolved_by_keys
+
+    resolving_keys = newly_committed_keys | changed_keys
     next_brief = dict(brief)
     items = list(next_brief.get("items") or [])
     questions = list(next_brief.get("open_questions") or [])
     kept_questions: list[dict[str, Any]] = []
     dropped_oq_ids: list[str] = []
     for q in questions:
-        if not isinstance(q, dict):
+        # Shared decision (panel-edit path uses the same predicate): is this an
+        # open, non-foundational, goal_key OQ whose key was committed/retuned
+        # this turn? If not, leave it untouched.
+        if not is_goal_key_oq_resolved_by_keys(q, resolving_keys):
             kept_questions.append(q)
             continue
-        topic = str(q.get("topic") or "other").strip() or "other"
-        if topic in FOUNDATIONAL_OQ_TOPICS:
-            kept_questions.append(q)
-            continue
-        anchor = q.get("goal_key")
-        anchor_key = anchor.strip() if isinstance(anchor, str) else ""
-        if not anchor_key:
-            kept_questions.append(q)
-            continue
-        status = str(q.get("status") or "open").strip().lower()
-        if status != "open":
-            # Already answered — let the answered→gathered promoter handle it.
-            kept_questions.append(q)
-            continue
-        if anchor_key not in newly_committed_keys:
-            # Anchored key was already in base — this is a tuning OQ.
-            kept_questions.append(q)
-            continue
+        anchor_key = str(q.get("goal_key") or "").strip()
         if not _has_gathered_evidence_for_key(items, anchor_key):
             # Key landed but the participant doesn't see it yet — keep the OQ.
             kept_questions.append(q)

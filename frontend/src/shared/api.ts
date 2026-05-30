@@ -405,7 +405,10 @@ export type PipelineStageMeta = {
     | "verifying_config";
   state: "pending" | "in_progress" | "success" | "failed" | "skipped" | "paused";
   label?: string;
-  substages?: string[];
+  /** Informational sub-list rendered as a nested, collapsed-by-default
+   *  disclosure (e.g. "Applying changes" lists what changed this turn).
+   *  Distinct from `issues`, which are failures shown prominently. */
+  details?: string[];
   issues?: PipelineIssueMeta[];
   retried?: boolean;
 };

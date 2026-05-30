@@ -320,6 +320,125 @@ def verify_brief_consistency(
     return issues
 
 
+def _algorithm_from_brief(brief: dict[str, Any] | None) -> str | None:
+    """Pull the committed algorithm out of the search-strategy carrier."""
+    if not isinstance(brief, dict):
+        return None
+    gt = brief.get("goal_terms")
+    ss = gt.get("search_strategy") if isinstance(gt, dict) else None
+    props = ss.get("properties") if isinstance(ss, dict) else None
+    algo = props.get("algorithm") if isinstance(props, dict) else None
+    return str(algo).strip() if isinstance(algo, str) and algo.strip() else None
+
+
+def _goal_term_label(key: str, labels: dict[str, str]) -> str:
+    """Human label for a goal-term key (never leak the raw snake_case key)."""
+    label = labels.get(key) if isinstance(labels, dict) else None
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    return key.replace("_", " ").strip().capitalize()
+
+
+def compute_material_brief_changes(
+    base_brief: dict[str, Any] | None,
+    merged_brief: dict[str, Any] | None,
+    workflow_mode: str,
+    test_problem_id: str | None = None,
+) -> list[str]:
+    """Deterministic, human-readable list of *material* (solver-affecting)
+    changes between two brief states: goal-term adds / removes / retunes and a
+    search-method change. Labels come from the port so no raw keys leak.
+
+    Pure — no NL parsing, no LLM. New goal-term keys are reported only when
+    they are anchored (would survive the apply layer), so a premature /
+    under-specified term the server is about to drop doesn't show up as a
+    phantom change. Existing-key retunes and removals are always real.
+
+    Consumed by the S2 acknowledgement check (an LLM then judges, by meaning,
+    whether the visible reply conveys each of these) and reusable as the basis
+    for a participant-facing 'what changed this turn' log.
+    """
+    base = base_brief if isinstance(base_brief, dict) else {}
+    merged = merged_brief if isinstance(merged_brief, dict) else {}
+    base_gt = base.get("goal_terms") if isinstance(base.get("goal_terms"), dict) else {}
+    merged_gt = merged.get("goal_terms") if isinstance(merged.get("goal_terms"), dict) else {}
+
+    port: Any | None = None
+    labels: dict[str, str] = {}
+    try:
+        port = get_study_port(test_problem_id)
+        result = port.weight_item_labels()
+        if isinstance(result, dict):
+            labels = result
+    except Exception:  # pragma: no cover — defensive
+        port = None
+
+    kinds = evidence_kinds_for_workflow(workflow_mode)
+    items = merged.get("items") if isinstance(merged.get("items"), list) else []
+    valid_ids = {
+        str(it.get("id") or "")
+        for it in items
+        if isinstance(it, dict)
+        and str(it.get("kind") or "").strip().lower() in kinds
+        and str(it.get("id") or "").strip()
+    }
+
+    def _weight(entry: Any) -> float | None:
+        if isinstance(entry, dict):
+            w = entry.get("weight")
+            if isinstance(w, (int, float)) and not isinstance(w, bool):
+                return float(w)
+        return None
+
+    def _type(entry: Any) -> str | None:
+        if isinstance(entry, dict):
+            t = entry.get("type")
+            if isinstance(t, str) and t.strip():
+                return t.strip()
+        return None
+
+    out: list[str] = []
+    # ``search_strategy`` is a carrier key, not a user-facing goal term — its
+    # change surfaces through the algorithm diff below, not as "Added …".
+    skip = {"search_strategy"}
+    for key, entry in merged_gt.items():
+        if not isinstance(key, str) or key in skip:
+            continue
+        label = _goal_term_label(key, labels)
+        if key not in base_gt:
+            if not is_goal_term_anchored(
+                key=key, entry=entry, valid_item_ids=valid_ids, port=port
+            ):
+                continue  # premature / unanchored — server will drop it
+            role = _type(entry) or "term"
+            w = _weight(entry)
+            out.append(
+                f"Added {role} '{label}'" + (f" (weight {w:g})." if w is not None else ".")
+            )
+        else:
+            old = base_gt[key]
+            ow, nw = _weight(old), _weight(entry)
+            ot, nt = _type(old), _type(entry)
+            if ow is not None and nw is not None and abs(ow - nw) > 1e-6:
+                out.append(f"Changed '{label}' weight from {ow:g} to {nw:g}.")
+            if ot and nt and ot != nt:
+                out.append(f"Changed '{label}' from {ot} to {nt}.")
+    for key in base_gt:
+        if isinstance(key, str) and key not in skip and key not in merged_gt:
+            out.append(f"Removed '{_goal_term_label(key, labels)}'.")
+
+    base_algo = _algorithm_from_brief(base)
+    merged_algo = _algorithm_from_brief(merged)
+    if base_algo != merged_algo:
+        if merged_algo and not base_algo:
+            out.append(f"Set the search method to {merged_algo}.")
+        elif merged_algo and base_algo:
+            out.append(f"Changed the search method from {base_algo} to {merged_algo}.")
+        elif base_algo and not merged_algo:
+            out.append(f"Removed the search method ({base_algo}).")
+    return out
+
+
 def _new_items(
     base_brief: dict[str, Any] | None,
     merged_brief: dict[str, Any] | None,

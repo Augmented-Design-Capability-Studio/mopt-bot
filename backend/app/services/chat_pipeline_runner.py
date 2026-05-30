@@ -43,6 +43,24 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _has_open_search_strategy_oq(brief: dict[str, Any] | None) -> bool:
+    """True iff the brief has an open search-strategy question — the only
+    state in which a chat algorithm answer needs server authorization."""
+    if not isinstance(brief, dict):
+        return False
+    for q in brief.get("open_questions") or []:
+        if not isinstance(q, dict):
+            continue
+        if str(q.get("status") or "open").strip().lower() != "open":
+            continue
+        if (
+            str(q.get("topic") or "").strip().lower() == "search_strategy"
+            or str(q.get("id") or "") == "oq-monitor-algorithm"
+        ):
+            return True
+    return False
+
+
 def _read_pipeline_meta(message_id: int) -> dict[str, Any] | None:
     """Best-effort read of ``meta.pipeline`` for a message."""
     with SessionLocal() as db:
@@ -511,6 +529,7 @@ def _run_chat_pipeline_thread(
             is_config_save=is_config_save,
             user_text=user_text,
             test_problem_id=test_problem_id,
+            is_answered_open_question=is_answered_open_question,
             suppress_runack_invariant=suppress_runack_invariant,
         )
         if applied_brief is None:
@@ -881,8 +900,9 @@ def _run_verify_brief_stage(
         return reconcile_companion_oqs(merged, test_problem_id)
 
     def _verify(t: ChatTurnResponse) -> list[Any]:
-        return pipeline_verification.verify_brief_consistency(
-            merged_brief=_merged(t),
+        merged = _merged(t)
+        issues = pipeline_verification.verify_brief_consistency(
+            merged_brief=merged,
             base_brief=base_problem_brief,
             patch=t.problem_brief_patch,
             visible_reply=t.assistant_message,
@@ -894,6 +914,40 @@ def _run_verify_brief_stage(
             question_clause=t.question_clause,
             change_clause=t.change_clause,
         )
+        # delta_without_claim — did the visible reply convey the material
+        # (solver-affecting) changes applied this turn? The diff is computed
+        # deterministically; an LLM judges coverage by meaning (paraphrase-
+        # tolerant, no keyword matching). Fail-safe: a None result adds no
+        # issues, so a transport/parse error never blocks the turn. Skipped on
+        # config-save (the panel authored the change; the brief just mirrors
+        # it, so there is nothing for the reply to "claim"). Adds one LLM call
+        # on change turns — kept conservative by the auditor prompt so it
+        # doesn't drive needless re-drafts.
+        if not is_config_save:
+            changes = pipeline_verification.compute_material_brief_changes(
+                base_problem_brief, merged, workflow_mode, test_problem_id
+            )
+            if changes:
+                unacknowledged = llm.check_changes_acknowledged(
+                    visible_reply=t.assistant_message,
+                    changes=changes,
+                    api_key=api_key,
+                    model_name=model_name,
+                )
+                for i in unacknowledged or []:
+                    issues.append(
+                        PipelineIssue(
+                            category="delta_without_claim",
+                            severity="error",
+                            subject="assistant_message",
+                            message=(
+                                "Your reply doesn't tell the user about a change it made "
+                                f'this turn: "{changes[i]}" Mention it briefly in the reply, '
+                                "or drop that change from the patch if it wasn't intended."
+                            ),
+                        )
+                    )
+        return issues
 
     issues = _verify(turn)
     if not issues:
@@ -1044,6 +1098,7 @@ def _apply_stage(
     is_config_save: bool,
     user_text: str,
     test_problem_id: str | None,
+    is_answered_open_question: bool = False,
     suppress_runack_invariant: bool = False,
 ) -> dict[str, Any] | None:
     """S3 — deterministic patch apply + workflow coercion + monitors +
@@ -1104,12 +1159,28 @@ def _apply_stage(
                     len(oq_actions_payload) - len(kept),
                 )
             oq_actions_payload = kept
+        # Authorize a chat answer to the search-strategy question by reading the
+        # PARTICIPANT'S own message with a focused classifier — independent of
+        # how the main-turn model phrased its patch (it tends to forge the
+        # carrier + drop the OQ, which the gate correctly distrusts). Only when
+        # waterfall and the question is actually open, so it's a few early turns
+        # at most. Fail-safe (None → gate falls back to its forgery guard).
+        user_ss_choice: str | None = None
+        if str(workflow_mode or "").strip().lower() == "waterfall" and _has_open_search_strategy_oq(
+            base_problem_brief
+        ):
+            from app.services import llm
+
+            user_ss_choice = llm.classify_user_search_strategy_choice(
+                user_text=user_text, api_key=api_key, model_name=model_name
+            )
         effective_brief, oq_actions_payload = (
             derivation.gate_unauthorized_search_strategy_commit(
                 effective_brief=effective_brief,
                 base_brief=base_problem_brief,
                 oq_actions=oq_actions_payload,
                 workflow_mode=workflow_mode,
+                user_search_strategy_choice=user_ss_choice,
             )
         )
 
@@ -1152,8 +1223,19 @@ def _apply_stage(
             row.processing_error = None
             helpers.touch_session(row)
             db.commit()
+        # Surface the material (solver-affecting) changes that actually landed
+        # as the applying stage's nested "what changed" detail list. Same
+        # deterministic diff the S2 acknowledgement check uses — here it feeds
+        # the UI, not a verifier — so the participant can expand one row to see
+        # exactly what the turn did to their setup.
+        change_details = pipeline_verification.compute_material_brief_changes(
+            base_problem_brief, effective_brief, workflow_mode, test_problem_id
+        )
         pipeline_status.update_stage(
-            message_id=message_id, stage_name="applying", state="success"
+            message_id=message_id,
+            stage_name="applying",
+            state="success",
+            details=change_details or None,
         )
         return effective_brief
     except Exception as exc:

@@ -22,6 +22,7 @@ from app.problems.schema_shared import goal_terms_schema
 from app.prompts.study_chat import (
     STUDY_CHAT_AMBIGUITY_DISCIPLINE,
     STUDY_CHAT_BRIEF_UPDATE_TASK,
+    STUDY_CHAT_CHANGE_ACK_CHECK_TASK,
     STUDY_CHAT_GROUNDING_DISCIPLINE,
     STUDY_CHAT_HARD_CONSTRAINT_DISCIPLINE,
     STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES,
@@ -32,6 +33,7 @@ from app.prompts.study_chat import (
     STUDY_CHAT_SEARCH_STRATEGY_ANCHORING,
     STUDY_CHAT_SYSTEM_PROMPT,
     STUDY_CHAT_SYSTEM_PROMPT_WARM,
+    STUDY_CHAT_USER_ALGORITHM_CHOICE_TASK,
     STUDY_CHAT_VISIBLE_REPLY_TASK,
     STUDY_CHAT_VISUALIZATION_GUIDANCE,
     STUDY_CHAT_WORKFLOW_AGILE,
@@ -446,6 +448,110 @@ def _run_ack_prompt(workflow_mode: str) -> str:
     else:
         wf_addendum = STUDY_CHAT_RUN_ACK_WATERFALL
     return f"{STUDY_CHAT_RUN_ACK_BASE}\n{wf_addendum}"
+
+
+CHANGE_ACK_CHECK_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "unacknowledged_indices": {
+            "type": "array",
+            "items": {"type": "integer"},
+        },
+    },
+    "required": ["unacknowledged_indices"],
+}
+
+
+USER_ALGORITHM_CHOICE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "algorithm": {
+            "type": "string",
+            "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR", "none"],
+        },
+    },
+    "required": ["algorithm"],
+}
+
+
+def classify_user_search_strategy_choice(
+    *,
+    user_text: str,
+    api_key: str | None,
+    model_name: str | None,
+) -> str | None:
+    """Return the canonical algorithm the PARTICIPANT named in ``user_text``
+    (their answer to the search-strategy question), or ``None``.
+
+    Reads the participant's own message — not the agent's reply or patch — so a
+    chat answer authorizes the same way a panel answer does, regardless of how
+    the main-turn model phrased its output. Closed-vocabulary structured
+    output (no regex / keyword matching in code). Fail-safe: ``None`` on any
+    error or missing key, so it never blocks a turn.
+    """
+    if not api_key or not model_name or not str(user_text or "").strip():
+        return None
+    try:
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=STUDY_CHAT_USER_ALGORITHM_CHOICE_TASK,
+            response_mime_type="application/json",
+            response_json_schema=USER_ALGORITHM_CHOICE_RESPONSE_JSON_SCHEMA,
+        )
+        resp = client.models.generate_content(
+            model=model_name, contents=str(user_text), config=config
+        )
+        parsed = resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
+    except Exception as exc:
+        log.warning("User search-strategy classify failed (%s); skipping (fail-safe)", exc)
+        return None
+    algo = (parsed or {}).get("algorithm") if isinstance(parsed, dict) else None
+    return algo if algo in {"GA", "PSO", "SA", "SwarmSA", "ACOR"} else None
+
+
+def check_changes_acknowledged(
+    *,
+    visible_reply: str,
+    changes: list[str],
+    api_key: str | None,
+    model_name: str | None,
+) -> list[int] | None:
+    """Which of ``changes`` does ``visible_reply`` fail to convey to the user?
+
+    The change list is computed deterministically by
+    ``pipeline_verification.compute_material_brief_changes``; this call only
+    asks the model to judge coverage **by meaning** (paraphrase-tolerant — no
+    regex, no keyword matching). Returns the indices the reply doesn't
+    acknowledge, or ``None`` on any failure / missing key, so a transport or
+    parse error never blocks the turn (caller treats ``None`` as "no issue").
+    """
+    if not api_key or not model_name or not changes:
+        return None
+    numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(changes))
+    user_payload = (
+        'Assistant reply:\n"""\n'
+        + (visible_reply or "").strip()
+        + '\n"""\n\nMaterial changes applied this turn:\n'
+        + numbered
+    )
+    try:
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=STUDY_CHAT_CHANGE_ACK_CHECK_TASK,
+            response_mime_type="application/json",
+            response_json_schema=CHANGE_ACK_CHECK_RESPONSE_JSON_SCHEMA,
+        )
+        resp = client.models.generate_content(
+            model=model_name, contents=user_payload, config=config
+        )
+        parsed = resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
+    except Exception as exc:
+        log.warning("Change-acknowledgement check failed (%s); skipping (fail-safe)", exc)
+        return None
+    idxs = parsed.get("unacknowledged_indices") if isinstance(parsed, dict) else None
+    if not isinstance(idxs, list):
+        return None
+    return [i for i in idxs if isinstance(i, int) and 0 <= i < len(changes)]
 
 
 def classify_chat_temperature(

@@ -898,6 +898,29 @@ def reconcile_companion_oqs(
     return out
 
 
+def is_goal_key_oq_resolved_by_keys(question: Any, resolving_keys: set[str]) -> bool:
+    """Shared decision for both OQ closers: is ``question`` an OPEN,
+    non-foundational, ``goal_key``-anchored question whose key is in
+    ``resolving_keys`` (the goal-term keys committed or changed this turn)?
+
+    Single source of truth so the two paths that close an answered tuning/
+    proposal OQ — the panel-edit closer (``_auto_close_oqs_for_panel_edited_keys``)
+    and the chat-path resolver (``derivation._resolve_anchored_provisional_rows``)
+    — can't drift on WHICH questions a key change resolves. Each caller still
+    applies its own action (mark-answered vs drop) and any extra gate (the
+    chat path additionally requires visible gathered evidence). Foundational
+    topics are excluded — the monitor state machine owns those.
+    """
+    if not isinstance(question, dict):
+        return False
+    if str(question.get("status") or "open").strip().lower() != "open":
+        return False
+    if str(question.get("topic") or "other").strip().lower() in FOUNDATIONAL_OQ_TOPICS:
+        return False
+    key = question.get("goal_key")
+    return isinstance(key, str) and key.strip() != "" and key.strip() in resolving_keys
+
+
 def _auto_close_oqs_for_panel_edited_keys(
     questions: list[dict[str, Any]], changed_keys: set[str]
 ) -> list[dict[str, Any]]:
@@ -930,23 +953,13 @@ def _auto_close_oqs_for_panel_edited_keys(
         return questions
     out: list[dict[str, Any]] = []
     for q in questions:
-        if not isinstance(q, dict):
-            out.append(q)
-            continue
-        if str(q.get("status") or "open").strip().lower() != "open":
-            out.append(q)
-            continue
-        if str(q.get("topic") or "other").strip().lower() != "other":
-            out.append(q)
-            continue
-        key = q.get("goal_key")
-        if isinstance(key, str) and key in changed_keys:
+        if is_goal_key_oq_resolved_by_keys(q, changed_keys):
             new_q = dict(q)
             new_q["status"] = "answered"
             new_q["answer_text"] = "Resolved by config edit."
             out.append(new_q)
-            continue
-        out.append(q)
+        else:
+            out.append(q)
     return out
 
 

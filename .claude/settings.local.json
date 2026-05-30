@@ -186,7 +186,8 @@
       "Bash(rm -f data/mopt_study.db)",
       "Bash(rmdir data *)",
       "Bash(npx tsx *)",
-      "Bash(grep *)"
+      "Bash(grep *)",
+      "Bash(../frontend/node_modules/.bin/tsc --noEmit -p ../frontend/tsconfig.json)"
     ]
   }
 }

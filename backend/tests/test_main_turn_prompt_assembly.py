@@ -50,6 +50,11 @@ BLOCK_MARKERS: dict[str, str] = {
     "config_save": _marker(P.STUDY_CHAT_CONFIG_SAVE_RATIONALE),
     "upload_context": _marker(P.STUDY_CHAT_UPLOAD_CONTEXT_GUIDANCE),
     "answered_oq": _marker(P.STUDY_CHAT_ANSWERED_OQ_CONTEXT),
+    "run_ack": _marker(P.STUDY_CHAT_RUN_ACK_BASE),
+    "tutorial": _marker(P.STUDY_CHAT_TUTORIAL_GUARDRAILS),
+    # Brief-edit ack is an inline block in build_main_turn_system_instruction,
+    # not a study_chat constant — match its literal heading.
+    "brief_edit": "## Brief-edit acknowledgement",
 }
 
 
@@ -123,6 +128,33 @@ SCENARIOS: dict[str, dict] = {
             {"category": "unanchored_goal_term", "severity": "error", "message": "x"}
         ],
     ),
+    # Run-ack carries completed runs, so the (pre-first-run) visualization
+    # block is correctly OFF while the run-ack guidance block is ON.
+    "run_ack": dict(
+        user_text="Run #1 just completed",
+        current_problem_brief=_warm_brief(),
+        workflow_mode="waterfall",
+        is_run_acknowledgement=True,
+        recent_runs_summary=[{"run": 1, "cost": 5}],
+    ),
+    "tutorial": dict(
+        user_text="minimize travel time",
+        current_problem_brief=_warm_brief(),
+        workflow_mode="waterfall",
+        is_tutorial_active=True,
+    ),
+    "answered_oq": dict(
+        user_text='- "Q" -> "A"',
+        current_problem_brief=_warm_brief(),
+        workflow_mode="waterfall",
+        is_answered_open_question=True,
+    ),
+    "brief_edit": dict(
+        user_text="(saved definition)",
+        current_problem_brief=_warm_brief(),
+        workflow_mode="waterfall",
+        is_brief_edit_ack=True,
+    ),
 }
 
 
@@ -151,6 +183,11 @@ EXPECTED_BLOCKS: dict[str, set[str]] = {
     "config_save": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization", "config_save"},
     "upload_context": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization", "upload_context"},
     "retry": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization"},
+    # Run-ack: run-ack guidance ON; visualization OFF (runs already completed).
+    "run_ack": _ALWAYS | {"system_warm", "workflow_waterfall", "run_ack"},
+    "tutorial": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization", "tutorial"},
+    "answered_oq": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization", "answered_oq"},
+    "brief_edit": _ALWAYS | {"system_warm", "workflow_waterfall", "visualization", "brief_edit"},
 }
 
 # Per-scenario word CEILINGS, not exact snapshots. The intent this encodes is
@@ -168,6 +205,10 @@ WORD_BUDGET_CEILING: dict[str, int] = {
     "config_save": 6331,
     "upload_context": 6066,
     "retry": 6110,
+    "run_ack": 5877,
+    "tutorial": 6276,
+    "answered_oq": 6081,
+    "brief_edit": 6083,
 }
 
 

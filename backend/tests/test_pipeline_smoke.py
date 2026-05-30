@@ -83,6 +83,136 @@ def test_claim_without_delta_silent_when_no_change_clause():
     assert not any(i.category == "claim_without_delta" for i in issues)
 
 
+def test_apply_stage_answered_oq_turn_does_not_nameerror(monkeypatch):
+    """Regression: ``_apply_stage`` referenced ``is_answered_open_question``
+    without receiving it as a parameter, so EVERY applied turn raised
+    ``NameError`` at the answer-save OQ-action guard. The offline suite
+    missed it because the default Gemini stub pauses the pipeline at S1
+    (drafting) before apply ever runs.
+
+    Drive the apply path directly with an answer-save turn carrying a
+    ``drop`` OQ action (the guard's trigger). The session id is
+    intentionally absent, so apply runs through the guard and returns
+    ``None`` at the missing-row check.
+
+    ``_apply_stage`` swallows exceptions into a ``paused`` status, so a
+    bare ``assert result is None`` would pass even with the bug. We instead
+    record the status calls and assert NO ``paused`` (crash) state — pre-fix
+    the NameError surfaces as ``paused`` + "Couldn't apply the patch …"."""
+    from app.schemas import ChatTurnResponse, OQMaintenanceItem
+    from app.services import pipeline_status
+    from app.services.chat_pipeline_runner import _apply_stage
+
+    calls: list[dict] = []
+    monkeypatch.setattr(pipeline_status, "update_stage", lambda **k: calls.append(k))
+    monkeypatch.setattr(pipeline_status, "fail_pipeline", lambda **k: calls.append({"fail_pipeline": True, **k}))
+
+    turn = ChatTurnResponse(
+        assistant_message="Here's why time windows matter…",
+        problem_brief_patch=None,
+        oq_actions=[OQMaintenanceItem(id="q1", action="drop")],
+    )
+    result = _apply_stage(
+        message_id=0,
+        turn=turn,
+        session_id="missing-session-regression",
+        revision=0,
+        base_problem_brief={"items": [], "goal_terms": {}, "open_questions": []},
+        base_panel=None,
+        workflow_mode="waterfall",
+        history_lines=[],
+        api_key="",
+        model_name="",
+        researcher_steers=None,
+        recent_runs_summary=None,
+        is_run_acknowledgement=False,
+        is_config_save=False,
+        user_text="why do time windows matter?",
+        test_problem_id="vrptw",
+        is_answered_open_question=True,
+    )
+    # Missing session row → graceful None, reached WITHOUT crashing en route.
+    assert result is None
+    paused = [c for c in calls if c.get("state") == "paused"]
+    assert not paused, f"_apply_stage crashed on an answer-save turn: {paused}"
+
+
+def test_classify_user_search_strategy_choice_fail_safe():
+    """Missing key or empty message → None (never blocks the turn)."""
+    from app.services.llm import classify_user_search_strategy_choice
+
+    assert classify_user_search_strategy_choice(
+        user_text="ant colony", api_key=None, model_name=None
+    ) is None
+    assert classify_user_search_strategy_choice(
+        user_text="   ", api_key="k", model_name="m"
+    ) is None
+
+
+def test_has_open_search_strategy_oq():
+    """The gate's classifier only fires while the search-strategy OQ is open."""
+    from app.services.chat_pipeline_runner import _has_open_search_strategy_oq
+
+    open_oq = {"open_questions": [{"id": "oq-monitor-algorithm", "topic": "search_strategy", "status": "open"}]}
+    answered = {"open_questions": [{"id": "oq-monitor-algorithm", "topic": "search_strategy", "status": "answered"}]}
+    assert _has_open_search_strategy_oq(open_oq) is True
+    assert _has_open_search_strategy_oq(answered) is False
+    assert _has_open_search_strategy_oq({"open_questions": []}) is False
+
+
+def test_compute_material_brief_changes_detects_add_retune_remove_algo():
+    """The deterministic diff names solver-affecting changes in plain language
+    (the input the LLM acknowledgement check judges against)."""
+    from app.services.pipeline_verification import compute_material_brief_changes
+
+    base = {
+        "items": [],
+        "goal_terms": {
+            "capacity_penalty": {"weight": 10.0, "type": "soft", "rank": 1},
+            "workload_balance": {"weight": 2.0, "type": "soft", "rank": 2},
+        },
+    }
+    merged = {
+        "items": [{"id": "ev1", "text": "minimize travel", "kind": "gathered", "source": "user"}],
+        "goal_terms": {
+            "capacity_penalty": {"weight": 30.0, "type": "soft", "rank": 1},  # retune
+            # added (anchored via ev1):
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 3, "evidence_item_ids": ["ev1"]},
+            "search_strategy": {"properties": {"algorithm": "GA"}},  # algorithm set
+            # workload_balance removed
+        },
+    }
+    changes = compute_material_brief_changes(base, merged, "agile", "vrptw")
+    assert any("added" in c.lower() for c in changes)
+    assert any("10" in c and "30" in c for c in changes)
+    assert any("removed" in c.lower() for c in changes)
+    assert any("search method" in c.lower() and "ga" in c.lower() for c in changes)
+    # search_strategy is reported via the algorithm line, never as "Added 'Search strategy'".
+    assert not any("search strategy" in c.lower() and "added" in c.lower() for c in changes)
+
+
+def test_compute_material_brief_changes_skips_unanchored_new_key():
+    """A new goal term with no evidence anchor is about to be dropped by the
+    apply layer, so it must NOT show up as a phantom change."""
+    from app.services.pipeline_verification import compute_material_brief_changes
+
+    base = {"items": [], "goal_terms": {}}
+    merged = {"items": [], "goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}}}
+    assert compute_material_brief_changes(base, merged, "agile", "vrptw") == []
+
+
+def test_check_changes_acknowledged_fail_safe():
+    """Missing key or empty change list → None (never blocks the turn)."""
+    from app.services.llm import check_changes_acknowledged
+
+    assert check_changes_acknowledged(
+        visible_reply="hi", changes=["Added X."], api_key=None, model_name=None
+    ) is None
+    assert check_changes_acknowledged(
+        visible_reply="hi", changes=[], api_key="k", model_name="m"
+    ) is None
+
+
 def test_demo_runack_has_no_invariant():
     """Demo mode silently drops assumption rows via workflow coercion, so
     the verifier doesn't impose a run-ack invariant on it (no retry pressure

@@ -615,3 +615,76 @@ def test_p_l7_replay_panel_derive_yields_no_brief_panel_mismatch(monkeypatch):
         if i.category == "brief_panel_mismatch" and "travel_time" in (i.subject or "")
     ]
     assert travel_time_drifts == [], [i.message for i in travel_time_drifts]
+
+
+def test_carrier_algorithm_wins_over_stale_panel_default(monkeypatch):
+    """Chat answer replay: the participant answered the search-strategy
+    question with ant colony, so the brief carrier holds ACOR. The panel
+    still carries the seed's default GA and the LLM-derive (re)emits GA.
+    The carrier is canonical, so the deterministic mirror must overwrite the
+    panel to ACOR — otherwise S5 reports a permanent ACOR↔GA drift the
+    participant can't clear (the symptom reported after the gate fix landed).
+    """
+    from app.services import pipeline_verification as verifier
+    from app.services import llm as llm_module
+
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {},
+                    "goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}},
+                    "algorithm": "GA",
+                }
+            }
+        ),
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        id="carrier_algo_replay",
+        updated_at=None,
+    )
+    brief = {
+        "goal_summary": "Minimize total travel time.",
+        "items": [
+            {
+                "id": "config-weight-travel_time",
+                "text": "Travel time (primary objective, weight 1) — minimize driving minutes.",
+                "kind": "gathered",
+                "source": "agent",
+            }
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+            "search_strategy": {
+                "weight": 1.0,
+                "type": "custom",
+                "rank": 2,
+                "properties": {"algorithm": "ACOR"},
+            },
+        },
+    }
+
+    # LLM-derive ignores the carrier and re-emits the default GA.
+    monkeypatch.setattr(
+        llm_module,
+        "generate_config_from_brief",
+        lambda **kwargs: {"problem": {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}}, "weights": {"travel_time": 1.0}, "algorithm": "GA"}},
+    )
+
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row,
+        db=_DummyDb(),
+        problem_brief=brief,
+        api_key="test",
+        model_name="test",
+        workflow_mode="waterfall",
+        commit=False,
+    )
+
+    assert panel["problem"]["algorithm"] == "ACOR", panel["problem"].get("algorithm")
+    issues = verifier.verify_panel_consistency(
+        brief=brief, panel=panel, workflow_mode="waterfall", test_problem_id="vrptw"
+    )
+    algo_drifts = [i for i in issues if i.category == "brief_panel_algorithm_mismatch"]
+    assert algo_drifts == [], [i.message for i in algo_drifts]

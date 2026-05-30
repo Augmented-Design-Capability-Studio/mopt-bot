@@ -509,16 +509,40 @@ select:focus-visible {
 .pipeline-stage--failed .pipeline-stage__indicator,
 .pipeline-stage--paused .pipeline-stage__indicator { color: #a14d39; }
 .pipeline-stage__retried { font-size: 0.75em; color: #8b5c2a; }
-.pipeline-stage__substages {
-  list-style: none;
-  margin: 0.1rem 0 0;
+.pipeline-status__retry-note {
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  color: #8b5c2a;
+}
+.pipeline-stage__details {
+  margin: 0.15rem 0 0;
+}
+.pipeline-stage__details-toggle {
+  appearance: none;
+  border: none;
+  background: none;
   padding: 0;
-  display: flex;
-  gap: 0.65rem;
+  cursor: pointer;
+  font: inherit;
   font-size: 0.78rem;
   color: #6f6a5d;
 }
-.pipeline-stage__substage::before { content: "↳ "; color: #b1ab9d; }
+.pipeline-stage__details-toggle:hover { color: #4a463c; }
+.pipeline-stage__details-caret { margin-right: 0.25rem; color: #b1ab9d; }
+.pipeline-stage__details-list {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.pipeline-stage__detail {
+  font-size: 0.78rem;
+  color: #6f6a5d;
+  line-height: 1.35;
+}
+.pipeline-stage__detail::before { content: "↳ "; color: #b1ab9d; }
 .pipeline-stage__issues {
   list-style: none;
   margin: 0.2rem 0 0;

@@ -491,9 +491,11 @@ class PipelineStage(BaseModel):
     # owns the canonical mapping but accepts overrides on a per-stage basis
     # (e.g. config-edit flavor wants "Verifying brief ↔ config").
     label: str | None = None
-    # Sub-rows surfaced inside this stage (currently only deriving_config /
-    # verifying_config: ["goal terms", "algorithm"]).
-    substages: list[str] | None = None
+    # Optional informational detail rows surfaced inside this stage as a
+    # nested, collapsed-by-default sub-list — e.g. "Applying changes" lists the
+    # material (solver-affecting) changes that landed this turn. Distinct from
+    # ``issues``, which are failures shown prominently.
+    details: list[str] | None = None
     # Issues attached to this stage when state=="failed" or "paused".
     issues: list[PipelineIssue] = Field(default_factory=list)
     # Set true once we've already burned the single allotted retry.

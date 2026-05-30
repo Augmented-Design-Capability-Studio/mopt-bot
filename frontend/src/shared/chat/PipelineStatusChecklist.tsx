@@ -45,6 +45,11 @@ export function PipelineStatusChecklist({
   const focusStage = pickFocusStage(status.stages, status.paused_stage ?? null);
   const visibleStages = expanded ? status.stages : focusStage ? [focusStage] : [];
   const canToggle = status.stages.length > 1;
+  // A step can fail, retry, and then succeed — leaving the collapsed view
+  // (which shows only the settled focus row) looking spotless. Surface the
+  // retry across all stages so the collapsed record stays honest. Expanded
+  // view doesn't need it: each retried stage shows its own "(retried)" badge.
+  const retriedCount = status.stages.filter((stage) => stage.retried).length;
   return (
     <div className="pipeline-status" aria-live="polite" data-bubble-pipeline>
       {visibleStages.length > 0 ? (
@@ -53,6 +58,11 @@ export function PipelineStatusChecklist({
             <PipelineStageRow key={stage.name} stage={stage} />
           ))}
         </ul>
+      ) : null}
+      {!expanded && retriedCount > 0 ? (
+        <div className="pipeline-status__retry-note">
+          ↺ {retriedCount === 1 ? "1 step needed a retry" : `${retriedCount} steps needed a retry`}
+        </div>
       ) : null}
       {canToggle ? (
         <button
@@ -161,14 +171,11 @@ function PipelineStageRow({ stage }: { stage: PipelineStageMeta }) {
             </span>
           ) : null}
         </div>
-        {Array.isArray(stage.substages) && stage.substages.length > 0 ? (
-          <ul className="pipeline-stage__substages">
-            {stage.substages.map((sub) => (
-              <li key={sub} className="pipeline-stage__substage">
-                {sub}
-              </li>
-            ))}
-          </ul>
+        {Array.isArray(stage.details) && stage.details.length > 0 ? (
+          <StageDetails
+            details={stage.details}
+            summary={stage.name === "applying" ? "What changed" : "Details"}
+          />
         ) : null}
         {Array.isArray(stage.issues) && stage.issues.length > 0 ? (
           <IssueList issues={stage.issues} />
@@ -224,6 +231,38 @@ function stageRetryLabel(name: PipelineStageMeta["name"]): string {
     case "verifying_config":
       return "Re-verifying config...";
   }
+}
+
+/** Nested, collapsed-by-default detail list for a stage (e.g. the "what
+ *  changed" rows on "Applying changes"). Keeps the checklist quiet by default
+ *  while letting a curious participant drill in for the specifics — the
+ *  second level of the "sub-list within list" disclosure. */
+function StageDetails({ details, summary }: { details: string[]; summary: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="pipeline-stage__details">
+      <button
+        type="button"
+        className="pipeline-stage__details-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className="pipeline-stage__details-caret" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        {open ? "Hide" : `${summary} (${details.length})`}
+      </button>
+      {open ? (
+        <ul className="pipeline-stage__details-list">
+          {details.map((detail, idx) => (
+            <li key={idx} className="pipeline-stage__detail">
+              {detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function IssueList({ issues }: { issues: PipelineIssueMeta[] }) {
