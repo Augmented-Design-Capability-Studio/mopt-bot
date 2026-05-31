@@ -23,6 +23,7 @@ from app.routers.sessions.derivation import (
     _enforce_session_monitors,
     _has_gathered_evidence_for_key,
     _resolve_anchored_provisional_rows,
+    gate_locked_goal_term_changes,
     gate_unauthorized_search_strategy_commit,
 )
 from app.services.pipeline_verification import verify_brief_consistency
@@ -269,6 +270,98 @@ def test_anchored_oq_dropped_when_evidence_comes_via_items_anchor():
     )
     after = _resolve_anchored_provisional_rows(merged, "waterfall", base_brief=base)
     assert after["open_questions"] == []
+
+
+def test_dedupes_duplicate_add_proposals_for_absent_concept():
+    """Two OPEN questions both proposing to ADD the same not-yet-existing
+    concept (same goal_key, no committed goal_term) collapse to one — the
+    `oq-lateness` + `oq-lateness-explanation` re-ask. Keeps the first."""
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={},  # lateness_penalty NOT committed yet → add-proposals
+            open_questions=[
+                {"id": "oq-lateness", "text": "Add a lateness penalty?", "topic": "other", "goal_key": "lateness_penalty"},
+                {"id": "oq-lateness-explanation", "text": "Should I add a lateness penalty?", "topic": "other", "goal_key": "lateness_penalty"},
+            ],
+        )
+    )
+    assert [q["id"] for q in brief["open_questions"]] == ["oq-lateness"]
+
+
+def test_tuning_question_coexists_with_existing_concept_state():
+    """The correction: a question is a pending DECISION, not the concept's
+    state. A tuning/change question about a concept that already has an
+    assumption (or gathered fact) is NOT a duplicate — it must coexist.
+    Here `lateness_penalty` is committed and has an assumption row, yet a
+    'raise the weight?' question about it survives."""
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"lateness_penalty": {"weight": 5.0, "type": "soft", "rank": 1}},
+            items=[
+                {
+                    "id": "item-assumption-late",
+                    "text": "Lateness penalty (soft, weight 5) — assumed to push punctuality.",
+                    "kind": "assumption",
+                    "source": "agent",
+                    "goal_key": "lateness_penalty",
+                },
+            ],
+            open_questions=[
+                {"id": "oq-late-tune", "text": "Raise the lateness weight to 30?", "topic": "other", "goal_key": "lateness_penalty"},
+            ],
+        )
+    )
+    assert [q["id"] for q in brief["open_questions"]] == ["oq-late-tune"]
+
+
+def test_keeps_distinct_absent_concept_add_proposals():
+    """Add-proposals for two DIFFERENT absent concepts both survive — dedup
+    only collapses same-key duplicates."""
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={},
+            open_questions=[
+                {"id": "oq-late", "text": "Add lateness?", "topic": "other", "goal_key": "lateness_penalty"},
+                {"id": "oq-cap", "text": "Add capacity?", "topic": "other", "goal_key": "capacity_penalty"},
+                {"id": "oq-free", "text": "Anything else?", "topic": "other"},
+            ],
+        )
+    )
+    assert [q["id"] for q in brief["open_questions"]] == ["oq-late", "oq-cap", "oq-free"]
+
+
+def test_one_state_per_goal_key_gathered_beats_assumption():
+    """INV2: a concept can't be both gathered and assumption at once. When both
+    LLM-authored rows exist for one goal_key, the gathered (user-confirmed) one
+    wins and the assumption is dropped."""
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"lateness_penalty": {"weight": 5.0, "type": "soft", "rank": 1}},
+            items=[
+                {"id": "g-late", "text": "Lateness penalty soft weight 5.", "kind": "gathered", "source": "user", "goal_key": "lateness_penalty"},
+                {"id": "a-late", "text": "Assume a lateness penalty.", "kind": "assumption", "source": "agent", "goal_key": "lateness_penalty"},
+            ],
+        )
+    )
+    states = [(i["id"], i["kind"]) for i in brief["items"]
+              if i.get("goal_key") == "lateness_penalty" and i["kind"] in ("gathered", "assumption")]
+    assert states == [("g-late", "gathered")]
+
+
+def test_one_state_per_goal_key_exempts_synthesized_companion_rows():
+    """INV2 exception: server-synthesized rows (``config-`` namespace) are not
+    collapsed — a companion-bearing key legitimately has several of them."""
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"worker_preference": {"weight": 1.0, "type": "soft", "rank": 1}},
+            items=[
+                {"id": "config-driver-pref-1-a", "text": "Driver 1 avoids zone A.", "kind": "gathered", "source": "agent", "goal_key": "worker_preference"},
+                {"id": "config-driver-pref-2-b", "text": "Driver 2 avoids zone B.", "kind": "gathered", "source": "agent", "goal_key": "worker_preference"},
+            ],
+        )
+    )
+    pref_ids = [i["id"] for i in brief["items"] if i.get("goal_key") == "worker_preference"]
+    assert pref_ids == ["config-driver-pref-1-a", "config-driver-pref-2-b"]
 
 
 def test_tuning_oq_resolves_when_its_key_is_retuned():
@@ -575,8 +668,12 @@ def test_panel_edit_does_not_close_foundational_oq():
 
 
 def test_anchored_assumption_never_auto_dropped_agile():
-    """Even with a parallel gathered+user item carrying the same anchor,
-    the resolver leaves the assumption row alone. Promotion is explicit-only."""
+    """The resolver only drops OPEN QUESTIONS, never assumption items —
+    promotion is an explicit user/LLM action (`assumption_actions`), not a
+    silent resolver side effect. The assumption is the only state for this
+    key here (the gathered+assumption-for-one-key case is owned by INV2,
+    `_reconcile_problem_brief_items`; see
+    ``test_one_state_per_goal_key_gathered_beats_assumption``)."""
     base = normalize_problem_brief(_minimal_brief())
     merged = normalize_problem_brief(
         _minimal_brief(
@@ -588,13 +685,6 @@ def test_anchored_assumption_never_auto_dropped_agile():
                     "source": "agent",
                     "goal_key": "capacity_penalty",
                 },
-                {
-                    "id": "item-gathered-cap",
-                    "text": "Capacity penalty (soft, weight 10.0) — user-confirmed.",
-                    "kind": "gathered",
-                    "source": "user",
-                    "goal_key": "capacity_penalty",
-                },
             ],
             goal_terms={"capacity_penalty": {"weight": 10.0, "type": "soft"}},
         )
@@ -602,7 +692,6 @@ def test_anchored_assumption_never_auto_dropped_agile():
     after = _resolve_anchored_provisional_rows(merged, "agile", base_brief=base)
     ids = [it["id"] for it in after["items"]]
     assert "item-assumption-cap" in ids
-    assert "item-gathered-cap" in ids
 
 
 def test_anchored_assumption_survives_tuning_case_agile():
@@ -1169,6 +1258,70 @@ def test_waterfall_gate_ignores_invalid_user_choice():
     )
     # Not a real algorithm name → no authorization → forged carrier stripped.
     assert "search_strategy" not in gated["goal_terms"]
+
+
+def test_locked_gate_reverts_change_and_raises_oq_brief_lock():
+    """All-mode lock guard: an agent change to a term locked via
+    ``goal_terms[key].locked`` is reverted to the locked value and an OQ is
+    raised asking the participant to approve unlocking + the change."""
+    base = normalize_problem_brief(_minimal_brief(
+        goal_terms={"capacity_penalty": {"weight": 10.0, "type": "hard", "rank": 1, "locked": True}},
+    ))
+    merged = normalize_problem_brief(_minimal_brief(
+        goal_terms={"capacity_penalty": {"weight": 30.0, "type": "hard", "rank": 1, "locked": True}},
+    ))
+    out = gate_locked_goal_term_changes(
+        effective_brief=merged, base_brief=base, base_panel=None, test_problem_id="vrptw"
+    )
+    assert out["goal_terms"]["capacity_penalty"]["weight"] == 10.0  # frozen
+    oq = [q for q in out["open_questions"] if q["id"] == "oq-locked-change-capacity_penalty"]
+    assert len(oq) == 1 and oq[0]["goal_key"] == "capacity_penalty"
+
+
+def test_locked_gate_honors_panel_lock_list():
+    """Lock recorded via the panel's ``locked_goal_terms`` id list is honored
+    even when the brief entry isn't flagged — the two surfaces are equivalent."""
+    base = normalize_problem_brief(_minimal_brief(
+        goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+    ))
+    merged = normalize_problem_brief(_minimal_brief(
+        goal_terms={"travel_time": {"weight": 9.0, "type": "objective", "rank": 1}},
+    ))
+    panel = {"problem": {"locked_goal_terms": ["travel_time"]}}
+    out = gate_locked_goal_term_changes(
+        effective_brief=merged, base_brief=base, base_panel=panel, test_problem_id="vrptw"
+    )
+    assert out["goal_terms"]["travel_time"]["weight"] == 1.0
+    assert any(q["id"] == "oq-locked-change-travel_time" for q in out["open_questions"])
+
+
+def test_locked_gate_passes_unlocked_change_through():
+    """An unlocked term changes freely — no revert, no OQ."""
+    base = normalize_problem_brief(_minimal_brief(
+        goal_terms={"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+    ))
+    merged = normalize_problem_brief(_minimal_brief(
+        goal_terms={"travel_time": {"weight": 9.0, "type": "objective", "rank": 1}},
+    ))
+    out = gate_locked_goal_term_changes(
+        effective_brief=merged, base_brief=base, base_panel=None, test_problem_id="vrptw"
+    )
+    assert out["goal_terms"]["travel_time"]["weight"] == 9.0
+    assert not any(str(q["id"]).startswith("oq-locked-change-") for q in out["open_questions"])
+
+
+def test_locked_gate_noop_when_locked_term_unchanged():
+    """Locked but untouched → no spurious OQ."""
+    base = normalize_problem_brief(_minimal_brief(
+        goal_terms={"capacity_penalty": {"weight": 10.0, "type": "hard", "rank": 1, "locked": True}},
+    ))
+    merged = normalize_problem_brief(_minimal_brief(
+        goal_terms={"capacity_penalty": {"weight": 10.0, "type": "hard", "rank": 1, "locked": True}},
+    ))
+    out = gate_locked_goal_term_changes(
+        effective_brief=merged, base_brief=base, base_panel=None, test_problem_id="vrptw"
+    )
+    assert not any(str(q["id"]).startswith("oq-locked-change-") for q in out["open_questions"])
 
 
 def test_foundational_ask_warms_brief_same_turn():

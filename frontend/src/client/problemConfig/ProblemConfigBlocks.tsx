@@ -308,12 +308,15 @@ export function ProblemConfigBlocks({
     runEditingAction(() => {
       const newWeights = { ...problem.weights };
       newOrder.forEach((key, idx) => {
-        const type =
-          problem.constraint_types[key] ?? (problem.locked_goal_terms.includes(key) ? "custom" : "objective");
-        if (type === "objective" || type === "soft") {
+        // Lock and type are independent: don't infer "custom" from a locked
+        // term. A locked objective stays an objective; only its lock protects
+        // its value, which the reorder weight-suggestion already respects
+        // because we re-suggest by type, not by lock.
+        const type = problem.constraint_types[key] ?? "objective";
+        if ((type === "objective" || type === "soft") && !problem.locked_goal_terms.includes(key)) {
           newWeights[key] = suggestedWeightForType(key, type, idx);
         }
-        // hard and custom weights stay unchanged
+        // hard, custom, and locked weights stay unchanged
       });
       updateProblem({
         goal_term_order: newOrder,

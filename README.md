@@ -1,5 +1,18 @@
 # MOPT study stack
 
+This is the software for a research study on how people work with an AI agent to set up an
+optimization problem. A participant describes a goal in plain language; the agent turns it into a
+running solver configuration and explains the results. The study compares two ways of working —
+**waterfall** (the agent asks before acting) and **agile** (the agent assumes a sensible default and
+runs early).
+
+One principle runs through the whole system: **the participant stays in control.** Every goal the
+agent proposes is a visible, editable entry that moves through a clear lifecycle — an *open question*
+the agent asks, an *assumption* it makes provisionally, or a *confirmed fact* the user owns — and
+anything the user states or locks is never silently overwritten. The deterministic checks in the
+pipeline exist to keep that promise. See `docs/.implementation/USER_FLOW_AUDIT.md` for the state
+model and `docs/.implementation/AI_INSTRUCTIONS.md` for the build rules.
+
 Participant and researcher web apps plus a FastAPI backend for the workflow study described in `docs/.implementation/AI_INSTRUCTIONS.md` (with the detailed plan in `docs/.study_plan/STUDY_DETAILED_PLAN.md`). **Solver domains** ship as sibling **`*_problem/`** directories — currently **`vrptw_problem/`** (fleet routing) and **`knapsack_problem/`** (toy benchmark). Each exposes a **study port** via `mopt_manifest.toml`, loaded by **`backend/app/problems/registry.py`**. Per-session **`test_problem_id`** (default `vrptw`, set by `DEFAULT_PROBLEM_ID` in `registry.py`) selects the active port. **`GET /meta/test-problems`** lists ids, labels, weight definitions, and UI extension keys for clients. Pulling new code **adds SQLite columns idempotently** on API startup (`ensure_database_shape`).
 
 ## Table of contents

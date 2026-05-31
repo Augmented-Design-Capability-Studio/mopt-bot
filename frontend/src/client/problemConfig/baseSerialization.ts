@@ -114,7 +114,10 @@ export function serializeBaseProblemConfig(
       rank = maxRank;
     }
     const explicitType = problem.constraint_types[key];
-    const type: ConstraintType = explicitType ?? (problem.locked_goal_terms.includes(key) ? "custom" : "objective");
+    // Lock and type are independent: a locked term keeps its own type. The
+    // `locked` flag below still serializes the lock state — only the type
+    // inference is decoupled.
+    const type: ConstraintType = explicitType ?? "objective";
     goalTerms[key] = {
       weight: value,
       type,

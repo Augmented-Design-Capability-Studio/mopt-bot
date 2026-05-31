@@ -390,16 +390,15 @@ function reorderKeys(arr: string[], from: string, to: string, insertBefore: bool
   return result;
 }
 
-/** Infer effective constraint type: explicit > locked-without-type > objective default. */
+/** Infer effective constraint type. Lock and type are independent — a locked
+ *  term keeps its own type (a locked objective stays "objective"). Only an
+ *  explicit type changes it. The reverse coupling (custom ⇒ lock) lives in the
+ *  constraint-type change handler. */
 function effectiveType(
   key: string,
   constraintTypes: Record<string, ConstraintType>,
-  lockedGoalTerms: string[],
 ): ConstraintType {
-  const explicit = constraintTypes[key];
-  if (explicit) return explicit;
-  if (lockedGoalTerms.includes(key)) return "custom";
-  return "objective";
+  return constraintTypes[key] ?? "objective";
 }
 
 export function GoalTermsSection({
@@ -427,7 +426,7 @@ export function GoalTermsSection({
     <>
       {displayWeightKeys.map((key, rankIndex) => {
         const slot = extension?.keySlots?.[key];
-        const ctype = effectiveType(key, constraintTypes, problem.locked_goal_terms);
+        const ctype = effectiveType(key, constraintTypes);
         const isBeingDragged = dragKey === key;
         const isDragOver = dragOverKey === key && !isBeingDragged;
 

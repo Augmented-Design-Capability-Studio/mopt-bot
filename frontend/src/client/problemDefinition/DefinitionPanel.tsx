@@ -41,6 +41,13 @@ type DefinitionSectionProps = {
   suppressTransientMarkers?: boolean;
   /** When set (Assumptions section), show the green ✓ next to remove to promote a row to gathered info. */
   onPromoteItem?: (id: string) => void;
+  /** When set (Gathered section), show a lock toggle on rows tied to a goal term.
+   *  Locking freezes the term so the agent can't change it without asking first
+   *  — the same lock as the Problem Config goal-term lock (one lock per concept).
+   *  Reads `goal_key` from the row; no-op for rows without one. */
+  onToggleItemLock?: (goalKey: string, nextLocked: boolean) => void;
+  /** Goal-term keys currently locked (drives the toggle's on/off state). */
+  lockedGoalKeys?: ReadonlySet<string>;
   collapsed?: boolean;
   onToggle?: () => void;
 };
@@ -91,6 +98,8 @@ function DefinitionSection({
   onRestoreItem,
   suppressTransientMarkers = false,
   onPromoteItem,
+  onToggleItemLock,
+  lockedGoalKeys,
   collapsed = false,
   onToggle,
 }: DefinitionSectionProps) {
@@ -182,6 +191,31 @@ function DefinitionSection({
                             ✓
                           </button>
                         ) : null}
+                        {onToggleItemLock && typeof item.goal_key === "string" && item.goal_key
+                          ? (() => {
+                              const goalKey = item.goal_key as string;
+                              const isLocked = lockedGoalKeys?.has(goalKey) ?? false;
+                              return (
+                                <button
+                                  type="button"
+                                  className={`definition-icon-btn ${isLocked ? "definition-icon-btn--locked" : "definition-icon-btn--unlocked"}`}
+                                  aria-label={isLocked ? "Unlock this setting" : "Lock this setting"}
+                                  aria-pressed={isLocked}
+                                  title={
+                                    isLocked
+                                      ? "Locked — the agent must ask before changing this. Click to unlock."
+                                      : "Lock this setting so the agent can't change it without asking."
+                                  }
+                                  onClick={() => {
+                                    onEnsureDefinitionEditing();
+                                    onToggleItemLock(goalKey, !isLocked);
+                                  }}
+                                >
+                                  {isLocked ? "🔒" : "🔓"}
+                                </button>
+                              );
+                            })()
+                          : null}
                       </>
                     ) : null}
                   </div>
@@ -418,6 +452,29 @@ export function DefinitionPanel({
         ),
       ),
     );
+  }
+
+  // Lock state lives on the concept (`goal_terms[key].locked`) — the same lock
+  // the Problem Config goal-term button sets, so there's one lock per concept
+  // shown in two places. The backend honors this brief-side flag (and mirrors
+  // it to the panel's `locked_goal_terms`), and `gate_locked_goal_term_changes`
+  // makes the agent ask before changing a locked term.
+  const lockedGoalKeys = new Set<string>(
+    Object.entries((problemBrief.goal_terms as Record<string, unknown>) ?? {})
+      .filter(([, entry]) => (entry as { locked?: unknown })?.locked === true)
+      .map(([key]) => key),
+  );
+
+  function toggleItemLock(goalKey: string, nextLocked: boolean) {
+    const currentTerms = (problemBrief.goal_terms as Record<string, unknown>) ?? {};
+    const currentEntry = (currentTerms[goalKey] as Record<string, unknown>) ?? {};
+    persist({
+      ...problemBrief,
+      goal_terms: {
+        ...currentTerms,
+        [goalKey]: { ...currentEntry, locked: nextLocked },
+      },
+    });
   }
 
   function updateItemText(id: string, text: string) {
@@ -729,6 +786,8 @@ export function DefinitionPanel({
           index: entry.index,
         }))}
         onRestoreItem={(id) => restoreRemovedItem("gathered", id)}
+        onToggleItemLock={toggleItemLock}
+        lockedGoalKeys={lockedGoalKeys}
         collapsed={collapsedSections.gatheredInfo}
         onToggle={() => toggleSection("gatheredInfo")}
       />

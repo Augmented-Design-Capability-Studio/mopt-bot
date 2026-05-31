@@ -528,6 +528,128 @@ def gate_unauthorized_search_strategy_commit(
     return gated, filtered_actions
 
 
+def _locked_goal_term_keys(
+    base_brief: dict[str, Any], base_panel: dict[str, Any] | None
+) -> set[str]:
+    """Keys the participant has locked, read from both representations.
+
+    Lock is set by the user in two equivalent surfaces: the brief carries
+    ``goal_terms[key].locked = true`` and the panel carries a
+    ``locked_goal_terms`` id list. We honor either so the gate fires no matter
+    which surface recorded the lock.
+    """
+    locked: set[str] = set()
+    gt = base_brief.get("goal_terms") if isinstance(base_brief, dict) else None
+    if isinstance(gt, dict):
+        for key, entry in gt.items():
+            if isinstance(key, str) and isinstance(entry, dict) and entry.get("locked") is True:
+                locked.add(key)
+    if isinstance(base_panel, dict):
+        problem = base_panel.get("problem") if isinstance(base_panel.get("problem"), dict) else base_panel
+        raw = problem.get("locked_goal_terms") if isinstance(problem, dict) else None
+        if isinstance(raw, list):
+            for entry in raw:
+                if isinstance(entry, str) and entry.strip():
+                    locked.add(entry.strip())
+    return locked
+
+
+def gate_locked_goal_term_changes(
+    *,
+    effective_brief: dict[str, Any],
+    base_brief: dict[str, Any],
+    base_panel: dict[str, Any] | None,
+    test_problem_id: str | None = None,
+) -> dict[str, Any]:
+    """All-mode structural gate: the agent must not silently change a LOCKED
+    goal term.
+
+    A locked term is the participant's "hands off" — its value is frozen until
+    they unlock it. When the merged brief would change a locked key's weight or
+    type (or drop the key), revert that key to its base value and raise an open
+    question asking the participant to approve unlocking + the change. This is
+    the lifecycle's strongest "user input wins" rule, and it holds in every
+    mode (waterfall already asks; agile would otherwise just demote to an
+    assumption — but a *locked* term is the exception that forces an OQ). A
+    prose rule can't enforce it; this gate does (cf.
+    ``gate_unauthorized_search_strategy_commit``).
+    """
+    if not isinstance(effective_brief, dict) or not isinstance(base_brief, dict):
+        return effective_brief
+    locked_keys = _locked_goal_term_keys(base_brief, base_panel)
+    if not locked_keys:
+        return effective_brief
+
+    base_gt = base_brief.get("goal_terms") if isinstance(base_brief.get("goal_terms"), dict) else {}
+    merged_gt = effective_brief.get("goal_terms") if isinstance(effective_brief.get("goal_terms"), dict) else {}
+
+    def _scalar(entry: Any, field: str) -> Any:
+        return entry.get(field) if isinstance(entry, dict) else None
+
+    reverted: list[str] = []
+    next_gt = dict(merged_gt)
+    for key in locked_keys:
+        if key not in base_gt:
+            continue  # nothing locked to protect
+        base_entry = base_gt[key]
+        if key not in merged_gt:
+            # Agent dropped a locked term — restore it.
+            next_gt[key] = deepcopy(base_entry)
+            reverted.append(key)
+            continue
+        merged_entry = merged_gt[key]
+        weight_changed = _scalar(base_entry, "weight") != _scalar(merged_entry, "weight")
+        type_changed = _scalar(base_entry, "type") != _scalar(merged_entry, "type")
+        if weight_changed or type_changed:
+            next_gt[key] = deepcopy(base_entry)  # freeze: revert to locked value
+            reverted.append(key)
+    if not reverted:
+        return effective_brief
+
+    out = dict(effective_brief)
+    out["goal_terms"] = next_gt
+    open_questions = list(out.get("open_questions") or [])
+    existing_locked_oq_keys = {
+        str(q.get("goal_key") or "").strip()
+        for q in open_questions
+        if isinstance(q, dict)
+        and str(q.get("id") or "").startswith("oq-locked-change-")
+    }
+    label_map: dict[str, str] = {}
+    try:
+        from app.problems.registry import get_study_port
+
+        result = get_study_port(test_problem_id).weight_item_labels()
+        if isinstance(result, dict):
+            label_map = result
+    except Exception:  # pragma: no cover — defensive
+        label_map = {}
+    for key in reverted:
+        if key in existing_locked_oq_keys:
+            continue
+        label = label_map.get(key) or key.replace("_", " ").strip()
+        open_questions.append(
+            {
+                "id": f"oq-locked-change-{key}",
+                "text": (
+                    f"The {label} setting is locked. Do you want to unlock it and "
+                    f"apply the change I proposed?"
+                ),
+                "status": "open",
+                "answer_text": None,
+                "topic": "other",
+                "goal_key": key,
+            }
+        )
+    out["open_questions"] = open_questions
+    log.warning(
+        "Locked goal-term gate: reverted %d locked change(s) and raised OQ(s): %s",
+        len(reverted),
+        reverted,
+    )
+    return out
+
+
 def _has_gathered_evidence_for_key(items: list[Any], key: str) -> bool:
     """True iff some ``kind: "gathered"`` row in ``items`` represents ``key``.
 

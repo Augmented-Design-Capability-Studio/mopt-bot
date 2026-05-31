@@ -302,6 +302,10 @@ export type ProblemBriefItem = {
   text: string;
   kind: "gathered" | "assumption";
   source: "user" | "upload" | "agent";
+  /** Canonical goal-term key this row is tied to (e.g. `travel_time`), when
+   *  the row represents a specific goal term. Drives the gathered-row lock
+   *  toggle (one lock per concept). Absent on free-form rows. */
+  goal_key?: string;
 };
 
 export type ProblemBriefQuestion = {

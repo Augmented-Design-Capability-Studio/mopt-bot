@@ -38,6 +38,87 @@ Highest to lowest:
 
 ---
 
+## Concept lifecycle — state vs. pending decision
+
+The key insight (and a correction to an earlier "one open question per concept"
+rule that was too strict): a concept has two independent things attached to it.
+
+- **State** — what the concept *currently is*. At most one of:
+  *assumption* (agent decided, provisional) → *gathered* (user confirmed) →
+  *locked* (user froze). These never coexist for the same concept.
+- **Pending decision** — an **open question** about the concept: *should we
+  add it?*, *raise its weight?*, *change its type?*. A question is a request
+  awaiting an answer, **not** the concept's state — so a question can sit
+  alongside an existing assumption or gathered fact. (Example: a gathered
+  "lateness penalty, weight 5" with an open "raise it to 30?" question is
+  perfectly valid.)
+
+So the rule is: **at most one state per concept, but a question may coexist
+with that state.** The only true duplicate is two questions both proposing to
+*add the same not-yet-existing concept*.
+
+```
+   add-proposal        agent decides          user confirms
+ ── QUESTION? ────────► ASSUMPTION ──────────► GATHERED ──► LOCKED
+   (no state yet)      (agent's, agile)        (user's)    (frozen)
+        │                   │  ▲                   │  ▲         │
+        │ once a STATE      │  └─ demote (agile) ──┘  │   only user, or
+        │ exists, further   │     agent changes it    │  ask→approve→unlock
+        └─ questions are ───┘                         │
+           change-proposals that COEXIST with the state
+           (resolved when the user acts on the concept)
+```
+
+- **Question** — a pending decision; coexists with whatever state exists.
+- **Assumption** — agent decided provisionally (agile only).
+- **Gathered** — user stated or confirmed it; it's theirs.
+- **Locked** — gathered *and* frozen by the user; strongest "hands off."
+
+Rules:
+
+1. **One state per concept** — never two states for the same `goal_key`. A
+   question is not a state, so it doesn't count here.
+2. **Dedupe only duplicate add-proposals** — two open questions that both
+   propose to add the *same absent concept* collapse to one. A question about
+   a concept that already exists is a change-proposal and is kept.
+3. **A change-question resolves when the user acts** — answering it, or
+   committing/retuning the concept, closes it (`_resolve_anchored_provisional_rows`).
+4. **User input wins** — a user value is never silently overwritten. In agile
+   the agent may retune, but that **demotes to an assumption** and is surfaced;
+   the user can revert, re-confirm, or lock.
+5. **Locked = no agent writes** (enforced, all modes) — an agent change to a
+   locked term is reverted and an OQ is raised for the participant to approve
+   unlock + apply (`gate_locked_goal_term_changes`). The lock is the exception
+   to agile's demote-to-assumption: locked → ask, never demote.
+6. **Mode picks the entry point** — waterfall enters at *question*, agile at
+   *assumption*. Same lifecycle; waterfall has no assumption state (coerced to
+   questions).
+7. **Provenance follows origin** — user-driven → gathered/user; agent-driven →
+   assumption/agent.
+
+Boundary: free-form facts without a `goal_key` (data, scale, caveats) are just
+facts — none of this lifecycle applies to them.
+
+### Transition status (enforced vs. gap)
+
+| Transition / rule | Enforced today | Gap to close |
+|---|---|---|
+| One *state* per concept (assumption xor gathered) | yes (`_reconcile_problem_brief_items`, gathered beats assumption; `config-` synth rows exempt) | — |
+| Change-question coexists with existing state | yes (dedup only hits add-proposals) | — |
+| Dedupe duplicate add-proposals (absent concept) | yes | — |
+| Question → gathered / → assumption | yes (answer classifier) | — |
+| Change-question closes when user acts | yes (`_resolve_anchored_provisional_rows`) | — |
+| Assumption → gathered (promote) | partly (`assumption_actions`) | promotion from a vague "yes" |
+| **Locked term = no agent write (all modes → revert + OQ)** | **yes** (`gate_locked_goal_term_changes`) | frontend lock button on gathered rows |
+| **Gathered → assumption (demote on agile retune)** | **no** | row stays "gathered", looks confirmed |
+| **Assumption dropped once user-confirmed** | partly (promote) | auto-drop on a *user-sourced* gathered row (not the synthesized one) |
+| Override of a same-session user statement (agile) | surfaced (`delta_without_claim`) | optional: ask before overriding |
+
+Open decision: **who can unlock?** Panel only, or can a chat "yes" to the
+agent's "unlock and change it?" authorize it (like the algorithm chat answer)?
+
+---
+
 ## What can change each item
 
 | Item | Can be changed by | Authoritative owner | Conflict defense |
@@ -50,7 +131,8 @@ Highest to lowest:
 | **Goal-term questions** (proposal/tuning, tagged `goal_key`) | agent (raises), participant (chat answer or panel), server resolver (closes) | server resolver `_resolve_anchored_provisional_rows` | one shared predicate decides closure for both chat and panel paths; closes when the key is committed or retuned; the model's drop is ignored on answer turns so a counter-question isn't lost |
 | **Free-form questions** (`other`, no `goal_key`) | agent (`oq_actions`), participant (answer) | model | waterfall caps at 3 active; verifier requires a question row when the reply asks one |
 | **Assumptions** (agile/demo) | agent (adds), participant (promote/edit/remove), workflow coercion | model proposes, participant promotes | promotion needs an explicit lock-in; waterfall converts assumptions to questions, demo drops them |
-| **Gathered facts & synthesized rows** | agent, participant (confirm/edit), synthesizer (`config-weight-*`, rule rows) | synthesizer owns the `config-*` rows | model is forbidden from emitting those ids; stale synthesized rows are pruned by id prefix |
+| **Gathered facts & synthesized rows** | agent, participant (confirm/edit/**lock**), synthesizer (`config-weight-*`, rule rows) | synthesizer owns the `config-*` rows; user owns the lock | model is forbidden from emitting those ids; stale synthesized rows pruned by id prefix; **a locked term's change is reverted + raises an OQ** (`gate_locked_goal_term_changes`) |
+| **Goal-term lock** | participant (Config lock button, or gathered-row lock — synced) | participant only | the lock is the same state in both surfaces (`goal_terms[key].locked` ↔ panel `locked_goal_terms`); the agent never sets it |
 | **Run summary / run records** | server only | server (`consolidate_run_summary`, run store) | anything the model writes here is overwritten |
 | **Uploaded-file fact** | participant upload event | server (one canonical row) | model must not duplicate the upload row; the upload question auto-resolves |
 
@@ -64,12 +146,26 @@ Highest to lowest:
 - **Search-strategy gate** (`gate_unauthorized_search_strategy_commit`) — drops
   an algorithm the user never chose; commits the user's chat answer
   deterministically (read from the user's own message by a classifier).
+- **Locked-term gate** (`gate_locked_goal_term_changes`) — all modes: an agent
+  change to a *locked* goal term is reverted to the locked value and surfaced as
+  an `oq-locked-change-<key>` open question for the participant to approve
+  (unlock + apply). Reads the lock from either surface (brief
+  `goal_terms[key].locked` or panel `locked_goal_terms`).
+- **One state per concept** (`_reconcile_problem_brief_items`) — a concept can't
+  be both gathered and assumption at once; gathered (user-confirmed) wins.
+  Server-synthesized `config-` rows are exempt (companion rules legitimately
+  have many).
 - **Foundational monitors + merge strip** — the server is the only writer of
   the upload / primary-goal / search-strategy questions.
 - **Anchored-question resolver + shared predicate**
   (`_resolve_anchored_provisional_rows`, `is_goal_key_oq_resolved_by_keys`) —
   closes a goal-term question when its key is committed or retuned, the same way
   on the chat and panel paths.
+- **Dedupe duplicate add-proposals** (`_dedupe_add_questions_for_absent_concepts`) —
+  collapses two OPEN questions that both propose to add the *same not-yet-existing*
+  concept (`goal_key` absent from `goal_terms`), keyed on the concept not the text.
+  A change/tuning question about a concept that already exists is a pending
+  decision and is kept — it coexists with the concept's state.
 - **Carrier→panel overwrite mirror** (`sync_panel_from_problem_brief`) — the
   brief carrier wins over panel defaults for algorithm / epochs / pop size.
 - **Scalar mirror** (`_mirror_canonical_scalars_from_brief`) — brief
@@ -122,6 +218,25 @@ Highest to lowest:
   the model from soft confirmation. Same split-decision shape that bit the
   questions; harden with a quoted lock-in if it misfires (see
   `FLOW_CONTROL_MAP.md`).
+
+## Done this round
+
+- **Gathered-row lock button (frontend).** Gathered rows that carry a
+  `goal_key` now show a lock toggle (`DefinitionPanel.tsx`) — the assumption
+  **↑ promote** control stays on assumption rows; lock is its gathered-row
+  parallel. The toggle reads/writes `brief.goal_terms[key].locked`, the *same*
+  lock the Problem Config goal-term button sets; `sync._mirror_locked_from_brief`
+  unions the brief flag into `panel.locked_goal_terms` (and drops it on explicit
+  unlock), so the two controls reflect one shared state — one lock per concept.
+  Companion rows (`config-driver-pref-*`, goal_key `worker_preference`) lock at
+  the term level; per-companion-row locking is intentionally not offered.
+
+## Pending implementation (spec ready)
+
+- **Gathered → assumption demote on agile retune.** When the agent changes an
+  *unlocked* gathered term in agile, swap its kind to `assumption` (provenance
+  follows origin) instead of leaving it looking user-confirmed. Locked terms
+  are the exception — already handled by the lock gate (revert + OQ).
 
 ## Decided, not doing now
 

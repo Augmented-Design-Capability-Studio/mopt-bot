@@ -92,6 +92,16 @@ Panel→brief injection for the `config-search-strategy` gathered row (`_brief_i
 
 Waterfall Definition invariant: do not persist `kind: "assumption"` rows; missing information is tracked as `open_questions` until confirmed.
 
+### Concept lifecycle & ownership rules (enforce, don't just prompt)
+
+Each goal-term concept (one `goal_key`) is a **question → assumption → gathered → locked** lifecycle. An assumption is the middle state: a decision the agent made, not yet the user's. These are invariants — enforce them in code (`problem_brief.py` dedup/coercion, the apply stage, the gates), not only in prompts. Full spec: `docs/.implementation/USER_FLOW_AUDIT.md`.
+
+- **User input always wins.** A user-set or user-confirmed value is never silently overwritten by the agent.
+- **One state per concept; questions are separate.** A concept has at most one *state* (assumption xor gathered xor locked). An open question is a *pending decision*, not a state — a change/tuning question coexists with the concept's existing state. Only duplicate *add-proposals* (two questions adding the same not-yet-existing concept) are deduped on normalize.
+- **Mode picks the entry point.** Waterfall asks (question); agile assumes (assumption). Same lifecycle — waterfall has no assumption state (assumptions coerce to questions).
+- **Provenance follows origin.** User-driven change → `gathered`/`user`; agent-driven change → `assumption`/`agent`. In agile, an agent change to a gathered term **demotes** it to an assumption (surfaced, never silent).
+- **Locked term = no agent write.** The agent cannot change or demote a locked goal term. It must raise a question and, only on the user's approval, unlock + update. Custom-type terms are user-owned/locked by default.
+
 ### Open-question answer routing (on save)
 
 When the participant saves the Definition, the PATCH `/sessions/{id}/problem-brief` handler diffs incoming vs persisted `open_questions` to find OQs that just transitioned to `status: "answered"`. Each such answer is sent to a dedicated batched classifier (`classify_answered_open_questions` in `backend/app/services/llm.py`, prompt `STUDY_CHAT_OQ_CLASSIFY_TASK`) which rephrases concrete answers and bucket-routes hedged ones per workflow:

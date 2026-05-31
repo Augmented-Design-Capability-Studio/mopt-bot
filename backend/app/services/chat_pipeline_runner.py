@@ -1184,6 +1184,17 @@ def _apply_stage(
             )
         )
 
+        # All-mode lock guard: a change the agent proposed to a LOCKED goal term
+        # is reverted and surfaced as an OQ for the participant to approve
+        # (unlock + apply). Runs before workflow coercion so the raised OQ is in
+        # place when waterfall coercion / monitors re-evaluate the brief.
+        effective_brief = derivation.gate_locked_goal_term_changes(
+            effective_brief=effective_brief,
+            base_brief=base_problem_brief,
+            base_panel=base_panel,
+            test_problem_id=test_problem_id,
+        )
+
         effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
         # Apply per-row OQ actions (all modes) before assumption actions so
         # the OQ list reflects the LLM's lifecycle decisions before the

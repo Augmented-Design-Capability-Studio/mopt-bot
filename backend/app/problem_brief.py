@@ -1523,6 +1523,53 @@ def _promote_goal_prefixed_items(
     return out_items, goal_summary
 
 
+def _dedupe_add_questions_for_absent_concepts(
+    questions: list[dict[str, Any]], goal_terms: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Collapse duplicate *add-proposal* questions only.
+
+    Key distinction (the correction to the earlier "one OQ per concept" rule):
+
+    - An open question is a **pending decision**, not the concept's state. A
+      gathered fact or assumption is the concept's **current state**. The two
+      coexist: the agent can ask *"raise the lateness weight to 30?"* while a
+      gathered/assumption row for lateness already exists. Those tuning /
+      change questions must NOT be deduped against the state.
+    - The only genuine duplicate is two questions both proposing to **add the
+      same concept that doesn't exist yet** (e.g. the `oq-lateness` +
+      `oq-lateness-explanation` re-ask). We detect "add-proposal" structurally:
+      the question's ``goal_key`` is not yet a committed ``goal_terms`` key.
+
+    So: among OPEN, non-foundational questions whose ``goal_key`` is **absent**
+    from ``goal_terms``, keep the first per key and drop later ones. Questions
+    about a concept that already exists are change-proposals and always kept
+    (the resolver handles them when the concept is committed/retuned).
+    Foundational topics are owned by the monitor state machine and untouched.
+    """
+    committed = {k for k in (goal_terms or {}) if isinstance(k, str)}
+    out: list[dict[str, Any]] = []
+    seen_absent_keys: set[str] = set()
+    for q in questions:
+        if not isinstance(q, dict):
+            out.append(q)
+            continue
+        goal_key = str(q.get("goal_key") or "").strip()
+        status = str(q.get("status") or "open").strip().lower()
+        topic = str(q.get("topic") or "other").strip().lower()
+        is_add_proposal = (
+            goal_key
+            and goal_key not in committed
+            and status == "open"
+            and topic not in FOUNDATIONAL_OQ_TOPICS
+        )
+        if is_add_proposal:
+            if goal_key in seen_absent_keys:
+                continue  # duplicate "add this concept" question
+            seen_absent_keys.add(goal_key)
+        out.append(q)
+    return out
+
+
 def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     base = default_problem_brief()
     if not isinstance(raw, dict):
@@ -1585,6 +1632,11 @@ def normalize_problem_brief(raw: Any) -> dict[str, Any]:
     # values shown in item text match live ``goal_terms`` state — kills
     # hallucinated or stale numbers in LLM-authored assumption rows.
     promoted_items = _refresh_referenced_goal_term_text(promoted_items, goal_terms)
+    # Collapse duplicate add-proposal questions (two OQs proposing to add the
+    # same not-yet-existing concept). Tuning/change questions about an existing
+    # concept are pending decisions and coexist with its gathered/assumption
+    # state. Runs last, when questions + goal_terms are final.
+    questions = _dedupe_add_questions_for_absent_concepts(questions, goal_terms)
     return {
         "goal_summary": goal_summary,
         "runs": runs,
@@ -2302,6 +2354,11 @@ def synthesize_canonical_goal_term_items(
                 "text": _weight_item_text(label, float(weight), ctype, rationale=rationale),
                 "kind": "gathered",
                 "source": "agent",
+                # Stamp the concept anchor so the synthesized weight row carries
+                # the Definition lock toggle (one lock per goal term) and
+                # self-anchors for derivation. Without it, even the main
+                # objective's row had no lock button.
+                "goal_key": key,
             }
         )
     return out
@@ -2435,7 +2492,35 @@ def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str
         if slot is not None and last_index_by_slot.get(slot) != index:
             continue
         reconciled.append(item)
-    return reconciled
+
+    # One provisional STATE per goal_key: a concept can't be both a gathered
+    # fact and an assumption at once. Gathered (user-confirmed) beats assumption
+    # (agent-provisional) — drop the assumption when a gathered row for the same
+    # key exists. Only LLM-authored rows participate; server-synthesized rows
+    # (``config-`` id namespace) are exempt, so the canonical per-key weight row
+    # and the many companion rows (``config-driver-pref-*``) are never collapsed.
+    # Demote (gathered→assumption) is a swap by the writer, so it never leaves
+    # both kinds present for this net to undo.
+    def _is_synth(it: dict[str, Any]) -> bool:
+        return str(it.get("id") or "").startswith("config-")
+
+    gathered_keys = {
+        str(it.get("goal_key") or "").strip()
+        for it in reconciled
+        if str(it.get("kind") or "").strip().lower() == "gathered"
+        and str(it.get("goal_key") or "").strip()
+        and not _is_synth(it)
+    }
+    if not gathered_keys:
+        return reconciled
+    deconflicted: list[dict[str, Any]] = []
+    for it in reconciled:
+        gk = str(it.get("goal_key") or "").strip()
+        kind = str(it.get("kind") or "").strip().lower()
+        if gk and kind == "assumption" and not _is_synth(it) and gk in gathered_keys:
+            continue  # gathered supersedes the contradictory assumption
+        deconflicted.append(it)
+    return deconflicted
 
 
 def _numeric_field(d: dict[str, Any], key: str) -> int | float | None:

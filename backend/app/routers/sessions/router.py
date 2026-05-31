@@ -220,14 +220,13 @@ def _route_oq_answers_through_classifier(
             gathered_item_id = (
                 f"item-gathered-from-question-{qid}" if qid else f"item-gathered-{len(items)}"
             )
-            items.append(
-                {
-                    "id": gathered_item_id,
-                    "text": rephrased,
-                    "kind": "gathered",
-                    "source": "user",
-                }
-            )
+            gathered_item = {
+                "id": gathered_item_id,
+                "text": rephrased,
+                "kind": "gathered",
+                "source": "user",
+            }
+            items.append(gathered_item)
             # Goal-term endorsement: seed brief.goal_terms so the brief →
             # panel sync attaches a weight. The panel-derive prompt is
             # explicitly forbidden from inventing keys from prose
@@ -239,6 +238,12 @@ def _route_oq_answers_through_classifier(
             if proposal is not None and isinstance(proposal.key, str):
                 key = proposal.key.strip()
                 if key:
+                    # Stamp the concept anchor on the gathered row so it carries
+                    # the same lock affordance + evidence linkage as the
+                    # canonical config-weight row (one lock per concept). This
+                    # also strengthens derivation: the row now self-anchors the
+                    # goal term it endorses.
+                    gathered_item["goal_key"] = key
                     goal_terms = incoming_brief.get("goal_terms")
                     if not isinstance(goal_terms, dict):
                         goal_terms = {}

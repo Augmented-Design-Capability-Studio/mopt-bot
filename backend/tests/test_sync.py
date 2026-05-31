@@ -517,6 +517,38 @@ def test_mirror_canonical_scalars_no_op_when_brief_lacks_key():
     assert next_problem["goal_terms"]["travel_time"]["weight"] == 5.0
 
 
+def test_mirror_locked_from_brief_adds_brief_flagged_key():
+    """A term locked from the Definition tab (brief `goal_terms[key].locked`)
+    is unioned into `panel.locked_goal_terms` so the two lock controls reflect
+    one shared state."""
+    next_problem = {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}}}
+    brief = {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "locked": True}}}
+    sync._mirror_locked_from_brief(next_problem, brief)
+    assert next_problem["locked_goal_terms"] == ["travel_time"]
+
+
+def test_mirror_locked_from_brief_removes_on_explicit_unlock():
+    """An explicit brief unlock (`locked: False`) drops the key from the panel
+    list — unlocking from the Definition tab syncs back to Config."""
+    next_problem = {
+        "goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}},
+        "locked_goal_terms": ["travel_time"],
+    }
+    brief = {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "locked": False}}}
+    sync._mirror_locked_from_brief(next_problem, brief)
+    # Empty lock list is dropped entirely (the panel carries the key only when locked).
+    assert next_problem.get("locked_goal_terms", []) == []
+
+
+def test_mirror_locked_from_brief_ignores_key_absent_from_panel():
+    """A brief lock flag for a key the panel doesn't carry is ignored — the
+    lock list never references a non-existent term."""
+    next_problem = {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}}}
+    brief = {"goal_terms": {"capacity_penalty": {"weight": 1.0, "type": "hard", "locked": True}}}
+    sync._mirror_locked_from_brief(next_problem, brief)
+    assert next_problem.get("locked_goal_terms", []) == []
+
+
 def test_p_l7_replay_panel_derive_yields_no_brief_panel_mismatch(monkeypatch):
     """End-to-end P_l7 msg-1688 replay through sync_panel_from_problem_brief.
 

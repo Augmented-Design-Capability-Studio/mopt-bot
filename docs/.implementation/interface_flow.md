@@ -139,6 +139,12 @@ The user can edit the definition. Supported actions:
 - edit gathered info
 - remove entries
 
+These edits move a concept along its lifecycle (question → assumption →
+gathered): answering or promoting confirms it as a user-owned **gathered**
+fact. A user edit always wins over an agent proposal. In agile the agent may
+later **demote** a gathered term back to an assumption if *it* changes the
+value — never silently for a value you set. Full model: `USER_FLOW_AUDIT.md`.
+
 On save:
 
 - Derivation is re-triggered to update the config.
@@ -152,7 +158,12 @@ The user can edit:
 - goal-term ranks and weight types
 - sub-properties of certain goal terms (see §7)
 - the search strategy / algorithm
+- lock / unlock a goal term
 - remove goal terms
+
+A **locked** goal term is frozen: the agent cannot change or demote it. To
+change a locked term the agent must ask first and update only if you approve
+(which unlocks it). Custom-type terms are locked by default.
 
 On save:
 

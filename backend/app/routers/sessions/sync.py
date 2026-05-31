@@ -510,6 +510,50 @@ def _mirror_canonical_scalars_from_brief(
         )
 
 
+def _mirror_locked_from_brief(
+    next_problem: dict[str, Any],
+    problem_brief: dict[str, Any] | None,
+) -> None:
+    """Mirror the participant's lock from the brief into the panel.
+
+    Lock is one state per concept shown in two surfaces: the Definition-tab
+    lock toggle writes ``brief.goal_terms[key].locked``; the Problem Config
+    lock button writes ``panel.problem.locked_goal_terms``. The reverse
+    direction (panel → brief) already carries ``locked`` via
+    ``merge_brief_from_panel``; this is the forward direction so a lock set on
+    the Definition tab reaches the panel list (and an explicit unlock removes
+    it). Only keys the panel actually carries are touched, so the list never
+    references a non-existent term. Keys the brief doesn't mention are left
+    alone — the panel's existing lock (e.g. a researcher/Config lock) wins
+    when the brief has no opinion.
+    """
+    if not isinstance(problem_brief, dict):
+        return
+    brief_goal_terms = problem_brief.get("goal_terms")
+    if not isinstance(brief_goal_terms, dict) or not brief_goal_terms:
+        return
+    panel_goal_terms = next_problem.get("goal_terms")
+    panel_keys = set(panel_goal_terms.keys()) if isinstance(panel_goal_terms, dict) else set()
+
+    current = next_problem.get("locked_goal_terms")
+    locked: list[str] = [k for k in current if isinstance(k, str)] if isinstance(current, list) else []
+    locked_set = set(locked)
+    for key, entry in brief_goal_terms.items():
+        if not isinstance(key, str) or key not in panel_keys or not isinstance(entry, dict):
+            continue
+        flag = entry.get("locked")
+        if flag is True and key not in locked_set:
+            locked.append(key)
+            locked_set.add(key)
+        elif flag is False and key in locked_set:
+            locked = [k for k in locked if k != key]
+            locked_set.discard(key)
+    if locked:
+        next_problem["locked_goal_terms"] = locked
+    else:
+        next_problem.pop("locked_goal_terms", None)
+
+
 def _canonicalize_locked_goal_terms(
     current_problem: dict,
     derived_problem: dict,
@@ -1100,6 +1144,10 @@ def sync_panel_from_problem_brief(
     # validator, so the persisted panel always agrees with the brief on
     # the canonical scalars. See ``_mirror_canonical_scalars_from_brief``.
     _mirror_canonical_scalars_from_brief(next_problem, problem_brief)
+    # Forward-mirror the participant's lock (Definition-tab toggle writes
+    # brief.goal_terms[key].locked) into the panel's locked_goal_terms so the
+    # Config lock control reflects the same single per-concept lock state.
+    _mirror_locked_from_brief(next_problem, problem_brief)
 
     # Drop stale `goal_term_order` entries whose keys were filtered out of
     # `goal_terms` above (unauthorized/unanchored sweeps) or that were carried
