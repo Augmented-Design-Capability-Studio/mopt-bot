@@ -203,7 +203,34 @@ def verify_brief_consistency(
                 if action in {"rephrase", "mark_answered"}:
                     retargets_existing = True
                     break
-        if not new_oqs and not retargets_existing:
+        # Re-affirming an ALREADY-OPEN OQ also satisfies the ask: the reply
+        # re-asks a clarifying question the brief already tracks (carried from
+        # a prior turn and still open), and the LLM re-emits that OQ by id in
+        # this turn's patch. The participant still sees a matching open
+        # question, so the ask IS recorded. Without this, re-asking a
+        # still-open OQ (P_0602: "increase the lateness penalty weight?" while
+        # ``oq-punctuality-tradeoff`` was already open) falsely fired
+        # ``ask_without_oq`` — and the retry could never satisfy it, since
+        # re-emitting the same id isn't "new" and ``mark_answered``/``rephrase``
+        # would be wrong for a question the participant hasn't answered. We tie
+        # the pass to the LLM's own structured signal (the patch re-emitting
+        # the OQ), not a bare "any open OQ exists", so an unrelated leftover
+        # OQ can't mask a genuinely unrecorded new ask.
+        reaffirms_open_oq = False
+        patch_oqs = patch.get("open_questions") if isinstance(patch, dict) else None
+        if isinstance(patch_oqs, list):
+            preview_open_ids = {
+                str(q.get("id") or "").strip()
+                for q in (preview_brief.get("open_questions") or [])
+                if isinstance(q, dict)
+                and str(q.get("status") or "open").strip().lower() == "open"
+                and str(q.get("id") or "").strip()
+            }
+            for q in patch_oqs:
+                if isinstance(q, dict) and str(q.get("id") or "").strip() in preview_open_ids:
+                    reaffirms_open_oq = True
+                    break
+        if not new_oqs and not retargets_existing and not reaffirms_open_oq:
             issues.append(
                 PipelineIssue(
                     category="ask_without_oq",

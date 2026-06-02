@@ -817,6 +817,7 @@ def apply_brief_patch_with_cleanup(
     api_key: str | None = None,
     model_name: str | None = None,
     suppress_runack_invariant: bool = False,
+    oq_actions: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Deterministic patch-merge pipeline used by the apply stage (S3).
 
@@ -932,6 +933,31 @@ def apply_brief_patch_with_cleanup(
             gk = q.get("goal_key")
             if isinstance(gk, str) and gk.strip():
                 pending_oq_keys.add(gk.strip())
+        # Answered-OQ keys: the goal_key of every OQ this turn's oq_actions
+        # RESOLVE (drop / mark_answered). These are the opposite of pending —
+        # the participant just answered the ask about K, so the commit is
+        # authorized and must NOT be premature-dropped. Resolved here, before
+        # the filter, because ``_apply_oq_actions`` (which removes the OQ) runs
+        # a step later in the caller — by the time the OQ is gone the link
+        # between the answer and the goal term is lost. Without this an
+        # "approve the proposed penalty" turn dropped both the term and the OQ.
+        answered_oq_keys: set[str] = set()
+        if oq_actions:
+            resolving_ids = {
+                str(a.get("id") or "").strip()
+                for a in oq_actions
+                if isinstance(a, dict)
+                and str(a.get("action") or "").strip().lower() in {"drop", "mark_answered"}
+            }
+            if resolving_ids:
+                for q in merged.get("open_questions") or []:
+                    if not isinstance(q, dict):
+                        continue
+                    if str(q.get("id") or "").strip() not in resolving_ids:
+                        continue
+                    gk = q.get("goal_key")
+                    if isinstance(gk, str) and gk.strip():
+                        answered_oq_keys.add(gk.strip())
         filtered, dropped = filter_unanchored_new_goal_terms(
             base_brief=base_problem_brief,
             proposed_goal_terms=proposed_goal_terms,
@@ -940,6 +966,7 @@ def apply_brief_patch_with_cleanup(
             api_key=api_key,
             test_problem_id=test_problem_id,
             pending_oq_keys=pending_oq_keys,
+            answered_oq_keys=answered_oq_keys,
         )
         if dropped:
             log.warning(

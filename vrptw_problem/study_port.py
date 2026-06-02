@@ -259,8 +259,78 @@ class VrptwStudyPort:
     def synthesize_brief_items_from_goal_terms(
         self, goal_terms: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        from vrptw_problem.brief_seed import synthesize_driver_preference_items
-        return synthesize_driver_preference_items(goal_terms)
+        """No separate companion rows. Companion detail (driver-preference
+        rules, shift cap) is merged INLINE into each term's single
+        ``config-weight-<key>`` def row via ``goal_term_companion_summary`` —
+        one row per concept that also carries the lock toggle. The
+        ``config-driver-pref-`` prefix stays owned (see
+        ``prose_id_prefixes_for_goal_term``) so legacy standalone rows from
+        older sessions get pruned on the next refresh."""
+        return []
+
+    def goal_term_companion_summary(self, goal_term_key: str, entry: dict[str, Any]) -> str | None:
+        """Merge a term's companion detail into its def row.
+
+        - ``shift_limit`` → the max-shift-hours cap.
+        - ``worker_preference`` → the per-driver rules, one concise clause each.
+        """
+        if not isinstance(entry, dict):
+            return None
+        props = entry.get("properties")
+        if not isinstance(props, dict):
+            return None
+
+        if goal_term_key == "shift_limit":
+            hours = props.get("max_shift_hours")
+            if not isinstance(hours, (int, float)) or isinstance(hours, bool) or hours <= 0:
+                return None
+            h = float(hours)
+            hours_str = str(int(h)) if h.is_integer() else str(h)
+            return f"Cap: {hours_str} hours per driver."
+
+        if goal_term_key == meta_worker_preference_key():
+            rules = props.get("driver_preferences")
+            if not isinstance(rules, list) or not rules:
+                return None
+            from vrptw_problem.brief_seed import (
+                _DRIVER_NAMES_BY_INDEX,
+                _ZONE_LETTERS_BY_INDEX,
+            )
+
+            clauses: list[str] = []
+            for rule in rules:
+                if not isinstance(rule, dict):
+                    continue
+                vid = rule.get("vehicle_idx")
+                driver = (
+                    _DRIVER_NAMES_BY_INDEX.get(vid, f"Driver {vid}")
+                    if isinstance(vid, int)
+                    else "A driver"
+                )
+                cond = str(rule.get("condition") or "").strip().lower()
+                if cond == "avoid_zone":
+                    zl = (
+                        _ZONE_LETTERS_BY_INDEX.get(rule.get("zone"))
+                        if isinstance(rule.get("zone"), int)
+                        else None
+                    )
+                    if zl:
+                        clauses.append(f"{driver} avoids Zone {zl}")
+                elif cond == "order_priority":
+                    pr = str(rule.get("order_priority") or "").strip().lower()
+                    if pr in {"express", "standard"}:
+                        clauses.append(f"{driver} skips {pr}-priority orders")
+                elif cond == "shift_over_limit":
+                    lim = rule.get("limit_minutes")
+                    if isinstance(lim, (int, float)) and not isinstance(lim, bool) and lim > 0:
+                        hrs = float(lim) / 60.0
+                        hs = f"{hrs:.1f}".rstrip("0").rstrip(".")
+                        clauses.append(f"{driver} caps shifts at {hs}h")
+            if not clauses:
+                return None
+            return "Rules — " + "; ".join(clauses) + "."
+
+        return None
 
     def verify_brief_companion(
         self,

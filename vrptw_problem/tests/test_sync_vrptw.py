@@ -304,11 +304,12 @@ def test_panel_to_brief_mirror_carries_driver_preferences_via_goal_terms():
     assert next_brief["goal_terms"]["worker_preference"]["weight"] == 5.0
 
 
-def test_panel_to_brief_synthesizes_prose_items_per_driver_preference():
-    """Each driver-preference rule must surface as one `config-driver-pref-*`
-    row in the brief items so the participant-facing Definition tab renders
-    'Alice avoids deliveries in Zone D…' alongside the structured rule the
-    solver consumes."""
+def test_panel_to_brief_merges_driver_preferences_into_one_row():
+    """Driver-preference rules are merged INLINE into the single
+    `config-weight-worker_preference` def row (no separate `config-driver-pref-*`
+    rows), so the term shows its companion detail in one row that also carries
+    the lock toggle (goal_key). Works whether the companion is nested under
+    `goal_terms[key].properties` or mirrored to a top-level panel field."""
     from app.problem_brief import _brief_items_from_panel
 
     panel = {
@@ -339,16 +340,14 @@ def test_panel_to_brief_synthesizes_prose_items_per_driver_preference():
         }
     }
     items = _brief_items_from_panel(panel, test_problem_id="vrptw")
-    ids = {it["id"] for it in items}
-    assert "config-driver-pref-0-zone-D" in ids
-    assert "config-driver-pref-2-order-express" in ids
-    assert "config-driver-pref-3-shift-390" in ids
-    alice = next(it for it in items if it["id"] == "config-driver-pref-0-zone-D")
-    assert "Alice" in alice["text"] and "Zone D" in alice["text"]
-    carol = next(it for it in items if it["id"] == "config-driver-pref-2-order-express")
-    assert "Carol" in carol["text"] and "express" in carol["text"]
-    dave = next(it for it in items if it["id"] == "config-driver-pref-3-shift-390")
-    assert "Dave" in dave["text"] and "6.5h" in dave["text"]
+    # No separate per-rule rows.
+    assert not [it for it in items if str(it["id"]).startswith("config-driver-pref-")]
+    wp = next(it for it in items if it["id"] == "config-weight-worker_preference")
+    # All three rules merged into the one row, which anchors for the lock toggle.
+    assert wp.get("goal_key") == "worker_preference"
+    assert "Alice avoids Zone D" in wp["text"]
+    assert "Carol skips express-priority orders" in wp["text"]
+    assert "Dave caps shifts at 6.5h" in wp["text"]
 
 
 def test_brief_synthesis_drops_stale_rows_when_rule_removed(monkeypatch):

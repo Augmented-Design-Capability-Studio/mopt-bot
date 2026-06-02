@@ -187,7 +187,11 @@
       "Bash(rmdir data *)",
       "Bash(npx tsx *)",
       "Bash(grep *)",
-      "Bash(../frontend/node_modules/.bin/tsc --noEmit -p ../frontend/tsconfig.json)"
+      "Bash(../frontend/node_modules/.bin/tsc --noEmit -p ../frontend/tsconfig.json)",
+      "Bash(./node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Bash(cat backend/.env)",
+      "Bash(cat .env)"
     ]
   }
 }

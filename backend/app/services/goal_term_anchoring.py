@@ -191,6 +191,7 @@ def filter_unanchored_new_goal_terms(
     test_problem_id: str | None = None,
     embedding_model: str | None = None,
     pending_oq_keys: frozenset[str] | set[str] = frozenset(),
+    answered_oq_keys: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Drop newly-introduced goal_term keys that have no evidence anchor.
 
@@ -201,9 +202,11 @@ def filter_unanchored_new_goal_terms(
     Anchor priority (for new keys):
     1. Key declared in port.auto_anchored_goal_term_keys() (closed-vocabulary
        opt-out for problems whose key set is too small/intrinsic to misuse).
-    2. Explicit ``evidence_item_ids`` resolves to a valid items[] id.
-    3. Self-anchored properties (e.g. worker_preference + driver_preferences).
-    4. Embedding cosine ≥ threshold against any item text (if api_key given).
+    2. Key whose anchored OQ is being RESOLVED this turn (``answered_oq_keys``)
+       — the participant's OQ answer IS the evidence (see below).
+    3. Explicit ``evidence_item_ids`` resolves to a valid items[] id.
+    4. Self-anchored properties (e.g. worker_preference + driver_preferences).
+    5. Embedding cosine ≥ threshold against any item text (if api_key given).
 
     Premature-commit rule (``pending_oq_keys``): when a new key K has no
     self-anchor / cite AND the brief carries an open question with
@@ -212,6 +215,16 @@ def filter_unanchored_new_goal_terms(
     open ask, and the term can re-commit cleanly when the user answers.
     Skips the embedding fallback (which would otherwise rescue noisy
     cases and contaminate the brief with a half-baked goal_term).
+
+    Answered-OQ override (``answered_oq_keys``): the keys of OQs that THIS
+    turn's ``oq_actions`` resolve (``drop`` / ``mark_answered``). These are
+    the exact opposite of the premature case — the participant just answered
+    the question about K, so the commit is authorized and the OQ answer is
+    its anchor. Without this, an "approve the proposed penalty" turn lost
+    BOTH the goal term (premature-dropped because the OQ was still open when
+    the filter ran) AND the OQ (dropped a step later by ``_apply_oq_actions``),
+    silently erasing the user's approval. Takes precedence over
+    ``pending_oq_keys`` so a key in both is kept.
     """
     if not isinstance(proposed_goal_terms, dict):
         return {}, []
@@ -256,6 +269,15 @@ def filter_unanchored_new_goal_terms(
         if not isinstance(key, str) or not isinstance(entry, dict):
             continue
         if key in base_keys or key in auto_anchored:
+            cheap_anchored[key] = True
+            continue
+        if key in answered_oq_keys:
+            # The participant just answered the OQ about K this turn (the
+            # turn's oq_actions resolve it). The answer authorizes the commit
+            # and stands as its anchor — keep the term. Checked BEFORE the
+            # pending-OQ premature drop so an answer-and-commit turn (OQ still
+            # technically open at filter time, resolved a step later) is never
+            # mistaken for a premature ask.
             cheap_anchored[key] = True
             continue
         if is_goal_term_anchored(

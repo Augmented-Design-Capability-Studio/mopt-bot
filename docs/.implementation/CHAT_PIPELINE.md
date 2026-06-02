@@ -60,6 +60,7 @@ IssueCategory:
   schema_invalid                            # patch shape failed validation
   claim_without_delta                       # reply claims a change but patch is empty for the claimed surface
   delta_without_claim                       # patch has content not justified by the reply
+  ask_without_oq                            # reply asks a clarifying question but the brief has no matching open question (satisfied by a new OQ, an oq_actions retarget, OR re-asking a still-open OQ the patch re-emits)
   unanchored_goal_term                      # new goal_term key lacks evidence_item_ids / properties / cosine anchor
   algorithm_committed_missing_carrier       # reply names algorithm but goal_terms.search_strategy.properties.algorithm empty
   algorithm_carrier_without_commit          # carrier set but reply doesn't surface it

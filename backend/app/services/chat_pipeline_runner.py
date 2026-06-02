@@ -1130,6 +1130,10 @@ def _apply_stage(
                 api_key=api_key,
                 model_name=model_name,
                 suppress_runack_invariant=suppress_runack_invariant,
+                # Tell the anchor filter which OQs this turn resolves so a goal
+                # term the user just approved via an OQ answer isn't mistaken
+                # for a premature/unanchored commit and silently dropped.
+                oq_actions=[a.model_dump() for a in (turn.oq_actions or [])],
             )
         else:
             effective_brief = dict(base_problem_brief)
@@ -1611,6 +1615,7 @@ def _retry_brief_from_panel(
                 api_key=api_key,
                 model_name=model_name,
                 suppress_runack_invariant=bool(retry_context.get("suppress_runack_invariant")),
+                oq_actions=[a.model_dump() for a in (retry_turn.oq_actions or [])],
             )
             applied = coerce_problem_brief_for_workflow(applied, workflow_mode)
             applied = derivation._enforce_session_monitors(

@@ -345,8 +345,26 @@ class StudyProblemPort(Protocol):
 
         Default returns ``[]`` — problems with no structured child fields
         contribute no extra prose rows.
+
+        NOTE: prefer ``goal_term_companion_summary`` for companion detail —
+        it merges into the term's single ``config-weight-<key>`` row instead
+        of emitting separate rows. This hook stays for any genuinely
+        standalone rows a port still wants.
         """
         return []
+
+    def goal_term_companion_summary(
+        self, goal_term_key: str, entry: dict[str, Any]
+    ) -> str | None:
+        """Short summary of a goal term's *companion* detail (a shift cap,
+        per-driver rules, …), merged inline into that term's single
+        ``config-weight-<key>`` def row.
+
+        ``entry`` is ``goal_terms[key]`` (carries ``properties``). Return a
+        concise clause like ``"Cap: 8 hours per driver."`` to be appended after
+        the row's rationale, or ``None`` when the term has no companion / it
+        isn't populated yet. Default: ``None``."""
+        return None
 
     def verify_brief_companion(
         self,

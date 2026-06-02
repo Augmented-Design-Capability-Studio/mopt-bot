@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.auth import Principal, require_any_study_user, require_client, require_researcher
 from app.config import get_settings
 from app.crypto_util import encrypt_secret
-from app.database import SessionLocal, get_db
+from app.database import SessionLocal, _resolve_sqlite_url, get_db
 from app.problems.registry import DEFAULT_PROBLEM_ID, get_study_port as _get_study_port, register_study_ports
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
 from app.optimization_gate import can_run_optimization
@@ -666,7 +666,10 @@ def export_sessions_db(
             status_code=501,
             detail="export-db only supports SQLite source databases",
         )
-    src_path = url[len("sqlite:///"):].lstrip("/")
+    # Resolve through the same backend-anchored helper the engine uses so we
+    # read the real study DB regardless of the server's cwd (otherwise a
+    # relative URL points at a stray /data file under the process cwd).
+    src_path = _resolve_sqlite_url(url)[len("sqlite:///"):]
 
     # Subset to ids that actually exist — silently skip phantoms so the
     # researcher gets a clean file even if the UI's list drifted from

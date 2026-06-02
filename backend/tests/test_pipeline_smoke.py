@@ -714,6 +714,62 @@ def test_unanchored_goal_term_silenced_by_pending_oq():
     # silent in this state — verified separately by their own dedicated tests.
 
 
+def test_ask_without_oq_satisfied_by_reaffirmed_open_oq():
+    """P_0602 regression: the reply re-asks a clarifying question the brief
+    already tracks (``oq-punctuality-tradeoff`` carried open from a prior
+    turn), and the LLM re-emits that OQ by id in the patch. The participant
+    still sees a matching open question, so ``ask_without_oq`` must NOT fire —
+    even though the OQ is not *new* this turn. Before the fix, the retry was
+    unwinnable (re-emitting the same id isn't "new"; mark_answered/rephrase
+    would be wrong for an unanswered question)."""
+    from app.services.pipeline_verification import verify_brief_consistency
+
+    oq = {
+        "id": "oq-punctuality-tradeoff",
+        "text": "Would you like me to increase the weight on the lateness penalty?",
+        "topic": "other",
+        "goal_key": "lateness_penalty",
+        "status": "open",
+    }
+    issues = verify_brief_consistency(
+        merged_brief={"items": [], "goal_terms": {}, "open_questions": [oq]},
+        base_brief={"items": [], "goal_terms": {}, "open_questions": [dict(oq)]},
+        patch={"open_questions": [dict(oq)]},  # re-emitted by id, still open
+        visible_reply=oq["text"],
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        question_clause=oq["text"],
+    )
+    assert not any(i.category == "ask_without_oq" for i in issues), [i.category for i in issues]
+
+
+def test_ask_without_oq_still_fires_when_ask_is_unrecorded():
+    """Guard: the reply asks a clarifying question but the LLM records NO
+    matching OQ (empty patch open_questions, no new OQ, no oq_actions). The
+    ask is genuinely unrecorded, so ``ask_without_oq`` MUST still fire — an
+    unrelated leftover OQ must not mask it (the fix ties the pass to the LLM
+    re-emitting the OQ, not to a bare 'any open OQ exists')."""
+    from app.services.pipeline_verification import verify_brief_consistency
+
+    leftover = {
+        "id": "oq-unrelated",
+        "text": "Some unrelated leftover question?",
+        "topic": "other",
+        "goal_key": "shift_limit",
+        "status": "open",
+    }
+    issues = verify_brief_consistency(
+        merged_brief={"items": [], "goal_terms": {}, "open_questions": [leftover]},
+        base_brief={"items": [], "goal_terms": {}, "open_questions": [dict(leftover)]},
+        patch={"open_questions": []},  # LLM recorded nothing for the new ask
+        visible_reply="Should I add a brand-new penalty for idle time?",
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        question_clause="Should I add a brand-new penalty for idle time?",
+    )
+    assert any(i.category == "ask_without_oq" for i in issues), [i.category for i in issues]
+
+
 def test_premature_goal_term_commit_dropped_by_anchor_filter():
     """At apply time, when a NEW goal_term lands with empty companion AND
     an OQ with matching ``goal_key`` exists, ``filter_unanchored_new_goal_terms``
@@ -767,6 +823,37 @@ def test_filter_does_not_drop_goal_term_with_populated_rules_even_with_pending_o
     )
     assert "worker_preference" in filtered
     assert "worker_preference" not in dropped
+
+
+def test_answered_oq_key_keeps_commit_even_when_pending_and_unanchored():
+    """When the participant ANSWERS an OQ about key K (the turn's oq_actions
+    resolve it), the goal_term commit for K must survive even though the OQ
+    is still technically open at filter time and the term has no items[]
+    anchor yet. ``answered_oq_keys`` takes precedence over the premature
+    ``pending_oq_keys`` drop. Regression for P_0602: "approve the two
+    proposed penalties as hard" silently lost both penalties because the
+    filter premature-dropped them while ``_apply_oq_actions`` dropped the
+    OQs a step later — erasing the approval entirely."""
+    from app.services.goal_term_anchoring import filter_unanchored_new_goal_terms
+
+    proposed = {
+        "capacity_penalty": {"weight": 10.0, "type": "hard"},
+        "lateness_penalty": {"weight": 10.0, "type": "hard"},
+    }
+    filtered, dropped = filter_unanchored_new_goal_terms(
+        base_brief={"goal_terms": {}},
+        proposed_goal_terms=proposed,
+        items=[],  # no anchoring items yet — synthesis happens after the filter
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        # Both keys are pending (OQ still open at filter time) AND answered
+        # (this turn's oq_actions drop them). Answered must win.
+        pending_oq_keys={"capacity_penalty", "lateness_penalty"},
+        answered_oq_keys={"capacity_penalty", "lateness_penalty"},
+    )
+    assert "capacity_penalty" in filtered
+    assert "lateness_penalty" in filtered
+    assert not dropped
 
 
 def test_vrptw_port_companion_silenced_by_pending_oq():

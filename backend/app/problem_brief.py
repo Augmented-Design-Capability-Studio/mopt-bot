@@ -2102,6 +2102,46 @@ def sync_problem_brief_from_panel(
             )
             if key in CARRIER_ONLY_GOAL_TERM_KEYS
         }
+        # Mirror the panel's algorithm INTO the preserved search_strategy
+        # carrier. The carrier's ``properties.algorithm`` exists solely to
+        # reflect ``panel.problem.algorithm`` (the value the solver actually
+        # runs); preserving it *verbatim* froze it at its prior value, so a
+        # user who switched the algorithm in the Config panel (P_0602:
+        # ACOR→GA) left the brief carrier at ACOR forever. The drift check then
+        # flagged "brief ACOR vs panel GA" and the retry pushed the panel back
+        # to ACOR — undoing the user's edit in a loop. The panel is
+        # authoritative for what runs, so on every panel→brief sync the
+        # existing carrier follows it. Only an existing carrier is updated (we
+        # never fabricate one from a panel default — that stays owned by the
+        # chat commit / monitors / waterfall authorization path).
+        ss_carrier = preserved_carriers.get("search_strategy")
+        if isinstance(ss_carrier, dict):
+            panel_problem = (
+                panel_config.get("problem")
+                if isinstance(panel_config, dict) and isinstance(panel_config.get("problem"), dict)
+                else (panel_config if isinstance(panel_config, dict) else {})
+            )
+            panel_algo_raw = panel_problem.get("algorithm")
+            if isinstance(panel_algo_raw, str) and panel_algo_raw.strip():
+                from app.algorithm_catalog import canonical_algorithm_stored
+
+                panel_algo = canonical_algorithm_stored(panel_algo_raw)
+                if panel_algo:
+                    props = ss_carrier.get("properties")
+                    if not isinstance(props, dict):
+                        props = {}
+                        ss_carrier["properties"] = props
+                    if props.get("algorithm") != panel_algo:
+                        props["algorithm"] = panel_algo
+                        # Re-anchor evidence to the panel-synthesized strategy
+                        # row so a stale pointer (e.g. ``config-strategy-ant-
+                        # colony`` after switching off ACOR) doesn't linger.
+                        if any(
+                            isinstance(it, dict)
+                            and str(it.get("id") or "") == "config-search-strategy"
+                            for it in merged.get("items") or []
+                        ):
+                            ss_carrier["evidence_item_ids"] = ["config-search-strategy"]
         merged["goal_terms"] = {**panel_goal_terms, **preserved_carriers}
 
         # Diff classification for user-triggered panel saves.
@@ -2269,6 +2309,39 @@ def _weight_item_text(
     return f"{label} is a {role} term (weight {value})."
 
 
+def _append_companion_clause(base_text: str, summary: str | None) -> str:
+    """Merge a goal term's companion summary into its def-row text.
+
+    The companion (e.g. shift-hours cap, per-driver rules) is appended after the
+    rationale so each goal term shows its full detail in one row, instead of
+    living in separate companion rows or going missing. No-op when there's no
+    summary. Ensures the base ends with sentence punctuation before appending.
+    """
+    base = (base_text or "").rstrip()
+    clause = (summary or "").strip()
+    if not clause:
+        return base
+    if base and base[-1] not in ".!?":
+        base += "."
+    return f"{base} {clause}" if base else clause
+
+
+def _companion_summary_for(test_problem_id: str | None, key: str, entry: Any) -> str | None:
+    """Best-effort port companion summary for a goal term (None on any issue)."""
+    if not isinstance(entry, dict):
+        return None
+    try:
+        from app.problems.registry import get_study_port
+
+        fn = getattr(get_study_port(test_problem_id), "goal_term_companion_summary", None)
+        if callable(fn):
+            result = fn(key, entry)
+            return result if isinstance(result, str) and result.strip() else None
+    except Exception:  # pragma: no cover — defensive
+        return None
+    return None
+
+
 def _goal_term_rationale_for_synthesis(
     goal_term_entry: Any,
     port_fallback: str | None,
@@ -2348,10 +2421,16 @@ def synthesize_canonical_goal_term_items(
         ctype = entry.get("type") if isinstance(entry.get("type"), str) else None
         label = labels.get(key) or key.replace("_", " ").capitalize()
         rationale = _goal_term_rationale_for_synthesis(entry, rationales.get(key))
+        text = _weight_item_text(label, float(weight), ctype, rationale=rationale)
+        # Merge the term's companion detail (shift cap, driver rules) inline so
+        # the single def row carries everything — no separate companion rows.
+        text = _append_companion_clause(
+            text, _companion_summary_for(test_problem_id, key, entry)
+        )
         out.append(
             {
                 "id": f"config-weight-{key}",
-                "text": _weight_item_text(label, float(weight), ctype, rationale=rationale),
+                "text": text,
                 "kind": "gathered",
                 "source": "agent",
                 # Stamp the concept anchor so the synthesized weight row carries
@@ -2625,22 +2704,46 @@ def _brief_items_from_panel(
     # Fall back to legacy top-level `weights` / `constraint_types` (for
     # unsanitized / legacy panels and tests). On conflict, goal_terms wins.
     weights, constraint_types = _weights_and_types_from_problem(problem)
+    # Companion detail (shift cap, driver rules) can sit on the panel either
+    # nested under ``goal_terms[key].properties`` or projected to a TOP-LEVEL
+    # field (``problem.driver_preferences`` / ``problem.max_shift_hours``) via
+    # the port's field mirror — both occur. Build a per-key ``properties`` view
+    # that prefers the nested form and falls back to the mirrored field, so the
+    # same ``goal_term_companion_summary`` hook merges the companion inline (one
+    # def row per concept, identical format to the brief-side synthesizer).
+    panel_goal_terms = problem.get("goal_terms") if isinstance(problem.get("goal_terms"), dict) else {}
+    try:
+        field_mirrors = port.goal_term_property_field_mirrors()
+        if not isinstance(field_mirrors, dict):
+            field_mirrors = {}
+    except Exception:  # pragma: no cover — defensive
+        field_mirrors = {}
+
+    def _companion_entry_for(key: str) -> dict[str, Any]:
+        gt_entry = panel_goal_terms.get(key) if isinstance(panel_goal_terms, dict) else None
+        props = gt_entry.get("properties") if isinstance(gt_entry, dict) else None
+        merged_props: dict[str, Any] = dict(props) if isinstance(props, dict) else {}
+        prop_field = field_mirrors.get(str(key))
+        if prop_field is not None and prop_field not in merged_props and prop_field in problem:
+            merged_props[prop_field] = problem.get(prop_field)
+        return {"properties": merged_props}
+
     if weights:
         for key in sorted(weights):
             value = weights[key]
             label = weight_labels.get(str(key), str(key).replace("_", " ").capitalize())
             ctype = constraint_types.get(str(key)) if isinstance(constraint_types, dict) else None
             rationale = weight_rationales.get(str(key)) if isinstance(weight_rationales, dict) else None
-            row = _config_item(
-                f"config-weight-{key}",
-                _weight_item_text(
-                    label,
-                    float(value),
-                    str(ctype) if isinstance(ctype, str) else None,
-                    rationale=str(rationale).strip() if isinstance(rationale, str) else None,
-                ),
-                source=origin,
+            text = _weight_item_text(
+                label,
+                float(value),
+                str(ctype) if isinstance(ctype, str) else None,
+                rationale=str(rationale).strip() if isinstance(rationale, str) else None,
             )
+            text = _append_companion_clause(
+                text, _companion_summary_for(test_problem_id, str(key), _companion_entry_for(str(key)))
+            )
+            row = _config_item(f"config-weight-{key}", text, source=origin)
             # Stamp the canonical goal-term anchor so the resolver/renderer
             # find this row by key without parsing text.
             row["goal_key"] = str(key)

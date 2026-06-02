@@ -1212,6 +1212,73 @@ def test_sync_problem_brief_from_panel_preserves_search_strategy_carrier():
     assert "travel_time" in out["goal_terms"]
 
 
+def test_sync_problem_brief_from_panel_carrier_follows_panel_algorithm_change():
+    """P_0602 regression: when the participant changes the algorithm in the
+    Config panel (ACOR→GA), the panel→brief sync must update the carrier's
+    ``properties.algorithm`` to match. The panel is authoritative for what the
+    solver runs; preserving the carrier verbatim froze it at ACOR, producing a
+    permanent ``algorithm_mismatch`` drift whose retry pushed the panel *back*
+    to ACOR — silently undoing the user's edit in a loop."""
+    base = default_problem_brief("vrptw")
+    base["goal_terms"] = {
+        "search_strategy": {
+            "weight": 1.0,
+            "type": "custom",
+            "rank": 2,
+            "evidence_item_ids": ["config-strategy-ant-colony"],
+            "properties": {"algorithm": "ACOR"},
+        },
+        "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+    }
+    # User switched the algorithm in the Config tab. epochs/pop_size present so
+    # the panel synthesizes a `config-search-strategy` item to re-anchor to.
+    panel = {
+        "problem": {
+            "goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            "algorithm": "GA",
+            "epochs": 100,
+            "pop_size": 50,
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    carrier = out["goal_terms"]["search_strategy"]
+    assert carrier["properties"]["algorithm"] == "GA", carrier
+    # Stale ant-colony evidence pointer re-anchored to the fresh strategy row.
+    assert carrier.get("evidence_item_ids") == ["config-search-strategy"], carrier
+    # No residual algorithm drift after the sync.
+    from app.routers.sessions.sync import compute_brief_panel_drift
+
+    algo_drift = [
+        d for d in compute_brief_panel_drift(out, panel, "vrptw")
+        if d.get("kind") == "algorithm_mismatch"
+    ]
+    assert not algo_drift, algo_drift
+
+
+def test_sync_problem_brief_from_panel_keeps_carrier_when_panel_algorithm_absent():
+    """Guard: when the panel carries no concrete ``algorithm`` (e.g. starter
+    panel or a goal-only save), the carrier is left untouched — the sync never
+    fabricates or clobbers the algorithm from a missing panel value."""
+    base = default_problem_brief("vrptw")
+    base["goal_terms"] = {
+        "search_strategy": {
+            "weight": 1.0,
+            "type": "custom",
+            "rank": 2,
+            "properties": {"algorithm": "PSO"},
+        },
+        "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+    }
+    panel = {
+        "problem": {
+            "goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+            # no `algorithm` key
+        }
+    }
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    assert out["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "PSO"
+
+
 def test_sync_problem_brief_from_panel_strips_supporting_items_on_removal():
     """Removing ``worker_preference`` from the panel must cascade — both the
     auto-synthesized ``config-driver-pref-*`` row and a user-prose row that
@@ -1518,6 +1585,66 @@ def test_apply_brief_patch_runack_strip_agile_drops_new_assumptions_and_goal_ter
     assert "selection_sparsity" not in gt, gt
     # The retune of value_emphasis weight came through:
     assert gt["value_emphasis"]["weight"] == 2.0, gt
+
+
+def test_apply_brief_patch_keeps_goal_term_user_approved_via_oq_answer():
+    """P_0602 regression: the participant approves two proposed penalties as
+    hard ("yes, add the two penalties — make them hard"). The main turn
+    commits ``capacity_penalty``/``lateness_penalty`` AND emits oq_actions
+    dropping their OQs. The new terms have no items[] anchor yet (synthesis
+    runs after the filter), and the OQs are still open when the anchor filter
+    runs — so without the ``answered_oq_keys`` signal the filter premature-
+    drops them while ``_apply_oq_actions`` drops the OQs, erasing the
+    approval. With the signal both terms survive and the OQs resolve."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    base = default_problem_brief("vrptw")
+    base["goal_terms"] = {
+        "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+    }
+    base["open_questions"] = [
+        {
+            "id": "oq-capacity-penalty",
+            "text": "Should I add a capacity penalty (soft)?",
+            "status": "open",
+            "answer_text": None,
+            "topic": "other",
+            "goal_key": "capacity_penalty",
+        },
+        {
+            "id": "oq-lateness-penalty",
+            "text": "Should I add a lateness penalty (soft)?",
+            "status": "open",
+            "answer_text": None,
+            "topic": "other",
+            "goal_key": "lateness_penalty",
+        },
+    ]
+    patch_payload = {
+        "goal_terms": {
+            "capacity_penalty": {"weight": 10.0, "type": "hard", "rank": 2},
+            "lateness_penalty": {"weight": 10.0, "type": "hard", "rank": 3},
+        },
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="waterfall",
+        recent_runs_summary=[],
+        test_problem_id="vrptw",
+        user_text="yes, you can add the two penalties. However, i need them to be hard.",
+        oq_actions=[
+            {"id": "oq-capacity-penalty", "action": "drop"},
+            {"id": "oq-lateness-penalty", "action": "drop"},
+        ],
+    )
+    gt = out.get("goal_terms") or {}
+    assert gt.get("capacity_penalty", {}).get("type") == "hard", gt
+    assert gt.get("lateness_penalty", {}).get("type") == "hard", gt
+    # Gathered evidence rows synthesized so the participant sees the approval.
+    item_ids = {it.get("id") for it in out.get("items") or [] if isinstance(it, dict)}
+    assert "config-weight-capacity_penalty" in item_ids, item_ids
+    assert "config-weight-lateness_penalty" in item_ids, item_ids
 
 
 def test_apply_brief_patch_runack_strip_off_lets_new_entries_through():
