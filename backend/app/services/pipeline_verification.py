@@ -187,7 +187,10 @@ def verify_brief_consistency(
         try:
             from app.routers.sessions.derivation import _enforce_session_monitors
             preview_brief = _enforce_session_monitors(
-                merged_brief, workflow_mode, test_problem_id=test_problem_id
+                merged_brief,
+                workflow_mode,
+                test_problem_id=test_problem_id,
+                is_run_acknowledgement=is_run_acknowledgement,
             )
         except Exception:  # pragma: no cover — defensive
             log.exception("Monitor preview raised; treating as no-op for ask_without_oq check")

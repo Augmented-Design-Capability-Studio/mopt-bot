@@ -4,6 +4,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { ChatBubbleTemplate } from "./ChatBubbleTemplate";
@@ -55,6 +56,28 @@ export function ChatComposer({
   const textareaIsDisabled = textareaDisabled ?? sendDisabled;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [attentionPulse, setAttentionPulse] = useState(false);
+  // User-set height when the box is dragged from its top edge (grows upward).
+  const [height, setHeight] = useState<number | null>(null);
+
+  function onResizeHandlePointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    const wrap = e.currentTarget.parentElement;
+    if (!wrap) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = wrap.getBoundingClientRect().height;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      // Dragging up (smaller clientY) grows the box.
+      const next = Math.max(56, startHeight + (startY - moveEvent.clientY));
+      setHeight(next);
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }
 
   useEffect(() => {
     if (attentionKey == null || textareaIsDisabled) return;
@@ -80,16 +103,25 @@ export function ChatComposer({
     <div
       className={`chat-input-row${inputRowClassName ? ` ${inputRowClassName}` : ""}${attentionPulse ? " chat-attention-pulse" : ""}`}
     >
-      <textarea
-        ref={textareaRef}
-        data-tutorial-anchor={textareaDataAnchor}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => onChatSendKeyDown(e, () => void onSend(), { disabled: sendDisabled })}
-        placeholder={placeholder}
-        disabled={textareaIsDisabled}
-        style={textareaStyle}
-      />
+      <div className="chat-textarea-wrap" style={height != null ? { height } : undefined}>
+        <div
+          className="chat-resize-handle"
+          onPointerDown={onResizeHandlePointerDown}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize message box"
+        />
+        <textarea
+          ref={textareaRef}
+          data-tutorial-anchor={textareaDataAnchor}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => onChatSendKeyDown(e, () => void onSend(), { disabled: sendDisabled })}
+          placeholder={placeholder}
+          disabled={textareaIsDisabled}
+          style={textareaStyle}
+        />
+      </div>
       <button type="button" disabled={sendDisabled} onClick={() => void onSend()}>
         {sendLabel}
       </button>

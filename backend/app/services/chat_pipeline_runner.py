@@ -1221,7 +1221,10 @@ def _apply_stage(
             )
             effective_brief = coerce_problem_brief_for_workflow(effective_brief, workflow_mode)
         effective_brief = derivation._enforce_session_monitors(
-            effective_brief, workflow_mode, test_problem_id=test_problem_id
+            effective_brief,
+            workflow_mode,
+            test_problem_id=test_problem_id,
+            is_run_acknowledgement=is_run_acknowledgement,
         )
 
         # Persist the merged brief on the session row.
@@ -1619,7 +1622,10 @@ def _retry_brief_from_panel(
             )
             applied = coerce_problem_brief_for_workflow(applied, workflow_mode)
             applied = derivation._enforce_session_monitors(
-                applied, workflow_mode, test_problem_id=test_problem_id
+                applied,
+                workflow_mode,
+                test_problem_id=test_problem_id,
+                is_run_acknowledgement=bool(retry_context.get("is_run_acknowledgement")),
             )
             with SessionLocal() as db:
                 row = db.get(StudySession, session_id)

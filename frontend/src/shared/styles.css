@@ -559,6 +559,13 @@ select:focus-visible {
 }
 .pipeline-issue--error { background: #f8ebe6; color: #6b3320; }
 .pipeline-issue--warn { background: #fdf3e0; color: #7a541a; }
+/* Caught-then-resolved (via auto/user retry): muted grey, struck through —
+   reads as "already cleared", not a live error. */
+.pipeline-issue--resolved {
+  background: #f1f0ed;
+  color: #8c887e;
+  text-decoration: line-through;
+}
 .pipeline-status__followup {
   margin-top: 0.5rem;
   padding: 0.4rem 0.55rem;
@@ -750,10 +757,29 @@ select:focus-visible {
   cursor: not-allowed;
 }
 
+.chat-textarea-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-resize-handle {
+  height: 5px;
+  flex: none;
+  cursor: ns-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.chat-resize-handle:hover,
+.chat-resize-handle:active {
+  background: var(--border);
+}
+
 .chat-input-row textarea {
   flex: 1;
   min-height: 3rem;
-  resize: vertical;
+  resize: none;
   border: 1px solid var(--border);
   padding: 0.35rem;
   background: #fff;

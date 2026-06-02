@@ -178,7 +178,17 @@ function PipelineStageRow({ stage }: { stage: PipelineStageMeta }) {
           />
         ) : null}
         {Array.isArray(stage.issues) && stage.issues.length > 0 ? (
-          <IssueList issues={stage.issues} />
+          // Issues on a stage that ultimately settled (success/skipped) were
+          // caught by verification but resolved by an auto- or user-requested
+          // retry — they're history, not a live problem. Tuck them into a
+          // collapsed, muted accordion (mirrors the "What changed" disclosure)
+          // instead of the red live-error list, so a settled bubble doesn't
+          // shout an error the participant already cleared.
+          stage.state === "success" || stage.state === "skipped" ? (
+            <ResolvedIssues issues={stage.issues} retried={!!stage.retried} />
+          ) : (
+            <IssueList issues={stage.issues} />
+          )
         ) : null}
       </div>
     </li>
@@ -257,6 +267,48 @@ function StageDetails({ details, summary }: { details: string[]; summary: string
           {details.map((detail, idx) => (
             <li key={idx} className="pipeline-stage__detail">
               {detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Collapsed, muted disclosure for issues that were caught during
+ *  verification but cleared by a retry. Same accordion mechanics as
+ *  ``StageDetails`` ("What changed"); the items render grey + struck-through
+ *  rather than red so a resolved error reads as resolved. */
+function ResolvedIssues({
+  issues,
+  retried,
+}: {
+  issues: PipelineIssueMeta[];
+  retried: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = retried ? "Resolved on retry" : "Resolved";
+  return (
+    <div className="pipeline-stage__details">
+      <button
+        type="button"
+        className="pipeline-stage__details-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className="pipeline-stage__details-caret" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        {open ? "Hide" : `${label} (${issues.length})`}
+      </button>
+      {open ? (
+        <ul className="pipeline-stage__issues">
+          {issues.map((issue, idx) => (
+            <li
+              key={`${issue.category}-${idx}`}
+              className="pipeline-issue pipeline-issue--resolved"
+            >
+              {issue.message || issue.category}
             </li>
           ))}
         </ul>

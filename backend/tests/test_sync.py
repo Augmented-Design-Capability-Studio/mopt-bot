@@ -408,6 +408,35 @@ def test_mirror_canonical_scalars_overrides_panel_with_brief_values():
     assert next_problem["weights"]["capacity_penalty"] == 10.0
 
 
+def test_mirror_canonical_scalars_syncs_constraint_types():
+    """P_0602 regression: the LLM panel-derive emits the legacy
+    ``constraint_types`` map (enum {soft,hard,custom} — can't say
+    ``objective``), so the objective term lands as ``constraint_types='soft'``.
+    ``sanitize_panel_config`` runs AFTER this mirror and re-derives
+    ``goal_terms[K].type`` from ``constraint_types``, undoing the mirror's
+    ``objective`` correction and re-opening a drift the retry can't clear. The
+    mirror must keep ``constraint_types`` consistent: drop the key for an
+    objective term (objective == omitted) and write through other types."""
+    next_problem = {
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "soft", "rank": 3},
+            "capacity_penalty": {"weight": 1.0, "type": "soft", "rank": 2},
+        },
+        "constraint_types": {"travel_time": "soft", "capacity_penalty": "soft"},
+    }
+    brief = {
+        "goal_terms": {
+            "travel_time": {"weight": 8.5, "type": "objective", "rank": 1},
+            "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 2},
+        }
+    }
+    sync._mirror_canonical_scalars_from_brief(next_problem, brief)
+    # Objective term removed from constraint_types (implicit-default convention).
+    assert "travel_time" not in next_problem["constraint_types"]
+    # Non-objective type written through so sanitize re-derives it correctly.
+    assert next_problem["constraint_types"]["capacity_penalty"] == "hard"
+
+
 def test_mirror_canonical_scalars_does_not_touch_properties():
     """Properties (per-rule structured data) belong to the LLM's
     translation job. The mirror covers scalars only."""

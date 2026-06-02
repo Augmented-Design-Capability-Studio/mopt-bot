@@ -503,6 +503,28 @@ def _mirror_canonical_scalars_from_brief(
             for key, field, value in overrides:
                 if field == "weight" and key in weights:
                     weights[key] = float(value)
+        # Keep the top-level `constraint_types` map in sync with the mirrored
+        # types. The LLM panel-derive emits the legacy `weights` +
+        # `constraint_types` form, and `sanitize_panel_config` (which runs
+        # AFTER this mirror) re-derives `goal_terms[K].type` FROM
+        # `constraint_types`. Its enum is {soft, hard, custom} — it cannot
+        # express `objective` — so the objective term lands as a stale
+        # `constraint_types[K]='soft'`. Without syncing it here, the mirror's
+        # `goal_terms` correction to `objective` is silently undone by the
+        # post-mirror sanitize, re-opening `travel_time.type` drift on every
+        # turn that the retry can never clear (P_0602). Per the panel
+        # convention (`CONSTRAINT_TYPES_SCHEMA`: "objective is the implicit
+        # default when a key is omitted"), an objective term is REMOVED from
+        # the map; any other type is written through.
+        ctypes = next_problem.get("constraint_types")
+        if isinstance(ctypes, dict):
+            for key, field, value in overrides:
+                if field != "type":
+                    continue
+                if value == "objective":
+                    ctypes.pop(key, None)
+                else:
+                    ctypes[key] = value
         log.info(
             "Brief→panel scalar mirror overrode %d goal_term field(s): %s",
             len(overrides),

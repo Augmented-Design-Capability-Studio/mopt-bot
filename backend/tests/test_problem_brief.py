@@ -1867,3 +1867,76 @@ def test_monitor_skips_when_cold():
     oq_ids = {str(q.get("id") or "") for q in (out.get("open_questions") or [])}
     assert _MONITOR_OQ_UPLOAD_ID not in oq_ids
     assert _MONITOR_OQ_GOAL_ID not in oq_ids
+
+
+def _plateau_brief(algo: str = "GA", costs=(3990.0, 3981.0)):
+    """A warm brief with two completed runs on ``algo`` at ~equal cost, with
+    ``algo`` still configured in the carrier."""
+    runs = [
+        {"run_number": i + 8, "cost": c, "ok": True, "algorithm": algo}
+        for i, c in enumerate(costs)
+    ]
+    return normalize_problem_brief({
+        "goal_summary": "Minimize travel time.",
+        "items": [
+            {"id": "config-weight-travel_time", "text": "x", "kind": "gathered",
+             "source": "agent", "goal_key": "travel_time"}
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+            "search_strategy": {"weight": 1.0, "type": "custom",
+                                "properties": {"algorithm": algo}},
+        },
+        "runs": runs,
+        "topic_engaged": True,
+    })
+
+
+def test_detect_run_plateau_thresholds():
+    from app.routers.sessions.derivation import _detect_run_plateau
+
+    # Two near-equal runs on the same configured algorithm → plateau.
+    assert _detect_run_plateau(_plateau_brief(costs=(3990.0, 3981.0))) == ("GA", 3981.0)
+    # Costs far apart → no plateau (>2% apart).
+    assert _detect_run_plateau(_plateau_brief(costs=(3990.0, 3000.0))) is None
+    # Only one completed run → not enough signal.
+    assert _detect_run_plateau(_plateau_brief(costs=(3990.0,))) is None
+    # Participant already switched the algorithm away from the stalled one.
+    b = _plateau_brief(costs=(3990.0, 3981.0))
+    b["goal_terms"]["search_strategy"]["properties"]["algorithm"] = "PSO"
+    assert _detect_run_plateau(b) is None
+
+
+def test_plateau_nudge_added_only_on_runack_waterfall_oq():
+    from app.routers.sessions.derivation import (
+        _MONITOR_OQ_PLATEAU_ID,
+        _enforce_session_monitors,
+    )
+
+    brief = _plateau_brief()
+    # Non-run-ack turn: don't nag.
+    out = _enforce_session_monitors(brief, "waterfall", "vrptw", is_run_acknowledgement=False)
+    assert not any(q["id"] == _MONITOR_OQ_PLATEAU_ID for q in out["open_questions"])
+    # Run-ack turn: surface the OQ, and its options exclude the stalled algorithm.
+    out = _enforce_session_monitors(brief, "waterfall", "vrptw", is_run_acknowledgement=True)
+    oq = [q for q in out["open_questions"] if q["id"] == _MONITOR_OQ_PLATEAU_ID]
+    assert oq and "(GA)" not in oq[0]["text"].split("switch to")[-1]
+
+
+def test_plateau_nudge_agile_assumption_and_self_heals():
+    from app.routers.sessions.derivation import (
+        _MONITOR_ITEM_PLATEAU_ID,
+        _MONITOR_OQ_PLATEAU_ID,
+        _enforce_session_monitors,
+    )
+
+    brief = _plateau_brief()
+    # Agile run-ack: an assumption row, not an OQ.
+    out = _enforce_session_monitors(brief, "agile", "vrptw", is_run_acknowledgement=True)
+    assert any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in out["items"])
+    assert not any(q["id"] == _MONITOR_OQ_PLATEAU_ID for q in out["open_questions"])
+    # Switching the algorithm clears the nudge on ANY later turn (not just run-ack).
+    out["goal_terms"]["search_strategy"]["properties"]["algorithm"] = "PSO"
+    healed = _enforce_session_monitors(out, "agile", "vrptw", is_run_acknowledgement=False)
+    assert not any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in healed["items"])

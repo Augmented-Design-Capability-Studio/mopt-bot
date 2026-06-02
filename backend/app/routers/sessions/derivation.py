@@ -1037,7 +1037,10 @@ def apply_brief_patch_with_cleanup(
         test_problem_id=test_problem_id,
     )
     consolidated = _enforce_session_monitors(
-        consolidated, workflow_mode, test_problem_id=test_problem_id
+        consolidated,
+        workflow_mode,
+        test_problem_id=test_problem_id,
+        is_run_acknowledgement=is_run_acknowledgement,
     )
     return consolidated, {"removed_total": 0, **run_meta}
 
@@ -1299,6 +1302,15 @@ _MONITOR_OQ_UPLOAD_ID = "oq-monitor-upload"
 _MONITOR_OQ_GOAL_ID = "oq-monitor-goal"
 _MONITOR_OQ_ALGORITHM_ID = "oq-monitor-algorithm"
 _MONITOR_ITEM_ALGORITHM_ID = "item-monitor-algorithm-default"
+_MONITOR_OQ_PLATEAU_ID = "oq-monitor-plateau"
+_MONITOR_ITEM_PLATEAU_ID = "item-monitor-plateau"
+
+# Plateau nudge tuning. Two consecutive completed runs on the SAME algorithm
+# whose costs land within this relative tolerance count as "stalled" — the
+# solver isn't making meaningful progress, so it's worth reconsidering the
+# search strategy (swap the algorithm or give it more iterations).
+_PLATEAU_MIN_RUNS = 2
+_PLATEAU_COST_REL_TOLERANCE = 0.02
 
 _MONITOR_OQ_UPLOAD_TEXT = (
     "Please use the **Upload file(s)...** button in the chat footer to share "
@@ -1376,10 +1388,100 @@ def _monitor_goal_oq_text(test_problem_id: str | None) -> str:
     """
     return _MONITOR_OQ_GOAL_TEXT
 
+def _current_brief_algorithm(brief: dict[str, Any]) -> str | None:
+    """The algorithm currently configured in the brief carrier, or None."""
+    gt = brief.get("goal_terms") if isinstance(brief, dict) else None
+    if isinstance(gt, dict):
+        ss = gt.get("search_strategy")
+        if isinstance(ss, dict):
+            props = ss.get("properties")
+            if isinstance(props, dict):
+                algo = props.get("algorithm")
+                if isinstance(algo, str) and algo.strip():
+                    return algo.strip()
+    return None
+
+
+def _detect_run_plateau(brief: dict[str, Any]) -> tuple[str, float] | None:
+    """Return ``(algorithm, latest_cost)`` when the last ``_PLATEAU_MIN_RUNS``
+    completed runs stalled — same algorithm, costs within
+    ``_PLATEAU_COST_REL_TOLERANCE`` — AND that algorithm is still the one
+    configured (the participant hasn't already switched away). Else None.
+
+    Reads only the server-managed ``brief.runs`` structured entries, so the
+    signal is deterministic (no LLM, no NL parsing). The "still configured"
+    guard auto-clears the nudge the moment the participant changes the
+    algorithm, even before the next run.
+    """
+    if not isinstance(brief, dict):
+        return None
+    runs = brief.get("runs")
+    if not isinstance(runs, list):
+        return None
+    completed = [
+        r
+        for r in runs
+        if isinstance(r, dict)
+        and r.get("ok")
+        and isinstance(r.get("cost"), (int, float))
+        and not isinstance(r.get("cost"), bool)
+    ]
+    if len(completed) < _PLATEAU_MIN_RUNS:
+        return None
+    window = completed[-_PLATEAU_MIN_RUNS:]
+    algos = {str(r.get("algorithm") or "").strip() for r in window}
+    if len(algos) != 1:
+        return None
+    algo = next(iter(algos))
+    if not algo:
+        return None
+    current = _current_brief_algorithm(brief)
+    if current and current != algo:
+        return None  # participant already switched — nothing to nudge
+    costs = [float(r["cost"]) for r in window]
+    base = max(abs(costs[0]), 1e-9)
+    if (max(costs) - min(costs)) / base > _PLATEAU_COST_REL_TOLERANCE:
+        return None
+    return algo, costs[-1]
+
+
+def _plateau_options_phrase(test_problem_id: str | None, exclude_algo: str) -> str:
+    """Port's algorithm options for the nudge, minus the stalled one."""
+    from app.algorithm_catalog import format_algorithm_choices_phrase
+
+    supported = tuple(
+        a for a in _port_supported_algorithms(test_problem_id) if a != exclude_algo
+    )
+    return format_algorithm_choices_phrase(supported)
+
+
+def _plateau_nudge_text(
+    test_problem_id: str | None, algo: str, cost: float, *, as_question: bool
+) -> str:
+    """Plain-language stall nudge. Waterfall asks (question); agile/demo states
+    it as an observation the agent can act on."""
+    from app.algorithm_catalog import ALGORITHM_PARTICIPANT_NICKNAMES_MAP
+
+    nick = ALGORITHM_PARTICIPANT_NICKNAMES_MAP.get(algo, algo)
+    if as_question:
+        phrase = _plateau_options_phrase(test_problem_id, algo)
+        options = f" You could switch to {phrase}, or give the current one more iterations." if phrase else ""
+        return (
+            f"The last couple of runs have stalled around a cost of {round(cost):,} "
+            f"with {nick}. Want to try a different search strategy?{options}"
+        )
+    return (
+        f"The last couple of runs have stalled around a cost of {round(cost):,} "
+        f"with {nick} — switching the search strategy or adding iterations may help."
+    )
+
+
 def _enforce_session_monitors(
     brief: dict[str, Any],
     workflow_mode: str | None,
     test_problem_id: str | None = None,
+    *,
+    is_run_acknowledgement: bool = False,
 ) -> dict[str, Any]:
     """Server-side state machine: keep the three "what's still missing" rows
     in lockstep with brief state. Three monitors, each idempotent via a stable
@@ -1507,6 +1609,42 @@ def _enforce_session_monitors(
             )
         # Drop any agile-mode assumption that may be lingering.
         _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
+
+    # Monitor 4: plateau nudge. When the last couple of completed runs stalled
+    # on the still-configured algorithm, prompt a search-strategy rethink:
+    # waterfall asks the participant (OQ), agile/demo states it as an
+    # assumption the agent can act on. ADD only on a run-acknowledgement turn
+    # so it surfaces "once in a while" (right after a run), not on every chat
+    # message — but DROP it on any turn once the plateau clears (e.g. the
+    # participant switched the algorithm), keeping it self-healing like the
+    # other monitors.
+    plateau = _detect_run_plateau(next_brief)
+    if plateau is None:
+        _drop_oq(_MONITOR_OQ_PLATEAU_ID)
+        _drop_item(_MONITOR_ITEM_PLATEAU_ID)
+    else:
+        algo, cost = plateau
+        if is_agile_or_demo:
+            _drop_oq(_MONITOR_OQ_PLATEAU_ID)
+            if is_run_acknowledgement and not _has_item(_MONITOR_ITEM_PLATEAU_ID):
+                items.append({
+                    "id": _MONITOR_ITEM_PLATEAU_ID,
+                    "text": _plateau_nudge_text(
+                        test_problem_id, algo, cost, as_question=False
+                    ),
+                    "kind": "assumption",
+                    "source": "agent",
+                })
+        else:
+            _drop_item(_MONITOR_ITEM_PLATEAU_ID)
+            if is_run_acknowledgement and not _has_oq(_MONITOR_OQ_PLATEAU_ID):
+                _append_oq(
+                    _MONITOR_OQ_PLATEAU_ID,
+                    _plateau_nudge_text(
+                        test_problem_id, algo, cost, as_question=True
+                    ),
+                    "search_strategy",
+                )
 
     # No tag-dedup loop is needed any more: foundational-topic OQs from the
     # LLM are stripped at merge time in `merge_problem_brief_patch` (the
