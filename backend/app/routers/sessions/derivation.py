@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
 from app.problem_brief import (
+    CONFIG_ITEM_PREFIX,
     merge_problem_brief_patch,
     normalize_problem_brief,
 )
@@ -1030,6 +1031,15 @@ def apply_brief_patch_with_cleanup(
     # LLM-set value wins.
     merged = _autofill_goal_summary_from_objective(merged, test_problem_id)
 
+    # Run-acknowledgement turns: keep run outcomes out of the Definition's
+    # gathered info. The run history is server-owned in ``brief.runs`` and the
+    # participant reads each result in the chat reply + Results panel — so an
+    # agent-authored "Run #N was feasible…" gathered row is pure clutter
+    # (observed piling up in P_0602). Strip those here; canonical config rows
+    # and anything the participant said are untouched.
+    if is_run_acknowledgement:
+        merged = _strip_agent_run_commentary(merged)
+
     consolidated, run_meta = consolidate_runs(
         merged,
         recent_runs_summary=recent_runs_summary,
@@ -1043,6 +1053,47 @@ def apply_brief_patch_with_cleanup(
         is_run_acknowledgement=is_run_acknowledgement,
     )
     return consolidated, {"removed_total": 0, **run_meta}
+
+
+def _strip_agent_run_commentary(brief: dict[str, Any]) -> dict[str, Any]:
+    """Remove agent-authored free-form gathered rows on a run-ack turn.
+
+    Drops items where ``kind == "gathered"`` AND ``source == "agent"`` AND the
+    id is NOT a canonical ``config-*`` row. That targets the agent's per-run
+    narration (e.g. ``item-gathered-run-13-interpretation`` —
+    "Run #13 was fully feasible…") while protecting:
+
+    - the synthesized ``config-weight-*`` / ``config-search-strategy`` rows
+      (canonical config, ``config-`` prefix),
+    - the upload row and anything the participant stated (``source != agent``).
+
+    Run outcomes belong in ``brief.runs`` and the chat reply, not as standing
+    facts in the Definition. Idempotent — re-running finds nothing to drop and
+    also retroactively clears rows added before this gate existed.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    items = brief.get("items")
+    if not isinstance(items, list):
+        return brief
+    kept: list[Any] = []
+    dropped = 0
+    for it in items:
+        if (
+            isinstance(it, dict)
+            and str(it.get("kind") or "").strip().lower() == "gathered"
+            and str(it.get("source") or "").strip().lower() == "agent"
+            and not str(it.get("id") or "").startswith(CONFIG_ITEM_PREFIX)
+        ):
+            dropped += 1
+            continue
+        kept.append(it)
+    if not dropped:
+        return brief
+    log.info("Run-ack: stripped %d agent run-commentary row(s) from gathered info", dropped)
+    out = dict(brief)
+    out["items"] = kept
+    return out
 
 
 def _strip_runack_additions(
@@ -1455,24 +1506,35 @@ def _plateau_options_phrase(test_problem_id: str | None, exclude_algo: str) -> s
     return format_algorithm_choices_phrase(supported)
 
 
-def _plateau_nudge_text(
-    test_problem_id: str | None, algo: str, cost: float, *, as_question: bool
-) -> str:
-    """Plain-language stall nudge. Waterfall asks (question); agile/demo states
-    it as an observation the agent can act on."""
+def _next_search_algorithm(current: str, supported: tuple[str, ...]) -> str | None:
+    """Deterministically pick a *different* algorithm than ``current`` — the
+    next one in the port's supported list, cycling. Returns None when there's
+    no real alternative. Deterministic (no LLM) so the agile fait-accompli
+    behaves identically for every participant — important for a controlled
+    study, where the assistant's intervention shouldn't itself vary."""
+    options = [a for a in (supported or ()) if isinstance(a, str) and a.strip()]
+    if not options:
+        return None
+    if current in options:
+        nxt = options[(options.index(current) + 1) % len(options)]
+        return nxt if nxt != current else None
+    return options[0]
+
+
+def _plateau_oq_text(test_problem_id: str | None, algo: str, cost: float) -> str:
+    """Plain-language stall question for waterfall — the participant decides."""
     from app.algorithm_catalog import ALGORITHM_PARTICIPANT_NICKNAMES_MAP
 
     nick = ALGORITHM_PARTICIPANT_NICKNAMES_MAP.get(algo, algo)
-    if as_question:
-        phrase = _plateau_options_phrase(test_problem_id, algo)
-        options = f" You could switch to {phrase}, or give the current one more iterations." if phrase else ""
-        return (
-            f"The last couple of runs have stalled around a cost of {round(cost):,} "
-            f"with {nick}. Want to try a different search strategy?{options}"
-        )
+    phrase = _plateau_options_phrase(test_problem_id, algo)
+    options = (
+        f" You could switch to {phrase}, or give the current one more iterations."
+        if phrase
+        else ""
+    )
     return (
         f"The last couple of runs have stalled around a cost of {round(cost):,} "
-        f"with {nick} — switching the search strategy or adding iterations may help."
+        f"with {nick}. Want to try a different search strategy?{options}"
     )
 
 
@@ -1624,25 +1686,46 @@ def _enforce_session_monitors(
         _drop_item(_MONITOR_ITEM_PLATEAU_ID)
     else:
         algo, cost = plateau
+        # Always clear the legacy advisory row / OQ from the other mode so a
+        # workflow switch can't leave a stale one behind.
+        _drop_item(_MONITOR_ITEM_PLATEAU_ID)
         if is_agile_or_demo:
+            # Agile = fait accompli: the assistant just switches the search
+            # method to a different one. The change lands on the SINGLE
+            # search-strategy carrier (and so the one ``config-search-strategy``
+            # entry that mirrors it) — no separate plateau row. The participant
+            # can switch back any time. Deterministic so every participant gets
+            # the same intervention. The detector needs two runs on the SAME
+            # algorithm, so after this switch the next plateau can't trigger
+            # until two runs on the new method — no thrashing.
             _drop_oq(_MONITOR_OQ_PLATEAU_ID)
-            if is_run_acknowledgement and not _has_item(_MONITOR_ITEM_PLATEAU_ID):
-                items.append({
-                    "id": _MONITOR_ITEM_PLATEAU_ID,
-                    "text": _plateau_nudge_text(
-                        test_problem_id, algo, cost, as_question=False
-                    ),
-                    "kind": "assumption",
-                    "source": "agent",
-                })
+            if is_run_acknowledgement:
+                new_algo = _next_search_algorithm(
+                    algo, _port_supported_algorithms(test_problem_id)
+                )
+                carrier = (
+                    next_brief.get("goal_terms", {}).get("search_strategy")
+                    if isinstance(next_brief.get("goal_terms"), dict)
+                    else None
+                )
+                if new_algo and isinstance(carrier, dict):
+                    props = carrier.get("properties")
+                    if not isinstance(props, dict):
+                        props = {}
+                        carrier["properties"] = props
+                    props["algorithm"] = new_algo
+                    log.info(
+                        "Agile plateau auto-switch: search method %s -> %s after stall",
+                        algo,
+                        new_algo,
+                    )
         else:
-            _drop_item(_MONITOR_ITEM_PLATEAU_ID)
+            # Waterfall = ask first: the participant owns the search-strategy
+            # choice (one of the canonical waterfall axes), so suggest via an OQ.
             if is_run_acknowledgement and not _has_oq(_MONITOR_OQ_PLATEAU_ID):
                 _append_oq(
                     _MONITOR_OQ_PLATEAU_ID,
-                    _plateau_nudge_text(
-                        test_problem_id, algo, cost, as_question=True
-                    ),
+                    _plateau_oq_text(test_problem_id, algo, cost),
                     "search_strategy",
                 )
 

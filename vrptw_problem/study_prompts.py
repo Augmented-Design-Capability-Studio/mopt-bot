@@ -104,13 +104,13 @@ the user clearly brings up the related concept.
 `express_miss_penalty`. Use `express_miss_penalty` only when the user clearly
 means express-tier / VIP / SLA / priority-order service class misses.
 
-**Hard constraints (encoded, not tunable):**
+**Truly fixed (encoded, no knob — acknowledge as already enforced, don't make a weight key):**
 - Every task is served exactly once (enforced by the routing encoding).
-- Shift duration limits (`max_shift_hours` + `shift_limit`).
 - Locked / forced assignments (`locked_assignments`).
 
-When the user describes a hard-constraint concept, acknowledge it as already
-enforced and pivot to a trade-off they can actually tune.
+**Tunable even when called "hard":** capacity (`capacity_penalty`) and shift
+overtime (`shift_limit`/`max_shift_hours`) are weight keys — "hard" just sets
+the `type`, so commit the key, don't drop it to a fact row.
 
 **Out-of-scope requests** (e.g. CO₂ emissions, weather risk, seniority
 weighting): never invent a weight key. Apply the global ambiguity discipline

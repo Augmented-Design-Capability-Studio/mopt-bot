@@ -1924,19 +1924,73 @@ def test_plateau_nudge_added_only_on_runack_waterfall_oq():
     assert oq and "(GA)" not in oq[0]["text"].split("switch to")[-1]
 
 
-def test_plateau_nudge_agile_assumption_and_self_heals():
+def test_plateau_agile_auto_switches_search_method_fait_accompli():
+    """Agile = fait accompli: on a run-ack plateau the assistant switches the
+    search method on the single carrier (no separate advisory row, no OQ).
+    Deterministic rotation to a different method."""
     from app.routers.sessions.derivation import (
         _MONITOR_ITEM_PLATEAU_ID,
         _MONITOR_OQ_PLATEAU_ID,
         _enforce_session_monitors,
     )
 
-    brief = _plateau_brief()
-    # Agile run-ack: an assumption row, not an OQ.
+    brief = _plateau_brief(algo="GA")
     out = _enforce_session_monitors(brief, "agile", "vrptw", is_run_acknowledgement=True)
-    assert any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in out["items"])
+    # The one carrier moved to a different method...
+    new_algo = out["goal_terms"]["search_strategy"]["properties"]["algorithm"]
+    assert new_algo and new_algo != "GA"
+    # ...and there's no separate plateau row or OQ — only the single entry.
+    assert not any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in out["items"])
     assert not any(q["id"] == _MONITOR_OQ_PLATEAU_ID for q in out["open_questions"])
-    # Switching the algorithm clears the nudge on ANY later turn (not just run-ack).
-    out["goal_terms"]["search_strategy"]["properties"]["algorithm"] = "PSO"
-    healed = _enforce_session_monitors(out, "agile", "vrptw", is_run_acknowledgement=False)
-    assert not any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in healed["items"])
+    # No thrash: with the new method now configured but the last two runs still
+    # on GA, the detector won't fire again.
+    again = _enforce_session_monitors(out, "agile", "vrptw", is_run_acknowledgement=True)
+    assert again["goal_terms"]["search_strategy"]["properties"]["algorithm"] == new_algo
+
+
+def test_runack_strips_agent_run_commentary_but_keeps_config_and_user_rows():
+    """Run-ack clears agent per-run narration from the Definition's gathered
+    info, but never the canonical config rows, the upload, or user-stated
+    facts."""
+    from app.routers.sessions.derivation import _strip_agent_run_commentary
+
+    brief = {
+        "items": [
+            {"id": "config-weight-travel_time", "text": "Travel time…", "kind": "gathered", "source": "agent"},
+            {"id": "config-search-strategy", "text": "Search strategy: GA…", "kind": "gathered", "source": "agent"},
+            {"id": "item-gathered-upload", "text": "Uploaded orders.csv", "kind": "gathered", "source": "upload"},
+            {"id": "item-gathered-from-question-oq-x", "text": "Capacity is hard.", "kind": "gathered", "source": "user"},
+            {"id": "item-gathered-run-13-interpretation", "text": "Run #13 was feasible.", "kind": "gathered", "source": "agent"},
+            {"id": "item-run-14-interpretation", "text": "Run #14 struggled.", "kind": "gathered", "source": "agent"},
+        ]
+    }
+    out = _strip_agent_run_commentary(brief)
+    ids = {i["id"] for i in out["items"]}
+    assert "item-gathered-run-13-interpretation" not in ids
+    assert "item-run-14-interpretation" not in ids
+    assert "config-weight-travel_time" in ids
+    assert "config-search-strategy" in ids
+    assert "item-gathered-upload" in ids
+    assert "item-gathered-from-question-oq-x" in ids
+
+
+def test_answered_goal_key_oq_does_not_create_prose_gathered_row():
+    """A tradeoff/weight OQ (anchored to a goal term) records its outcome in
+    that term's weight row — not a duplicate prose ``item-gathered-from-
+    question-*`` row. An OQ with no goal_key still promotes (genuine fact)."""
+    from app.problem_brief import _promote_answered_open_questions_to_gathered
+
+    items, questions = _promote_answered_open_questions_to_gathered(
+        [],
+        [
+            {"id": "oq-punctuality", "text": "Raise punctuality?", "status": "answered",
+             "answer_text": "yes", "goal_key": "lateness_penalty"},
+            {"id": "oq-misc", "text": "Anything else to note?", "status": "answered",
+             "answer_text": "deliveries start at 8am", "goal_key": None},
+        ],
+    )
+    ids = {i["id"] for i in items}
+    assert "item-gathered-from-question-oq-punctuality" not in ids  # weight row is the record
+    assert "item-gathered-from-question-oq-misc" in ids  # standalone fact still kept
+    # Both answered OQs are consumed (removed from the open list).
+    assert questions == []

@@ -749,3 +749,45 @@ def test_carrier_algorithm_wins_over_stale_panel_default(monkeypatch):
     )
     algo_drifts = [i for i in issues if i.category == "brief_panel_algorithm_mismatch"]
     assert algo_drifts == [], [i.message for i in algo_drifts]
+
+
+def test_realign_panel_scalars_from_brief_heals_stuck_type_drift():
+    """A panel that drifted to travel_time.type='soft' while the brief says
+    'objective' is deterministically force-aligned back to the brief — so a
+    stuck objective↔soft mismatch can't keep pausing the pipeline when the
+    derive is skipped or keeps re-drifting the same way."""
+    from app.routers.sessions.sync import (
+        compute_brief_panel_drift,
+        realign_panel_scalars_from_brief,
+    )
+
+    brief = {
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+            "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 2},
+        }
+    }
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "goal_terms": {
+                        "travel_time": {"weight": 1.0, "type": "soft", "rank": 1},
+                        "capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 2},
+                    },
+                    "algorithm": "GA",
+                }
+            }
+        ),
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+    # Pre-condition: drift exists.
+    pre = compute_brief_panel_drift(brief, json.loads(row.panel_config_json), "vrptw")
+    assert any(d.get("detail") == "type" for d in pre)
+
+    merged = realign_panel_scalars_from_brief(row, _DummyDb(), brief, commit=False)
+    assert merged["problem"]["goal_terms"]["travel_time"]["type"] == "objective"
+    post = compute_brief_panel_drift(brief, merged, "vrptw")
+    assert not any(d.get("detail") == "type" for d in post)

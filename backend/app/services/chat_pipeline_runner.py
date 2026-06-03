@@ -1400,6 +1400,15 @@ def _run_verify_config_stage(
                 message_id=message_id, stage_name="verifying_config", state="skipped"
             )
             return
+        # Brief-authoritative turns (chat / brief origin): deterministically
+        # force the panel's canonical scalars (weight/type/rank) to match the
+        # brief before verifying. This self-heals a panel that drifted on an
+        # earlier turn or when the derive was skipped — without it, a stuck
+        # ``travel_time.type`` objective↔soft mismatch keeps pausing the
+        # pipeline and Retry never clears it (re-deriving can drift the same
+        # way). Config-save turns (panel authoritative) are left untouched.
+        if derive_config:
+            sync.realign_panel_scalars_from_brief(row, db, brief, commit=True)
         panel = helpers.panel_dict(row)
     issues = pipeline_verification.verify_panel_consistency(
         brief=brief,

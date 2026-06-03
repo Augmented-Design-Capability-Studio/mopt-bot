@@ -149,6 +149,7 @@ def _route_oq_answers_through_classifier(
     mode = (workflow_mode or "").strip().lower()
     next_questions: list[dict[str, Any]] = []
     items = list(incoming_brief.get("items") or [])
+    seeded_goal_term = False
 
     def _reset_oq_to_open(parent_q: dict[str, Any]) -> dict[str, Any]:
         """Revert an OQ to its open state when the user's answer was
@@ -217,59 +218,71 @@ def _route_oq_answers_through_classifier(
             if not rephrased:
                 next_questions.append(q)
                 continue
+            proposal = getattr(c, "goal_term_proposal", None)
+            proposal_key = (
+                proposal.key.strip()
+                if proposal is not None and isinstance(proposal.key, str)
+                else ""
+            )
+            # The answer is "about a goal term" when the classifier proposes one
+            # OR the answered OQ was anchored to one (its ``goal_key``). Either
+            # way the term's single record is its canonical
+            # ``config-weight-<key>`` row — we never mint a separate
+            # "from-question" prose row beside it. That covers BOTH a tuning
+            # answer ("yes, raise it") AND a DECLINE ("not now"), which used to
+            # leave a no-op "Capacity penalty remains at weight 1.0 …" row next
+            # to the real weight row (P_0602).
+            term_key = proposal_key or str(q.get("goal_key") or "").strip()
+            if term_key:
+                goal_terms = incoming_brief.get("goal_terms")
+                if not isinstance(goal_terms, dict):
+                    goal_terms = {}
+                has_main_entry = term_key in goal_terms or any(
+                    isinstance(it, dict)
+                    and (
+                        str(it.get("id") or "") == f"config-weight-{term_key}"
+                        or str(it.get("goal_key") or "").strip() == term_key
+                    )
+                    for it in items
+                )
+                if proposal_key and proposal_key not in goal_terms:
+                    # A brand-new term was endorsed: seed it and anchor it to its
+                    # canonical row (synthesized at the end of this function);
+                    # the brief → panel sync then attaches the weight. (The
+                    # panel-derive prompt can't invent keys from prose, so this
+                    # bridge is what gets a newly-endorsed term onto the panel.)
+                    existing_ranks = [
+                        int(entry.get("rank"))
+                        for entry in goal_terms.values()
+                        if isinstance(entry, dict)
+                        and isinstance(entry.get("rank"), (int, float))
+                        and not isinstance(entry.get("rank"), bool)
+                    ]
+                    next_rank = (max(existing_ranks) + 1) if existing_ranks else 1
+                    goal_terms[proposal_key] = {
+                        "weight": 1.0,
+                        "type": proposal.type,
+                        "rank": next_rank,
+                        "evidence_item_ids": [f"config-weight-{proposal_key}"],
+                    }
+                    incoming_brief["goal_terms"] = goal_terms
+                    seeded_goal_term = True
+                    has_main_entry = True
+                if has_main_entry:
+                    continue  # canonical row is the record — no prose row
+            # No goal-term link — a genuine standalone fact (not about a
+            # weighted term), so keep it as a gathered row.
             gathered_item_id = (
                 f"item-gathered-from-question-{qid}" if qid else f"item-gathered-{len(items)}"
             )
-            gathered_item = {
-                "id": gathered_item_id,
-                "text": rephrased,
-                "kind": "gathered",
-                "source": "user",
-            }
-            items.append(gathered_item)
-            # Goal-term endorsement: seed brief.goal_terms so the brief →
-            # panel sync attaches a weight. The panel-derive prompt is
-            # explicitly forbidden from inventing keys from prose
-            # (`do not invent goal-term keys from prose in brief.items[]
-            # alone`), so without this bridge, answering an OQ like
-            # *"Should I add workload balance as a priority?"* would land
-            # the gathered items[] row but leave the panel unchanged.
-            proposal = getattr(c, "goal_term_proposal", None)
-            if proposal is not None and isinstance(proposal.key, str):
-                key = proposal.key.strip()
-                if key:
-                    # Stamp the concept anchor on the gathered row so it carries
-                    # the same lock affordance + evidence linkage as the
-                    # canonical config-weight row (one lock per concept). This
-                    # also strengthens derivation: the row now self-anchors the
-                    # goal term it endorses.
-                    gathered_item["goal_key"] = key
-                    goal_terms = incoming_brief.get("goal_terms")
-                    if not isinstance(goal_terms, dict):
-                        goal_terms = {}
-                    if key not in goal_terms:
-                        existing_ranks = [
-                            int(entry.get("rank"))
-                            for entry in goal_terms.values()
-                            if isinstance(entry, dict)
-                            and isinstance(entry.get("rank"), (int, float))
-                            and not isinstance(entry.get("rank"), bool)
-                        ]
-                        next_rank = (max(existing_ranks) + 1) if existing_ranks else 1
-                        # No `ambiguity_note.chosen_rationale` — the synthesizer
-                        # falls back to the port's per-key rationale
-                        # (`goal_term_rationales()`), which is a short clause
-                        # like "to minimize total driving minutes across all
-                        # routes". Setting a verbose "endorsed via answered
-                        # question: <full OQ text>" rationale here used to
-                        # produce a long, hard-to-scan items[] row.
-                        goal_terms[key] = {
-                            "weight": 1.0,
-                            "type": proposal.type,
-                            "rank": next_rank,
-                            "evidence_item_ids": [gathered_item_id],
-                        }
-                        incoming_brief["goal_terms"] = goal_terms
+            items.append(
+                {
+                    "id": gathered_item_id,
+                    "text": rephrased,
+                    "kind": "gathered",
+                    "source": "user",
+                }
+            )
             continue
 
         # Mode mismatch (e.g. classifier emitted assumption for waterfall) — leave the OQ
@@ -278,6 +291,17 @@ def _route_oq_answers_through_classifier(
 
     incoming_brief["items"] = items
     incoming_brief["open_questions"] = next_questions
+    if seeded_goal_term:
+        # Materialize the canonical ``config-weight-<key>`` row for each
+        # endorsed term NOW so it exists when the brief → panel anchor check
+        # runs — otherwise the freshly-seeded term (whose evidence points at
+        # that row) would look unanchored and get dropped. Idempotent
+        # drop-and-replace by id, so existing rows just refresh.
+        from app.routers.sessions.derivation import _synthesize_canonical_weight_items
+
+        incoming_brief = _synthesize_canonical_weight_items(
+            incoming_brief, test_problem_id
+        )
     return incoming_brief
 
 

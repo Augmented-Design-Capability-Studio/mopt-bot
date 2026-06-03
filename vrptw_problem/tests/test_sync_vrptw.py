@@ -440,3 +440,44 @@ def test_existing_lock_preserve_test_still_works_with_goal_terms_present(monkeyp
     assert panel["problem"]["goal_terms"]["worker_preference"]["weight"] == 5.0
     # Lock honored: driver_preferences from current panel (not derived) preserved.
     assert panel["problem"]["driver_preferences"] == current_prefs
+
+
+def test_lock_search_settings_fills_defaults_once_algorithm_chosen():
+    """Once an algorithm is set, the run-affecting search settings are pinned
+    to concrete defaults so they can't silently flip between runs. A value the
+    participant already chose is never overwritten; before an algorithm exists
+    nothing is locked."""
+    port = get_study_port("vrptw")
+
+    # Algorithm chosen, knobs unset -> filled with the solver's own defaults.
+    filled, _ = port.sanitize_panel_config(
+        {"problem": {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+                     "algorithm": "GA"}}
+    )
+    prob = filled["problem"]
+    assert prob["use_greedy_init"] is True
+    assert prob["early_stop"] is True
+    assert prob["epochs"] == 100
+    assert prob["pop_size"] == 50
+    # The full recipe is specified — early-stop tuning, seed, and the chosen
+    # algorithm's hyperparameters — all at the solver's own defaults, so the
+    # setup is complete and reproducible without changing any run behaviour.
+    assert prob["early_stop_patience"] == 20
+    assert prob["early_stop_epsilon"] == 1e-4
+    assert prob["random_seed"] == 42
+    assert prob["algorithm_params"]
+
+    # A deliberate choice survives the lock.
+    kept, _ = port.sanitize_panel_config(
+        {"problem": {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}},
+                     "algorithm": "GA", "early_stop": False, "use_greedy_init": False}}
+    )
+    assert kept["problem"]["early_stop"] is False
+    assert kept["problem"]["use_greedy_init"] is False
+
+    # No algorithm yet -> nothing locked (no run is possible).
+    none_yet, _ = port.sanitize_panel_config(
+        {"problem": {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}}}}
+    )
+    assert none_yet["problem"].get("use_greedy_init") is None
+    assert none_yet["problem"].get("early_stop") is None

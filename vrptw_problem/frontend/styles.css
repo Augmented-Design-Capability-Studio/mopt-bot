@@ -64,8 +64,8 @@
 }
 
 .timeline-legend-swatch.preference {
-  border: 1px dashed #4a148c;
-  background: #e1bee7;
+  border-color: #506273;
+  background: linear-gradient(to bottom, #c651d4 45%, #8094a8 45%);
 }
 
 .run-timeline-axis,
@@ -163,8 +163,7 @@
 }
 
 .run-stop-bar.violation-preference {
-  border: 2px dashed #6a1b9a;
-  box-shadow: 0 0 0 1px rgba(106, 27, 154, 0.25);
+  box-shadow: inset 0 0.45rem 0 #c651d4;
 }
 
 .run-stop-bar.selected {

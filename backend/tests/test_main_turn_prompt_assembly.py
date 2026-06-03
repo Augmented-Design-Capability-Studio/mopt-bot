@@ -201,7 +201,9 @@ WORD_BUDGET_CEILING: dict[str, int] = {
     "cold_waterfall": 4133,
     "warm_waterfall": 6019,
     "warm_agile": 6259,
-    "warm_demo": 6343,
+    # Deliberate bump: VRPTW appendix clarity (capacity/shift are tunable terms,
+    # not fixed constraints) + the "type is a field, not a name" items rule.
+    "warm_demo": 6370,
     "config_save": 6331,
     "upload_context": 6066,
     "retry": 6110,

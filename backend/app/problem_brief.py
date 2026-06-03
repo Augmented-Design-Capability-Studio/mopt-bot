@@ -980,6 +980,16 @@ def _promote_answered_open_questions_to_gathered(
         if st != "answered" or not at:
             kept_q.append(q)
             continue
+        # Tradeoff / weight questions — those anchored to a goal term via
+        # ``goal_key`` — record their outcome in that term's weight + type,
+        # i.e. the canonical ``config-weight-<key>`` row. Don't also mint a
+        # prose "(question → answer)" row: it just restates the weight and
+        # clutters the Definition (observed in P_0602, where a dozen
+        # "The solver will now prioritise…" rows piled up alongside the
+        # weights they describe). The answered OQ is still consumed (dropped);
+        # its effect lives in the goal term it moved.
+        if str(q.get("goal_key") or "").strip():
+            continue
         qtext = str(q.get("text") or "").strip()
         combined = _format_answered_open_question_gathered(qtext, at)
         key = _gathered_text_key(combined)
@@ -2602,11 +2612,6 @@ def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str
     return deconflicted
 
 
-def _numeric_field(d: dict[str, Any], key: str) -> int | float | None:
-    v = d.get(key)
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-
 def _weights_and_types_from_problem(
     problem: dict[str, Any],
 ) -> tuple[dict[str, float], dict[str, str]]:
@@ -2774,8 +2779,14 @@ def _brief_items_from_panel(
                 continue
             strategy_details.append(f"{key}={rendered}")
 
-    # Search-strategy extras (not algorithm_params): keep in the same gathered line so brief→panel
-    # seeding and chat context retain greedy init / early-stop / seed settings across sync.
+    # Search-strategy extras the participant can actually reason about: whether
+    # the solver starts from a quick guess and whether it stops early on a
+    # plateau. The deeper tuning (plateau patience / epsilon / random seed) is
+    # intentionally NOT surfaced here — those are fixed implementation defaults
+    # a layperson never tunes, so listing them only adds jargon. They remain
+    # fully specified in the saved config (so the run is complete and
+    # reproducible); this line just stays readable. See the search-settings
+    # lock in the problem module for where those defaults are pinned.
     if isinstance(problem.get("use_greedy_init"), bool):
         strategy_details.append(
             "greedy initialization on" if problem["use_greedy_init"] else "greedy initialization off"
@@ -2784,12 +2795,6 @@ def _brief_items_from_panel(
         strategy_details.append(
             "stop early on plateau on" if problem["early_stop"] else "stop early on plateau off"
         )
-    if (esp := _numeric_field(problem, "early_stop_patience")) is not None:
-        strategy_details.append(f"plateau patience {int(esp)}")
-    if (ese := _numeric_field(problem, "early_stop_epsilon")) is not None:
-        strategy_details.append(f"min improvement epsilon {float(ese):g}")
-    if (rs := _numeric_field(problem, "random_seed")) is not None:
-        strategy_details.append(f"random seed {int(rs)}")
 
     if algorithm and strategy_details:
         items.append(

@@ -192,12 +192,70 @@ def sanitize_panel_weights(panel_config: dict[str, Any]) -> tuple[dict[str, Any]
 
     warnings.extend(_sanitize_algorithm_params_on_problem(problem))
 
+    _lock_search_settings(problem)
+
     # Canonical projection for downstream clients: one place to inspect goal-term semantics.
     _rebuild_goal_terms_metadata(problem)
     # goal_terms is canonical storage; keep legacy fields out of persisted panel config.
     problem.pop("weights", None)
     problem.pop("constraint_types", None)
     return cfg, warnings
+
+
+def _lock_search_settings(problem: dict[str, Any]) -> None:
+    """Pin EVERY run-affecting search setting to a concrete value in place.
+
+    Only fires once an ``algorithm`` is chosen (before that there's no search
+    block / no run is possible). Only fills a setting that is missing or
+    ``None`` — a value the participant set is never overwritten.
+
+    Every default here matches what the solver already uses for an unset
+    field (including ``random_seed=42`` and the early-stop patience/epsilon),
+    so locking changes NO run behaviour — it just makes the full setup
+    explicit and stable so nothing drifts silently between runs and the
+    Definition can show the participant exactly what will run. ``epochs`` and
+    ``pop_size`` are also re-asserted here in case a partial derive dropped
+    them.
+    """
+    if not isinstance(problem, dict):
+        return
+    if not str(problem.get("algorithm") or "").strip():
+        return
+    # Imported locally to match the existing pattern in this module and dodge
+    # any import-order coupling with the optimizer.
+    from vrptw_problem.optimizer import (
+        EARLY_STOP_DEFAULT_EPSILON,
+        EARLY_STOP_DEFAULT_PATIENCE,
+    )
+
+    defaults: dict[str, Any] = {
+        "use_greedy_init": True,  # optimizer use_greedy_init default
+        "early_stop": True,       # optimizer early_stop default
+        "early_stop_patience": EARLY_STOP_DEFAULT_PATIENCE,
+        "early_stop_epsilon": EARLY_STOP_DEFAULT_EPSILON,
+        "epochs": DEFAULT_EPOCHS,
+        "pop_size": DEFAULT_POP_SIZE,
+        "random_seed": 42,        # parse_problem_config default — runs were already deterministic
+    }
+    for key, default in defaults.items():
+        if problem.get(key) is None:
+            problem[key] = default
+
+    # Algorithm hyperparameters: fill the chosen algorithm's defaults when none
+    # were specified, so the recipe is complete rather than implicitly defaulted
+    # at solve time. Default values are dropped from the participant-facing prose
+    # by the brief synthesizer, so this adds completeness without adding noise.
+    algo = str(problem.get("algorithm") or "").strip()
+    ap = problem.get("algorithm_params")
+    if algo and (not isinstance(ap, dict) or not ap):
+        from app.algorithm_catalog import default_algorithm_params
+
+        try:
+            params = default_algorithm_params(algo)
+        except Exception:  # pragma: no cover — defensive; never block a save
+            params = {}
+        if params:
+            problem["algorithm_params"] = dict(params)
 
 
 def _canonical_weight_aliases_from_payload(raw_weights: Any) -> dict[str, float]:

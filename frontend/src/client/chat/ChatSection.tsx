@@ -118,7 +118,14 @@ export function ChatSection({
         <MessageBubbleList
           messages={messages}
           getBubbleClassName={(message) =>
-            message.role !== "user" && message.meta?.verifying
+            // Glow only while the pipeline is actively settling. On a PAUSE
+            // (verification failed, awaiting Retry/Revert) the backend keeps
+            // `verifying` true on purpose, but the sweeping glow then reads as
+            // "still loading" and hides the fact that the user needs to act.
+            // Gate it off once the pipeline has paused.
+            message.role !== "user"
+              && message.meta?.verifying
+              && !message.meta?.pipeline?.paused_stage
               ? "bubble--verifying"
               : undefined
           }

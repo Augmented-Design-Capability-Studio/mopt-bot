@@ -1348,3 +1348,99 @@ def test_foundational_ask_warms_brief_same_turn():
     # Warm + empty goal_terms → monitor surfaces the canonical goal OQ.
     after = _enforce_session_monitors(merged, "waterfall", test_problem_id="vrptw")
     assert any(q["id"] == "oq-monitor-goal" for q in after["open_questions"])
+
+
+def test_answered_oq_proposing_goal_term_makes_one_canonical_row_no_prose(monkeypatch):
+    """Answering an OQ that proposes a goal term seeds the term and yields its
+    single canonical config-weight row — NOT a separate
+    item-gathered-from-question prose row duplicating it."""
+    from app.routers.sessions.router import _route_oq_answers_through_classifier
+    from app.schemas import OpenQuestionClassification, OpenQuestionGoalTermProposal
+
+    def _fake_classify(**kwargs):
+        return [
+            OpenQuestionClassification(
+                question_id="oq-wb",
+                bucket="gathered",
+                rephrased_text="Workload balance enabled as a soft constraint.",
+                goal_term_proposal=OpenQuestionGoalTermProposal(
+                    key="workload_balance", type="soft"
+                ),
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.services.llm.classify_answered_open_questions", _fake_classify
+    )
+
+    incoming = {
+        "items": [
+            {"id": "item-gathered-upload", "text": "data", "kind": "gathered", "source": "upload"}
+        ],
+        "open_questions": [
+            {"id": "oq-wb", "text": "Add workload balance as a priority?",
+             "status": "answered", "answer_text": "yes please", "goal_key": "workload_balance"}
+        ],
+        "goal_terms": {},
+    }
+    out = _route_oq_answers_through_classifier(
+        incoming_brief=incoming,
+        persisted_open_questions=[],
+        workflow_mode="waterfall",
+        api_key="x",
+        model_name="m",
+        test_problem_id="vrptw",
+    )
+    ids = {i["id"] for i in out["items"]}
+    assert not any("from-question" in i for i in ids), ids  # no duplicate prose row
+    assert "config-weight-workload_balance" in ids  # single canonical row
+    assert "workload_balance" in out["goal_terms"]  # term seeded
+    assert not any(q["id"] == "oq-wb" for q in out["open_questions"])  # OQ consumed
+
+
+def test_answered_oq_declining_tuning_of_existing_term_makes_no_prose(monkeypatch):
+    """Declining a tuning OQ about an EXISTING term ('not now') must not leave a
+    no-op prose row ('Capacity penalty remains at weight 1.0 …') beside the
+    term's canonical weight row. The OQ's goal_key is the signal."""
+    from app.routers.sessions.router import _route_oq_answers_through_classifier
+    from app.schemas import OpenQuestionClassification
+
+    def _fake_classify(**kwargs):
+        return [
+            OpenQuestionClassification(
+                question_id="question-capacity-weight",
+                bucket="gathered",
+                rephrased_text="Capacity penalty remains at a weight of 1.0, treating load limits as a soft constraint.",
+                goal_term_proposal=None,  # decline → nothing new to add
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.services.llm.classify_answered_open_questions", _fake_classify
+    )
+
+    incoming = {
+        "items": [
+            {"id": "config-weight-capacity_penalty",
+             "text": "Load capacity (soft constraint, weight 1.0) — to discourage overloading.",
+             "kind": "gathered", "source": "agent", "goal_key": "capacity_penalty"}
+        ],
+        "open_questions": [
+            {"id": "question-capacity-weight",
+             "text": "Should I increase the capacity penalty weight (currently 1.0)?",
+             "status": "answered", "answer_text": "not now", "goal_key": "capacity_penalty"}
+        ],
+        "goal_terms": {"capacity_penalty": {"weight": 1.0, "type": "soft", "rank": 1}},
+    }
+    out = _route_oq_answers_through_classifier(
+        incoming_brief=incoming,
+        persisted_open_questions=[],
+        workflow_mode="waterfall",
+        api_key="x",
+        model_name="m",
+        test_problem_id="vrptw",
+    )
+    ids = {i["id"] for i in out["items"]}
+    assert not any("from-question" in i for i in ids), ids  # no no-op prose row
+    assert "config-weight-capacity_penalty" in ids  # canonical row stays
+    assert not any(q["id"] == "question-capacity-weight" for q in out["open_questions"])

@@ -1204,6 +1204,43 @@ def sync_panel_from_problem_brief(
     return merged, weight_warnings
 
 
+def realign_panel_scalars_from_brief(
+    row: StudySession, db: Session, problem_brief: dict, *, commit: bool = True
+) -> dict:
+    """Deterministically force the panel's canonical goal-term scalars
+    (``weight`` / ``type`` / ``rank``) to match the brief, then persist.
+    Idempotent.
+
+    The brief is authoritative for those scalars on chat / brief-origin turns.
+    The LLM panel-derive can disagree (and re-disagree the *same* way on a
+    retry), and a panel that drifted on an earlier turn stays stuck if a later
+    turn skips the derive — so the verifier keeps reporting the mismatch
+    (e.g. ``travel_time.type`` objective↔soft) and "Retry" never clears it.
+    Running this deterministic mirror right before S5 verification guarantees
+    the canonical scalars always agree, so that class of drift can't pause the
+    pipeline regardless of what the LLM emitted or whether the derive ran.
+    """
+    panel = helpers.panel_dict(row)
+    if not isinstance(panel, dict):
+        return panel
+    problem = panel.get("problem")
+    if not isinstance(problem, dict):
+        return panel
+    from app.problems.registry import get_study_port
+
+    _mirror_canonical_scalars_from_brief(problem, problem_brief)
+    tpid = getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
+    merged, _warnings = get_study_port(tpid).sanitize_panel_config(panel)
+    if merged == helpers.panel_dict(row):
+        return merged  # already aligned — no write
+    row.panel_config_json = json.dumps(merged)
+    row.updated_at = datetime.now(timezone.utc)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return merged
+
+
 def sync_problem_brief_from_panel(
     row: StudySession,
     db: Session,
