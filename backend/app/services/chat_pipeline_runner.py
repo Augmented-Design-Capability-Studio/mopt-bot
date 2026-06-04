@@ -117,6 +117,7 @@ def run_chat_pipeline(
     test_problem_id: str | None = None,
     gate_status: dict[str, Any] | None = None,
     skip_derive_config: bool = False,
+    post_run_directive: str | None = None,
 ) -> None:
     """Launch the chat pipeline in a daemon thread.
 
@@ -157,6 +158,7 @@ def run_chat_pipeline(
         test_problem_id=test_problem_id,
         gate_status=gate_status,
         skip_derive_config=skip_derive_config,
+        post_run_directive=post_run_directive,
     )
     thread = Thread(
         target=_run_chat_pipeline_thread,
@@ -288,6 +290,7 @@ def _run_chat_pipeline_thread(
     gate_status: dict[str, Any] | None,
     skip_derive_config: bool,
     resume_from: str | None = None,
+    post_run_directive: str | None = None,
 ) -> None:
     """Run S1→S2→S3→S4→S5 in sequence, updating per-stage status.
 
@@ -398,6 +401,7 @@ def _run_chat_pipeline_thread(
                 is_tutorial_active=is_tutorial_active,
                 test_problem_id=test_problem_id,
                 gate_status=gate_status,
+                post_run_directive=post_run_directive,
             )
             if turn is None:
                 # Replace the placeholder with a visible failure message so
@@ -440,7 +444,14 @@ def _run_chat_pipeline_thread(
                 message_id=message_id,
                 visible_reply=turn.assistant_message,
                 inline_followup=turn.inline_followup,
-                is_run_invitation=bool(turn.is_run_invitation),
+                is_run_invitation=bool(turn.is_run_invitation)
+                and _run_invitation_allowed(
+                    session_id=session_id,
+                    base_problem_brief=base_problem_brief,
+                    base_panel=base_panel,
+                    workflow_mode=workflow_mode,
+                    test_problem_id=test_problem_id,
+                ),
             )
             pipeline_status.update_stage(
                 message_id=message_id, stage_name="drafting", state="success"
@@ -490,6 +501,7 @@ def _run_chat_pipeline_thread(
         if resume_from is None or resume_from in ("drafting", "verifying_brief"):
             _run_verify_brief_stage(
                 message_id=message_id,
+                session_id=session_id,
                 turn=turn,
                 user_text=user_text,
                 history_lines=history_lines,
@@ -509,6 +521,7 @@ def _run_chat_pipeline_thread(
                 suppress_runack_invariant=suppress_runack_invariant,
                 test_problem_id=test_problem_id,
                 gate_status=gate_status,
+                post_run_directive=post_run_directive,
             )
 
         # ------------------ Stage 3: Apply patch ------------------
@@ -531,6 +544,7 @@ def _run_chat_pipeline_thread(
             test_problem_id=test_problem_id,
             is_answered_open_question=is_answered_open_question,
             suppress_runack_invariant=suppress_runack_invariant,
+            is_brief_edit_ack=is_brief_edit_ack,
         )
         if applied_brief is None:
             return  # already marked paused / failed by _apply_stage
@@ -547,6 +561,7 @@ def _run_chat_pipeline_thread(
             "base_problem_brief": base_problem_brief,
             "base_panel": base_panel,
             "is_run_acknowledgement": is_run_acknowledgement,
+            "post_run_directive": post_run_directive,
             "is_brief_edit_ack": is_brief_edit_ack,
             "is_config_save": is_config_save,
             "is_upload_context": is_upload_context,
@@ -687,6 +702,53 @@ def _replace_placeholder_with_error(message_id: int, fallback: str) -> None:
             return
         msg.content = fallback
         db.commit()
+
+
+def _run_invitation_allowed(
+    *,
+    session_id: str,
+    base_problem_brief: dict[str, Any],
+    base_panel: dict[str, Any] | None,
+    workflow_mode: str,
+    test_problem_id: str | None,
+) -> bool:
+    """Whether a run could actually start right now — the same gate the Run
+    button uses (``can_run_optimization``).
+
+    Used to suppress a premature run invitation the LLM flags before the gate
+    is satisfied: P_0603 invited a run on the very first turn, before any data
+    was uploaded. The model's ``is_run_invitation`` is advisory; this makes the
+    button-bearing bubble appear only when a run is genuinely possible, so it
+    can't show up unprompted or over-eagerly. Fail-open on any error (never
+    suppress a legitimate invitation because of an unexpected hiccup).
+    """
+    try:
+        from app.optimization_gate import can_run_optimization
+
+        has_upload = isinstance(base_problem_brief, dict) and any(
+            isinstance(it, dict)
+            and str(it.get("source") or "").strip().lower() == "upload"
+            for it in (base_problem_brief.get("items") or [])
+        )
+        with SessionLocal() as db:
+            row = db.get(StudySession, session_id)
+            if row is None:
+                return True
+            return can_run_optimization(
+                workflow_mode=workflow_mode or row.workflow_mode,
+                optimization_allowed=bool(row.optimization_allowed),
+                optimization_runs_blocked_by_researcher=bool(
+                    row.optimization_runs_blocked_by_researcher
+                ),
+                panel_config=base_panel,
+                problem_brief=base_problem_brief,
+                has_uploaded_data=has_upload,
+                optimization_gate_engaged=bool(row.optimization_gate_engaged),
+                problem_id=test_problem_id or row.test_problem_id,
+            )
+    except Exception:  # pragma: no cover — defensive; never block the reply
+        log.exception("Run-invitation gate check failed; leaving invitation as-is")
+        return True
 
 
 def _persist_assistant_message(
@@ -858,6 +920,7 @@ def _settle_session_state(session_id: str, revision: int) -> None:
 def _run_verify_brief_stage(
     *,
     message_id: int,
+    session_id: str,
     turn: ChatTurnResponse,
     user_text: str,
     history_lines: list[tuple[str, str]],
@@ -877,6 +940,7 @@ def _run_verify_brief_stage(
     suppress_runack_invariant: bool,
     test_problem_id: str | None,
     gate_status: dict[str, Any] | None,
+    post_run_directive: str | None = None,
 ) -> None:
     """S2 — verify; on first failure retry S1 once with feedback; on
     second failure pause. Updates the brief on the persisted turn
@@ -1003,6 +1067,7 @@ def _run_verify_brief_stage(
             test_problem_id=test_problem_id,
             gate_status=gate_status,
             verification_issues=pipeline_verification.issues_to_audit_payload(latest_issues),
+            post_run_directive=post_run_directive,
         )
         if retry is None:
             # LLM failure — give up retrying; pause with the last known
@@ -1019,7 +1084,14 @@ def _run_verify_brief_stage(
             message_id=message_id,
             visible_reply=retry.assistant_message,
             inline_followup=retry.inline_followup,
-            is_run_invitation=bool(retry.is_run_invitation),
+            is_run_invitation=bool(retry.is_run_invitation)
+            and _run_invitation_allowed(
+                session_id=session_id,
+                base_problem_brief=base_problem_brief,
+                base_panel=base_panel,
+                workflow_mode=workflow_mode,
+                test_problem_id=test_problem_id,
+            ),
         )
         pipeline_status.update_stage(
             message_id=message_id, stage_name="drafting", state="success"
@@ -1042,12 +1114,33 @@ def _run_verify_brief_stage(
             turn.__dict__.update(latest_turn.__dict__)
             return
 
-    # All retries exhausted with issues still present — pause.
+    # All retries exhausted. A leftover `port_companion` issue (the reply
+    # over-claims a companion-bearing term it committed hollow) is NOT a
+    # pause: the LLM populates the carrier only ~half the time, so after a
+    # best-effort retry we hand off to the deterministic gate. Apply (S3)
+    # runs `reconcile_companion_oqs` with the base brief, which drops the
+    # hollow term and parks a natural companion OQ — the participant gets a
+    # structured re-ask instead of a dead-ended pipeline. Only genuinely
+    # blocking issues (anything else) still pause here.
+    blocking_issues = [
+        i for i in latest_issues if getattr(i, "category", None) != "port_companion"
+    ]
+    if not blocking_issues:
+        _persist_turn_for_resume(message_id, latest_turn)
+        pipeline_status.update_stage(
+            message_id=message_id,
+            stage_name="verifying_brief",
+            state="success",
+            issues=[],
+        )
+        turn.__dict__.update(latest_turn.__dict__)
+        return
+
     pipeline_status.update_stage(
         message_id=message_id,
         stage_name="verifying_brief",
         state="paused",
-        issues=pipeline_verification.issues_to_audit_payload(latest_issues),
+        issues=pipeline_verification.issues_to_audit_payload(blocking_issues),
     )
     pipeline_status.fail_pipeline(message_id=message_id, paused_stage="verifying_brief")
     _persist_turn_for_resume(message_id, latest_turn)
@@ -1100,6 +1193,7 @@ def _apply_stage(
     test_problem_id: str | None,
     is_answered_open_question: bool = False,
     suppress_runack_invariant: bool = False,
+    is_brief_edit_ack: bool = False,
 ) -> dict[str, Any] | None:
     """S3 — deterministic patch apply + workflow coercion + monitors +
     assumption_actions. Returns the merged-and-coerced brief, or None
@@ -1134,6 +1228,11 @@ def _apply_stage(
                 # term the user just approved via an OQ answer isn't mistaken
                 # for a premature/unanchored commit and silently dropped.
                 oq_actions=[a.model_dump() for a in (turn.oq_actions or [])],
+                # Drives keep-vs-drop of an empty companion term: a claim means a
+                # concrete child was given (keep the term); no claim means a vague
+                # mention the agent should just ask about (drop a new hollow term).
+                change_clause=turn.change_clause,
+                is_brief_edit_ack=is_brief_edit_ack,
             )
         else:
             effective_brief = dict(base_problem_brief)
@@ -1175,8 +1274,24 @@ def _apply_stage(
         ):
             from app.services import llm
 
+            # The agent's immediately-preceding visible message — what the
+            # participant is replying to. Lets the classifier resolve a bare
+            # affirmation ("sounds good") of an agent-proposed algorithm (the
+            # agent answered the OQ counter-question "what do you suggest?" with
+            # GA, then the user affirmed — P_0602).
+            agent_prompt = next(
+                (
+                    text
+                    for role, text in reversed(history_lines or [])
+                    if role == "assistant" and str(text or "").strip()
+                ),
+                None,
+            )
             user_ss_choice = llm.classify_user_search_strategy_choice(
-                user_text=user_text, api_key=api_key, model_name=model_name
+                user_text=user_text,
+                api_key=api_key,
+                model_name=model_name,
+                agent_prompt=agent_prompt,
             )
         effective_brief, oq_actions_payload = (
             derivation.gate_unauthorized_search_strategy_commit(
@@ -1409,6 +1524,11 @@ def _run_verify_config_stage(
         # way). Config-save turns (panel authoritative) are left untouched.
         if derive_config:
             sync.realign_panel_scalars_from_brief(row, db, brief, commit=True)
+            # A companion the agent committed hollow (e.g. shift_limit with no
+            # max_shift_hours) lives only on the derived panel — copy it back into
+            # the brief so the brief↔panel mirror agrees (otherwise the retry can
+            # never clear the mismatch) and the def row shows the cap.
+            brief = sync.gapfill_brief_companions_from_panel(row, db, brief, commit=True)
         panel = helpers.panel_dict(row)
     issues = pipeline_verification.verify_panel_consistency(
         brief=brief,
@@ -1600,6 +1720,7 @@ def _retry_brief_from_panel(
             test_problem_id=test_problem_id,
             gate_status=retry_context.get("gate_status"),
             verification_issues=pipeline_verification.issues_to_audit_payload(issues),
+            post_run_directive=retry_context.get("post_run_directive"),
         )
     except Exception:
         log.exception("Config-save LLM retry failed for message %s", message_id)
@@ -1628,6 +1749,8 @@ def _retry_brief_from_panel(
                 model_name=model_name,
                 suppress_runack_invariant=bool(retry_context.get("suppress_runack_invariant")),
                 oq_actions=[a.model_dump() for a in (retry_turn.oq_actions or [])],
+                change_clause=retry_turn.change_clause,
+                is_brief_edit_ack=bool(retry_context.get("is_brief_edit_ack")),
             )
             applied = coerce_problem_brief_for_workflow(applied, workflow_mode)
             applied = derivation._enforce_session_monitors(

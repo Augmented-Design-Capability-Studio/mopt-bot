@@ -133,6 +133,20 @@ class StudyProblemPort(Protocol):
         """
         return None
 
+    def companion_extraction_instructions(self, goal_term_key: str) -> str | None:
+        """Domain instructions for the deterministic companion-rule extractor.
+
+        When a change turn references a companion-bearing term but the main
+        agent fails to populate its structured carrier (a recurring LLM miss),
+        the server runs a small dedicated structured-extraction call that turns
+        the participant's wording into the carrier's schema. This returns the
+        per-problem guidance that call needs — field meanings, name/zone/code
+        mappings, worked examples (e.g. VRPTW's driver-preference contract).
+        Returns ``None`` to opt out (the extractor then doesn't run for the
+        term). Default: ``None``.
+        """
+        return None
+
     def study_prompt_appendix(self) -> str | None:
         """Extra structured-prompt text for the study chat model (problem-specific)."""
 

@@ -197,20 +197,26 @@ EXPECTED_BLOCKS: dict[str, set[str]] = {
 # the cap bumped deliberately. Set at the current word counts (no headroom) so
 # any regrowth is caught immediately. A ceiling avoids the self-fulfilling churn
 # of an exact `==` snapshot, which would have to be re-pasted on every edit.
+# Deliberate bump (~+32 across the board): the items-discipline block was
+# reworked to match the structured-items whitelist — items[] is now a
+# server-built projection (goal terms + search strategy + upload marker), the
+# agent no longer authors standalone fact rows, and is told to FOLD any
+# free-text it's handed (a Definition row the participant typed, an answered
+# question's note) into a goal term / goal_summary / open question. Net new
+# behavior, so a small uniform growth; replaced the looser "other rows are
+# natural language" rule.
 WORD_BUDGET_CEILING: dict[str, int] = {
-    "cold_waterfall": 4133,
-    "warm_waterfall": 6019,
-    "warm_agile": 6259,
-    # Deliberate bump: VRPTW appendix clarity (capacity/shift are tunable terms,
-    # not fixed constraints) + the "type is a field, not a name" items rule.
-    "warm_demo": 6370,
-    "config_save": 6331,
-    "upload_context": 6066,
-    "retry": 6110,
-    "run_ack": 5877,
-    "tutorial": 6276,
-    "answered_oq": 6081,
-    "brief_edit": 6083,
+    "cold_waterfall": 4170,
+    "warm_waterfall": 6051,
+    "warm_agile": 6268,
+    "warm_demo": 6391,
+    "config_save": 6363,
+    "upload_context": 6096,
+    "retry": 6142,
+    "run_ack": 5909,
+    "tutorial": 6308,
+    "answered_oq": 6096,
+    "brief_edit": 6122,
 }
 
 

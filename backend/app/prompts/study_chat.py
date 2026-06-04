@@ -236,7 +236,9 @@ inviting a run.
 `open_questions` is the primary elicitation mechanism — every
 provisional gap, modelling choice, or weight proposal goes through an
 OQ.
-- Cap **3** active OQs. Add or refine at most 1 new per turn.
+- **Prefer one new open question per turn**; add a second only when it's
+  closely related and batching saves the participant a round-trip. Refine
+  an existing question before adding another; keep ≈3 active.
 - Phase order: scope/objectives → trade-offs/weights (one at a time) →
   search strategy.
 - When an OQ proposes a specific goal_term (e.g. *"Should I add a
@@ -307,8 +309,9 @@ stated objectives motivate a change (e.g. time-window violations →
   A rationale-only row like *"Enforce strict vehicle capacity limits
   using a soft penalty."* loses the weight on later turns —
   always include the number.
-- Cap **1** new assumption / turn; keep ~3–5 active. Prefer updating
-  an existing assumption before adding another.
+- **Prefer one new assumption per run** so each experiment stays
+  attributable; add more only when the run motivates several distinct
+  changes. Update an existing assumption before adding another.
 - **Conservative promotion.** Emit `assumption_actions: [{action:
   "promote_to_gathered"}]` **only** when the user's message is an
   unambiguous lock-in for the specific term — naming the term
@@ -604,9 +607,12 @@ STUDY_CHAT_ITEMS_DISCIPLINE = """
   ``properties.driver_preferences``) follow the per-problem appendix, not this
   completeness rule.
 - **Goal summary lives in ``goal_summary``, not items[].**
-- **Other rows are natural language** — gathered facts/assumptions about
-  non-goal aspects (data, scale, entities, caveats), one fact per row. Never
-  describe the agent's own role or capabilities.
+- **items[] is server-built — no standalone fact rows.** It projects goal terms,
+  search strategy, and the upload marker; any other row (non-goal facts, "user is
+  interested in…" notes, agent narration) is swept. Fold that meaning — and any
+  free-text you're handed (a Definition row the participant typed, an answered
+  question's note) — into a goal term, ``goal_summary``, or an open question; if
+  it maps to nothing tunable, say so.
 - **Type is a field, not a name.** Don't bake a term's classification
   (objective/soft/hard/custom) into a row's id/wording — that's the `type`
   field. Name the concept plainly ("Load capacity"), not by its role
@@ -1230,8 +1236,10 @@ Never flag a change merely because the wording differs from the change text.
 # ---------------------------------------------------------------------------
 
 STUDY_CHAT_USER_ALGORITHM_CHOICE_TASK = """
-Read the participant's chat message and decide whether THEY named a search
-method for the optimizer (answering "which search method should we use?").
+You are given a short exchange: the agent's most recent message (which may
+propose or ask about a search method) followed by the participant's reply.
+Decide which search method the PARTICIPANT settled on for the optimizer
+(the "which search method should we use?" question).
 
 Return JSON only: {"algorithm": "<one of GA | PSO | SA | SwarmSA | ACOR | none>"}.
 
@@ -1242,9 +1250,16 @@ Map everyday names to the canonical token:
 - swarm-based simulated annealing / SwarmSA → SwarmSA
 - ant colony / ACO / ACOR → ACOR
 
-Return "none" when the message does not clearly choose one of these methods —
-e.g. they ask what the options are, express no preference, say "you decide",
-or are talking about goals/constraints rather than the search method. Only
-report a method the participant themselves chose, not one merely mentioned in
-passing as an example.
+Report a method when EITHER:
+- the participant names it themselves, OR
+- the participant accepts/affirms a method the agent just proposed — e.g. the
+  agent asked "how does genetic search (GA) sound?" and they reply "sounds
+  good" / "yes" / "let's go with that". Report the method the agent proposed
+  (if the agent floated a baseline plus a fallback, report the baseline they
+  affirmed).
+
+Return "none" when the participant does NOT settle on a method — e.g. they ask
+what the options are, defer ("you decide", "what do you suggest?"), reject the
+proposal, or are talking about goals/constraints rather than the search method.
+Never invent a method neither side mentioned.
 """.strip()

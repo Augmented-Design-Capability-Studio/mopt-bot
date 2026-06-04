@@ -1444,3 +1444,30 @@ def test_answered_oq_declining_tuning_of_existing_term_makes_no_prose(monkeypatc
     assert not any("from-question" in i for i in ids), ids  # no no-op prose row
     assert "config-weight-capacity_penalty" in ids  # canonical row stays
     assert not any(q["id"] == "question-capacity-weight" for q in out["open_questions"])
+
+
+def test_apply_oq_actions_refuses_to_drop_companion_oq():
+    """Server-managed companion OQs (`auto-oq-companion-<key>`) must survive an
+    agent drop/mark_answered while the companion is still empty — otherwise the
+    only thing still asking for the rules dies and the term vanishes silently
+    (P_0603: agent dropped the driver-preferences companion OQ, claimed
+    'added', but no rules were committed)."""
+    from app.routers.sessions.derivation import _apply_oq_actions
+
+    brief = {
+        "open_questions": [
+            {"id": "auto-oq-companion-worker_preference", "text": "Which driver…?",
+             "status": "open", "goal_key": "worker_preference"},
+            {"id": "question-other", "text": "Something else?", "status": "open"},
+        ]
+    }
+    out = _apply_oq_actions(
+        brief,
+        [
+            {"id": "auto-oq-companion-worker_preference", "action": "drop"},
+            {"id": "question-other", "action": "drop"},
+        ],
+    )
+    ids = {q["id"] for q in out["open_questions"]}
+    assert "auto-oq-companion-worker_preference" in ids  # protected
+    assert "question-other" not in ids  # normal drop still works

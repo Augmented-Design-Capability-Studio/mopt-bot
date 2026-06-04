@@ -50,6 +50,10 @@ class SessionPatch(BaseModel):
     optimization_allowed: bool | None = None
     optimization_runs_blocked_by_researcher: bool | None = None
     allow_agent_autorun: bool | None = None
+    # Agile OQ cadence (controlled-study lever). Sent only when the researcher
+    # changes it (``model_fields_set`` gate in the PATCH): ``null`` = off,
+    # 0 = never, 1 = every run, N≥2 = one OQ per N runs.
+    agile_oq_every_n_runs: int | None = None
     participant_tutorial_enabled: bool | None = None
     tutorial_step_override: TutorialStepIdLiteral | None = None
     gemini_model: str | None = None
@@ -205,6 +209,7 @@ class SessionOut(BaseModel):
     optimization_allowed: bool
     optimization_runs_blocked_by_researcher: bool
     allow_agent_autorun: bool = False
+    agile_oq_every_n_runs: int | None = None
     participant_tutorial_enabled: bool = False
     tutorial_step_override: TutorialStepIdLiteral | None = None
     tutorial_chat_started: bool = False

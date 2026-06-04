@@ -1,4 +1,5 @@
-import type { RunResult } from "@shared/api";
+import type { ReactNode } from "react";
+import type { ProblemBrief, ProblemBriefItem, RunResult } from "@shared/api";
 import type { TutorialContent } from "@tutorial/types";
 import type { GoalTermsExtension } from "./GoalTermsSection";
 import type { MarkerKind } from "./useProblemConfigDiffMarkers";
@@ -68,4 +69,20 @@ export type ProblemModule = {
    * When omitted, the generic fallback in `frontend/src/tutorial/defaultContent.ts` is used.
    */
   tutorialContent?: TutorialContent;
+  /**
+   * Optional: a small footnote rendered under a definition-panel row. Used for
+   * companion goal-term rows (a parent term that owns structured child rules,
+   * e.g. VRPTW worker preferences) to hint where rules go and that typing one in
+   * plain language gets structured automatically. Returns null for other rows.
+   */
+  definitionRowFootnote?: (item: ProblemBriefItem) => ReactNode;
+  /**
+   * Optional: itemize problem-specific changes between two brief states for the
+   * synthetic "Definition edited:" chat message (companion rule add/remove, etc.),
+   * mirroring how a config save lists its changed fields. Returns one short
+   * human-readable line per change ("Added driver preference — Carol skips
+   * express-priority orders"). Diff the STRUCTURED carriers, so the caller passes
+   * the post-save brief (the backend structures free-text rule edits at the save).
+   */
+  describeBriefChanges?: (previous: ProblemBrief, next: ProblemBrief) => string[];
 };

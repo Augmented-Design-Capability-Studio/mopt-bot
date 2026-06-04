@@ -1525,9 +1525,12 @@ def test_apply_brief_patch_runack_strip_waterfall_drops_new_oqs():
 
 
 def test_apply_brief_patch_runack_strip_agile_drops_new_assumptions_and_goal_terms():
-    """Tutorial Runs 1+2 in agile: a post-run patch trying to add new
-    assumption rows or new goal_terms keys is stripped server-side.
-    Existing assumption edits + retunes survive."""
+    """Tutorial Runs 1+2 in agile: a post-run patch trying to add a new
+    goal_terms key is stripped server-side; existing goal-term retunes
+    survive. Free-text ``item-*`` assumption rows (old model) are no longer
+    part of items[] at all — the structured-items whitelist sweeps them
+    regardless of age, since assumptions now live on goal terms
+    (``config-weight-*`` rows with kind=assumption)."""
     from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
 
     base = default_problem_brief("knapsack")
@@ -1577,7 +1580,9 @@ def test_apply_brief_patch_runack_strip_agile_drops_new_assumptions_and_goal_ter
         suppress_runack_invariant=True,
     )
     item_ids = {it.get("id") for it in out.get("items") or [] if isinstance(it, dict)}
-    assert "item-existing-assumption" in item_ids, item_ids
+    # Free-text assumption rows are not part of the structured items[] anymore —
+    # the whitelist drops both the existing and the new one.
+    assert "item-existing-assumption" not in item_ids, item_ids
     assert "item-new-assumption" not in item_ids, item_ids
     gt = out.get("goal_terms") or {}
     assert "value_emphasis" in gt, gt
@@ -1585,6 +1590,107 @@ def test_apply_brief_patch_runack_strip_agile_drops_new_assumptions_and_goal_ter
     assert "selection_sparsity" not in gt, gt
     # The retune of value_emphasis weight came through:
     assert gt["value_emphasis"]["weight"] == 2.0, gt
+
+
+def test_apply_brief_patch_keeps_carrier_only_search_strategy_anchor():
+    """P_0602 waterfall regression: the participant answers the search-strategy
+    OQ and confirms ("sounds good"). The main turn commits the carrier-only
+    ``goal_terms.search_strategy.properties.algorithm = "GA"`` AND its anchor
+    row ``config-search-strategy``. The redundant-anchor sweep must NOT drop
+    that anchor — unlike weighted terms, ``search_strategy`` is skipped by the
+    canonical synthesizer, so there is no ``config-weight-*`` row to replace it.
+    Dropping it left the carrier unanchored, the panel-sync legitimacy gate
+    stripped ``algorithm``, and the choice silently vanished."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+    from app.services.goal_term_anchoring import brief_mentions_search_strategy
+
+    base = default_problem_brief("vrptw")
+    base["goal_terms"] = {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}}
+    base["items"] = [
+        {"id": "config-weight-travel_time", "text": "Total travel time (objective, weight 1.0).",
+         "kind": "gathered", "source": "user"},
+    ]
+    patch_payload = {
+        "items": [
+            {"id": "config-search-strategy", "text": "Search strategy: Genetic Search (GA).",
+             "kind": "gathered", "source": "agent"},
+        ],
+        "goal_terms": {
+            "search_strategy": {
+                "weight": 1.0, "type": "custom", "rank": 2,
+                "properties": {"algorithm": "GA"},
+                "evidence_item_ids": ["config-search-strategy"],
+            },
+        },
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="waterfall",
+        recent_runs_summary=[],
+        test_problem_id="vrptw",
+        user_text="sounds good",
+    )
+    ids = {str(it.get("id") or "") for it in out.get("items") or []}
+    assert "config-search-strategy" in ids, ids
+    ss = (out.get("goal_terms") or {}).get("search_strategy") or {}
+    assert (ss.get("properties") or {}).get("algorithm") == "GA", ss
+    # The panel-sync legitimacy gate keys off this — it must see the strategy.
+    assert brief_mentions_search_strategy(out, test_problem_id="vrptw", workflow_mode="waterfall")
+
+
+def test_apply_brief_patch_whitelists_items_to_structured_rows():
+    """The Definition's items[] is a projection of the structured model: after
+    apply, only ``config-*`` synthesized rows and the upload marker remain.
+    Free-form agent prose, orphan "user indicated interest in …" placeholders,
+    and OQ-answer context rows are swept (P_0603 clutter). goal_terms /
+    goal_summary / search_strategy are untouched."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+    from app.problem_brief import UPLOAD_MARKER_ITEM_ID
+
+    base = default_problem_brief("vrptw")
+    patch_payload = {
+        "goal_summary": "Minimize total travel time.",
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "objective", "rank": 1,
+                            "evidence_item_ids": ["item-anchor-travel-time"]},
+        },
+        "items": [
+            # Anchor for the goal term (consumed by synthesis → config-weight-*).
+            {"id": "item-anchor-travel-time",
+             "text": "Minimize total travel time.", "kind": "gathered", "source": "user"},
+            {"id": UPLOAD_MARKER_ITEM_ID, "text": "Files uploaded.",
+             "kind": "gathered", "source": "upload"},
+            {"id": "item-interest-driver-pref", "text": "User indicated interest in driver preferences.",
+             "kind": "gathered", "source": "agent"},
+            {"id": "item-gathered-from-question-oq7", "text": "Deliveries should be same-day.",
+             "kind": "gathered", "source": "user"},
+            {"id": "item-freeform-note", "text": "Some agent prose.",
+             "kind": "gathered", "source": "agent"},
+        ],
+    }
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=base,
+        patch_payload=patch_payload,
+        workflow_mode="agile",
+        recent_runs_summary=[],
+        test_problem_id="vrptw",
+        user_text="minimize travel time",
+    )
+    items = out.get("items") or []
+    for it in items:
+        rid = str(it.get("id") or "")
+        assert rid.startswith("config-") or rid == UPLOAD_MARKER_ITEM_ID, rid
+    ids = {str(it.get("id") or "") for it in items}
+    # The structured goal-term row was synthesized; the upload marker kept.
+    assert "config-weight-travel_time" in ids, ids
+    assert UPLOAD_MARKER_ITEM_ID in ids, ids
+    # Clutter swept.
+    assert "item-interest-driver-pref" not in ids, ids
+    assert "item-gathered-from-question-oq7" not in ids, ids
+    assert "item-freeform-note" not in ids, ids
+    # Structured model untouched.
+    assert "travel_time" in (out.get("goal_terms") or {})
 
 
 def test_apply_brief_patch_keeps_goal_term_user_approved_via_oq_answer():
@@ -1994,3 +2100,93 @@ def test_answered_goal_key_oq_does_not_create_prose_gathered_row():
     assert "item-gathered-from-question-oq-misc" in ids  # standalone fact still kept
     # Both answered OQs are consumed (removed from the open list).
     assert questions == []
+
+
+def test_agile_agent_proposal_keeps_assumption_provenance_through_synthesis():
+    """P_0603: an agile agent proposes a goal term as kind:assumption (self-
+    anchored to its canonical config-weight-<key> id). The canonical synthesizer
+    must KEEP it as assumption — not flatten it to gathered, which would strip
+    its provisional status and promotion affordance."""
+    from app.routers.sessions.derivation import apply_brief_patch_with_cleanup
+
+    base = default_problem_brief("vrptw")
+    base["goal_terms"] = {"travel_time": {"weight": 1.0, "type": "objective", "rank": 1}}
+    patch = {
+        "items": [
+            {"id": "config-weight-capacity_penalty",
+             "text": "Load capacity (soft constraint, weight 10.0) — keep loads safe.",
+             "kind": "assumption", "source": "agent", "goal_key": "capacity_penalty"}
+        ],
+        "goal_terms": {
+            "capacity_penalty": {"weight": 10.0, "type": "soft", "rank": 2,
+                                 "evidence_item_ids": ["config-weight-capacity_penalty"]}
+        },
+    }
+    out, _ = apply_brief_patch_with_cleanup(
+        base_problem_brief=base, patch_payload=patch, workflow_mode="agile",
+        recent_runs_summary=[], test_problem_id="vrptw", is_run_acknowledgement=True,
+        user_text="Run #1 just completed…", api_key=None, model_name=None,
+    )
+    cap = next(i for i in out["items"] if i.get("goal_key") == "capacity_penalty")
+    assert cap["kind"] == "assumption", cap
+    assert cap["source"] == "agent", cap
+
+
+def test_locking_goal_term_on_config_promotes_assumption():
+    """Lock implies confirm: locking K on the Config panel promotes its agent
+    assumption row to gathered/user (and the term stays locked). A weight-only
+    change does NOT promote (only deliberate commitments do)."""
+    base = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [{"id": "config-weight-capacity_penalty",
+                   "text": "Load capacity (hard constraint, weight 100.0) — keep loads safe.",
+                   "kind": "assumption", "source": "agent", "goal_key": "capacity_penalty"}],
+        "open_questions": [],
+        "goal_terms": {"capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1, "locked": False}},
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    panel = {"problem": {"goal_terms": {"capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1, "locked": True}},
+                         "locked_goal_terms": ["capacity_penalty"]}}
+    out = sync_problem_brief_from_panel(base, panel, test_problem_id="vrptw", origin="user")
+    cap = next(i for i in out["items"] if i.get("goal_key") == "capacity_penalty")
+    assert cap["kind"] == "gathered"
+    assert cap["source"] == "user"
+    assert out["goal_terms"]["capacity_penalty"].get("locked") is True
+
+    # Weight-only change must NOT promote.
+    base2 = normalize_problem_brief({
+        "goal_summary": "",
+        "items": [{"id": "config-weight-capacity_penalty", "text": "x",
+                   "kind": "assumption", "source": "agent", "goal_key": "capacity_penalty"}],
+        "open_questions": [],
+        "goal_terms": {"capacity_penalty": {"weight": 100.0, "type": "hard", "rank": 1}},
+        "solver_scope": "general_metaheuristic_translation",
+        "backend_template": "routing_time_windows",
+    })
+    panel2 = {"problem": {"goal_terms": {"capacity_penalty": {"weight": 150.0, "type": "hard", "rank": 1}}}}
+    out2 = sync_problem_brief_from_panel(base2, panel2, test_problem_id="vrptw", origin="user")
+    cap2 = next(i for i in out2["items"] if i.get("goal_key") == "capacity_penalty")
+    assert cap2["kind"] == "assumption"
+
+
+def test_synthesizer_keeps_strongest_provenance_no_demotion():
+    """When several prior rows reference the same goal term, the synthesizer
+    keeps the STRONGEST provenance — an agent re-emitting a term as a fresh
+    `assumption` must never demote a `gathered/user` fact the user confirmed
+    (P_0603: capacity was confirmed via config edit, then re-proposed)."""
+    from app.problem_brief import synthesize_canonical_goal_term_items
+
+    brief = {
+        "goal_terms": {"capacity_penalty": {"weight": 50.0, "type": "hard", "rank": 1}},
+        "items": [
+            {"id": "config-weight-capacity_penalty", "goal_key": "capacity_penalty",
+             "kind": "gathered", "source": "user", "text": "x"},
+            {"id": "config-weight-capacity_penalty-update", "goal_key": "capacity_penalty",
+             "kind": "assumption", "source": "agent", "text": "y"},
+        ],
+    }
+    cap = next(r for r in synthesize_canonical_goal_term_items(brief, "vrptw")
+               if r["goal_key"] == "capacity_penalty")
+    assert cap["kind"] == "gathered"
+    assert cap["source"] == "user"

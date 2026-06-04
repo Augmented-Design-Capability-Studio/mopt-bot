@@ -751,6 +751,62 @@ def test_carrier_algorithm_wins_over_stale_panel_default(monkeypatch):
     assert algo_drifts == [], [i.message for i in algo_drifts]
 
 
+def test_gapfill_brief_companions_from_panel_populates_hollow_shift_limit():
+    """P_0603: the agent committed `shift_limit` HOLLOW (no
+    `properties.max_shift_hours` — it parked the value in `ambiguity_note`). The
+    derive step put `max_shift_hours=8` on the panel, so a `mirror_mismatch`
+    drift (brief None vs panel 8) kept pausing S5 and the retry couldn't clear it,
+    and the def row never showed the cap. The gap-fill copies the panel value into
+    the brief, re-synthesizes the def row (now shows the cap), and resolves drift.
+    An explicitly-populated companion (driver_preferences) is left untouched."""
+    from app.routers.sessions.sync import (
+        compute_brief_panel_drift,
+        gapfill_brief_companions_from_panel,
+    )
+
+    brief = {
+        "goal_terms": {
+            # Hollow shift_limit — no properties.max_shift_hours.
+            "shift_limit": {"weight": 100.0, "type": "hard", "rank": 4,
+                            "ambiguity_note": {"chosen_rationale": "mapped to shift_limit"}},
+            # worker_preference already carries its list — must NOT be touched.
+            "worker_preference": {"weight": 1.0, "type": "soft", "rank": 3,
+                "properties": {"driver_preferences": [
+                    {"vehicle_idx": 0, "condition": "avoid_zone", "penalty": 50.0, "zone": 4}]}},
+        },
+        "items": [], "open_questions": [],
+    }
+    row = SimpleNamespace(
+        panel_config_json=json.dumps({"problem": {
+            "max_shift_hours": 8.0,
+            "driver_preferences": [{"vehicle_idx": 0, "condition": "avoid_zone", "penalty": 50.0, "zone": 4}],
+            "goal_terms": {
+                "shift_limit": {"weight": 100.0, "type": "hard", "rank": 4,
+                                "properties": {"max_shift_hours": 8.0}},
+                "worker_preference": {"weight": 1.0, "type": "soft", "rank": 3},
+            },
+        }}),
+        problem_brief_json=json.dumps(brief),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+    # Pre-condition: max_shift_hours mirror drift exists.
+    pre = compute_brief_panel_drift(brief, json.loads(row.panel_config_json), "vrptw")
+    assert any(d.get("detail") == "max_shift_hours" for d in pre), pre
+
+    out = gapfill_brief_companions_from_panel(row, _DummyDb(), brief, commit=False)
+    assert out["goal_terms"]["shift_limit"]["properties"]["max_shift_hours"] == 8.0
+    # Drift resolved.
+    post = compute_brief_panel_drift(out, json.loads(row.panel_config_json), "vrptw")
+    assert not any(d.get("detail") == "max_shift_hours" for d in post), post
+    # The def row now surfaces the cap.
+    row_text = [it["text"] for it in out["items"] if it.get("id") == "config-weight-shift_limit"][0]
+    assert "8 hours" in row_text, row_text
+    # The populated list companion was not disturbed.
+    assert out["goal_terms"]["worker_preference"]["properties"]["driver_preferences"]
+
+
 def test_realign_panel_scalars_from_brief_heals_stuck_type_drift():
     """A panel that drifted to travel_time.type='soft' while the brief says
     'objective' is deterministically force-aligned back to the brief — so a

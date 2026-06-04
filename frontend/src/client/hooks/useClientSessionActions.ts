@@ -708,10 +708,24 @@ export function useClientSessionActions({
           defaultChatMessage = `${headerLine}\n${quoteBlock}${tail}`;
         } else {
           // No OQ answered → describe whatever changed (added/removed/
-          // edited/goal/run-summary). The phrase comes from
-          // problemBriefChangeSummary which is now direction-aware.
-          const summary = problemBriefChangeSummary(previousBrief, cleanedBrief);
-          defaultChatMessage = `Definition edited: ${summary}.`;
+          // edited/goal/run-summary). Problem-specific structured changes
+          // (e.g. VRPTW companion rules) are itemized as bullets, mirroring
+          // the "Config edited:" message — diffed against the POST-SAVE brief
+          // (``nextSession``), because the backend structures a free-text
+          // "Rules —" edit into the carrier only at the save.
+          const structuredBullets =
+            getProblemModule(session?.test_problem_id ?? "").describeBriefChanges?.(
+              previousBrief,
+              nextSession.problem_brief,
+            ) ?? [];
+          if (structuredBullets.length > 0) {
+            defaultChatMessage =
+              "Definition edited:\n" + structuredBullets.map((b) => `- ${b}`).join("\n");
+          } else {
+            // The phrase comes from problemBriefChangeSummary (direction-aware).
+            const summary = problemBriefChangeSummary(previousBrief, cleanedBrief);
+            defaultChatMessage = `Definition edited: ${summary}.`;
+          }
         }
         const chatMessage = options?.chatNote?.trim()
           ? options.chatNote.trim()

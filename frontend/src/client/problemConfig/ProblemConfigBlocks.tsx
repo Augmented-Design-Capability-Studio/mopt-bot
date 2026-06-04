@@ -334,6 +334,9 @@ export function ProblemConfigBlocks({
         locked_goal_terms: removed.locked
           ? Array.from(new Set([...problem.locked_goal_terms, removed.key]))
           : problem.locked_goal_terms,
+        // Bring back any child fields the parent cleared on removal (e.g. VRPTW
+        // driver_preferences captured at remove time).
+        ...(removed.restorePatch ?? {}),
       });
     } else if (removed.fieldName) {
       // Non-weight removable field — uses fieldName stored by the problem-module extension.

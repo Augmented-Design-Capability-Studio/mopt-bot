@@ -2244,6 +2244,35 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   gap: 0.2rem;
 }
 
+/* Agile OQ-cadence lever: stacked label / dropdown / explanation so the long
+   option labels and hint don't crowd onto one line. */
+.researcher-oq-cadence {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border, #d0c4b3);
+}
+
+.researcher-oq-cadence__label {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.researcher-oq-cadence__select {
+  min-height: 1.9rem;
+  padding: 0.22rem 0.4rem;
+  font-size: 0.85rem;
+  max-width: 100%;
+}
+
+.researcher-oq-cadence__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
 .researcher-workflow-select {
   min-height: 1.9rem;
   padding: 0.22rem 0.4rem;

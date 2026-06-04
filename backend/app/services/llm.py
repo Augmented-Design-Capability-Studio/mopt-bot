@@ -479,18 +479,30 @@ def classify_user_search_strategy_choice(
     user_text: str,
     api_key: str | None,
     model_name: str | None,
+    agent_prompt: str | None = None,
 ) -> str | None:
-    """Return the canonical algorithm the PARTICIPANT named in ``user_text``
-    (their answer to the search-strategy question), or ``None``.
+    """Return the canonical algorithm the PARTICIPANT settled on, or ``None``.
 
-    Reads the participant's own message — not the agent's reply or patch — so a
+    Reads the participant's own message — not the main-turn model's patch — so a
     chat answer authorizes the same way a panel answer does, regardless of how
-    the main-turn model phrased its output. Closed-vocabulary structured
-    output (no regex / keyword matching in code). Fail-safe: ``None`` on any
-    error or missing key, so it never blocks a turn.
+    the main-turn model phrased its output.
+
+    ``agent_prompt`` is the agent's immediately-preceding visible message (what
+    the participant is replying to). When supplied, the classifier can resolve a
+    bare AFFIRMATION: the agent proposes a method ("how does GA sound?") and the
+    participant replies "sounds good" — the choice is GA even though their own
+    words name nothing (P_0602). Without it, only a method the participant names
+    themselves counts. Closed-vocabulary structured output (no regex / keyword
+    matching in code). Fail-safe: ``None`` on any error or missing key.
     """
     if not api_key or not model_name or not str(user_text or "").strip():
         return None
+    # Frame as a 2-line transcript so the affirmation rule has the agent's
+    # proposal to bind to; agent-less form stays a plain participant message.
+    if str(agent_prompt or "").strip():
+        contents = f"Agent: {str(agent_prompt).strip()}\nParticipant: {str(user_text).strip()}"
+    else:
+        contents = f"Participant: {str(user_text).strip()}"
     try:
         client = genai.Client(api_key=api_key)
         config = types.GenerateContentConfig(
@@ -499,7 +511,7 @@ def classify_user_search_strategy_choice(
             response_json_schema=USER_ALGORITHM_CHOICE_RESPONSE_JSON_SCHEMA,
         )
         resp = client.models.generate_content(
-            model=model_name, contents=str(user_text), config=config
+            model=model_name, contents=contents, config=config
         )
         parsed = resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
     except Exception as exc:
@@ -552,6 +564,90 @@ def check_changes_acknowledged(
     if not isinstance(idxs, list):
         return None
     return [i for i in idxs if isinstance(i, int) and 0 <= i < len(changes)]
+
+
+def extract_companion_rules(
+    *,
+    test_problem_id: str | None,
+    goal_term_key: str,
+    companion_field: str,
+    source_text: str,
+    current_rules: list[Any] | None,
+    api_key: str | None,
+    model_name: str | None,
+) -> list[Any] | None:
+    """Deterministic fallback that turns a participant's free-text rule into the
+    companion term's structured carrier when the main agent failed to.
+
+    The main-turn LLM is unreliable at populating list companions (VRPTW
+    ``driver_preferences``) — it acknowledges the rule in prose but omits the
+    array. This focused, single-task call (the participant's wording + the
+    current rules + the port's domain instructions, constrained to the carrier's
+    JSON schema) is far more reliable. Returns the COMPLETE updated rule list
+    (existing rules preserved + any new ones the text describes), or ``None`` on
+    any failure / opt-out so it never blocks the turn.
+    """
+    if not api_key or not model_name or not test_problem_id:
+        return None
+    text = (source_text or "").strip()
+    if not text:
+        return None
+    try:
+        port = get_study_port(test_problem_id)
+        instructions = port.companion_extraction_instructions(goal_term_key)
+        if not instructions or not str(instructions).strip():
+            return None  # port opted this term out
+        props_schema = port.goal_term_properties_schema() or {}
+        array_schema = (
+            props_schema.get("properties", {}).get(companion_field)
+            if isinstance(props_schema, dict)
+            else None
+        )
+        if not isinstance(array_schema, dict):
+            return None
+    except Exception:  # pragma: no cover — never block on registry/schema hiccups
+        return None
+
+    response_schema = {
+        "type": "object",
+        "properties": {"rules": array_schema},
+        "required": ["rules"],
+        "additionalProperties": False,
+    }
+    system = (
+        str(instructions).strip()
+        + "\n\n## Your task\n"
+        "Return the COMPLETE updated rule list as JSON `{\"rules\": [...]}`. "
+        "Start from the current rules given below and ADD any rule the "
+        "participant's text describes; keep every existing rule unless the text "
+        "clearly removes or changes it. Do not invent rules the text doesn't "
+        "state. If the text adds nothing new, return the current rules unchanged."
+    )
+    user_payload = (
+        "Current rules:\n"
+        + json.dumps(current_rules or [], ensure_ascii=False)
+        + "\n\nParticipant's wording:\n\"\"\"\n"
+        + text
+        + "\n\"\"\""
+    )
+    try:
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            response_mime_type="application/json",
+            response_json_schema=response_schema,
+        )
+        resp = client.models.generate_content(
+            model=model_name, contents=user_payload, config=config
+        )
+        parsed = resp.parsed if isinstance(resp.parsed, dict) else json.loads(resp.text or "{}")
+    except Exception as exc:
+        log.warning("Companion-rule extraction failed (%s); skipping (fail-safe)", exc)
+        return None
+    rules = parsed.get("rules") if isinstance(parsed, dict) else None
+    if not isinstance(rules, list):
+        return None
+    return rules
 
 
 def classify_chat_temperature(
@@ -638,6 +734,7 @@ def _build_visible_chat_system_instruction(
     run_button_enabled: bool | None = None,
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
+    post_run_directive: str | None = None,
 ) -> str:
     cold = is_chat_cold_start(current_problem_brief)
     brief_for_prompt = surface_problem_brief_for_chat_prompt(
@@ -759,6 +856,24 @@ def _build_visible_chat_system_instruction(
         parts.append(weights_blob)
     if is_run_acknowledgement:
         parts.append(_run_ack_prompt(workflow_mode))
+        # Controlled-study lever (agile): the server pre-decided whether THIS
+        # post-run turn raises an open question or commits an assumption (blocked
+        # randomization), overriding the soft OQ/assumption bias above.
+        if post_run_directive == "open_question":
+            parts.append(
+                "## Post-run decision (this turn, REQUIRED)\n\n"
+                "Raise EXACTLY ONE `open_questions` entry about a genuine "
+                "modeling fork the run result raised, and add NO new assumption "
+                "this turn. This overrides the default assumption-leaning bias."
+            )
+        elif post_run_directive == "assumption":
+            parts.append(
+                "## Post-run decision (this turn, REQUIRED)\n\n"
+                "Commit EXACTLY ONE new assumption (a `kind:\"assumption\"` row "
+                "responding to the run result) and raise NO open question this "
+                "turn. Keep the visible-reply vocabulary plain (\"working "
+                "setting\", \"I'll roll with X for now\")."
+            )
     if is_tutorial_active:
         from app.prompts.study_chat import STUDY_CHAT_TUTORIAL_GUARDRAILS
 
@@ -1198,6 +1313,7 @@ def build_main_turn_system_instruction(
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
     verification_issues: list[dict[str, Any]] | None = None,
+    post_run_directive: str | None = None,
 ) -> str:
     """Assemble the full main-turn system instruction string.
 
@@ -1225,6 +1341,7 @@ def build_main_turn_system_instruction(
         run_button_enabled=run_button_enabled,
         run_disabled_reason=run_disabled_reason,
         gate_status=gate_status,
+        post_run_directive=post_run_directive,
     )
 
     # The brief-update disciplines that the V1 brief LLM carried separately
@@ -1246,11 +1363,12 @@ def build_main_turn_system_instruction(
         parts.append(
             "## Brief-edit acknowledgement\n\n"
             "The participant just saved a manual edit to the problem definition. "
-            "Acknowledge the change in your visible reply and, where the user's "
-            "edit implies further structural updates (rephrasing related rows, "
-            "adjusting goal terms / weights / algorithm to fit, asking about "
-            "consequences), emit those updates in `problem_brief_patch`. Do NOT "
-            "echo back what the user just typed verbatim."
+            "In your visible reply, acknowledge it and list the specific changes "
+            "as short bullet points (one per change). Where the edit implies "
+            "further structural updates (rephrasing related rows, adjusting goal "
+            "terms / weights / algorithm to fit, asking about consequences), emit "
+            "those in `problem_brief_patch`. Do NOT echo back what the user typed "
+            "verbatim."
         )
     if is_config_save:
         from app.prompts.study_chat import STUDY_CHAT_CONFIG_SAVE_RATIONALE
@@ -1328,6 +1446,7 @@ def generate_main_turn(
     run_disabled_reason: str | None = None,
     gate_status: dict[str, Any] | None = None,
     verification_issues: list[dict[str, Any]] | None = None,
+    post_run_directive: str | None = None,
 ):
     """Main-turn LLM. ONE call returning everything needed for
     the turn: visible reply, intents, brief patch, assumption actions.
@@ -1365,6 +1484,7 @@ def generate_main_turn(
         run_disabled_reason=run_disabled_reason,
         gate_status=gate_status,
         verification_issues=verification_issues,
+        post_run_directive=post_run_directive,
     )
     schema = _build_main_turn_schema(test_problem_id)
 

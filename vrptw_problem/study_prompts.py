@@ -40,18 +40,17 @@ Worked example — user says "Alice doesn't like Zone D":
     }
 
 Rules:
-- **Same-turn structured emission is mandatory.** The moment the user
-  introduces a driver-preference rule (e.g. *"Alice doesn't like Zone D"*,
-  *"can you add something for Bob who prefers express orders"*) the
-  brief patch for **that turn** MUST include
-  `goal_terms.worker_preference.properties.driver_preferences = [...]`
-  with the rule populated. Emitting only a prose `items[]` row about the
-  rule is **insufficient** — without the structured carrier, the panel
-  receives no driver-preference and the synthesized prose row is never
-  rendered. The rule then quietly re-materialises on a *later* turn when
-  the LLM re-reads the brief, which the participant sees as the rule
-  flickering in and out. Avoid that by always landing the structured
-  carrier on the introducing turn.
+- **Vague mention → ask, don't commit an empty term.** If the user names the
+  concept but no concrete rule (e.g. *"I'd like to set some driver preferences"*),
+  ASK which driver / what condition — do **not** commit a `worker_preference` term
+  with empty `driver_preferences`. Materialise the term only once you have at least
+  one concrete rule.
+- **Concrete rule → same-turn structured emission is mandatory.** The moment the
+  user introduces a driver-preference rule (e.g. *"Alice doesn't like Zone D"*,
+  *"add something for Bob who prefers express orders"*) the brief patch for **that
+  turn** MUST include `goal_terms.worker_preference.properties.driver_preferences =
+  [...]` with the rule populated. A prose `items[]` row about the rule is
+  **insufficient** — the panel gets no rule and the term goes hollow.
 - **Provenance:** a driver-preference rule the user explicitly asked for
   is `kind: "gathered"`, `source: "user"`, **not** an assumption — even
   when your visible reply uses fait-accompli phrasing. The synthesized
@@ -59,12 +58,9 @@ Rules:
   to assumption.
 - The `driver_preferences` array is **atomic**: send the complete current list
   whenever you change it. Partial merges of individual rules are not supported.
-- The system **deterministically synthesizes one participant-facing
-  `gathered` row per rule** (id `config-driver-pref-{vid}-{discriminator}`)
-  from this structured carrier — you do not need to write those rows
-  yourself, and you should not. Do **not** add a separate prose
-  `gathered` / `assumption` row that restates the same rule; it would
-  collide with the synthesized row and may be deduped or shadow it.
+- The system **synthesizes one participant-facing `gathered` row per rule**
+  (id `config-driver-pref-{vid}-{discriminator}`) from this carrier — don't write
+  those rows yourself, and don't add a separate prose row restating a rule.
 - When the brief carries a non-empty `properties.driver_preferences`, copy it
   verbatim into the panel under the same path. Do **not** re-derive rules from
   prose when the structured array is present.

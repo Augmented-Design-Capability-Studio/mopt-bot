@@ -1241,6 +1241,73 @@ def realign_panel_scalars_from_brief(
     return merged
 
 
+def gapfill_brief_companions_from_panel(
+    row: StudySession, db: Session, problem_brief: dict, *, commit: bool = True
+) -> dict:
+    """Populate the brief's companion mirror fields from the derived panel when
+    the brief never recorded them.
+
+    The agent sometimes commits a companion-bearing goal term HOLLOW — e.g.
+    ``shift_limit`` with no ``properties.max_shift_hours`` (it parks the value in
+    ``ambiguity_note`` narration). The panel-derive step still extracts the value
+    into the panel (``max_shift_hours = 8``). The result is a ``mirror_mismatch``
+    the LLM retry can never clear (brief ``None`` vs panel ``8``) — and the def
+    row never shows the cap. This copies the panel value back into the brief's
+    ``goal_terms[K].properties[field]``, re-synthesizes the canonical def rows so
+    the companion summary (cap / rules) surfaces, and persists.
+
+    Only fills a field the brief never recorded (absent key) — an explicitly
+    EMPTY value (e.g. the user cleared ``driver_preferences``) is respected and
+    NOT resurrected from a stale panel. Returns the (possibly updated) brief.
+    """
+    if not isinstance(problem_brief, dict):
+        return problem_brief
+    panel = helpers.panel_dict(row)
+    problem = panel.get("problem") if isinstance(panel, dict) else None
+    if not isinstance(problem, dict):
+        return problem_brief
+    tpid = getattr(row, "test_problem_id", None) or DEFAULT_PROBLEM_ID
+    try:
+        from app.problems.registry import get_study_port
+
+        mirrors = get_study_port(tpid).goal_term_property_field_mirrors() or {}
+    except Exception:  # pragma: no cover — defensive
+        return problem_brief
+    brief_gt = problem_brief.get("goal_terms")
+    if not isinstance(brief_gt, dict) or not mirrors:
+        return problem_brief
+    _EMPTY = (None, [], {}, "")
+    changed = False
+    for key, field in mirrors.items():
+        entry = brief_gt.get(key)
+        if not isinstance(entry, dict):
+            continue
+        props = entry.get("properties") if isinstance(entry.get("properties"), dict) else None
+        # Only gap-fill a field the brief NEVER recorded (truly hollow), so an
+        # explicitly-cleared value isn't resurrected from the panel.
+        if props is not None and field in props:
+            continue
+        panel_val = problem.get(field)
+        if panel_val in _EMPTY:
+            continue
+        if not isinstance(props, dict):
+            props = {}
+            entry["properties"] = props
+        props[field] = panel_val
+        changed = True
+    if not changed:
+        return problem_brief
+    from app.routers.sessions.derivation import _synthesize_canonical_weight_items
+
+    updated = _synthesize_canonical_weight_items(problem_brief, tpid)
+    row.problem_brief_json = json.dumps(updated)
+    row.updated_at = datetime.now(timezone.utc)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return updated
+
+
 def sync_problem_brief_from_panel(
     row: StudySession,
     db: Session,

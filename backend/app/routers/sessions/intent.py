@@ -153,9 +153,15 @@ def is_brief_edit_context_message(
     ``is_brief_edit_ack=True`` so the main-turn LLM produces an
     acknowledgement + any implied maintenance updates rather than
     fighting with the user's typed edit.
+
+    The frontend tags a definition-panel save with ``context_kind:
+    "definition_save"`` (see ``useClientSessionActions``); historically only the
+    literal ``"brief_edit_ack"`` was honoured here, so every def-panel save was
+    silently misclassified as a plain ``chat`` turn — the brief-edit guidance and
+    the companion extractor never ran for the def surface. Both values count.
     """
     if context_kind is not None:
-        return context_kind == "brief_edit_ack"
+        return context_kind in {"brief_edit_ack", "definition_save"}
     text = content.strip()
     if not text:
         return False

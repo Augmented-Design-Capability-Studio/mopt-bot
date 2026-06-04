@@ -10,8 +10,9 @@
  * no VRPTW types, field names, or derived state leak into the generic shell.
  */
 
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 
+import type { ProblemBriefItem } from "@shared/api";
 import type { GoalTermsExtension, RemovedGoalTermEntry } from "@problemConfig/GoalTermsSection";
 import { toggleLockedGoalTerm, removeLockedGoalTerm, WeightRow } from "@problemConfig/GoalTermsSection";
 import type { ConstraintType } from "@problemConfig/types";
@@ -521,6 +522,34 @@ function VrptwFooterRows({
 }
 
 // ------------------------------------------------------------------
+// Definition-panel footnote for the worker-preference companion row
+// ------------------------------------------------------------------
+
+/**
+ * Small hint shown under the `worker_preference` row in the definition panel.
+ * That row's "Rules —" summary stays in sync with the structured driver-preference
+ * rules. Editing it here in plain language is allowed: on save the agent reformats
+ * the edited rules back into the structured carrier (preserving the information),
+ * and a Config-panel edit flows the other way. The footnote states this without an
+ * example. Returns null for every other row.
+ */
+export function vrptwDefinitionRowFootnote(item: ProblemBriefItem): ReactNode {
+  const key = typeof item.goal_key === "string" ? item.goal_key : "";
+  const id = typeof item.id === "string" ? item.id : "";
+  const isWorkerPreferenceRow = key === "worker_preference" || id === "config-weight-worker_preference";
+  if (!isWorkerPreferenceRow) return null;
+  return (
+    <div
+      className="muted"
+      style={{ fontSize: "0.72rem", marginTop: "0.25rem", lineHeight: 1.35, fontStyle: "italic" }}
+    >
+      Edit the rules after “Rules” and save — the agent will reformat them. Or edit
+      them in the Config panel.
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Public API
 // ------------------------------------------------------------------
 
@@ -605,6 +634,16 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
                 (problem.locked_goal_terms.includes("worker_preference") ? "custom" : "objective")
               }
               onConstraintTypeChange={(type) => p.onConstraintTypeChange("worker_preference", type)}
+              // Removing the parent worker_preference clears its child rules in the
+              // same update — otherwise leftover driver_preferences keep the block
+              // visible (showWorkerBlock) and the user is forced to delete each
+              // child first. Restore brings the rules back.
+              extraRemovePatch={{ driver_preferences: [] }}
+              extraRestorePatch={
+                problem.driver_preferences.length > 0
+                  ? { driver_preferences: problem.driver_preferences }
+                  : undefined
+              }
             />
             {showWorkerBlock && (
               <WorkerPreferenceExtras
@@ -634,6 +673,13 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
             rememberRemovedGoalTerm={p.rememberRemovedGoalTerm}
           />
         ),
+        // Parent-"X" parity with worker_preference: removing the shift_limit row
+        // also clears its companion (max_shift_hours) so the whole term goes away
+        // in one click instead of lingering via getAdditionalGoalTermKeys; restore
+        // brings the cap back.
+        extraRemovePatch: { max_shift_hours: null },
+        extraRestorePatch:
+          problem.max_shift_hours !== null ? { max_shift_hours: problem.max_shift_hours } : undefined,
       },
     },
     footerRows: (

@@ -6,6 +6,7 @@ import { StatusBanner } from "@shared/status/StatusBanner";
 import type { EditMode } from "../lib/clientTypes";
 import type { ClientOpsState } from "../lib/clientOps";
 import { DefinitionPanel } from "../problemDefinition/DefinitionPanel";
+import { getProblemModule } from "../problemRegistry";
 import { ProblemConfigBlocks } from "./ProblemConfigBlocks";
 import { SnapshotDialog } from "./SnapshotDialog";
 import { RawJsonDialog } from "../components/RawJsonDialog";
@@ -462,6 +463,9 @@ export function ConfigPanel({
                   suppressTransientMarkers={definitionSaveShieldActive || configBlockingUi}
                   onChange={(b) => onProblemBriefChange(b)}
                   onEnsureDefinitionEditing={onEnsureDefinitionEditing}
+                  renderRowFootnote={
+                    testProblemMeta ? getProblemModule(testProblemMeta.id).definitionRowFootnote : undefined
+                  }
                 />
               ) : (
                 <p className="muted" style={{ fontSize: "0.85rem", padding: "0.35rem 0" }}>

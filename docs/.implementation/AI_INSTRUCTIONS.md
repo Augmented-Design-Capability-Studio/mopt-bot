@@ -137,6 +137,8 @@ Port hooks for problem-specific structured metadata under `goal_terms[key].prope
 
 The single source of truth for cross-prompt wiring of these structured rules is `vrptw_problem/study_prompts.DRIVER_PREFERENCES_BRIEF_CONTRACT`, imported by both `VRPTW_STUDY_PROMPT_APPENDIX` (chat / brief-update) and `VRPTW_CONFIG_DERIVE_SYSTEM_PROMPT` (panel-derive). Future ports add their own contract constant alongside their problem module; see `template_problem/TEMPLATE_INSTRUCTIONS.md` (section 7) for the pattern.
 
+**Companion goal-term pattern.** A goal term that owns a structured child carrier (a rule list like `driver_preferences`, or a scalar like `max_shift_hours`) is a *companion term*, declared once via `gate_conditional_companions() -> {parent_key: companion_field}`. From that declaration the generic layer guarantees: vague mention → agent asks, no empty term (`reconcile_companion_oqs` drops a new hollow term on a no-claim turn — keep-vs-drop keys off `change_clause` threaded through `apply_brief_patch_with_cleanup`); concrete child → parent term kept + populated (kept even if the LLM fumbles the carrier, never silently lost); add more via chat / def panel (typed rule structured by the same LLM path) / config editor; `port_companion` over-claim check + retry catches hollow commits and prose-row-only "additions". Frontend opt-ins: `ProblemModule.definitionRowFootnote` (def-row hint) and a config `keySlot`/`WeightRow` `extraRemovePatch`/`extraRestorePatch` so the parent-"X" clears children too. VRPTW `worker_preference` and `shift_limit` both reuse it with no term-specific backend code.
+
 ### API shape
 
 REST with FastAPI. Separate bearer token secrets for participant and researcher (from `.env`).

@@ -771,6 +771,7 @@ def reconcile_companion_oqs(
     brief: dict[str, Any],
     test_problem_id: str | None,
     base_brief: dict[str, Any] | None = None,
+    turn_claimed_change: bool = True,
 ) -> dict[str, Any]:
     """Auto-park an OQ for any goal_term whose port-declared required
     companion is empty (and drop the OQ when the companion is populated).
@@ -784,16 +785,21 @@ def reconcile_companion_oqs(
       - lives in ``open_questions`` so the LLM sees it and asks naturally, and
       - auto-drops once the companion gets populated (idempotent).
 
-    **Show-vs-hide the term (``base_brief``):**
-      - **New this turn** (key NOT in ``base_brief.goal_terms``) — the agent
-        recognised the concept but has no specifics yet. Showing an empty
-        carrier confuses the participant, so we DROP the term and let the OQ
-        carry the ask ("be smart: ask, don't show a hollow term"). Requires
-        ``base_brief`` to identify newness.
-      - **Pre-existing** (key already in base, or ``base_brief`` not supplied —
-        e.g. the panel-save path) — the participant may be keeping the term as
-        a placeholder while they edit rules. Non-destructive: KEEP the term,
-        just park the OQ.
+    **Keep-vs-drop the empty term — driven by whether a child was actually
+    given** (the companion-goal-term pattern's B1 vs B2):
+      - **The turn CLAIMED a companion change** (``turn_claimed_change=True`` —
+        the participant gave a concrete child rule, or the term already exists)
+        → KEEP the term. The participant introduced a concrete preference, so it
+        must show up immediately; the visible term surfaces the config-panel rule
+        editor ("+ Add preference rule") and the parked OQ asks for anything still
+        missing. Even if the agent fumbled the structured carrier, the term stays
+        so the rule is never silently lost.
+      - **No claim** (``turn_claimed_change=False`` — a vague "I want driver
+        preferences" the agent should answer by ASKING) AND the term is **new
+        this turn** (not in ``base_brief``) → DROP the term and let the OQ /
+        agent question carry the ask. Don't materialise an empty term for a vague
+        mention. Requires ``base_brief`` to identify newness; a pre-existing term
+        is always kept (non-destructive).
 
     OQ wording comes from ``port.companion_open_question_text`` (participant-
     friendly, no raw keys); falls back to neutral phrasing if the port has none.
@@ -855,9 +861,13 @@ def reconcile_companion_oqs(
         )
         needs_question = _companion_missing(key, companion_field)
         if needs_question:
-            # New agent commit with no specifics yet → don't show a hollow term.
+            # Keep-vs-drop (see docstring): a vague mention the agent should just
+            # ASK about (no claim) must not materialise a hollow new term — drop
+            # it and let the OQ carry the ask. A claimed concrete child (or a
+            # pre-existing term) is kept so it shows up and the config/def rule
+            # editors can complete it.
             is_new_this_turn = base_brief is not None and key not in base_keys
-            if is_new_this_turn and key in next_goal_terms:
+            if not turn_claimed_change and is_new_this_turn and key in next_goal_terms:
                 del next_goal_terms[key]
                 goal_terms_mutated = True
             # If ANY open OQ already covers this goal_key (auto OR LLM-emitted),
@@ -2170,8 +2180,10 @@ def sync_problem_brief_from_panel(
         #   A weight change only counts as active when the key's rank
         #   DIDN'T change in the same save (otherwise it's a cascade).
         # - ``promotion_keys`` — narrower lock-in subset. Includes
-        #   newly-added keys AND ``type`` changes only; rank-only and
-        #   weight-only changes never promote (matches the Fix 8 rule).
+        #   newly-added keys, ``type`` changes, AND a fresh lock (locking K on
+        #   the Config panel is a strong commitment — the user froze the value,
+        #   so it's no longer a tentative assumption). Rank-only and weight-only
+        #   changes never promote (matches the Fix 8 rule).
         oq_close_keys: set[str] = set()
         promotion_keys: set[str] = set()
         for key, new_entry in panel_goal_terms.items():
@@ -2188,13 +2200,17 @@ def sync_problem_brief_from_panel(
             type_changed = prior_entry.get("type") != new_entry.get("type")
             rank_changed = prior_entry.get("rank") != new_entry.get("rank")
             weight_changed = prior_entry.get("weight") != new_entry.get("weight")
-            # Active edit signals only: type change, or a weight change
-            # that ISN'T a rerank cascade. A bare rank change is never
-            # an active edit on K — the user actively moved some other
-            # key and K got shifted.
-            if type_changed or (weight_changed and not rank_changed):
+            # A fresh lock (locked now, not before) is a deliberate commitment —
+            # treat it like a type change for promotion. Lock implies confirm,
+            # so the assumption becomes a gathered fact; the reverse (promote)
+            # does not lock, and unlocking later does not demote.
+            newly_locked = bool(new_entry.get("locked")) and not bool(prior_entry.get("locked"))
+            # Active edit signals only: type change, a weight change that ISN'T
+            # a rerank cascade, or a fresh lock. A bare rank change is never an
+            # active edit on K — the user actively moved some other key.
+            if type_changed or (weight_changed and not rank_changed) or newly_locked:
                 oq_close_keys.add(key)
-            if type_changed:
+            if type_changed or newly_locked:
                 promotion_keys.add(key)
         if oq_close_keys:
             merged["open_questions"] = _auto_close_oqs_for_panel_edited_keys(
@@ -2313,7 +2329,9 @@ def _weight_item_text(
         role = "primary objective"
     rationale_clause = (rationale or "").strip()
     if rationale_clause:
-        return f"{label} ({role}, weight {value}) — {rationale_clause}."
+        # Avoid a double period when the rationale already ends a sentence.
+        end = "" if rationale_clause[-1] in ".!?" else "."
+        return f"{label} ({role}, weight {value}) — {rationale_clause}{end}"
     if ctype == "custom":
         return f"{label} uses a custom locked value (weight {value})."
     return f"{label} is a {role} term (weight {value})."
@@ -2352,43 +2370,21 @@ def _companion_summary_for(test_problem_id: str | None, key: str, entry: Any) ->
     return None
 
 
-def _goal_term_rationale_for_synthesis(
-    goal_term_entry: Any,
-    port_fallback: str | None,
-) -> str | None:
-    """Pick the rationale clause for a synthesized goal-term row.
-
-    Preference order:
-    1. ``goal_terms[key].ambiguity_note.chosen_rationale`` — LLM-emitted,
-       user-specific reasoning for why this term was added / picked.
-    2. ``port.goal_term_rationales()[key]`` — generic per-key fallback so
-       every term still reads as a complete sentence even when the LLM
-       didn't supply specific reasoning.
-    """
-    if isinstance(goal_term_entry, dict):
-        note = goal_term_entry.get("ambiguity_note")
-        if isinstance(note, dict):
-            chosen = note.get("chosen_rationale")
-            if isinstance(chosen, str) and chosen.strip():
-                return chosen.strip()
-    if isinstance(port_fallback, str) and port_fallback.strip():
-        return port_fallback.strip()
-    return None
-
-
 def synthesize_canonical_goal_term_items(
     brief: dict[str, Any],
     test_problem_id: str | None = None,
+    provenance_hints: dict[str, tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build canonical ``config-weight-<key>`` items[] rows from the brief's
     ``goal_terms`` map.
 
     Every entry in ``brief.goal_terms`` produces one row whose text follows
-    ``{Label} ({type}, weight N) — {reasoning}.`` — natural language that
-    surfaces all three pieces the brief spec requires (reasoning, type,
-    weight). The reasoning comes from ``ambiguity_note.chosen_rationale``
-    when the LLM supplied one, otherwise from the active port's generic
-    ``goal_term_rationales`` mapping.
+    ``{Label} ({type}, weight N) — {justification}.`` — natural language that
+    surfaces all three pieces the brief spec requires (justification, type,
+    weight). The justification is the port's generic ``goal_term_rationales``
+    phrase — a clean "why this term exists" line ("to minimize total driving
+    minutes …"). It is deliberately NOT the LLM's ``ambiguity_note`` (that
+    records HOW the agent reasoned and leaks raw schema keys to the participant).
 
     Caller is responsible for merging these into ``brief.items`` and letting
     the slot reconciler drop the previous-turn copies (``config-weight-<key>``
@@ -2412,6 +2408,58 @@ def synthesize_canonical_goal_term_items(
     except Exception:  # pragma: no cover — defensive
         labels, rationales = {}, {}
 
+    # Provenance to inherit: an existing items[] row for a goal term records
+    # whether it's a confirmed fact (``gathered``) or an agile agent proposal
+    # (``assumption``). The synthesized canonical row KEEPS that — otherwise an
+    # agent's post-run proposal (correctly emitted as ``assumption``) gets
+    # flattened to ``gathered``, and a user-confirmed term gets re-flattened
+    # too (observed in P_0603). When several prior rows reference the same key,
+    # keep the STRONGEST provenance so an agent re-emitting a term as a fresh
+    # ``assumption`` can never DEMOTE a fact the user already confirmed
+    # (``gathered/user``) — origin trumps phrasing. Rank:
+    # gathered/user > gathered/* > assumption.
+    def _prov_rank(kind: str, source: str) -> int:
+        if kind == "gathered":
+            return 3 if source == "user" else 2
+        return 1 if kind == "assumption" else 0
+
+    prior_provenance: dict[str, tuple[str, str]] = {}
+    _best_rank: dict[str, int] = {}
+    for it in (brief.get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        k = str(it.get("goal_key") or "").strip()
+        iid = str(it.get("id") or "")
+        if not k and iid.startswith("config-weight-"):
+            k = iid[len("config-weight-"):]
+        if not k:
+            continue
+        kind = str(it.get("kind") or "").strip().lower()
+        if kind not in {"gathered", "assumption"}:
+            continue
+        source = str(it.get("source") or "agent").strip().lower() or "agent"
+        rank = _prov_rank(kind, source)
+        if rank > _best_rank.get(k, 0):
+            _best_rank[k] = rank
+            prior_provenance[k] = (kind, source)
+
+    # Provenance carried forward from an evidence anchor the apply layer dropped
+    # this turn (e.g. an agile `assumption` row the agent emitted as the goal
+    # term's `evidence_item_ids` anchor). Without this, that anchor's kind/source
+    # is gone by the time we synthesize, and the row silently defaults to
+    # `gathered` — erasing every agile assumption (P_0603: capacity/shift terms).
+    # Merged with the same strongest-wins precedence so it can't demote a fact
+    # the user already confirmed.
+    for k, (hkind, hsource) in (provenance_hints or {}).items():
+        hk = str(hkind or "").strip().lower()
+        hs = str(hsource or "agent").strip().lower() or "agent"
+        if hk not in {"gathered", "assumption"}:
+            continue
+        rank = _prov_rank(hk, hs)
+        if rank > _best_rank.get(k, 0):
+            _best_rank[k] = rank
+            prior_provenance[k] = (hk, hs)
+
     out: list[dict[str, Any]] = []
     for key, entry in goal_terms.items():
         if not isinstance(key, str) or not key.strip():
@@ -2430,19 +2478,28 @@ def synthesize_canonical_goal_term_items(
             continue
         ctype = entry.get("type") if isinstance(entry.get("type"), str) else None
         label = labels.get(key) or key.replace("_", " ").capitalize()
-        rationale = _goal_term_rationale_for_synthesis(entry, rationales.get(key))
+        # Justification = the port's clean "why this goal term exists" phrase
+        # (e.g. "to minimize total driving minutes across all routes"). NEVER the
+        # agent's `ambiguity_note.chosen_rationale`: that records HOW it reasoned
+        # ("I read 'minimize travel time' as … rather than …") and routinely leaks
+        # raw schema keys to the participant. Bare form if a port has no phrase.
+        rationale: str | None = rationales.get(key)
         text = _weight_item_text(label, float(weight), ctype, rationale=rationale)
         # Merge the term's companion detail (shift cap, driver rules) inline so
         # the single def row carries everything — no separate companion rows.
         text = _append_companion_clause(
             text, _companion_summary_for(test_problem_id, key, entry)
         )
+        # Default gathered/agent for a brand-new term with no prior row; else
+        # inherit (so an agile `assumption/agent` proposal stays provisional and
+        # a user-confirmed `gathered/user` row keeps its user provenance).
+        kind, source = prior_provenance.get(key, ("gathered", "agent"))
         out.append(
             {
                 "id": f"config-weight-{key}",
                 "text": text,
-                "kind": "gathered",
-                "source": "agent",
+                "kind": kind,
+                "source": source,
                 # Stamp the concept anchor so the synthesized weight row carries
                 # the Definition lock toggle (one lock per goal term) and
                 # self-anchors for derivation. Without it, even the main
@@ -2565,6 +2622,24 @@ def _slot_from_text(text: str) -> str | None:
 
 
 def _reconcile_problem_brief_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Collapse multiple upload-event rows to ONE canonical marker. The agent
+    # sometimes emits a second "Uploaded data incorporated…" gathered row beside
+    # the server's canonical `item-gathered-upload`, and the upload-turn sweep
+    # (`resolve_upload_open_questions_after_upload`) only runs on upload turns —
+    # so a duplicate emitted on a later turn lingers (P_0603). Keep the canonical
+    # id if present, else the first marker; drop the rest. Runs every normalize.
+    upload_markers = [it for it in items if isinstance(it, dict) and _is_upload_marker_item(it)]
+    if len(upload_markers) > 1:
+        keep = next(
+            (it for it in upload_markers if str(it.get("id") or "") == UPLOAD_MARKER_ITEM_ID),
+            upload_markers[0],
+        )
+        items = [
+            it
+            for it in items
+            if not (isinstance(it, dict) and _is_upload_marker_item(it) and it is not keep)
+        ]
+
     last_index_by_slot: dict[str, int] = {}
     for index, item in enumerate(items):
         if not isinstance(item, dict):

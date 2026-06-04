@@ -245,6 +245,10 @@ export type Session = {
    *  click or a clearly user-initiated chat request. When true, agile may auto-fire its
    *  baseline run once the panel + data are ready (the legacy auto-first-run behaviour). */
   allow_agent_autorun: boolean;
+  /** Agile-only controlled-study lever: raise an open question once per block of
+   *  N post-run turns (random position in the block); the rest are assumptions.
+   *  null = off (model's soft bias), 0 = never, 1 = every run, N≥2 = one per N. */
+  agile_oq_every_n_runs?: number | null;
   /** Researcher-controlled tutorial visibility toggle for participant UI. */
   participant_tutorial_enabled: boolean;
   /** Researcher-selected tutorial step for soft jump; null means natural progression. */

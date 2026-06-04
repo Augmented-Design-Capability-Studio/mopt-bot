@@ -39,6 +39,11 @@ class StudySession(Base):
     # When True, the client may auto-fire the agile baseline run once panel +
     # data are ready (the historical "agile auto-first-run" behaviour).
     allow_agent_autorun: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Agile-only controlled-study lever: raise an open question once per block of
+    # N post-run turns (the OQ lands at a random position in each block); the rest
+    # are assumptions. NULL = off (model's soft ~70/30 bias). 0 = never raise an
+    # OQ. 1 = every run. N≥2 = one OQ per N runs. See ``agile_post_run_schedule``.
+    agile_oq_every_n_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
     participant_tutorial_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     tutorial_step_override: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tutorial_chat_started: Mapped[bool] = mapped_column(Boolean, default=False)

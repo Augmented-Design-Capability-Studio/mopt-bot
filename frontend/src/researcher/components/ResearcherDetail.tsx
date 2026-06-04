@@ -454,6 +454,45 @@ export function ResearcherDetail({
                     />{" "}
                     Allow agent autoruns <span className="muted">(default off)</span>
                   </label>
+                  {detail.workflow_mode === "agile" ? (
+                    <div className="researcher-oq-cadence">
+                      <label
+                        htmlFor="researcher-oq-cadence-select"
+                        className="researcher-oq-cadence__label"
+                      >
+                        Post-run OQ cadence <span className="muted">(agile)</span>
+                      </label>
+                      <select
+                        id="researcher-oq-cadence-select"
+                        className="researcher-oq-cadence__select"
+                        disabled={busy}
+                        value={
+                          detail.agile_oq_every_n_runs == null
+                            ? "off"
+                            : String(detail.agile_oq_every_n_runs)
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          void onPatchSession({
+                            agile_oq_every_n_runs: v === "off" ? null : Number(v),
+                          });
+                        }}
+                      >
+                        <option value="off">Off — model decides</option>
+                        <option value="0">Never raise OQs (100 : 0)</option>
+                        <option value="10">1 OQ every 10 runs (90 : 10)</option>
+                        <option value="5">1 OQ every 5 runs (80 : 20)</option>
+                        <option value="3">1 OQ every 3 runs (~67 : 33)</option>
+                        <option value="2">1 OQ every 2 runs (50 : 50)</option>
+                        <option value="1">Every run is an OQ (0 : 100)</option>
+                      </select>
+                      <p className="researcher-oq-cadence__hint muted">
+                        One post-run turn per block of N raises an open question at a
+                        random position in the block; the rest commit assumptions.
+                        Ratios are assumption : OQ. “Off” uses the model’s default.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               </details>
             </div>

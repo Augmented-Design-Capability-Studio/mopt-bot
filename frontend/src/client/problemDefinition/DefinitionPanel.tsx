@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 
 import type { ProblemBrief, ProblemBriefItem, ProblemBriefQuestion, RunSummaryEntry } from "@shared/api";
 
@@ -21,6 +21,10 @@ export type DefinitionPanelProps = {
   /** Enter definition edit mode (no-op if already editing another panel mode) */
   onEnsureDefinitionEditing: () => void;
   suppressTransientMarkers?: boolean;
+  /** Optional per-row footnote, supplied by the active problem module. Used for
+   *  companion goal-term rows (e.g. VRPTW worker preferences) to hint where rules
+   *  go. Returns null for rows that need no footnote. */
+  renderRowFootnote?: (item: ProblemBriefItem) => ReactNode;
 };
 
 type DefinitionSectionProps = {
@@ -50,6 +54,8 @@ type DefinitionSectionProps = {
   lockedGoalKeys?: ReadonlySet<string>;
   collapsed?: boolean;
   onToggle?: () => void;
+  /** Optional per-row footnote (problem-module supplied); rendered under the row. */
+  renderRowFootnote?: (item: ProblemBriefItem) => ReactNode;
 };
 
 function makeId(prefix: string): string {
@@ -102,6 +108,7 @@ function DefinitionSection({
   lockedGoalKeys,
   collapsed = false,
   onToggle,
+  renderRowFootnote,
 }: DefinitionSectionProps) {
   const locked = sessionTerminated || !editable;
   const rowMinHeight = "3rem";
@@ -248,6 +255,7 @@ function DefinitionSection({
                       {item.text || "Click to add details..."}
                     </button>
                   )}
+                  {renderRowFootnote ? renderRowFootnote(item) : null}
                 </div>
               </div>
             </Fragment>
@@ -316,6 +324,7 @@ export function DefinitionPanel({
   onChange,
   onEnsureDefinitionEditing,
   suppressTransientMarkers = false,
+  renderRowFootnote,
 }: DefinitionPanelProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingScrollToItemIdRef = useRef<string | null>(null);
@@ -763,6 +772,7 @@ export function DefinitionPanel({
           onPromoteItem={promoteAssumptionToGathered}
           collapsed={collapsedSections.assumptions}
           onToggle={() => toggleSection("assumptions")}
+          renderRowFootnote={renderRowFootnote}
         />
       ) : null}
 
@@ -790,6 +800,7 @@ export function DefinitionPanel({
         lockedGoalKeys={lockedGoalKeys}
         collapsed={collapsedSections.gatheredInfo}
         onToggle={() => toggleSection("gatheredInfo")}
+        renderRowFootnote={renderRowFootnote}
       />
 
     </div>

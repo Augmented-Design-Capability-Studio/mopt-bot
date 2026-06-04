@@ -131,6 +131,23 @@ def test_answered_open_question_regex_fallback():
 
 
 # ---------------------------------------------------------------------------
+# is_brief_edit_context_message
+# ---------------------------------------------------------------------------
+
+
+def test_brief_edit_recognizes_definition_save_kind():
+    """Root cause of the recurring def-panel companion failures: the frontend
+    tags a definition save with ``context_kind="definition_save"``, but the
+    backend only honoured ``"brief_edit_ack"`` — so every def edit was
+    misclassified as a plain chat turn and the brief-edit path (acknowledgement +
+    companion extractor) never ran. Both kinds must count."""
+    assert intent.is_brief_edit_context_message("Definition edited: 1 fact edited.", "definition_save")
+    assert intent.is_brief_edit_context_message("anything", "brief_edit_ack")
+    # A different typed kind must NOT be treated as a brief edit.
+    assert not intent.is_brief_edit_context_message("Definition edited: 1 fact edited.", "run_ack")
+
+
+# ---------------------------------------------------------------------------
 # classify_fixed_phrase_intents
 # ---------------------------------------------------------------------------
 

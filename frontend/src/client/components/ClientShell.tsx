@@ -260,6 +260,14 @@ export function ClientShell({
     }
     return null;
   }, [messages]);
+  // While the chat pipeline is mid-flight the brief/config may be half-merged, so
+  // a Run click can fire against stale state. The CHAT-bubble Run button missed
+  // this gate (only `!optimizing`), so it stayed clickable during processing.
+  // Use the SAME server-authoritative signal the panel Run button uses
+  // (ResultsPanel: brief_status/config_status === "pending") so the two agree.
+  const pipelineBusy =
+    session?.processing?.brief_status === "pending" ||
+    session?.processing?.config_status === "pending";
   const isPostRunAnalysisPending = aiPending && lastAssistantMessage?.kind === "run";
   // Elapsed-time heuristic for the "Verifying changes..." label: once the AI
   // round has been pending for ~3s we assume the backend's pre-release probe
@@ -302,14 +310,16 @@ export function ClientShell({
     problemBrief,
     hasUploadedData,
     testProblemMeta,
-  ) && !sessionTerminated && !optimizing && editMode === "none";
+  ) && !sessionTerminated && !optimizing && !pipelineBusy && editMode === "none";
   const chatRunDisabledHint = chatRunReady
     ? undefined
     : (sessionTerminated
         ? "This session has ended."
         : optimizing
           ? "An optimization run is already in progress."
-          : editMode !== "none"
+          : pipelineBusy
+            ? "Waiting for the agent to finish updating the brief and config…"
+            : editMode !== "none"
             ? "Save or cancel your current edits before running optimization."
             : runOptimizationDisabledHint(
                 session,

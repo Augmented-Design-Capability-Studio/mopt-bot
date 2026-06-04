@@ -1,6 +1,7 @@
 import type { ProblemModule } from "@problemConfig/problemModule";
 import "./styles.css";
-import { buildVrptwGoalTermsExtension } from "./VrptwExtras";
+import { buildVrptwGoalTermsExtension, vrptwDefinitionRowFootnote } from "./VrptwExtras";
+import { vrptwDescribeBriefChanges } from "./briefChanges";
 import { FleetScheduleViz } from "./FleetScheduleViz";
 import { parseRoutesForSolver } from "./schedule";
 import { parseProblemConfig } from "./serialization";
@@ -23,6 +24,8 @@ export const MODULE: ProblemModule = {
     return problem.max_shift_hours !== null ? ["shift_limit"] : [];
   },
   buildGoalTermsExtension: buildVrptwGoalTermsExtension,
+  definitionRowFootnote: vrptwDefinitionRowFootnote,
+  describeBriefChanges: vrptwDescribeBriefChanges,
   vizTabs: [{ id: "fleet_gantt", label: "Schedule", component: FleetScheduleViz }],
   parseEvalRoutes: parseRoutesForSolver,
   formatRunViolationSummary,

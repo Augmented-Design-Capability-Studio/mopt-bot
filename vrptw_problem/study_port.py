@@ -112,6 +112,15 @@ class VrptwStudyPort:
             return "What is the longest shift a driver should work, in hours?"
         return None
 
+    def companion_extraction_instructions(self, goal_term_key: str) -> str | None:
+        # Only the worker_preference rule LIST benefits from free-text extraction;
+        # the scalar shift cap is trivially carried by the panel/agent already.
+        if goal_term_key == meta_worker_preference_key():
+            from vrptw_problem.study_prompts import DRIVER_PREFERENCES_BRIEF_CONTRACT
+
+            return DRIVER_PREFERENCES_BRIEF_CONTRACT
+        return None
+
     def visualization_capabilities(self) -> list[str]:
         return [
             "Convergence trend across iterations",

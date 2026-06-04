@@ -162,3 +162,47 @@ def test_main_turn_emits_structured_driver_preference_for_alice_zone_d(
     assert rule.get("vehicle_idx") == 0, f"Expected Alice (vehicle_idx=0); got: {rule!r}"
     assert rule.get("condition") == "avoid_zone", f"Expected avoid_zone; got: {rule!r}"
     assert rule.get("zone") == 4, f"Expected Zone D = 4; got: {rule!r}"
+
+
+@pytest.mark.live_gemini
+def test_user_search_strategy_choice_resolves_affirmation(gemini_api_key: str) -> None:
+    """P_0602: the participant defers the search-strategy OQ ("what do you
+    suggest?"), the agent proposes GA and asks "how does that sound?", and the
+    participant affirms ("sounds good"). The affirmation names no algorithm on
+    its own, so the classifier must read the agent's preceding proposal to
+    resolve the choice — else the waterfall gate treats the GA carrier as
+    forged and strips it, and the choice silently vanishes."""
+    from app.services.llm import classify_user_search_strategy_choice
+
+    model = get_settings().default_gemini_model
+    agent_prompt = (
+        "For most delivery scheduling tasks, the genetic search (GA) is a robust "
+        "starting point. I suggest we use it as our baseline, though we can switch "
+        "to simulated annealing later. How does that sound for our search strategy?"
+    )
+    try:
+        # Affirmation binds to the agent's proposal → GA.
+        affirmed = classify_user_search_strategy_choice(
+            user_text="sounds good", api_key=gemini_api_key,
+            model_name=model, agent_prompt=agent_prompt,
+        )
+        # The same affirmation with no proposal to bind to → no choice.
+        bare = classify_user_search_strategy_choice(
+            user_text="sounds good", api_key=gemini_api_key, model_name=model,
+        )
+        # A deferral never authorizes, even with a proposal present.
+        deferred = classify_user_search_strategy_choice(
+            user_text="what do you suggest?", api_key=gemini_api_key,
+            model_name=model, agent_prompt="Which search strategy should we use?",
+        )
+    except genai_errors.ClientError as exc:
+        if _is_auth_failure(exc):
+            pytest.fail(
+                f"Gemini rejected the supplied key — check the key. {_short_repr(exc)}",
+                pytrace=False,
+            )
+        raise
+
+    assert affirmed == "GA", f"Affirmation of GA proposal should resolve GA; got {affirmed!r}"
+    assert bare is None, f"Bare affirmation with no proposal must not authorize; got {bare!r}"
+    assert deferred is None, f"Deferral must not authorize; got {deferred!r}"

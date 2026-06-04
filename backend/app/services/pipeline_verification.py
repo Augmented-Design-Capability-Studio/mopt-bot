@@ -22,6 +22,7 @@ is the single source of truth for what's surfaced to either consumer.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Iterable
 
@@ -253,6 +254,152 @@ def verify_brief_consistency(
                     ),
                 )
             )
+
+    # ---- Companion over-claim → retry once ----
+    # When the reply claims a change (`change_clause`) AND the patch commits a
+    # NEW companion-bearing goal term (per the port, e.g. VRPTW
+    # `worker_preference` → `driver_preferences`) whose companion is EMPTY, the
+    # claim is false: the server parks/drops that hollow term, so nothing was
+    # actually configured (P_0603: agent kept saying "I've added the driver
+    # preferences" while the rules were never structured). Fire so the one S2
+    # retry asks the model to populate the rules it was given — the protected
+    # companion OQ is the fallback if the retry still fails. Deterministic: no
+    # NL parsing, just the structured `change_clause` flag + the port's
+    # companion check.
+    change_text = (change_clause or "").strip() if isinstance(change_clause, str) else ""
+    if change_text and isinstance(patch, dict) and test_problem_id:
+        try:
+            port = get_study_port(test_problem_id)
+            gate_companions = port.gate_conditional_companions()
+        except Exception:  # pragma: no cover — never block on registry hiccups
+            gate_companions = {}
+        patch_gt = patch.get("goal_terms") if isinstance(patch.get("goal_terms"), dict) else {}
+        base_gt = (
+            base_brief.get("goal_terms")
+            if isinstance(base_brief, dict) and isinstance(base_brief.get("goal_terms"), dict)
+            else {}
+        )
+        merged_gt = (
+            merged_brief.get("goal_terms")
+            if isinstance(merged_brief.get("goal_terms"), dict)
+            else {}
+        )
+
+        # Item ids the port's synthesizer owns (e.g. VRPTW `config-driver-pref-*`,
+        # `config-weight-*`). A NEW items[] row whose id starts with none of these
+        # is *agent-authored* — the LLM wrote prose about something itself.
+        try:
+            from app.problems.port import all_synthesized_id_prefixes
+
+            synth_prefixes = tuple(all_synthesized_id_prefixes(port))
+        except Exception:  # pragma: no cover — defensive
+            synth_prefixes = ()
+        base_item_ids = {
+            str(it.get("id") or "")
+            for it in (base_brief.get("items") if isinstance(base_brief, dict) else None) or []
+            if isinstance(it, dict)
+        }
+        new_items = [
+            it
+            for it in (merged_brief.get("items") if isinstance(merged_brief.get("items"), list) else [])
+            if isinstance(it, dict) and str(it.get("id") or "") not in base_item_ids
+        ]
+
+        def _companion_array(gt_map: Any, k: str, f: str) -> Any:
+            ent = gt_map.get(k) if isinstance(gt_map, dict) else None
+            props_ = ent.get("properties") if isinstance(ent, dict) and isinstance(ent.get("properties"), dict) else {}
+            return props_.get(f) if isinstance(props_, dict) else None
+
+        def _norm(v: Any) -> str:
+            try:
+                return json.dumps(v, sort_keys=True, default=str)
+            except Exception:  # pragma: no cover — defensive
+                return repr(v)
+
+        def _scalar(gt_map: Any, k: str, fld: str) -> Any:
+            ent = gt_map.get(k) if isinstance(gt_map, dict) else None
+            return ent.get(fld) if isinstance(ent, dict) else None
+
+        for key, field in (gate_companions or {}).items():
+            # If the port has a deterministic rule extractor for this companion,
+            # don't nag/retry the agent over a hollow carrier — the apply stage
+            # (and the def-save) populate it reliably regardless. This removes the
+            # "failed a bunch of times" S2 retries on driver-preference turns.
+            try:
+                if port.companion_extraction_instructions(key):
+                    continue
+            except Exception:  # pragma: no cover — defensive
+                pass
+            entry = patch_gt.get(key) if isinstance(patch_gt, dict) else None
+            if isinstance(entry, dict) and key not in base_gt:
+                # ---- NEW commit this turn: term must not be hollow. ----
+                props = entry.get("properties") if isinstance(entry.get("properties"), dict) else {}
+                companion_value = props.get(field) if isinstance(props, dict) else None
+                try:
+                    present = port.companion_present(key, companion_value)
+                except Exception:  # pragma: no cover — safe default
+                    present = bool(companion_value)
+                if not present:
+                    issues.append(
+                        PipelineIssue(
+                            category="port_companion",
+                            severity="error",
+                            subject=f"{key}.{field}",
+                            message=(
+                                f"Your reply claims a change, but you committed `{key}` "
+                                f"with an empty `properties.{field}` — so the term has no "
+                                f"rules and won't affect the solver, making the claim false. "
+                                f"Populate `properties.{field}` with the specifics the "
+                                f"participant gave (see the per-problem appendix for the exact "
+                                f"shape). If you don't have the specifics yet, don't claim you "
+                                f"added them — ask for them instead."
+                            ),
+                        )
+                    )
+                continue
+
+            # ---- Pre-existing companion term: did the agent document a NEW rule
+            # in prose without structuring it? Symptom (P_0603, Dave): the
+            # companion array is unchanged, nothing material about the term moved
+            # (weight/type same), yet a new agent-authored items[] row got attached
+            # to the term this turn — so the "added" rule never reaches the solver.
+            if key not in base_gt:
+                continue
+            merged_entry = merged_gt.get(key)
+            if not isinstance(merged_entry, dict):
+                continue
+            if _norm(_companion_array(merged_gt, key, field)) != _norm(
+                _companion_array(base_gt, key, field)
+            ):
+                continue  # array actually changed → the rule landed; fine.
+            if _scalar(merged_gt, key, "weight") != _scalar(base_gt, key, "weight") or _scalar(
+                merged_gt, key, "type"
+            ) != _scalar(base_gt, key, "type"):
+                continue  # a real weight/type change backs the claim → not this bug.
+            ev_ids = {str(x) for x in (merged_entry.get("evidence_item_ids") or [])}
+            leaked = [
+                it
+                for it in new_items
+                if (iid := str(it.get("id") or ""))
+                and not (synth_prefixes and iid.startswith(synth_prefixes))
+                and (iid in ev_ids or str(it.get("goal_key") or "") == key)
+            ]
+            if leaked:
+                issues.append(
+                    PipelineIssue(
+                        category="port_companion",
+                        severity="error",
+                        subject=f"{key}.{field}",
+                        message=(
+                            f"Your reply claims you added a rule to `{key}`, but you only "
+                            f"wrote a prose items[] row about it — `properties.{field}` is "
+                            f"unchanged, so the rule never reaches the solver. Send the "
+                            f"complete `properties.{field}` list (existing rules plus the new "
+                            f"one) and drop the standalone prose row (the per-problem appendix "
+                            f"has the exact shape). Don't park the rule in `ambiguity_note`."
+                        ),
+                    )
+                )
 
     # ---- Workflow invariants ----
     if mode == "waterfall":

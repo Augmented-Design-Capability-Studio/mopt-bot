@@ -305,6 +305,92 @@ def _route_oq_answers_through_classifier(
     return incoming_brief
 
 
+def _structure_companion_rule_edits(
+    *,
+    incoming_brief: dict[str, Any],
+    test_problem_id: str | None,
+    api_key: str | None,
+    model_name: str | None,
+) -> dict[str, Any]:
+    """Deterministically structure companion rules the participant typed into a
+    goal term's ``config-weight-<key>`` "Rules —" summary on the definition panel.
+
+    That row is server-synthesized, so a free-text edit to it ("…and Carol skips
+    express orders") never reaches the structured carrier on its own. Here, at the
+    save, we detect an edited companion row (its text differs from what the current
+    carrier would synthesize) and run the focused structured extractor to populate
+    the carrier. Generic (port ``gate_conditional_companions`` + extraction
+    instructions); fail-safe (any error leaves the brief untouched).
+    """
+    if not test_problem_id or not api_key or not model_name:
+        return incoming_brief
+    try:
+        from app.problems.registry import get_study_port
+        from app.problem_brief import synthesize_canonical_goal_term_items
+        from app.services import llm
+
+        port = get_study_port(test_problem_id)
+        gate = port.gate_conditional_companions() or {}
+        if not gate:
+            return incoming_brief
+    except Exception:  # pragma: no cover — never block the save
+        return incoming_brief
+
+    gt = incoming_brief.get("goal_terms") if isinstance(incoming_brief.get("goal_terms"), dict) else {}
+    if not gt:
+        return incoming_brief
+    row_text = {
+        str(it.get("id") or ""): str(it.get("text") or "")
+        for it in (incoming_brief.get("items") or [])
+        if isinstance(it, dict)
+    }
+    try:
+        baseline = {
+            str(r.get("id") or ""): str(r.get("text") or "")
+            for r in synthesize_canonical_goal_term_items(incoming_brief, test_problem_id)
+        }
+    except Exception:  # pragma: no cover
+        baseline = {}
+
+    out = incoming_brief
+    for key, field in gate.items():
+        if key not in gt:
+            continue
+        rid = f"config-weight-{key}"
+        edited = row_text.get(rid, "").strip()
+        # Only fire when the participant actually changed the summary's text (so an
+        # unrelated def-panel save doesn't burn an extraction call).
+        if not edited or edited == baseline.get(rid, "").strip():
+            continue
+        entry = gt.get(key) if isinstance(gt.get(key), dict) else {}
+        props = entry.get("properties") if isinstance(entry.get("properties"), dict) else {}
+        current = props.get(field) if isinstance(props.get(field), list) else []
+        new_rules = llm.extract_companion_rules(
+            test_problem_id=test_problem_id,
+            goal_term_key=key,
+            companion_field=field,
+            source_text=edited,
+            current_rules=current,
+            api_key=api_key,
+            model_name=model_name,
+        )
+        if not isinstance(new_rules, list) or new_rules == current:
+            continue
+        out = dict(out)
+        ngt = dict(out.get("goal_terms") or {})
+        nentry = dict(ngt.get(key) or {})
+        nprops = dict(nentry.get("properties") or {})
+        nprops[field] = new_rules
+        nentry["properties"] = nprops
+        # Drop the agent's stale narration so the synthesized row falls back to the
+        # port's real rationale instead of "Mapped … to the worker_preference module".
+        nentry.pop("ambiguity_note", None)
+        ngt[key] = nentry
+        out["goal_terms"] = ngt
+        gt = ngt
+    return out
+
+
 def _session_has_uploaded_data(db: Session, session_id: str) -> bool:
     return (
         db.query(ChatMessage.id)
@@ -583,6 +669,10 @@ def patch_session(
         row.optimization_runs_blocked_by_researcher = body.optimization_runs_blocked_by_researcher
     if body.allow_agent_autorun is not None:
         row.allow_agent_autorun = body.allow_agent_autorun
+    if "agile_oq_every_n_runs" in body.model_fields_set:
+        # ``null`` clears to off; a number sets the cadence (0 never, 1 every,
+        # N≥2 = one OQ per N runs).
+        row.agile_oq_every_n_runs = body.agile_oq_every_n_runs
     if body.participant_tutorial_enabled is not None:
         row.participant_tutorial_enabled = body.participant_tutorial_enabled
     if "tutorial_step_override" in body.model_fields_set:
@@ -1036,6 +1126,25 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
             db.commit()
             db.refresh(row)
 
+            # Controlled-study lever (agile): on a post-run turn, the server
+            # pre-decides via blocked randomization whether THIS turn raises an
+            # open question or commits an assumption, per the researcher-set
+            # cadence. Returns None (no directive → soft bias) off-study.
+            post_run_directive = None
+            if is_run_ack:
+                from app.services.agile_post_run_schedule import post_run_oq_directive
+
+                _completed_run_number = max(
+                    (int(r.get("run_number") or 0) for r in (recent_runs_summary or [])),
+                    default=0,
+                )
+                post_run_directive = post_run_oq_directive(
+                    session_id=session_id,
+                    run_number=_completed_run_number,
+                    every_n_runs=getattr(row, "agile_oq_every_n_runs", None),
+                    workflow_mode=row.workflow_mode,
+                )
+
             run_chat_pipeline(
                 session_id=session_id,
                 revision=revision,
@@ -1059,6 +1168,7 @@ def _handle_post_participant_message(session_id: str, db: Session, body: Message
                 test_problem_id=row.test_problem_id,
                 gate_status=gate_status_for_chat,
                 skip_derive_config=is_config_save,
+                post_run_directive=post_run_directive,
             )
 
             # Return immediately — the frontend polls the placeholder
@@ -1666,6 +1776,17 @@ def patch_participant_problem_brief(
         model_name=row.gemini_model or get_settings().default_gemini_model,
         test_problem_id=row.test_problem_id,
     )
+    # Structure any companion rules the participant typed into a goal term's
+    # "Rules —" summary on the definition panel (e.g. VRPTW driver preferences)
+    # right here at the save — deterministic, independent of the follow-up chat
+    # turn's classification or the agent's behaviour. The synthesized row regen
+    # and panel sync below then reflect the populated carrier.
+    incoming_brief = _structure_companion_rule_edits(
+        incoming_brief=incoming_brief,
+        test_problem_id=row.test_problem_id,
+        api_key=decrypt_secret(row.gemini_key_encrypted),
+        model_name=row.gemini_model or get_settings().default_gemini_model,
+    )
 
     next_problem_brief = coerce_problem_brief_for_workflow(
         incoming_brief,
@@ -2155,6 +2276,8 @@ def export_session(
             "processing_error": row.processing_error,
             "optimization_allowed": row.optimization_allowed,
             "optimization_runs_blocked_by_researcher": row.optimization_runs_blocked_by_researcher,
+            "allow_agent_autorun": bool(getattr(row, "allow_agent_autorun", False)),
+            "agile_oq_every_n_runs": getattr(row, "agile_oq_every_n_runs", None),
             "participant_tutorial_enabled": bool(getattr(row, "participant_tutorial_enabled", False)),
             "tutorial_step_override": getattr(row, "tutorial_step_override", None),
             "tutorial_chat_started": bool(getattr(row, "tutorial_chat_started", False)),

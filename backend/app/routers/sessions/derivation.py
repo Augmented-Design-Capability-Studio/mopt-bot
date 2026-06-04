@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import ChatMessage, StudySession
 from app.problem_brief import (
+    CARRIER_ONLY_GOAL_TERM_KEYS,
     CONFIG_ITEM_PREFIX,
     merge_problem_brief_patch,
     normalize_problem_brief,
@@ -287,6 +288,16 @@ def _apply_oq_actions(
         qid = str(raw_action.get("id") or "").strip()
         action = str(raw_action.get("action") or "").strip().lower()
         if not qid or action not in {"keep", "rephrase", "drop", "mark_answered"}:
+            continue
+        # Server-managed companion OQs (`auto-oq-companion-<key>`) are owned by
+        # `reconcile_companion_oqs`: they appear when a companion-bearing goal
+        # term (e.g. VRPTW `worker_preference` → `driver_preferences`) has no
+        # rules yet, and auto-drop the moment the rules land. The agent must NOT
+        # be able to drop/mark_answered them while the companion is still empty
+        # — doing so kills the only thing still asking for the rules and lets
+        # the term vanish silently (observed in P_0603: agent dropped the
+        # companion OQ, claimed "added", but no rules were ever committed).
+        if qid.startswith("auto-oq-companion-") and action in {"drop", "mark_answered"}:
             continue
         if qid not in by_id:
             continue
@@ -805,6 +816,119 @@ def _resolve_anchored_provisional_rows(
     return next_brief
 
 
+def _companion_row_prose(merged: dict[str, Any], key: str) -> str:
+    """The participant-visible prose for a companion parent row (its synthesized
+    ``config-weight-<key>`` items[] text), which on a definition-panel edit holds
+    the rules the participant typed after "Rules —". Empty string if absent."""
+    for it in (merged.get("items") or []):
+        if isinstance(it, dict) and str(it.get("id") or "") == f"config-weight-{key}":
+            return str(it.get("text") or "")
+    return ""
+
+
+def _extract_missing_companion_rules(
+    *,
+    merged: dict[str, Any],
+    base_brief: dict[str, Any],
+    patch_payload: dict[str, Any],
+    test_problem_id: str | None,
+    user_text: str,
+    change_clause: str | None,
+    is_brief_edit_ack: bool,
+    api_key: str | None,
+    model_name: str | None,
+) -> dict[str, Any]:
+    """For each companion-bearing goal term whose structured array didn't move
+    this turn — on a claimed chat change OR a definition-panel edit —
+    deterministically extract the rules from the participant's wording and the
+    companion row's prose, and populate the carrier.
+
+    Generic — driven by ``port.gate_conditional_companions`` + the port's
+    extraction instructions; ports without those opt out (the extractor no-ops).
+    Fail-safe: any error leaves ``merged`` untouched.
+    """
+    if not test_problem_id or not api_key or not model_name:
+        return merged
+    claimed = bool(change_clause and str(change_clause).strip())
+    if not claimed and not is_brief_edit_ack:
+        return merged  # only on a claimed change or a definition-panel edit
+    try:
+        from app.problems.registry import get_study_port
+        from app.services import llm
+
+        port = get_study_port(test_problem_id)
+        gate_companions = port.gate_conditional_companions() or {}
+    except Exception:  # pragma: no cover — never block on registry hiccups
+        return merged
+    if not gate_companions:
+        return merged
+
+    merged_gt = merged.get("goal_terms") if isinstance(merged.get("goal_terms"), dict) else {}
+    base_gt = base_brief.get("goal_terms") if isinstance(base_brief.get("goal_terms"), dict) else {}
+    patch_gt = (
+        patch_payload.get("goal_terms")
+        if isinstance(patch_payload, dict) and isinstance(patch_payload.get("goal_terms"), dict)
+        else {}
+    )
+
+    def _arr(gt: dict[str, Any], k: str, f: str) -> Any:
+        ent = gt.get(k) if isinstance(gt, dict) else None
+        props = ent.get("properties") if isinstance(ent, dict) and isinstance(ent.get("properties"), dict) else {}
+        return props.get(f) if isinstance(props, dict) else None
+
+    out = merged
+    for key, field in gate_companions.items():
+        if key not in merged_gt:
+            continue
+        # Fire when: the agent committed the term + claimed a change (chat path),
+        # OR this is a definition-panel edit (the user may have typed a rule into
+        # the companion row's prose, which the agent then overwrote).
+        if not ((claimed and key in patch_gt) or is_brief_edit_ack):
+            continue
+        merged_arr = _arr(merged_gt, key, field)
+        base_arr = _arr(base_gt, key, field)
+        if merged_arr != base_arr:
+            continue  # agent already updated the carrier — nothing to fix
+        current_rules = merged_arr if isinstance(merged_arr, list) else []
+        # Source: chat wording + the companion row's prose from BOTH base (where a
+        # def-panel "Rules —" edit lives — the agent often overwrites it in the
+        # merged copy) and merged. The extractor returns the complete deduped list.
+        source_text = "\n".join(
+            t
+            for t in [
+                (user_text or "").strip(),
+                _companion_row_prose(base_brief, key),
+                _companion_row_prose(out, key),
+            ]
+            if t
+        )
+        new_rules = llm.extract_companion_rules(
+            test_problem_id=test_problem_id,
+            goal_term_key=key,
+            companion_field=field,
+            source_text=source_text,
+            current_rules=current_rules,
+            api_key=api_key,
+            model_name=model_name,
+        )
+        if not isinstance(new_rules, list) or new_rules == current_rules:
+            continue
+        out = dict(out)
+        gt = dict(out.get("goal_terms") or {})
+        entry = dict(gt.get(key) or {})
+        props = dict(entry.get("properties") or {})
+        props[field] = new_rules
+        entry["properties"] = props
+        # The agent's ``ambiguity_note`` here is stale narration about rules it
+        # failed to structure ("I've structured Alice and Carol together"); drop
+        # it so the synthesized row falls back to the port's clean rationale.
+        entry.pop("ambiguity_note", None)
+        gt[key] = entry
+        out["goal_terms"] = gt
+        merged_gt = gt  # keep view consistent for any later companion keys
+    return out
+
+
 def apply_brief_patch_with_cleanup(
     *,
     base_problem_brief: dict[str, Any],
@@ -819,6 +943,8 @@ def apply_brief_patch_with_cleanup(
     model_name: str | None = None,
     suppress_runack_invariant: bool = False,
     oq_actions: list[dict[str, Any]] | None = None,
+    change_clause: str | None = None,
+    is_brief_edit_ack: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Deterministic patch-merge pipeline used by the apply stage (S3).
 
@@ -985,8 +1111,28 @@ def apply_brief_patch_with_cleanup(
     # filter above already consumed the citation, so dropping the cited
     # item here is safe. Existing items (carried over from prior turns)
     # are NEVER dropped; only fresh anchors this patch introduced.
-    merged = _drop_redundant_goal_term_anchors(
+    merged, _dropped_anchor_provenance = _drop_redundant_goal_term_anchors(
         base_brief=base_problem_brief, merged=merged
+    )
+
+    # Deterministic companion-rule extraction. The main-turn LLM is unreliable at
+    # populating list companions (it acknowledges a rule in prose but omits the
+    # structured array). When this turn committed a companion term + claimed a
+    # change yet the array didn't move, run a focused structured-extraction call
+    # on the participant's wording to populate it — far more reliable than the
+    # main agent (P_0603: "added Dave" with no driver_preferences). Runs BEFORE
+    # reconcile/synthesize so the populated array clears the companion OQ and the
+    # synthesized row reflects the rules.
+    merged = _extract_missing_companion_rules(
+        merged=merged,
+        base_brief=base_problem_brief,
+        patch_payload=patch_payload,
+        test_problem_id=test_problem_id,
+        user_text=user_text,
+        change_clause=change_clause,
+        is_brief_edit_ack=is_brief_edit_ack,
+        api_key=api_key,
+        model_name=model_name,
     )
 
     # Reconcile auto-OQs for goal_terms with missing/present companions.
@@ -997,11 +1143,16 @@ def apply_brief_patch_with_cleanup(
     # was in place get their auto-OQ added on the next chat turn.
     from app.problem_brief import reconcile_companion_oqs
 
-    # Pass base_problem_brief so a goal term the agent introduces THIS turn
-    # without its companion specifics is deferred (dropped + OQ) rather than
-    # shown as a hollow carrier; pre-existing terms stay put (non-destructive).
+    # Keep-vs-drop the empty companion term by whether this turn CLAIMED a
+    # concrete child (B1 vs B2): a vague mention the agent should just ask about
+    # (no change_clause) doesn't materialise a hollow new term — it's dropped and
+    # the OQ carries the ask. A claimed concrete child (or a pre-existing term) is
+    # kept so it shows up and the config/def rule editors can complete it.
     merged = reconcile_companion_oqs(
-        merged, test_problem_id, base_brief=base_problem_brief
+        merged,
+        test_problem_id,
+        base_brief=base_problem_brief,
+        turn_claimed_change=bool(change_clause and str(change_clause).strip()),
     )
 
     # Canonical goal-term rows: synthesize a ``config-weight-<key>`` items[]
@@ -1011,7 +1162,9 @@ def apply_brief_patch_with_cleanup(
     # dropped. Re-normalisation inside the helper triggers the slot
     # reconciler, which drops any LLM-authored row that collides with the
     # synthesized one.
-    merged = _synthesize_canonical_weight_items(merged, test_problem_id)
+    merged = _synthesize_canonical_weight_items(
+        merged, test_problem_id, provenance_hints=_dropped_anchor_provenance
+    )
 
     # Drop OQs whose anchored goal_term key was newly committed this turn
     # AND whose answer is already visible in gathered info. Runs after
@@ -1052,7 +1205,43 @@ def apply_brief_patch_with_cleanup(
         test_problem_id=test_problem_id,
         is_run_acknowledgement=is_run_acknowledgement,
     )
+    # The Definition's items[] is a projection of the structured model — keep
+    # only the synthesized goal-term rows and the upload marker; sweep agent
+    # free-form prose, orphan "interest" rows, and OQ-answer context rows. Runs
+    # LAST (after the agent has drafted, so it can fold any free-text into a goal
+    # term / goal_summary first) and never on load (which would strip a user's
+    # note before the agent sees it).
+    consolidated = _whitelist_structured_items(consolidated)
     return consolidated, {"removed_total": 0, **run_meta}
+
+
+def _whitelist_structured_items(brief: dict[str, Any]) -> dict[str, Any]:
+    """Restrict items[] to structured rows: synthesized ``config-*`` goal-term /
+    search-strategy / companion rows, plus the single upload marker. Everything
+    else (free-form agent prose, "user indicated interest in …" placeholders,
+    OQ-answer context rows, user-typed notes) is dropped so the panel stays a
+    clean, analyzable set of structured artifacts. ``goal_terms`` / ``goal_summary``
+    / ``search_strategy`` / ``open_questions`` / ``runs`` are untouched — the
+    agent is told to merge any free-text meaning into those before this sweep.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    items = brief.get("items")
+    if not isinstance(items, list):
+        return brief
+    from app.problem_brief import _is_upload_marker_item
+
+    kept = [
+        it
+        for it in items
+        if isinstance(it, dict)
+        and (str(it.get("id") or "").startswith("config-") or _is_upload_marker_item(it))
+    ]
+    if len(kept) == len(items):
+        return brief
+    out = dict(brief)
+    out["items"] = kept
+    return out
 
 
 def _strip_agent_run_commentary(brief: dict[str, Any]) -> dict[str, Any]:
@@ -1224,7 +1413,7 @@ def _drop_redundant_goal_term_anchors(
     *,
     base_brief: dict[str, Any] | None,
     merged: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, tuple[str, str]]]:
     """Drop LLM-emitted items[] rows that double as goal-term anchors.
 
     Pattern this fixes: the LLM emits ``goal_terms.travel_time = {weight,
@@ -1245,7 +1434,7 @@ def _drop_redundant_goal_term_anchors(
       context safe.
     """
     if not isinstance(merged, dict):
-        return merged
+        return merged, {}
     base_item_ids: set[str] = set()
     base_gt_keys: set[str] = set()
     if isinstance(base_brief, dict):
@@ -1258,11 +1447,28 @@ def _drop_redundant_goal_term_anchors(
 
     merged_gt = merged.get("goal_terms")
     if not isinstance(merged_gt, dict):
-        return merged
+        return merged, {}
+    items_by_id = {
+        str(it.get("id") or ""): it
+        for it in (merged.get("items") or [])
+        if isinstance(it, dict) and str(it.get("id") or "")
+    }
     anchor_ids_to_drop: set[str] = set()
+    # Provenance to carry forward to the synthesized config-weight-<key> row, so a
+    # dropped agile `assumption` anchor isn't silently rewritten to `gathered`.
+    dropped_provenance: dict[str, tuple[str, str]] = {}
     for key, entry in merged_gt.items():
         if not isinstance(key, str) or key in base_gt_keys:
             continue  # existing goal_term — leave its evidence alone
+        if key in CARRIER_ONLY_GOAL_TERM_KEYS:
+            # Carrier-only terms (e.g. ``search_strategy``) are SKIPPED by the
+            # canonical synthesizer — no ``config-weight-<key>`` row is emitted to
+            # replace the dropped anchor. Dropping the anchor (``config-search-
+            # strategy``) here would leave the carrier without its required
+            # items[] row, so the panel-sync legitimacy gate strips the algorithm
+            # and the choice silently vanishes (P_0602: "sounds good" → GA never
+            # reached the panel). Leave the anchor in place.
+            continue
         if not isinstance(entry, dict):
             continue
         evidence = entry.get("evidence_item_ids")
@@ -1274,9 +1480,22 @@ def _drop_redundant_goal_term_anchors(
             sid = eid.strip()
             if not sid or sid in base_item_ids:
                 continue  # only drop NEW anchors, never existing items
+            if sid.startswith("config-weight-"):
+                # The agent self-anchored to the CANONICAL row id. That row is
+                # owned by the synthesizer (drop-and-replace by id), which also
+                # preserves its provenance — dropping it here would erase an
+                # agile `assumption` proposal before the synthesizer can read
+                # its kind/source (P_0603). Leave it for the synthesizer.
+                continue
             anchor_ids_to_drop.add(sid)
+            anchor = items_by_id.get(sid)
+            if isinstance(anchor, dict):
+                akind = str(anchor.get("kind") or "").strip().lower()
+                if akind in {"gathered", "assumption"}:
+                    asrc = str(anchor.get("source") or "agent").strip().lower() or "agent"
+                    dropped_provenance[key] = (akind, asrc)
     if not anchor_ids_to_drop:
-        return merged
+        return merged, {}
 
     next_items = [
         it for it in (merged.get("items") or [])
@@ -1284,7 +1503,7 @@ def _drop_redundant_goal_term_anchors(
     ]
     next_brief = dict(merged)
     next_brief["items"] = next_items
-    return next_brief
+    return next_brief, dropped_provenance
 
 
 def _autofill_goal_summary_from_objective(
@@ -1742,7 +1961,9 @@ def _enforce_session_monitors(
 
 
 def _synthesize_canonical_weight_items(
-    brief: dict[str, Any], test_problem_id: str | None
+    brief: dict[str, Any],
+    test_problem_id: str | None,
+    provenance_hints: dict[str, tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Refresh canonical ``config-weight-<key>`` rows from ``brief.goal_terms``.
 
@@ -1765,7 +1986,9 @@ def _synthesize_canonical_weight_items(
 
     if not isinstance(brief, dict):
         return brief
-    extras = synthesize_canonical_goal_term_items(brief, test_problem_id)
+    extras = synthesize_canonical_goal_term_items(
+        brief, test_problem_id, provenance_hints=provenance_hints
+    )
     base_items = list(brief.get("items") or [])
     has_stale = any(
         isinstance(item, dict)

@@ -13,6 +13,11 @@ export type GoalTermsKeySlot = {
   replaceRow?: () => React.ReactNode;
   /** Extra content rendered after the default WeightRow for this key. */
   appendAfterRow?: () => React.ReactNode;
+  /** Extra child fields cleared when this key's parent row is removed (so a
+   *  single parent "X" removes the whole companion term — e.g. shift_limit
+   *  clearing max_shift_hours). Paired with `extraRestorePatch` for restore. */
+  extraRemovePatch?: Record<string, unknown>;
+  extraRestorePatch?: Record<string, unknown>;
 };
 
 export type GoalTermsExtension = {
@@ -41,6 +46,14 @@ export type RemovedGoalTermEntry = {
    * Set by the problem-module extension; used by ProblemConfigBlocks.restoreRemovedGoalTerm.
    */
   fieldName?: string;
+  /**
+   * Optional extra patch re-applied verbatim on restore, on top of the standard
+   * weight/lock (or fieldName) restore. A problem module uses this to bring back
+   * child fields it cleared when the parent goal term was removed — e.g. VRPTW
+   * restores `driver_preferences` alongside the `worker_preference` weight, so
+   * removing the parent doesn't silently discard its rules.
+   */
+  restorePatch?: Record<string, unknown>;
 };
 
 export function toggleLockedGoalTerm(list: string[], key: string): string[] {
@@ -290,6 +303,8 @@ export function WeightRow({
   onRememberRemoved,
   constraintType,
   onConstraintTypeChange,
+  extraRemovePatch,
+  extraRestorePatch,
 }: {
   wkey: string;
   problem: BaseProblemBlock;
@@ -301,6 +316,14 @@ export function WeightRow({
   onRememberRemoved?: (entry: RemovedGoalTermEntry) => void;
   constraintType?: ConstraintType;
   onConstraintTypeChange?: (type: ConstraintType) => void;
+  /**
+   * Extra fields to clear in the same update when this row is removed (e.g. VRPTW
+   * clears `driver_preferences` when `worker_preference` is removed so the child
+   * rules don't keep the block alive). Paired with `extraRestorePatch` to bring
+   * them back on restore.
+   */
+  extraRemovePatch?: Record<string, unknown>;
+  extraRestorePatch?: Record<string, unknown>;
 }) {
   const info = weightCatalog[wkey];
   const isLocked = problem.locked_goal_terms.includes(wkey);
@@ -336,6 +359,7 @@ export function WeightRow({
           value: typeof problem.weights[wkey] === "number" ? problem.weights[wkey]! : 0,
           locked: problem.locked_goal_terms.includes(wkey),
           type: "weight",
+          ...(extraRestorePatch ? { restorePatch: extraRestorePatch } : {}),
         });
         const nextWeights = { ...problem.weights };
         delete nextWeights[wkey];
@@ -347,6 +371,9 @@ export function WeightRow({
           locked_goal_terms: removeLockedGoalTerm(problem.locked_goal_terms, wkey),
           constraint_types: nextConstraintTypes,
           goal_term_order: nextOrder,
+          // Child fields the parent owns (e.g. VRPTW driver_preferences) — clearing
+          // them here is what lets the whole block disappear on a single parent X.
+          ...(extraRemovePatch ?? {}),
         });
       }}
       constraintType={constraintType}
@@ -512,6 +539,8 @@ export function GoalTermsSection({
                 onRememberRemoved={rememberRemovedGoalTerm}
                 constraintType={ctype}
                 onConstraintTypeChange={(type) => onConstraintTypeChange(key, type)}
+                extraRemovePatch={slot?.extraRemovePatch}
+                extraRestorePatch={slot?.extraRestorePatch}
               />
               {slot?.appendAfterRow?.() ?? null}
             </div>
