@@ -181,6 +181,16 @@ def _apply_assumption_actions(
         if item_id:
             items_by_id[item_id] = index
 
+    # Live goal-term keys. A canonical ``config-weight-<key>`` row is SERVER-OWNED
+    # — a deterministic projection of ``goal_terms`` re-synthesized every turn by
+    # ``_synthesize_canonical_weight_items``. Its lifecycle follows the goal term,
+    # not an LLM drop decision, so a ``drop`` targeting one is refused while the
+    # term is still live (see the drop branch below).
+    gt = brief.get("goal_terms")
+    live_goal_keys: set[str] = (
+        {k for k in gt if isinstance(k, str) and k.strip()} if isinstance(gt, dict) else set()
+    )
+
     drop_ids: set[str] = set()
     for raw_action in actions:
         if not isinstance(raw_action, dict):
@@ -211,6 +221,25 @@ def _apply_assumption_actions(
         if action == "keep":
             continue
         if action == "drop":
+            # Refuse to drop a canonical weight row whose goal term is still live.
+            # The row is re-synthesized from ``goal_terms`` a few steps earlier in
+            # the apply stage, so honoring the drop deletes the freshly-rebuilt row
+            # and orphans an active solver term — leaving the Definition with no
+            # line explaining a goal that's still in effect (P_0603: the agent
+            # renamed the capacity row to ``…-run3`` and dropped the canonical id
+            # while keeping ``capacity_penalty`` at weight 30). A genuine removal
+            # retires the goal_term key instead; once it's gone no row is
+            # synthesized and this guard is inert, so real deletions still work.
+            if (
+                item_id.startswith("config-weight-")
+                and item_id[len("config-weight-"):] in live_goal_keys
+            ):
+                log.info(
+                    "Refused assumption-action drop of canonical weight row %s; "
+                    "goal_term still live",
+                    item_id,
+                )
+                continue
             drop_ids.add(item_id)
             continue
         rephrased = str(raw_action.get("rephrased_text") or "").strip()
@@ -2017,6 +2046,56 @@ def _synthesize_canonical_weight_items(
     ]
     kept_items.extend(extras)
     next_brief["items"] = kept_items
+    return normalize_problem_brief(next_brief)
+
+
+def _heal_orphaned_goal_term_rows(
+    brief: dict[str, Any], test_problem_id: str | None
+) -> dict[str, Any]:
+    """Post-apply safety net: ensure every live goal term still has its canonical
+    ``config-weight-<key>`` row.
+
+    The canonical row is a deterministic projection of ``goal_terms``
+    (``synthesize_canonical_goal_term_items``). If some step removed it while the
+    goal term stayed live — e.g. an ``assumption_actions`` drop landing on the
+    freshly-synthesized row (P_0603) — the participant is left with an active
+    solver term and no line explaining it. This rebuilds only the **missing** rows
+    and logs when it does, so a clean turn is untouched and a fired log flags a
+    real anomaly to chase. It is NOT an unconditional re-synthesis and never
+    rewrites or drops rows that are present.
+
+    Runs as the last brief mutation in the apply stage (after
+    ``_apply_assumption_actions`` / monitors), so it backstops any source of
+    canonical-row loss, present or future.
+    """
+    if not isinstance(brief, dict):
+        return brief
+    from app.problem_brief import (
+        normalize_problem_brief,
+        synthesize_canonical_goal_term_items,
+    )
+
+    canonical = synthesize_canonical_goal_term_items(brief, test_problem_id)
+    if not canonical:
+        return brief
+    existing_ids = {
+        str(it.get("id") or "")
+        for it in (brief.get("items") or [])
+        if isinstance(it, dict)
+    }
+    missing = [
+        row
+        for row in canonical
+        if isinstance(row, dict) and str(row.get("id") or "") not in existing_ids
+    ]
+    if not missing:
+        return brief
+    healed_keys = [str(row.get("id") or "")[len("config-weight-"):] for row in missing]
+    log.warning(
+        "Healed orphaned goal-term row(s) with no items[] line: %s", healed_keys
+    )
+    next_brief = dict(brief)
+    next_brief["items"] = list(brief.get("items") or []) + missing
     return normalize_problem_brief(next_brief)
 
 

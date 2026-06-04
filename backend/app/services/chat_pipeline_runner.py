@@ -1341,6 +1341,15 @@ def _apply_stage(
             test_problem_id=test_problem_id,
             is_run_acknowledgement=is_run_acknowledgement,
         )
+        # Post-apply safety net: every live goal term must still have its canonical
+        # ``config-weight-<key>`` row. Runs last (after assumption_actions /
+        # monitors) so it backstops any step that drops a row while the term stays
+        # live — e.g. the P_0603 ordering where an assumption drop deleted the
+        # freshly-synthesized capacity row. Self-heals the missing row and logs;
+        # never fires on a clean turn.
+        effective_brief = derivation._heal_orphaned_goal_term_rows(
+            effective_brief, test_problem_id
+        )
 
         # Persist the merged brief on the session row.
         with SessionLocal() as db:

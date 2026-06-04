@@ -1471,3 +1471,118 @@ def test_apply_oq_actions_refuses_to_drop_companion_oq():
     ids = {q["id"] for q in out["open_questions"]}
     assert "auto-oq-companion-worker_preference" in ids  # protected
     assert "question-other" not in ids  # normal drop still works
+
+
+# ---------------------------------------------------------------------------
+# Canonical weight rows are server-owned (a projection of goal_terms): an
+# assumption-action `drop` must not orphan a live goal term, but a genuine
+# retirement still drops the row. Plus the post-apply self-heal safety net.
+# Reproducer: P_0603 Run #3 ack — agent renamed the capacity row to `…-run3`
+# and dropped the canonical id while keeping `capacity_penalty` at weight 30,
+# so the synthesized canonical row was deleted and the term lost its def line.
+# ---------------------------------------------------------------------------
+
+
+def test_assumption_drop_refused_for_canonical_row_of_live_term():
+    from app.routers.sessions.derivation import _apply_assumption_actions
+
+    brief = {
+        "items": [
+            {
+                "id": "config-weight-capacity_penalty",
+                "text": "Load capacity (soft constraint, weight 30.0).",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "capacity_penalty",
+            },
+        ],
+        "goal_terms": {"capacity_penalty": {"weight": 30.0, "type": "soft", "rank": 1}},
+    }
+    out = _apply_assumption_actions(
+        brief, [{"id": "config-weight-capacity_penalty", "action": "drop"}]
+    )
+    ids = {it["id"] for it in out["items"]}
+    assert "config-weight-capacity_penalty" in ids  # guard kept the live term's row
+
+
+def test_assumption_drop_allowed_when_term_retired():
+    """Genuine removal still works: once the goal_term key is gone the row is no
+    longer server-owned, so the drop proceeds."""
+    from app.routers.sessions.derivation import _apply_assumption_actions
+
+    brief = {
+        "items": [
+            {
+                "id": "config-weight-capacity_penalty",
+                "text": "Load capacity (soft constraint, weight 30.0).",
+                "kind": "assumption",
+                "source": "agent",
+                "goal_key": "capacity_penalty",
+            },
+        ],
+        "goal_terms": {},  # term retired this turn
+    }
+    out = _apply_assumption_actions(
+        brief, [{"id": "config-weight-capacity_penalty", "action": "drop"}]
+    )
+    ids = {it["id"] for it in out["items"]}
+    assert "config-weight-capacity_penalty" not in ids  # retired -> drop honored
+
+
+def test_heal_orphaned_goal_term_rows_rebuilds_missing_row():
+    """Safety net: a live goal term with no canonical row gets its row rebuilt."""
+    from app.routers.sessions.derivation import _heal_orphaned_goal_term_rows
+
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            items=[
+                {
+                    "id": "item-gathered-upload",
+                    "text": "Source data file(s) uploaded.",
+                    "kind": "gathered",
+                    "source": "upload",
+                }
+            ],
+            goal_terms={
+                "capacity_penalty": {
+                    "weight": 30.0,
+                    "type": "soft",
+                    "rank": 1,
+                    "evidence_item_ids": ["config-weight-capacity_penalty"],
+                }
+            },
+        )
+    )
+    out = _heal_orphaned_goal_term_rows(brief, "vrptw")
+    ids = {it["id"] for it in out["items"]}
+    assert "config-weight-capacity_penalty" in ids  # rebuilt the orphaned row
+
+
+def test_heal_orphaned_goal_term_rows_noop_when_rows_present():
+    """The net does not fire (and never duplicates) on a clean brief."""
+    from app.routers.sessions.derivation import _heal_orphaned_goal_term_rows
+
+    brief = normalize_problem_brief(
+        _minimal_brief(
+            items=[
+                {
+                    "id": "config-weight-capacity_penalty",
+                    "text": "Load capacity (soft constraint, weight 30.0).",
+                    "kind": "assumption",
+                    "source": "agent",
+                    "goal_key": "capacity_penalty",
+                }
+            ],
+            goal_terms={
+                "capacity_penalty": {
+                    "weight": 30.0,
+                    "type": "soft",
+                    "rank": 1,
+                    "evidence_item_ids": ["config-weight-capacity_penalty"],
+                }
+            },
+        )
+    )
+    out = _heal_orphaned_goal_term_rows(brief, "vrptw")
+    cap_rows = [it for it in out["items"] if it["id"] == "config-weight-capacity_penalty"]
+    assert len(cap_rows) == 1  # not rebuilt, not duplicated
