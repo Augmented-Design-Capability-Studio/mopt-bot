@@ -46,6 +46,8 @@ When auditing prompts or code:
 - `prompts/study_chat.py:STUDY_CHAT_RUN_ACK_{WATERFALL,AGILE,DEMO}`: post-run delta discipline per axis 2.
 - `prompts/study_chat.py:STUDY_CHAT_OQ_CLASSIFY_TASK` workflow gating: axis 2 (waterfall: hedged→new OQ; agile: hedged→assumption; demo: like waterfall).
 
+**Plateau intervention is SYMMETRIC (researcher decision, June 2026).** Monitor 4 in `_enforce_session_monitors`: when the last 2 completed runs stall on the same algorithm, BOTH modes now raise the same `oq-monitor-plateau` OQ on the run-ack turn (`topic: search_strategy`). Agile used to silently auto-switch the carrier (fait accompli via the now-removed `_next_search_algorithm`); the researcher chose symmetry so the participant owns the call in both modes. NOT one of the 4 axes — keep it symmetric. SUPPRESSED entirely while the tutorial is active (`is_tutorial_active`, threaded through `apply_brief_patch_with_cleanup`/`_apply_stage`/retry-context) — tutorial runs are too similar to justify it. Note this is distinct from axis 4 (the *initial* search-strategy default, which stays asymmetric: agile assumption row vs waterfall OQ).
+
 **Not mode-branched (intentionally symmetric):** OQ ownership (server owns foundational topics via `merge_problem_brief_patch` foundational-topic strip + `_enforce_session_monitors`), brief↔panel drift detection, pipeline shape, retry budget, failure UX.
 
 **Why this matters:** the study's whole point is comparing the two modes. Drift that collapses or scrambles the axes invalidates the comparison. Don't add mode-specific code paths or prompt rules for anything other than these four — and when you must, document which axis you're implementing.

@@ -1678,9 +1678,17 @@ def test_apply_brief_patch_whitelists_items_to_structured_rows():
         user_text="minimize travel time",
     )
     items = out.get("items") or []
+    # Allowed survivors: synthesized config-* rows, the upload marker, and the
+    # server-owned agile algorithm-assumption monitor row (kept visible so the
+    # participant can see/override the assumed search strategy — P_lk).
+    allowed_monitor_ids = {"item-monitor-algorithm-default", "item-monitor-plateau"}
     for it in items:
         rid = str(it.get("id") or "")
-        assert rid.startswith("config-") or rid == UPLOAD_MARKER_ITEM_ID, rid
+        assert (
+            rid.startswith("config-")
+            or rid == UPLOAD_MARKER_ITEM_ID
+            or rid in allowed_monitor_ids
+        ), rid
     ids = {str(it.get("id") or "") for it in items}
     # The structured goal-term row was synthesized; the upload marker kept.
     assert "config-weight-travel_time" in ids, ids
@@ -2030,10 +2038,11 @@ def test_plateau_nudge_added_only_on_runack_waterfall_oq():
     assert oq and "(GA)" not in oq[0]["text"].split("switch to")[-1]
 
 
-def test_plateau_agile_auto_switches_search_method_fait_accompli():
-    """Agile = fait accompli: on a run-ack plateau the assistant switches the
-    search method on the single carrier (no separate advisory row, no OQ).
-    Deterministic rotation to a different method."""
+def test_plateau_agile_raises_oq_like_waterfall():
+    """Symmetric plateau handling (researcher choice): on a run-ack plateau, agile
+    now ASKS via an OQ — same as waterfall — instead of silently auto-switching
+    the carrier. The carrier algorithm is left UNCHANGED until the participant
+    answers; no advisory item row is created."""
     from app.routers.sessions.derivation import (
         _MONITOR_ITEM_PLATEAU_ID,
         _MONITOR_OQ_PLATEAU_ID,
@@ -2042,16 +2051,33 @@ def test_plateau_agile_auto_switches_search_method_fait_accompli():
 
     brief = _plateau_brief(algo="GA")
     out = _enforce_session_monitors(brief, "agile", "vrptw", is_run_acknowledgement=True)
-    # The one carrier moved to a different method...
-    new_algo = out["goal_terms"]["search_strategy"]["properties"]["algorithm"]
-    assert new_algo and new_algo != "GA"
-    # ...and there's no separate plateau row or OQ — only the single entry.
+    # The carrier is NOT auto-switched — the participant owns the call now.
+    assert out["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+    # A plateau OQ is raised; no separate advisory item row.
+    assert any(q["id"] == _MONITOR_OQ_PLATEAU_ID for q in out["open_questions"])
     assert not any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in out["items"])
-    assert not any(q["id"] == _MONITOR_OQ_PLATEAU_ID for q in out["open_questions"])
-    # No thrash: with the new method now configured but the last two runs still
-    # on GA, the detector won't fire again.
-    again = _enforce_session_monitors(out, "agile", "vrptw", is_run_acknowledgement=True)
-    assert again["goal_terms"]["search_strategy"]["properties"]["algorithm"] == new_algo
+
+
+def test_plateau_suppressed_during_tutorial_both_modes():
+    """The plateau intervention is suppressed for the whole tutorial (researcher
+    choice): runs are too similar to justify it and it's a learning context. No
+    plateau OQ in either mode while the tutorial is active."""
+    from app.routers.sessions.derivation import (
+        _MONITOR_OQ_PLATEAU_ID,
+        _enforce_session_monitors,
+    )
+
+    for mode in ("agile", "waterfall"):
+        out = _enforce_session_monitors(
+            _plateau_brief(algo="GA"),
+            mode,
+            "vrptw",
+            is_run_acknowledgement=True,
+            is_tutorial_active=True,
+        )
+        assert not any(
+            q["id"] == _MONITOR_OQ_PLATEAU_ID for q in out["open_questions"]
+        ), mode
 
 
 def test_runack_strips_agent_run_commentary_but_keeps_config_and_user_rows():

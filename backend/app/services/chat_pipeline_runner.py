@@ -545,6 +545,7 @@ def _run_chat_pipeline_thread(
             is_answered_open_question=is_answered_open_question,
             suppress_runack_invariant=suppress_runack_invariant,
             is_brief_edit_ack=is_brief_edit_ack,
+            is_tutorial_active=is_tutorial_active,
         )
         if applied_brief is None:
             return  # already marked paused / failed by _apply_stage
@@ -1194,6 +1195,7 @@ def _apply_stage(
     is_answered_open_question: bool = False,
     suppress_runack_invariant: bool = False,
     is_brief_edit_ack: bool = False,
+    is_tutorial_active: bool = False,
 ) -> dict[str, Any] | None:
     """S3 — deterministic patch apply + workflow coercion + monitors +
     assumption_actions. Returns the merged-and-coerced brief, or None
@@ -1233,6 +1235,7 @@ def _apply_stage(
                 # mention the agent should just ask about (drop a new hollow term).
                 change_clause=turn.change_clause,
                 is_brief_edit_ack=is_brief_edit_ack,
+                is_tutorial_active=is_tutorial_active,
             )
         else:
             effective_brief = dict(base_problem_brief)
@@ -1340,6 +1343,7 @@ def _apply_stage(
             workflow_mode,
             test_problem_id=test_problem_id,
             is_run_acknowledgement=is_run_acknowledgement,
+            is_tutorial_active=is_tutorial_active,
         )
         # Post-apply safety net: every live goal term must still have its canonical
         # ``config-weight-<key>`` row. Runs last (after assumption_actions /
@@ -1760,6 +1764,7 @@ def _retry_brief_from_panel(
                 oq_actions=[a.model_dump() for a in (retry_turn.oq_actions or [])],
                 change_clause=retry_turn.change_clause,
                 is_brief_edit_ack=bool(retry_context.get("is_brief_edit_ack")),
+                is_tutorial_active=bool(retry_context.get("is_tutorial_active")),
             )
             applied = coerce_problem_brief_for_workflow(applied, workflow_mode)
             applied = derivation._enforce_session_monitors(
@@ -1767,6 +1772,7 @@ def _retry_brief_from_panel(
                 workflow_mode,
                 test_problem_id=test_problem_id,
                 is_run_acknowledgement=bool(retry_context.get("is_run_acknowledgement")),
+                is_tutorial_active=bool(retry_context.get("is_tutorial_active")),
             )
             with SessionLocal() as db:
                 row = db.get(StudySession, session_id)

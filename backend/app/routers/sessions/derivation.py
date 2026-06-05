@@ -393,6 +393,24 @@ def _validated_algorithm_name(text: Any) -> str | None:
     return extract_algorithm_from_brief([{"text": raw}])
 
 
+def _carrier_search_strategy_algorithm(brief: dict[str, Any] | None) -> str | None:
+    """Return the algorithm stored in the search-strategy carrier
+    (``goal_terms.search_strategy.properties.algorithm``), or None."""
+    if not isinstance(brief, dict):
+        return None
+    gt = brief.get("goal_terms")
+    if not isinstance(gt, dict):
+        return None
+    ss = gt.get("search_strategy")
+    if not isinstance(ss, dict):
+        return None
+    props = ss.get("properties")
+    if not isinstance(props, dict):
+        return None
+    algo = props.get("algorithm")
+    return algo.strip() if isinstance(algo, str) and algo.strip() else None
+
+
 def _set_search_strategy_algorithm(
     brief: dict[str, Any], algorithm: str
 ) -> dict[str, Any]:
@@ -409,6 +427,27 @@ def _set_search_strategy_algorithm(
     if not isinstance(entry, dict):
         entry = {}
         goal_terms["search_strategy"] = entry
+    # Carrier-only or not, a goal_terms entry still needs the scalar trio
+    # (weight/type/rank) or ``normalize_problem_brief`` drops it as malformed —
+    # so a FRESHLY CREATED carrier (no agent-committed entry to update, e.g. a
+    # user answering the search-strategy OQ in chat or the textarea) must be
+    # completed here, else it vanishes on the next normalize and the OQ bounces
+    # back open (P_lk). An existing (agent-committed) entry keeps its own scalars.
+    if not isinstance(entry.get("weight"), (int, float)) or isinstance(entry.get("weight"), bool):
+        entry["weight"] = 1.0
+    if not (isinstance(entry.get("type"), str) and entry.get("type").strip()):
+        entry["type"] = "custom"
+    rank = entry.get("rank")
+    if not (isinstance(rank, int) and not isinstance(rank, bool) and rank > 0):
+        existing_ranks = [
+            int(e["rank"])
+            for k, e in goal_terms.items()
+            if k != "search_strategy"
+            and isinstance(e, dict)
+            and isinstance(e.get("rank"), (int, float))
+            and not isinstance(e.get("rank"), bool)
+        ]
+        entry["rank"] = (max(existing_ranks) + 1) if existing_ranks else 1
     props = entry.get("properties")
     if not isinstance(props, dict):
         props = {}
@@ -974,6 +1013,7 @@ def apply_brief_patch_with_cleanup(
     oq_actions: list[dict[str, Any]] | None = None,
     change_clause: str | None = None,
     is_brief_edit_ack: bool = False,
+    is_tutorial_active: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Deterministic patch-merge pipeline used by the apply stage (S3).
 
@@ -1233,6 +1273,7 @@ def apply_brief_patch_with_cleanup(
         workflow_mode,
         test_problem_id=test_problem_id,
         is_run_acknowledgement=is_run_acknowledgement,
+        is_tutorial_active=is_tutorial_active,
     )
     # The Definition's items[] is a projection of the structured model — keep
     # only the synthesized goal-term rows and the upload marker; sweep agent
@@ -1246,12 +1287,13 @@ def apply_brief_patch_with_cleanup(
 
 def _whitelist_structured_items(brief: dict[str, Any]) -> dict[str, Any]:
     """Restrict items[] to structured rows: synthesized ``config-*`` goal-term /
-    search-strategy / companion rows, plus the single upload marker. Everything
-    else (free-form agent prose, "user indicated interest in …" placeholders,
-    OQ-answer context rows, user-typed notes) is dropped so the panel stays a
-    clean, analyzable set of structured artifacts. ``goal_terms`` / ``goal_summary``
-    / ``search_strategy`` / ``open_questions`` / ``runs`` are untouched — the
-    agent is told to merge any free-text meaning into those before this sweep.
+    search-strategy / companion rows, the single upload marker, and server-owned
+    monitor rows (agile algorithm assumption / plateau advisory). Everything else
+    (free-form agent prose, "user indicated interest in …" placeholders, OQ-answer
+    context rows, user-typed notes) is dropped so the panel stays a clean,
+    analyzable set of structured artifacts. ``goal_terms`` / ``goal_summary`` /
+    ``search_strategy`` / ``open_questions`` / ``runs`` are untouched — the agent
+    is told to merge any free-text meaning into those before this sweep.
     """
     if not isinstance(brief, dict):
         return brief
@@ -1260,11 +1302,20 @@ def _whitelist_structured_items(brief: dict[str, Any]) -> dict[str, Any]:
         return brief
     from app.problem_brief import _is_upload_marker_item
 
+    # Server-owned monitor items that ARE structured artifacts (not free-form
+    # agent prose) and must survive: the agile/demo algorithm assumption row and
+    # the plateau advisory. Stable ids, re-enforced by _enforce_session_monitors.
+    structured_monitor_ids = {_MONITOR_ITEM_ALGORITHM_ID, _MONITOR_ITEM_PLATEAU_ID}
+
     kept = [
         it
         for it in items
         if isinstance(it, dict)
-        and (str(it.get("id") or "").startswith("config-") or _is_upload_marker_item(it))
+        and (
+            str(it.get("id") or "").startswith("config-")
+            or str(it.get("id") or "") in structured_monitor_ids
+            or _is_upload_marker_item(it)
+        )
     ]
     if len(kept) == len(items):
         return brief
@@ -1658,15 +1709,20 @@ def _monitor_algorithm_oq_text(test_problem_id: str | None) -> str:
     return f"Which search strategy should we use? Options include {phrase}."
 
 
-def _monitor_algorithm_item_text(test_problem_id: str | None) -> str:
-    """Agile/demo assumption-row text. Names the port's first supported
-    algorithm as the starting point; falls back to GA if the port returns
-    an empty list (defensive — shouldn't happen with the default impl)."""
+def _monitor_algorithm_item_text(
+    test_problem_id: str | None, algorithm: str | None = None
+) -> str:
+    """Agile/demo assumption-row text. Reflects the COMMITTED carrier algorithm
+    when one is given (so the visible assumption tracks what the solver will
+    actually run); otherwise names the port's first supported algorithm as the
+    starting point. Falls back to GA if the port returns an empty list
+    (defensive — shouldn't happen with the default impl)."""
     from app.algorithm_catalog import ALGORITHM_PARTICIPANT_NICKNAMES_MAP
 
     supported = _port_supported_algorithms(test_problem_id)
     default = supported[0] if supported else "GA"
-    nickname = ALGORITHM_PARTICIPANT_NICKNAMES_MAP.get(default, default)
+    chosen = algorithm if (algorithm in ALGORITHM_PARTICIPANT_NICKNAMES_MAP) else default
+    nickname = ALGORITHM_PARTICIPANT_NICKNAMES_MAP.get(chosen, chosen)
     return f"Search strategy is set to {nickname} as a starting point — change anytime."
 
 
@@ -1754,23 +1810,8 @@ def _plateau_options_phrase(test_problem_id: str | None, exclude_algo: str) -> s
     return format_algorithm_choices_phrase(supported)
 
 
-def _next_search_algorithm(current: str, supported: tuple[str, ...]) -> str | None:
-    """Deterministically pick a *different* algorithm than ``current`` — the
-    next one in the port's supported list, cycling. Returns None when there's
-    no real alternative. Deterministic (no LLM) so the agile fait-accompli
-    behaves identically for every participant — important for a controlled
-    study, where the assistant's intervention shouldn't itself vary."""
-    options = [a for a in (supported or ()) if isinstance(a, str) and a.strip()]
-    if not options:
-        return None
-    if current in options:
-        nxt = options[(options.index(current) + 1) % len(options)]
-        return nxt if nxt != current else None
-    return options[0]
-
-
 def _plateau_oq_text(test_problem_id: str | None, algo: str, cost: float) -> str:
-    """Plain-language stall question for waterfall — the participant decides."""
+    """Plain-language stall question (both modes) — the participant decides."""
     from app.algorithm_catalog import ALGORITHM_PARTICIPANT_NICKNAMES_MAP
 
     nick = ALGORITHM_PARTICIPANT_NICKNAMES_MAP.get(algo, algo)
@@ -1792,6 +1833,7 @@ def _enforce_session_monitors(
     test_problem_id: str | None = None,
     *,
     is_run_acknowledgement: bool = False,
+    is_tutorial_active: bool = False,
 ) -> dict[str, Any]:
     """Server-side state machine: keep the three "what's still missing" rows
     in lockstep with brief state. Three monitors, each idempotent via a stable
@@ -1897,12 +1939,25 @@ def _enforce_session_monitors(
         next_brief, workflow_mode=workflow
     )
     if is_agile_or_demo:
-        if has_algorithm:
+        # The algorithm choice is an ASSUMPTION in agile/demo and must stay
+        # VISIBLE as a row the participant sees and can override — the tutorial
+        # gates on it (P_lk). The carrier-only `search_strategy` term has no
+        # synthesized config-weight row, and the canonical `config-search-
+        # strategy` row is only minted on a panel save (brief→panel doesn't run
+        # on a chat turn), so THIS monitor row is the algorithm's visible
+        # representation on the chat path. So: DON'T drop it the moment the
+        # carrier is set (the old bug — the agent committing GA erased the only
+        # visible assumption). Keep it in lockstep with the committed carrier
+        # algorithm; step aside only when a real `config-search-strategy` row
+        # already shows the choice (e.g. after a panel save).
+        if _has_item("config-search-strategy"):
             _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
-        elif not _has_item(_MONITOR_ITEM_ALGORITHM_ID):
+        else:
+            carrier_algo = _carrier_search_strategy_algorithm(next_brief)
+            _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
             items.append({
                 "id": _MONITOR_ITEM_ALGORITHM_ID,
-                "text": _monitor_algorithm_item_text(test_problem_id),
+                "text": _monitor_algorithm_item_text(test_problem_id, carrier_algo),
                 "kind": "assumption",
                 "source": "agent",
             })
@@ -1921,61 +1976,29 @@ def _enforce_session_monitors(
         _drop_item(_MONITOR_ITEM_ALGORITHM_ID)
 
     # Monitor 4: plateau nudge. When the last couple of completed runs stalled
-    # on the still-configured algorithm, prompt a search-strategy rethink:
-    # waterfall asks the participant (OQ), agile/demo states it as an
-    # assumption the agent can act on. ADD only on a run-acknowledgement turn
-    # so it surfaces "once in a while" (right after a run), not on every chat
-    # message — but DROP it on any turn once the plateau clears (e.g. the
-    # participant switched the algorithm), keeping it self-healing like the
-    # other monitors.
+    # on the still-configured algorithm, suggest a search-strategy rethink via an
+    # OQ — in BOTH workflows (researcher choice: symmetric plateau handling. The
+    # agent used to silently auto-switch in agile; now agile ASKS like waterfall
+    # so the participant owns the call in both). ADD only on a run-ack turn so it
+    # surfaces "once in a while" (right after a run), not on every chat message;
+    # DROP once the plateau clears, keeping it self-healing. SUPPRESSED during the
+    # tutorial (runs are too similar to justify it and it's a learning context) —
+    # drop any lingering plateau OQ/row and skip.
     plateau = _detect_run_plateau(next_brief)
-    if plateau is None:
+    if is_tutorial_active or plateau is None:
         _drop_oq(_MONITOR_OQ_PLATEAU_ID)
         _drop_item(_MONITOR_ITEM_PLATEAU_ID)
     else:
         algo, cost = plateau
-        # Always clear the legacy advisory row / OQ from the other mode so a
-        # workflow switch can't leave a stale one behind.
+        # Clear the legacy agile advisory row (older builds wrote one); the OQ
+        # is the only surface now.
         _drop_item(_MONITOR_ITEM_PLATEAU_ID)
-        if is_agile_or_demo:
-            # Agile = fait accompli: the assistant just switches the search
-            # method to a different one. The change lands on the SINGLE
-            # search-strategy carrier (and so the one ``config-search-strategy``
-            # entry that mirrors it) — no separate plateau row. The participant
-            # can switch back any time. Deterministic so every participant gets
-            # the same intervention. The detector needs two runs on the SAME
-            # algorithm, so after this switch the next plateau can't trigger
-            # until two runs on the new method — no thrashing.
-            _drop_oq(_MONITOR_OQ_PLATEAU_ID)
-            if is_run_acknowledgement:
-                new_algo = _next_search_algorithm(
-                    algo, _port_supported_algorithms(test_problem_id)
-                )
-                carrier = (
-                    next_brief.get("goal_terms", {}).get("search_strategy")
-                    if isinstance(next_brief.get("goal_terms"), dict)
-                    else None
-                )
-                if new_algo and isinstance(carrier, dict):
-                    props = carrier.get("properties")
-                    if not isinstance(props, dict):
-                        props = {}
-                        carrier["properties"] = props
-                    props["algorithm"] = new_algo
-                    log.info(
-                        "Agile plateau auto-switch: search method %s -> %s after stall",
-                        algo,
-                        new_algo,
-                    )
-        else:
-            # Waterfall = ask first: the participant owns the search-strategy
-            # choice (one of the canonical waterfall axes), so suggest via an OQ.
-            if is_run_acknowledgement and not _has_oq(_MONITOR_OQ_PLATEAU_ID):
-                _append_oq(
-                    _MONITOR_OQ_PLATEAU_ID,
-                    _plateau_oq_text(test_problem_id, algo, cost),
-                    "search_strategy",
-                )
+        if is_run_acknowledgement and not _has_oq(_MONITOR_OQ_PLATEAU_ID):
+            _append_oq(
+                _MONITOR_OQ_PLATEAU_ID,
+                _plateau_oq_text(test_problem_id, algo, cost),
+                "search_strategy",
+            )
 
     # No tag-dedup loop is needed any more: foundational-topic OQs from the
     # LLM are stripped at merge time in `merge_problem_brief_patch` (the

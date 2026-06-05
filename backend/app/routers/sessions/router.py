@@ -218,6 +218,29 @@ def _route_oq_answers_through_classifier(
             if not rephrased:
                 next_questions.append(q)
                 continue
+            # Foundational search-strategy answer → commit the STRUCTURED carrier,
+            # not a free-text row. The algorithm choice's canonical home is
+            # ``goal_terms.search_strategy.properties.algorithm`` (mirrored to the
+            # panel + the synthesized ``config-search-strategy`` row). Recorded as
+            # a prose ``item-gathered-from-question-*`` row it would be swept by the
+            # structured-items whitelist on the very next chat turn, flipping
+            # ``brief_mentions_search_strategy`` False and bouncing the OQ back open
+            # — so "Use GA" never stuck (P_lk). Resolve the OQ once the carrier is
+            # set; an answer naming no recognizable method stays open for a retry.
+            if parent_topic == "search_strategy":
+                from app.routers.sessions.derivation import (
+                    _set_search_strategy_algorithm,
+                    _validated_algorithm_name,
+                )
+
+                algo = _validated_algorithm_name(q.get("answer_text")) or _validated_algorithm_name(
+                    rephrased
+                )
+                if algo:
+                    incoming_brief = _set_search_strategy_algorithm(incoming_brief, algo)
+                    continue
+                next_questions.append(_reset_oq_to_open(q))
+                continue
             proposal = getattr(c, "goal_term_proposal", None)
             proposal_key = (
                 proposal.key.strip()

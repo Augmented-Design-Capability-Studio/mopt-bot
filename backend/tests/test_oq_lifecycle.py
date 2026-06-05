@@ -23,6 +23,7 @@ from app.routers.sessions.derivation import (
     _enforce_session_monitors,
     _has_gathered_evidence_for_key,
     _resolve_anchored_provisional_rows,
+    _set_search_strategy_algorithm,
     gate_locked_goal_term_changes,
     gate_unauthorized_search_strategy_commit,
 )
@@ -1258,6 +1259,81 @@ def test_waterfall_gate_ignores_invalid_user_choice():
     )
     # Not a real algorithm name → no authorization → forged carrier stripped.
     assert "search_strategy" not in gated["goal_terms"]
+
+
+def test_set_search_strategy_algorithm_creates_normalize_surviving_carrier():
+    """P_lk: a participant answering the search-strategy OQ ("Use GA") commits a
+    FRESH carrier — there's no agent-committed entry to update. The carrier must
+    be created with the full scalar trio (weight/type/rank), or
+    ``normalize_problem_brief`` drops it as malformed on the very next turn and
+    the OQ bounces back open. An existing entry keeps its own scalars."""
+    base = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={"value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1}},
+            topic_engaged=True,
+        )
+    )
+    out = _set_search_strategy_algorithm(base, "GA")
+    ss = out["goal_terms"]["search_strategy"]
+    assert ss["properties"]["algorithm"] == "GA"
+    assert isinstance(ss["weight"], (int, float))
+    assert isinstance(ss["type"], str) and ss["type"].strip()
+    assert ss["rank"] == 2  # next available after value_emphasis (rank 1)
+    # Survives a normalize round-trip (the malformed-carrier drop is what bit P_lk).
+    renorm = normalize_problem_brief(out)
+    assert "search_strategy" in renorm["goal_terms"]
+    assert (
+        renorm["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+    )
+
+
+def test_agile_algorithm_assumption_row_stays_visible_after_carrier_set():
+    """P_lk (agile): the algorithm is an ASSUMPTION the participant must SEE and
+    can override — the tutorial gates on it. The carrier-only ``search_strategy``
+    term has no synthesized config-weight row, so the monitor's assumption row is
+    its only visible representation on the chat path. Committing the carrier must
+    NOT erase that row (the old bug dropped it the moment ``brief_mentions`` went
+    True, leaving the algorithm invisible). The row tracks the committed
+    algorithm; it survives the items[] whitelist; waterfall still shows an OQ."""
+    from app.routers.sessions.derivation import (
+        _MONITOR_ITEM_ALGORITHM_ID,
+        _MONITOR_OQ_ALGORITHM_ID,
+        _set_search_strategy_algorithm,
+        apply_brief_patch_with_cleanup,
+    )
+
+    base = normalize_problem_brief(
+        _minimal_brief(
+            items=[{"id": "item-gathered-upload", "text": "Uploaded ORDERS.csv",
+                    "kind": "gathered", "source": "upload"}],
+            goal_terms={"value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1}},
+            topic_engaged=True,
+        )
+    )
+    committed = _set_search_strategy_algorithm(base, "SA")  # agent assumed SA
+
+    out, _meta = apply_brief_patch_with_cleanup(
+        base_problem_brief=committed,
+        patch_payload={},
+        workflow_mode="agile",
+        recent_runs_summary=[],
+        test_problem_id="knapsack",
+        user_text="ok",
+    )
+    final = _enforce_session_monitors(out, "agile", test_problem_id="knapsack")
+    algo_rows = [
+        it for it in final["items"] if it.get("id") == _MONITOR_ITEM_ALGORITHM_ID
+    ]
+    assert algo_rows, "agile algorithm assumption row must stay visible"
+    assert algo_rows[0]["kind"] == "assumption"
+    assert "annealing" in algo_rows[0]["text"].lower(), algo_rows[0]["text"]
+    # No OQ in agile (the algorithm is an assumption, not a question).
+    assert not any(q.get("id") == _MONITOR_OQ_ALGORITHM_ID for q in final["open_questions"])
+
+    # Waterfall: no assumption row, an OQ instead.
+    wf = _enforce_session_monitors(base, "waterfall", test_problem_id="knapsack")
+    assert not any(it.get("id") == _MONITOR_ITEM_ALGORITHM_ID for it in wf["items"])
+    assert any(q.get("id") == _MONITOR_OQ_ALGORITHM_ID for q in wf["open_questions"])
 
 
 def test_locked_gate_reverts_change_and_raises_oq_brief_lock():
