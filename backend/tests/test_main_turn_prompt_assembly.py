@@ -205,18 +205,23 @@ EXPECTED_BLOCKS: dict[str, set[str]] = {
 # question's note) into a goal term / goal_summary / open question. Net new
 # behavior, so a small uniform growth; replaced the looser "other rows are
 # natural language" rule.
+# Deliberate +45 on every WATERFALL scenario only (agile/demo unchanged): the
+# waterfall assumption-policy block now tells the agent that a USER-stated
+# primary objective is already `gathered` and must be committed the same turn
+# (like agile), rather than deferred into an open_question — which left the
+# brief with no objective and kept the server goal-monitor OQ up (P_0602).
 WORD_BUDGET_CEILING: dict[str, int] = {
-    "cold_waterfall": 4170,
-    "warm_waterfall": 6051,
+    "cold_waterfall": 4215,
+    "warm_waterfall": 6096,
     "warm_agile": 6268,
     "warm_demo": 6391,
-    "config_save": 6363,
-    "upload_context": 6096,
-    "retry": 6142,
-    "run_ack": 5909,
-    "tutorial": 6308,
-    "answered_oq": 6096,
-    "brief_edit": 6122,
+    "config_save": 6408,
+    "upload_context": 6141,
+    "retry": 6187,
+    "run_ack": 5954,
+    "tutorial": 6353,
+    "answered_oq": 6141,
+    "brief_edit": 6167,
 }
 
 

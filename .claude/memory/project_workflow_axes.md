@@ -29,6 +29,7 @@ When auditing prompts or code:
 - Upload-before-run-invite (master prompt's "Upload warm-up behavior").
 - Claim-implies-patch invariant (`visible_reply_consistency_block` for brief LLM; pre-release probe enforces deterministically).
 - Provenance follows origin, not phrasing (`STUDY_CHAT_HIDDEN_BRIEF_ITEMS_RULES`).
+- A USER-stated fact (esp. a clearly-stated primary objective, "minimize travel time") is `gathered` in BOTH modes and must commit SAME turn — it is NOT "provisional content". Waterfall's "confirm before gathered" gate is ONLY for AGENT-proposed content; deferring a user-stated goal into an OQ strands the brief with no goal_term and leaves the server goal-monitor OQ (`oq-monitor-goal`, drops only on non-empty `goal_terms`) up "as if the user said nothing" (P_0602 — fixed in `STUDY_CHAT_WORKFLOW_WATERFALL` assumption-policy block, NOT via any keyword/seed). Agile already committed, so the bug was waterfall-only.
 - Concept-only turns emit `null` problem_brief_patch (master system prompt).
 - After-run: relate to stated goals; ≤2 config-linked refinements; lead with operational impact (`STUDY_CHAT_RUN_ACK_BASE`).
 - No brief items describing the agent's role / capabilities (`STUDY_CHAT_ITEMS_DISCIPLINE`).

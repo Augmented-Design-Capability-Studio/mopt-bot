@@ -252,9 +252,13 @@ OQ.
 
 ### Assumption policy
 
-DO NOT add `kind: "assumption"` rows. Provisional content goes in
-`open_questions`. Add to `gathered` only after the user confirms in
-chat or via the Definition panel.
+DO NOT add `kind: "assumption"` rows. Content YOU propose is provisional —
+it goes in `open_questions`, reaching `gathered` only after the user
+confirms (chat or panel). But a requirement the USER states is already
+gathered: commit a clearly stated primary objective ("minimize travel
+time") as a `gathered` goal_term the SAME turn (cite it in
+`evidence_item_ids`), like agile — never defer it into an OQ, which leaves
+the brief with no objective.
 
 ### Search-strategy default
 
