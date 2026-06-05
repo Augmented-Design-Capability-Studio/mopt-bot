@@ -475,6 +475,62 @@ def test_agile_runack_missing_assumption():
     assert any(i.category == "runack_invariant_violation" for i in issues)
 
 
+def test_agile_runack_satisfied_by_updated_assumption():
+    """Re-tuning an EXISTING assumption (same id, new weight/text) on a run-ack
+    turn satisfies the agile invariant — it need not be a brand-new row."""
+    issues = verify_brief_consistency(
+        merged_brief={
+            "items": [
+                {
+                    "id": "a1",
+                    "text": "Lateness penalty (weight 5)",
+                    "kind": "assumption",
+                    "source": "agent",
+                },
+            ],
+            "goal_terms": {},
+            "open_questions": [],
+        },
+        base_brief={
+            "items": [
+                {
+                    "id": "a1",
+                    "text": "Lateness penalty (weight 2)",
+                    "kind": "assumption",
+                    "source": "agent",
+                },
+            ],
+            "goal_terms": {},
+            "open_questions": [],
+        },
+        patch={},
+        visible_reply="Run #2 still had late arrivals, so I bumped the lateness penalty to 5.",
+        workflow_mode="agile",
+        is_run_acknowledgement=True,
+    )
+    assert not any(i.category == "runack_invariant_violation" for i in issues)
+
+
+def test_agile_runack_unchanged_assumption_does_not_satisfy():
+    """An unchanged carry-over assumption (same id, identical content) does NOT
+    satisfy the invariant — the turn must reflect something the run revealed."""
+    row = {
+        "id": "a1",
+        "text": "Lateness penalty (weight 2)",
+        "kind": "assumption",
+        "source": "agent",
+    }
+    issues = verify_brief_consistency(
+        merged_brief={"items": [dict(row)], "goal_terms": {}, "open_questions": []},
+        base_brief={"items": [dict(row)], "goal_terms": {}, "open_questions": []},
+        patch={},
+        visible_reply="Run #2 completed with cost 100.",
+        workflow_mode="agile",
+        is_run_acknowledgement=True,
+    )
+    assert any(i.category == "runack_invariant_violation" for i in issues)
+
+
 def test_waterfall_runack_missing_oq():
     issues = verify_brief_consistency(
         merged_brief={
@@ -1325,6 +1381,59 @@ def test_companion_overclaim_does_not_pause_after_retries(monkeypatch):
     )
     # Best-effort retry exhausted, only port_companion left → graceful proceed,
     # NOT a pause. The deterministic companion-OQ gate handles it in apply.
+    assert not [c for c in calls if c.get("state") == "paused"], calls
+    assert not [c for c in calls if c.get("fail")], calls
+    assert any(c.get("state") == "success" for c in calls), calls
+
+
+def test_runack_missing_assumption_does_not_pause_after_retries(monkeypatch):
+    """P_0603 (post-run #7): on an agile run-ack the LLM never adds/updates an
+    assumption row. The retries give it a best-effort chance, but when every
+    attempt still lacks one we must NOT dead-end in a pause — pausing here used
+    to take down the *deterministic* run summary (``consolidate_runs`` runs in
+    apply/S3, which a pause skips) and corrupt plateau detection. The turn must
+    proceed so S3 writes ``brief.runs``."""
+    from app.schemas import ChatTurnResponse
+    from app.services import llm, pipeline_status
+    from app.services.chat_pipeline_runner import _run_verify_brief_stage
+
+    calls: list[dict] = []
+    monkeypatch.setattr(pipeline_status, "update_stage", lambda **k: calls.append(k))
+    monkeypatch.setattr(pipeline_status, "fail_pipeline", lambda **k: calls.append({"fail": True, **k}))
+    monkeypatch.setattr(llm, "check_changes_acknowledged", lambda **k: [])
+
+    # A pure acknowledgement with no new/updated assumption row.
+    ack = ChatTurnResponse(
+        assistant_message="Run #7 completed with cost 1,200 — no constraint violations.",
+        problem_brief_patch=None,
+    )
+    monkeypatch.setattr(llm, "generate_main_turn", lambda **k: ack)
+
+    _run_verify_brief_stage(
+        message_id=0,
+        session_id="runack-no-assumption-regression",
+        turn=ack,
+        user_text="",
+        history_lines=[],
+        api_key="",
+        model_name="",
+        base_problem_brief={"items": [], "goal_terms": {}, "open_questions": []},
+        base_panel=None,
+        workflow_mode="agile",
+        researcher_steers=None,
+        recent_runs_summary=[{"run_number": 7, "cost": 1200.0, "ok": True, "algorithm": "GA"}],
+        is_run_acknowledgement=True,
+        is_brief_edit_ack=False,
+        is_config_save=False,
+        is_upload_context=False,
+        is_answered_open_question=False,
+        is_tutorial_active=False,
+        suppress_runack_invariant=False,
+        test_problem_id="vrptw",
+        gate_status=None,
+    )
+    # Best-effort retry exhausted, only runack_invariant_violation left →
+    # graceful proceed so apply (S3) still consolidates run #7's summary entry.
     assert not [c for c in calls if c.get("state") == "paused"], calls
     assert not [c for c in calls if c.get("fail")], calls
     assert any(c.get("state") == "success" for c in calls), calls

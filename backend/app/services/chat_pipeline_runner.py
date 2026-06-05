@@ -1115,16 +1115,30 @@ def _run_verify_brief_stage(
             turn.__dict__.update(latest_turn.__dict__)
             return
 
-    # All retries exhausted. A leftover `port_companion` issue (the reply
-    # over-claims a companion-bearing term it committed hollow) is NOT a
-    # pause: the LLM populates the carrier only ~half the time, so after a
-    # best-effort retry we hand off to the deterministic gate. Apply (S3)
-    # runs `reconcile_companion_oqs` with the base brief, which drops the
-    # hollow term and parks a natural companion OQ — the participant gets a
-    # structured re-ask instead of a dead-ended pipeline. Only genuinely
-    # blocking issues (anything else) still pause here.
+    # All retries exhausted. Two issue categories are best-effort, NOT
+    # pipeline-blocking — after the retries we proceed so the deterministic
+    # apply stage (S3) still runs:
+    #   * `port_companion` — the reply over-claims a companion-bearing term it
+    #     committed hollow. The LLM populates the carrier only ~half the time,
+    #     so we hand off to S3's `reconcile_companion_oqs` (with base_brief),
+    #     which drops the hollow term and parks a natural companion OQ — the
+    #     participant gets a structured re-ask instead of a dead-ended pipeline.
+    #   * `runack_invariant_violation` — the agile reply didn't add a new
+    #     assumption row (or the waterfall reply didn't add a new OQ). This is a
+    #     soft "assume and progress" / "drive the next iteration" nudge, not a
+    #     correctness gate. Pausing over it used to take down the *deterministic*
+    #     run summary too: `consolidate_runs` (the sole writer of the
+    #     server-owned `brief.runs`) lives in S3, so a pause meant the run never
+    #     got its summary entry, and there's no backfill (observed after run #7
+    #     in P_0603). The LLM still gets the retry feedback above — so it adds
+    #     the assumption most of the time — but we no longer dead-end the turn,
+    #     and lose the run summary, when it doesn't.
+    # Only genuinely blocking issues (anything else) still pause here.
+    NON_BLOCKING_CATEGORIES = {"port_companion", "runack_invariant_violation"}
     blocking_issues = [
-        i for i in latest_issues if getattr(i, "category", None) != "port_companion"
+        i
+        for i in latest_issues
+        if getattr(i, "category", None) not in NON_BLOCKING_CATEGORIES
     ]
     if not blocking_issues:
         _persist_turn_for_resume(message_id, latest_turn)

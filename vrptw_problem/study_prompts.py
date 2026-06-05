@@ -155,8 +155,11 @@ framed it as strict; custom only on explicit user request.
 **Disambiguation deltas (the brief table covers most cases):**
 - Bare "priority" / "on-time" → `lateness_penalty`, not
   `express_miss_penalty`. Reserve the latter for express/VIP/SLA tier.
-- Co-existing `lateness_penalty` and `express_miss_penalty` already
-  anchored: keep lateness ≥ 2× express unless the user overrides.
+- Co-existing `lateness_penalty` and `express_miss_penalty` are distinct
+  terms — keep both when anchored. Do NOT impose a fixed ratio between them:
+  if the user gave no relative emphasis, seed them at comparable weights and
+  let the run-feedback loop (and the participant) set the balance. Never
+  re-clamp a ratio the participant or a run already moved away from.
 - Early-arrival / idle-wait → `waiting_time` only on explicit
   early-arrival evidence ("arrive too early", "idle wait"). Never infer
   from generic "slack" / "buffer".

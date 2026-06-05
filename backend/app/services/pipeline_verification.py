@@ -431,22 +431,20 @@ def verify_brief_consistency(
     # Caller sets ``suppress_runack_invariant`` for those turns; we skip the
     # mode-specific check below. Demo always skipped (see comment further down).
     if is_run_acknowledgement and not suppress_runack_invariant:
-        new_items = _new_items(base_brief, merged_brief)
         new_oqs = _new_open_questions(base_brief, merged_brief)
         if mode == "agile":
-            has_new_assumption = any(
-                isinstance(it, dict)
-                and str(it.get("kind") or "").strip().lower() == "assumption"
-                for it in new_items
-            )
-            if not has_new_assumption:
+            # Satisfied by adding a NEW assumption row OR updating an existing
+            # one (re-tuning a weight/threshold after the run counts just as
+            # much as adding a fresh assumption — both reflect "what the run
+            # revealed / what to try next").
+            if not _agile_assumption_added_or_updated(base_brief, merged_brief):
                 issues.append(
                     PipelineIssue(
                         category="runack_invariant_violation",
                         severity="error",
                         subject="items",
                         message=(
-                            "Agile run acknowledgements must add at least one "
+                            "Agile run acknowledgements must add or update at least one "
                             "`kind: \"assumption\"` row summarizing what the run revealed "
                             "or what to try next."
                         ),
@@ -616,22 +614,69 @@ def compute_material_brief_changes(
     return out
 
 
-def _new_items(
+def _assumption_content_signature(item: dict[str, Any]) -> tuple[Any, ...]:
+    """Content fingerprint of an assumption row, excluding its ``id``.
+
+    Used to tell a genuine *update* (same id, changed text/weight/properties)
+    from a no-op carry-over of an unchanged row.
+    """
+    props = item.get("properties")
+    try:
+        props_sig = json.dumps(props, sort_keys=True, default=str) if props is not None else ""
+    except Exception:  # pragma: no cover — defensive
+        props_sig = repr(props)
+    return (
+        str(item.get("text") or "").strip(),
+        str(item.get("source") or "").strip().lower(),
+        str(item.get("weight") if item.get("weight") is not None else "").strip(),
+        props_sig,
+    )
+
+
+def _agile_assumption_added_or_updated(
     base_brief: dict[str, Any] | None,
     merged_brief: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    base_ids = {
-        str(it.get("id") or "")
-        for it in (base_brief.get("items") if isinstance(base_brief, dict) else None) or []
-        if isinstance(it, dict)
-    }
-    out: list[dict[str, Any]] = []
-    for it in (merged_brief.get("items") if isinstance(merged_brief, dict) else None) or []:
-        if not isinstance(it, dict):
-            continue
-        if str(it.get("id") or "") not in base_ids:
-            out.append(it)
-    return out
+) -> bool:
+    """True when this turn ADDS a new ``kind:"assumption"`` row or UPDATES the
+    content of an existing one.
+
+    The agile run-ack invariant is really "the reply reflected what the run
+    revealed / what to try next." Re-tuning an existing assumption (e.g.
+    bumping a lateness-penalty weight after more time-window violations)
+    satisfies that just as well as adding a brand-new row — so we count both.
+    Assumption rows are matched by ``id``: a new id is an add; a shared id
+    whose content signature changed is an update. An id-less assumption row in
+    the merged brief that isn't a verbatim carry-over is treated as an add.
+    """
+
+    def _sig_map(brief: dict[str, Any] | None) -> tuple[dict[str, tuple[Any, ...]], list[tuple[Any, ...]]]:
+        keyed: dict[str, tuple[Any, ...]] = {}
+        idless: list[tuple[Any, ...]] = []
+        for it in (brief.get("items") if isinstance(brief, dict) else None) or []:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("kind") or "").strip().lower() != "assumption":
+                continue
+            sig = _assumption_content_signature(it)
+            iid = str(it.get("id") or "").strip()
+            if iid:
+                keyed[iid] = sig
+            else:
+                idless.append(sig)
+        return keyed, idless
+
+    base_map, base_idless = _sig_map(base_brief)
+    merged_map, merged_idless = _sig_map(merged_brief)
+    # An id-less assumption row that wasn't present verbatim in base is a fresh add.
+    for sig in merged_idless:
+        if sig not in base_idless:
+            return True
+    for iid, sig in merged_map.items():
+        if iid not in base_map:
+            return True  # added
+        if base_map[iid] != sig:
+            return True  # updated
+    return False
 
 
 def _new_open_questions(

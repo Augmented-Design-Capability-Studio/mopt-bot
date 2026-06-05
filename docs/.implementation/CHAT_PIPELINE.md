@@ -65,7 +65,7 @@ IssueCategory:
   algorithm_committed_missing_carrier       # reply names algorithm but goal_terms.search_strategy.properties.algorithm empty
   algorithm_carrier_without_commit          # carrier set but reply doesn't surface it
   workflow_invariant_violation              # waterfall has assumption row, etc.
-  runack_invariant_violation                # agile run-ack missing assumption, waterfall missing OQ
+  runack_invariant_violation                # agile run-ack added/updated no assumption row, waterfall added no OQ (best-effort: drives retries but does NOT pause after exhaustion, so the deterministic run summary still lands)
   port_companion                            # per-port structural concern (e.g. VRPTW driver-pref structured/prose mismatch)
   brief_panel_mismatch                      # S5 only: goal_terms key set or weight mismatch
   brief_panel_algorithm_mismatch            # S5 only: panel algorithm != brief algorithm
