@@ -29,7 +29,10 @@ export function anchorForTutorialStep(stepId: TutorialStepId, editMode: Tutorial
     case "update-definition":
       return editMode === "definition" ? "definition-save" : "definition-tab";
     case "inspect-config":
-      return "config-tab";
+      // Mirror update-config: point at the Save button once the participant is
+      // editing the config. Before that (config tab open, not yet editing) the
+      // shell spotlights the step's `highlightConstraintKey` dropdown instead.
+      return editMode === "config" ? "config-save" : "config-tab";
     case "first-run":
       return "run-optimize";
     case "read-run-summary":

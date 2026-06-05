@@ -28,9 +28,9 @@ function knapsackStepOverrides(
       : "Tell the assistant about the knapsack task in plain language. The agent will work through the setup with you — answering its open questions or refining what it gathers as you go. You can paste the starter prompt below to skip typing.";
 
   const updateDefinitionBody = isWaterfall
-    ? "Click the **Definition** tab. Each open question has an answer field — type your answer inline. Answering them is required before the first run is unlocked. You can also edit any Gathered row, then click **Save**."
+    ? "Click the **Definition** tab. Each open question has an answer field — type your answer inline. For the **search strategy** question, answer **Use GA** (genetic search) to set the algorithm. Answering every open question is required before the first run is unlocked. You can also edit any Gathered row, then click **Save**."
     : isAgile
-      ? "Click the **Definition** tab. Promote any agent assumption you agree with using the green ✓ button, edit a row to refine it if you want, then click **Save**."
+      ? "Click the **Definition** tab. Promote any agent assumption you agree with using the green ✓ button — including the **search strategy** assumption (genetic search / GA): click its green ✓ to lock it in. Edit a row to refine it if you want, then click **Save**."
       : "Click the **Definition** tab. Answer any open questions inline, or promote an assumption with the green ✓ button — refine any row as needed, then click **Save**. (Open questions here are advisory — they don't block your run.)";
 
   const firstRunBody = isWaterfall
@@ -51,7 +51,8 @@ function knapsackStepOverrides(
     },
     "inspect-config": {
       title: "Step 4 - Set up Run 1",
-      body: "Click the **Problem Config** tab. On the `capacity_overflow` row, switch the constraint type to **Custom** and set the weight to `1`, then **Save**. We're deliberately keeping the capacity penalty weak so the solver packs over the limit — you'll see what infeasibility looks like next. (Optional: drag-rank the goal terms to set their relative priority — top of the list carries more weight.) The bubble advances once the save lands.",
+      body: "Click the **Problem Config** tab. On the `capacity_overflow` row, use the highlighted **type** dropdown to switch the constraint type to **Custom** — the spotlight then moves to the **weight box**, where you set the value to `1` — then **Save**. We're deliberately keeping the capacity penalty weak so the solver packs over the limit — you'll see what infeasibility looks like next. (Optional: drag-rank the goal terms to set their relative priority — top of the list carries more weight.) The bubble advances once the save lands.",
+      highlightConstraintKey: "capacity_overflow",
     },
     "first-run": {
       title: "Step 5 - First run (probably infeasible)",
@@ -66,7 +67,8 @@ function knapsackStepOverrides(
     },
     "update-config": {
       title: "Step 9 - Bump capacity penalty (Run 2 fix)",
-      body: "Back on the **Problem Config** tab, switch the `capacity_overflow` row to **Custom** and raise the weight (try `100`), then **Save**. Custom is the only mode where you set the weight number directly, and your value sticks — agents won't quietly overwrite it later. (Switching to **Hard** also works if you want the limit strictly enforced.)",
+      body: "Back on the **Problem Config** tab, the `capacity_overflow` row is still **Custom** from Run 1 — use the highlighted **weight box** to raise the weight (try `100`), then **Save**. Custom is the only mode where you set the weight number directly, and your value sticks — agents won't quietly overwrite it later. (Prefer a strict cap? Switch the type to **Hard** instead.)",
+      highlightConstraintKey: "capacity_overflow",
     },
     "second-run": {
       title: "Step 10 - Run again (should be feasible)",

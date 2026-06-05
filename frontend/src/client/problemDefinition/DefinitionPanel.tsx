@@ -191,7 +191,9 @@ function DefinitionSection({
                             aria-label="Promote to gathered info"
                             title="Promote to gathered info"
                             onClick={() => {
-                              onEnsureDefinitionEditing();
+                              // Edit-mode entry + focus/scroll to the promoted row
+                              // is handled inside the promote handler so focus
+                              // lands on the row, not the goal summary.
                               onPromoteItem(item.id);
                             }}
                           >
@@ -328,6 +330,10 @@ export function DefinitionPanel({
 }: DefinitionPanelProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingScrollToItemIdRef = useRef<string | null>(null);
+  // Item whose inline textarea should take focus after the next items render
+  // (set when promoting an assumption — focus should land on the promoted row,
+  // not fall back to the goal summary via useLockedEditFocus).
+  const pendingFocusItemIdRef = useRef<string | null>(null);
   const deletedMarkerTimeoutRef = useRef<number | null>(null);
   const [deletedMarker, setDeletedMarker] = useState<{
     section: "gathered" | "assumption" | "open";
@@ -376,11 +382,22 @@ export function DefinitionPanel({
   const { flashClassForItem, flashClassForQuestion } = useDefinitionExternalFlash(problemBrief, editable, showDeletedMarker);
 
   useLayoutEffect(() => {
-    const id = pendingScrollToItemIdRef.current;
-    if (!id) return;
+    const scrollId = pendingScrollToItemIdRef.current;
+    const focusId = pendingFocusItemIdRef.current;
+    if (!scrollId && !focusId) return;
     pendingScrollToItemIdRef.current = null;
+    pendingFocusItemIdRef.current = null;
     requestAnimationFrame(() => {
-      document.getElementById(`definition-item-${id}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      if (focusId) {
+        const textarea = document.getElementById(`definition-inline-text-${focusId}`);
+        if (textarea instanceof HTMLTextAreaElement) textarea.focus({ preventScroll: true });
+      }
+      const scrollTarget = scrollId ?? focusId;
+      if (scrollTarget) {
+        document
+          .getElementById(`definition-item-${scrollTarget}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     });
   }, [problemBrief.items]);
 
@@ -452,6 +469,12 @@ export function DefinitionPanel({
   }
 
   function promoteAssumptionToGathered(id: string) {
+    // Focus + reveal the promoted row once it re-renders in Gathered Info. Enter
+    // edit mode via the raw handler (not ensureDefinitionEditingFromLocked) so
+    // useLockedEditFocus doesn't grab focus for the goal summary instead.
+    pendingScrollToItemIdRef.current = id;
+    pendingFocusItemIdRef.current = id;
+    onEnsureDefinitionEditing();
     persist(
       updateItems(problemBrief, (items) =>
         items.map((item) =>

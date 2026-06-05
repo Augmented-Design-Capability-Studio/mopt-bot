@@ -341,6 +341,7 @@ export function ClientShell({
   const [bubbleStyle, setBubbleStyle] = useState<BubbleStyle>({ right: 16, bottom: 16 });
   const [bubblePinned, setBubblePinned] = useState(false);
   const [tabSwitchRequest, setTabSwitchRequest] = useState<{ nonce: number; target: "definition" | "config" } | null>(null);
+  const [activeConfigTab, setActiveConfigTab] = useState<"definition" | "config">("definition");
   const bubbleRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
   const prevTutorialOverrideRef = useRef<TutorialStepId | null>(null);
@@ -362,6 +363,40 @@ export function ClientShell({
     return anchorForTutorialStep(activeTutorialStep.id, editMode);
   }, [activeTutorialStep, editMode]);
 
+  // Ordered CSS selectors the bubble + highlight try, first match wins. When a
+  // step names a `highlightConstraintKey` and the participant is on the config
+  // tab, spotlight where they need to act on that row:
+  //   - the Custom weight box (`weight-<key>`) when it's present — i.e. the type
+  //     is already Custom, so the value is what's left to set (step 9, and step 4
+  //     after the switch lands); else
+  //   - the constraint-type dropdown (`constraint-<key>`) so they can switch to
+  //     Custom first.
+  // The weight box only renders once the type is Custom, so its DOM presence is
+  // the signal — as the dropdown flips to Custom the box appears and the
+  // spotlight follows it (the effects re-run on `configText` edits). Falls back
+  // to the step's normal anchor when neither control is on screen.
+  const tutorialTargetSelectors = useMemo<string[]>(() => {
+    if (!activeTutorialAnchor) return [];
+    const anchorSelector = `[data-tutorial-anchor="${activeTutorialAnchor}"]`;
+    const constraintKey = activeTutorialStep?.highlightConstraintKey;
+    if (constraintKey && activeConfigTab === "config") {
+      return [
+        `[data-focus-key="weight-${constraintKey}"]`,
+        `[data-focus-key="constraint-${constraintKey}"]`,
+        anchorSelector,
+      ];
+    }
+    return [anchorSelector];
+  }, [activeTutorialAnchor, activeTutorialStep, activeConfigTab]);
+
+  const queryTutorialTarget = useCallback((): HTMLElement | null => {
+    for (const selector of tutorialTargetSelectors) {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (el) return el;
+    }
+    return null;
+  }, [tutorialTargetSelectors]);
+
   // Bubble visibility is now driven entirely by the researcher toggle plus
   // step progression. There is no participant-side dismiss affordance — the
   // wrap-up step's "Got it!" button is the only user-driven way to end the
@@ -381,7 +416,7 @@ export function ClientShell({
     }
     if (bubblePinned) return;
     const computePosition = () => {
-      const target = document.querySelector<HTMLElement>(`[data-tutorial-anchor="${activeTutorialAnchor}"]`);
+      const target = queryTutorialTarget();
       const bubble = bubbleRef.current;
       if (!target || !bubble) {
         setBubbleStyle({ right: 16, bottom: 16 });
@@ -423,7 +458,9 @@ export function ClientShell({
       window.removeEventListener("resize", computePosition);
       window.removeEventListener("scroll", computePosition, true);
     };
-  }, [activeTutorialAnchor, bubblePinned, showTutorial, tutorialEnabled]);
+    // `configText` is a dep so the bubble re-anchors when a live config edit
+    // (e.g. switching the type to Custom) changes which control is on screen.
+  }, [activeTutorialAnchor, queryTutorialTarget, configText, bubblePinned, showTutorial, tutorialEnabled]);
 
   useEffect(() => {
     // Step changes should re-anchor to the new focus target rather than preserving dragged pin position.
@@ -448,11 +485,13 @@ export function ClientShell({
 
   useEffect(() => {
     if (!tutorialEnabled || !showTutorial || !activeTutorialAnchor) return;
-    const target = document.querySelector<HTMLElement>(`[data-tutorial-anchor="${activeTutorialAnchor}"]`);
+    const target = queryTutorialTarget();
     if (!target) return;
     target.classList.add("tutorial-target-highlight");
     return () => target.classList.remove("tutorial-target-highlight");
-  }, [activeTutorialAnchor, showTutorial, tutorialEnabled]);
+    // `configText` dep: re-run so the highlight moves off the type dropdown and
+    // onto the Custom weight box once the type switch lands.
+  }, [activeTutorialAnchor, queryTutorialTarget, configText, showTutorial, tutorialEnabled]);
 
   const handleSaveDefinitionEdit = useCallback(async () => {
     await onSaveDefinitionEdit();
@@ -684,6 +723,7 @@ export function ClientShell({
                     : null;
               if (tutorialPatch) void onSetParticipantTutorialState?.(tutorialPatch);
             }}
+            onActiveTabChange={setActiveConfigTab}
             tabSwitchNonce={tabSwitchRequest?.nonce}
             tabSwitchTarget={tabSwitchRequest?.target}
           />

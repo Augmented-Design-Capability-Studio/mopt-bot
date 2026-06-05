@@ -39,18 +39,6 @@ Do NOT use system/global `python` or `pip` when working in this repo.
 ---
 
 ## 5. Preserve agile vs. waterfall workflow differences (`workflow-mode-differentiation.mdc`, alwaysApply)
-`agile` and `waterfall` are intentional study variables. When changing workflow logic, prompts, UX, or session state:
-- Keep `session.workflow_mode` as a first-class input
-- Do NOT collapse the two modes into one generic behavior (unless user explicitly asks)
-- Consider differences in: prompts, backend flow, gating, defaults, nudges, visible UI language/controls
-- New workflow-related features must make a deliberate choice: same in both modes, or different — encode it explicitly
-- If a change affects workflow semantics, update `README.md` and `AI_INSTRUCTIONS.md`
-**Why:** Agile vs. waterfall is the primary study IV. Collapsing them would corrupt the study.
-**How to apply:** Before any workflow-touching change, ask: does this treat both modes the same? Is that intentional?
+`agile` and `waterfall` are the primary study IV — keep `session.workflow_mode` a first-class input and never collapse the two modes into one generic behavior (unless the user explicitly asks). The canonical axes the modes may differ on, plus the symmetry rules for everything else, live in [[project_workflow_axes]]. If a change affects workflow semantics, update `README.md` and `AI_INSTRUCTIONS.md`.
 
----
-
-## 6. `live_gemini` test failures may be key/network — not product bugs
-Tests in `backend/tests/test_live_gemini.py` (marker `live_gemini`) call the real Gemini API. They auto-skip without a key, and once one fails for an auth or connection reason the rest of the live tests in the same session are auto-skipped to save quota. Setup: `backend/.secrets/gemini_api_key` (file, gitignored) **or** the `GEMINI_API_KEY` env var.
-**Why:** Without this context, an agent debugging a `live_gemini` failure may chase phantom code bugs.
-**How to apply:** When a `live_gemini` test fails, first confirm the key file exists, is non-empty, and isn't expired/revoked before assuming the production code regressed. See `backend/.secrets/README.md`.
+> Note: the `live_gemini` test-failure guidance that used to live here is already in `CLAUDE.md` ("Live Gemini tests") — kept there to avoid duplication.

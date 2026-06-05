@@ -43,6 +43,14 @@ export type TutorialStep = {
   title: string;
   body: string;
   actions?: TutorialAction[];
+  /**
+   * Optional goal-term key (e.g. `"capacity_overflow"`) whose constraint-type
+   * dropdown the tutorial bubble should spotlight while the participant is on
+   * the Problem Config tab for this step. The shell resolves it to the row's
+   * `data-focus-key="constraint-<key>"` element. Problem-specific — only set by
+   * steps that ask the participant to change a particular row's type.
+   */
+  highlightConstraintKey?: string;
 };
 
 export type TutorialCompletionByStepId = Record<TutorialStepId, boolean>;
@@ -52,7 +60,9 @@ export type TutorialCompletionByStepId = Record<TutorialStepId, boolean>;
  * default steps. `id` is implicit (the map key); only `title`, `body`, and
  * `actions` can be overridden — anchors and completion gating stay default.
  */
-export type TutorialStepOverride = Partial<Pick<TutorialStep, "title" | "body" | "actions">>;
+export type TutorialStepOverride = Partial<
+  Pick<TutorialStep, "title" | "body" | "actions" | "highlightConstraintKey">
+>;
 
 /**
  * Per-problem tutorial content surface. Problem modules export this on their
