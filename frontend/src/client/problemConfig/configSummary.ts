@@ -129,13 +129,12 @@ export function configChangeDetailedSummary(
         const prevTypeRaw = (prev as Record<string, unknown>)?.type;
         const prevType = typeof prevTypeRaw === "string" ? prevTypeRaw : "";
         // Cascade suppression: ``handleReorder`` (ProblemConfigBlocks.tsx)
-        // rewrites weights for ALL objective/soft terms when any rerank
-        // happens, and explicitly skips ``hard``/``custom`` types. So a
-        // weight change is attributable to cascade iff the save involved
-        // a rerank AND the key's type falls inside that rewrite scope.
-        // Hard/custom weight changes are always user-driven.
-        const suppressWeightAsCascade =
-          anyRankChanged && (prevType === "objective" || prevType === "soft");
+        // re-nudges weights for ALL non-``custom`` terms (objective/soft/hard)
+        // when any rerank happens, skipping only ``custom`` and locked terms.
+        // So a weight change is attributable to the rerank cascade iff the save
+        // involved a rerank AND the key isn't ``custom``. Custom weight changes
+        // are always user-driven.
+        const suppressWeightAsCascade = anyRankChanged && prevType !== "custom";
         if (stableJSON(prevCmp) !== stableJSON(nextCmp)) {
           const fieldLines = goalTermFieldDiffLines(
             key, prevCmp, nextCmp,

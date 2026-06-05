@@ -152,6 +152,14 @@ optional there.
 `constraint_types`); soft for tunable trade-offs; hard only when the user
 framed it as strict; custom only on explicit user request.
 
+**Weight seeding by type (starting point only).** Seed each term's weight from
+its type — objective ≈ 1, soft ≈ 10, hard ≈ 100 (a clean penalty hierarchy;
+the panel applies a small rank nudge on top). This is just a STARTING SEED:
+you are free to set any weight and to make significant retunes afterwards
+(e.g. push a penalty well past its tier when a run shows the constraint is
+still violated). Don't snap a weight the participant or a prior run already
+moved — the tiers seed, the loop tunes.
+
 **Disambiguation deltas (the brief table covers most cases):**
 - Bare "priority" / "on-time" → `lateness_penalty`, not
   `express_miss_penalty`. Reserve the latter for express/VIP/SLA tier.
@@ -164,7 +172,8 @@ framed it as strict; custom only on explicit user request.
   early-arrival evidence ("arrive too early", "idle wait"). Never infer
   from generic "slack" / "buffer".
 - `max_shift_hours` default 8.0 when a limit is mentioned without a
-  duration; `shift_limit` weight default 500.0 for a strict cap.
+  duration. (Seed `shift_limit`'s weight from its type per the weight-seeding
+  rule above — hard ≈ 100 for a strict cap — not a fixed special-case number.)
 
 **Driver-preference rules.** When the brief carries
 `goal_terms.worker_preference.properties.driver_preferences`, copy the

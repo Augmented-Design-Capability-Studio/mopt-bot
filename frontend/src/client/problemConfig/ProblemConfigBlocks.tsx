@@ -14,10 +14,27 @@ import { parseBaseProblemConfig, serializeBaseProblemConfig } from "@problemConf
 import type { BaseProblemBlock, ConstraintType } from "@problemConfig/types";
 import { getProblemModule } from "../problemRegistry";
 
-const HARD_WEIGHT = 100;
-const SOFT_WEIGHTS_BY_RANK = [5, 3, 2, 1.5, 1, 0.5, 0.25];
-function softWeightForRank(rankIndex: number): number {
-  return SOFT_WEIGHTS_BY_RANK[Math.min(rankIndex, SOFT_WEIGHTS_BY_RANK.length - 1)] ?? 0.25;
+// Type-tier base weights. The participant picks a *type* (objective/soft/hard)
+// and the weight is derived from it — a clean 1/10/100 penalty hierarchy: a unit
+// of the objective costs 1, breaking a soft constraint ~10×, a hard one ~100×.
+// "custom" is the manual escape hatch (the participant types the number).
+const TIER_BASE_WEIGHT: Record<"objective" | "soft" | "hard", number> = {
+  objective: 1,
+  soft: 10,
+  hard: 100,
+};
+
+// Rank applies a small SYMMETRIC nudge around the tier base so reordering
+// produces small, visible shifts in BOTH directions (higher rank → up, lower
+// rank → down) without ever crossing into another tier. Centered on the middle
+// rank: top term ×(1+RANK_NUDGE), bottom ×(1−RANK_NUDGE), middle ×1. The ±10%
+// band stays well inside the 10× gap between tiers, so a nudged hard term
+// (90–110) never collides with a nudged soft term (9–11).
+const RANK_NUDGE = 0.1;
+function rankNudgeFactor(rankIndex: number, count: number): number {
+  if (count <= 1 || rankIndex < 0) return 1;
+  const mid = (count - 1) / 2;
+  return 1 + RANK_NUDGE * ((mid - rankIndex) / mid);
 }
 
 function orderedDisplayWeightKeys(
@@ -61,6 +78,8 @@ export type ProblemConfigBlocksProps = {
   onInteractionStart?: () => void;
   /** From GET /meta/test-problems for `session.test_problem_id`; null uses empty labels. */
   problemMeta?: TestProblemMeta | null;
+  /** Accepted for call-site compatibility but no longer used: weight suggestion
+   * is now a pure function of (type, rank), with no run/chat-derived inputs. */
   runs?: RunResult[];
   messages?: Message[];
 };
@@ -71,8 +90,6 @@ export function ProblemConfigBlocks({
   editable,
   onInteractionStart,
   problemMeta = null,
-  runs = [],
-  messages = [],
 }: ProblemConfigBlocksProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const { markLockedInteraction } = useLockedEditFocus({
@@ -169,81 +186,17 @@ export function ProblemConfigBlocks({
     onChange(serializeBaseProblemConfig(updatedOuterRaw, hasProblemKey, nextProblem));
   }
 
-  function latestCompletedRun(): RunResult | null {
-    for (let i = runs.length - 1; i >= 0; i -= 1) {
-      const run = runs[i];
-      if (run?.ok && run.result && run.request?.problem) return run;
-    }
-    return null;
-  }
-
-  function contributionMagnitudeForKey(key: string, run: RunResult | null): number {
-    if (!run?.result || !run.request?.problem) return 0;
-    const runProblem = run.request.problem as Record<string, unknown>;
-    const runWeights = (runProblem.weights ?? {}) as Record<string, unknown>;
-    const w = Number(runWeights[key]);
-    if (!Number.isFinite(w) || w === 0) return 0;
-    const r = run.result;
-    switch (key) {
-      case "travel_time":
-        return Math.abs(w * Number(r.metrics.total_travel_minutes ?? 0));
-      case "shift_limit":
-      case "shift_overtime":
-        return Math.abs(w * Number(r.metrics.shift_overtime_minutes ?? 0));
-      case "lateness_penalty":
-        return Math.abs(w * Number(r.violations.time_window_minutes_over ?? 0));
-      case "capacity_penalty":
-        return Math.abs(w * Number(r.violations.capacity_units_over ?? 0));
-      case "workload_balance":
-        return Math.abs(w * Number(r.metrics.workload_variance ?? 0));
-      case "worker_preference": {
-        const prefUnits = Number(r.metrics.driver_preference_penalty ?? r.metrics.driver_preference_units ?? 0);
-        return Math.abs(w * prefUnits);
-      }
-      case "express_miss_penalty":
-        return Math.abs(w * Number(r.violations.priority_deadline_misses ?? 0));
-      case "waiting_time":
-        return Math.abs(w * Number((r as unknown as { metrics?: { wait_minutes_total?: number } }).metrics?.wait_minutes_total ?? 0));
-      default:
-        return 0;
-    }
-  }
-
-  function chatEmphasisBoost(key: string): number {
-    if (messages.length === 0) return 1;
-    const recent = messages
-      .filter((m) => m.role === "user")
-      .slice(-12)
-      .map((m) => m.content.toLowerCase())
-      .join(" ");
-    if (!recent.trim()) return 1;
-    const lexicon: Record<string, RegExp> = {
-      travel_time: /\b(travel|distance|fuel|route time|mileage)\b/g,
-      shift_limit: /\b(shift|overtime|over[- ]?time|hours|workday|max shift)\b/g,
-      lateness_penalty: /\b(deadline|late|lateness|on[- ]?time|time window|punctual)\b/g,
-      capacity_penalty: /\b(capacity|overflow|overload|load limit|truck load)\b/g,
-      workload_balance: /\b(balance|variance|fairness|even workload|equal routes)\b/g,
-      worker_preference: /\b(preference|driver preference|worker preference|preferred)\b/g,
-      express_miss_penalty: /\b(express|urgent|vip|sla|priority[-\s]?orders?|rush|critical)\b/gi,
-      waiting_time: /\b(wait|idle|idling|queue)\b/g,
-    };
-    const matches = [...recent.matchAll(lexicon[key] ?? /$^/g)].length;
-    return 1 + Math.min(0.5, matches * 0.08);
-  }
-
+  // Weight is a deterministic function of (type, rank): the type sets the tier
+  // (1/10/100) and rank applies a small symmetric nudge. No hidden inputs —
+  // earlier versions also folded in the last run's cost share and a regex
+  // keyword-match on chat messages, which made the number unexplainable and
+  // moved weights behind the participant's back. The agent still retunes
+  // explicitly after runs (visible + attributed); this surface just derives a
+  // clean starting/edited value from the type and order the participant set.
   function suggestedWeightForType(key: string, type: ConstraintType, rankIndex: number): number {
-    if (type === "hard") return HARD_WEIGHT;
     if (type === "custom") return problem.weights[key] ?? 1;
-    const base = softWeightForRank(rankIndex >= 0 ? rankIndex : 0);
-    const latestRun = latestCompletedRun();
-    const ownContribution = contributionMagnitudeForKey(key, latestRun);
-    const allContrib =
-      displayWeightKeys.reduce((sum, k) => sum + contributionMagnitudeForKey(k, latestRun), 0) || 0;
-    const contributionRatio = allContrib > 0 ? ownContribution / allContrib : 0;
-    const contributionAdjust = contributionRatio > 0.45 ? 0.75 : contributionRatio < 0.08 ? 1.2 : 1;
-    const typeAdjust = type === "objective" ? 1.1 : 1;
-    const chatAdjust = chatEmphasisBoost(key);
-    const suggested = base * contributionAdjust * typeAdjust * chatAdjust;
+    const base = TIER_BASE_WEIGHT[type] ?? TIER_BASE_WEIGHT.objective;
+    const suggested = base * rankNudgeFactor(rankIndex, displayWeightKeys.length);
     return Math.max(0.1, Math.round(suggested * 100) / 100);
   }
 
@@ -283,10 +236,9 @@ export function ProblemConfigBlocks({
         delete currentConstraintTypes[key]; // "objective" is implicit; "soft" stored below
         if (type === "soft") currentConstraintTypes[key] = "soft";
       } else if (type === "hard") {
-        // Hard weights are fixed to HARD_WEIGHT and ``handleReorder`` already
-        // skips ``hard``-typed terms when cascading suggested weights, so the
-        // lock flag has no functional effect here. Don't auto-lock — leave
-        // the existing lock state alone (user can lock manually if they want).
+        // Hard sits in the top tier (~100) but is still rank-nudged, so a hard
+        // term can move up or down a little with its priority. Don't auto-lock —
+        // leave the existing lock state alone (user can lock manually if they want).
         newWeight = suggestedWeightForType(key, type, rankIndex);
         currentConstraintTypes[key] = "hard";
       } else {
@@ -306,17 +258,33 @@ export function ProblemConfigBlocks({
 
   function handleReorder(newOrder: string[]) {
     runEditingAction(() => {
+      const prevOrder = displayWeightKeys;
+      const count = newOrder.length;
       const newWeights = { ...problem.weights };
-      newOrder.forEach((key, idx) => {
+      newOrder.forEach((key, newIdx) => {
         // Lock and type are independent: don't infer "custom" from a locked
-        // term. A locked objective stays an objective; only its lock protects
-        // its value, which the reorder weight-suggestion already respects
-        // because we re-suggest by type, not by lock.
+        // term. A locked term's value is protected; custom is user-managed.
         const type = problem.constraint_types[key] ?? "objective";
-        if ((type === "objective" || type === "soft") && !problem.locked_goal_terms.includes(key)) {
-          newWeights[key] = suggestedWeightForType(key, type, idx);
+        if (type === "custom" || problem.locked_goal_terms.includes(key)) return;
+        // Re-apply ONLY the rank component, RELATIVE to the current weight —
+        // never reset to the tier base. The deterministic tier×nudge is just a
+        // STARTING seed (set when the participant picks a type); the agent and
+        // participant are free to move a weight far from it, and those free /
+        // significant adjustments must survive a reorder. So we swap out the old
+        // rank factor and swap in the new one (objective/soft/hard alike), which
+        // shifts the weight a little with its priority without clobbering the
+        // magnitude. Falls back to a fresh seed only when there's no usable
+        // current value.
+        const current = problem.weights[key];
+        if (!Number.isFinite(current)) {
+          newWeights[key] = suggestedWeightForType(key, type, newIdx);
+          return;
         }
-        // hard, custom, and locked weights stay unchanged
+        const prevIdx = prevOrder.indexOf(key);
+        const prevFactor = rankNudgeFactor(prevIdx, count);
+        const nextFactor = rankNudgeFactor(newIdx, count);
+        newWeights[key] =
+          Math.max(0.1, Math.round((current as number) * (nextFactor / prevFactor) * 100) / 100);
       });
       updateProblem({
         goal_term_order: newOrder,

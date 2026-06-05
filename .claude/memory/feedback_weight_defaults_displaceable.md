@@ -37,6 +37,29 @@ the loop set the balance. Removed the VRPTW 2× lateness/express rule (June
 (agent proposes, loop + participant decide) and the run-ack /
 plateau feedback machinery in [[project_workflow_axes]].
 
+**Implemented scheme (June 2026) — three-tier × symmetric rank nudge.**
+Weight is derived from `(type, rank)` in `frontend/.../problemConfig/
+ProblemConfigBlocks.tsx` (`suggestedWeightForType` + `rankNudgeFactor`):
+- **Tier base by type:** objective 1, soft 10, hard 100 — a clean 1/10/100
+  penalty hierarchy (objective is the *baseline*; penalties dominate). `custom`
+  = participant-typed manual override.
+- **Rank nudge:** small SYMMETRIC ±10% around the tier base (`RANK_NUDGE=0.1`),
+  centered on the middle rank so higher rank goes up AND lower rank goes down,
+  never crossing a tier. Applies to ALL non-custom types incl. hard.
+- **Seed vs clamp (load-bearing):** the tier×nudge is a STARTING SEED only.
+  `handleConstraintTypeChange` reseeds to the tier (deliberate re-categorize),
+  but `handleReorder` applies only the RELATIVE rank delta to the *current*
+  weight (`current × nextFactor/prevFactor`) — it never resets to the tier
+  base, so an agent's or participant's free / significant adjustment survives a
+  reorder. The agent is told (VRPTW `study_prompts.py`) the tiers are a start
+  and it may retune far past them.
+- **Deleted magic:** the old `chatEmphasisBoost` (regex keyword-match on chat —
+  violated [[feedback_no_regex_for_nl]]) and `contributionAdjust` (silent
+  run-share auto-tuning) are gone; weight is now a pure function of (type,rank)
+  plus explicit agent/participant edits. Also removed the panel-vs-agent
+  mismatch (panel hard=100 vs agent shift=500). NOTE: knapsack port seed brief
+  still hard-codes per-term weights (40/0.5) — not yet aligned to the tiers.
+
 **Paper angle:** defend the organic claim empirically with a *displacement
 metric* — fraction of sessions whose final weight vector moved away from the
 seeded defaults, and how far. High displacement = the loop, not the prior,
