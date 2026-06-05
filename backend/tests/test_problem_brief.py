@@ -2058,6 +2058,42 @@ def test_plateau_agile_raises_oq_like_waterfall():
     assert not any(i["id"] == _MONITOR_ITEM_PLATEAU_ID for i in out["items"])
 
 
+def test_tutorial_strips_freeform_llm_clarification_oqs():
+    """P_lk: the tutorial must stay scripted — freeform LLM clarification OQs
+    (e.g. 'should the capacity be hard or soft?') are swept so the participant
+    only faces the guided questions. Server-owned OQs survive: canonical monitors
+    (``oq-monitor-*``) and structural companion asks (``auto-oq-companion-*``).
+    Outside the tutorial, nothing is stripped."""
+    from app.routers.sessions.derivation import _enforce_session_monitors
+
+    def _brief():
+        return normalize_problem_brief(
+            {
+                "items": [{"id": "item-gathered-upload", "text": "Uploaded knapsack_22.csv",
+                           "kind": "gathered", "source": "upload"}],
+                "goal_terms": {"value_emphasis": {"weight": 1.0, "type": "objective", "rank": 1}},
+                "open_questions": [
+                    {"id": "question-1", "topic": "other", "goal_key": None, "status": "open",
+                     "text": "Should the 50-weight capacity be a hard limit or a soft penalty?"},
+                    {"id": "oq-monitor-algorithm", "topic": "search_strategy", "goal_key": None,
+                     "status": "open", "text": "Which search strategy should we use?"},
+                    {"id": "auto-oq-companion-worker_preference", "topic": "other",
+                     "goal_key": "worker_preference", "status": "open", "text": "Which driver rules?"},
+                ],
+                "topic_engaged": True,
+            }
+        )
+
+    tut = _enforce_session_monitors(_brief(), "waterfall", "knapsack", is_tutorial_active=True)
+    ids = {q["id"] for q in tut["open_questions"]}
+    assert "question-1" not in ids, ids
+    assert "oq-monitor-algorithm" in ids, ids
+    assert "auto-oq-companion-worker_preference" in ids, ids
+
+    non = _enforce_session_monitors(_brief(), "waterfall", "knapsack", is_tutorial_active=False)
+    assert "question-1" in {q["id"] for q in non["open_questions"]}
+
+
 def test_plateau_suppressed_during_tutorial_both_modes():
     """The plateau intervention is suppressed for the whole tutorial (researcher
     choice): runs are too similar to justify it and it's a learning context. No

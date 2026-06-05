@@ -1867,6 +1867,23 @@ def _enforce_session_monitors(
     items = list(next_brief.get("items") or [])
     open_questions = list(next_brief.get("open_questions") or [])
 
+    # Tutorial = scripted, friction-free. Strip freeform LLM clarification OQs
+    # (e.g. "should the capacity be a hard limit or a soft penalty?") so the
+    # participant only ever faces the guided questions. Keep ONLY server-owned
+    # OQs: canonical monitors (`oq-monitor-*`) and structural companion asks
+    # (`auto-oq-companion-*`). Deterministic, so a regenerated clarification is
+    # swept again next turn (P_lk — "it's just a tutorial!").
+    if is_tutorial_active:
+        open_questions = [
+            q
+            for q in open_questions
+            if isinstance(q, dict)
+            and (
+                str(q.get("id") or "").startswith("oq-monitor-")
+                or str(q.get("id") or "").startswith("auto-oq-companion-")
+            )
+        ]
+
     def _has_oq(oq_id: str) -> bool:
         return any(
             isinstance(q, dict) and str(q.get("id") or "") == oq_id
