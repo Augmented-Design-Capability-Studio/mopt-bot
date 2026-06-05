@@ -1277,8 +1277,10 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
 .definition-question-text {
   border: none;
   background: transparent;
-  /* Align question text start with answer input/content text. */
-  padding: 0 0 0 0.1rem;
+  /* Align question text start with answer input/content text. Right padding
+     keeps a long question from running under the absolute-positioned remove
+     control in the top-right (.definition-item-overlay-controls, ~1.4rem wide). */
+  padding: 0 1.75rem 0 0.1rem;
   white-space: pre-wrap;
   line-height: 1.3;
   font-size: inherit;
@@ -1399,6 +1401,16 @@ button.definition-section-toggle.is-collapsed .definition-section-chevron {
   border: none;
   background: transparent;
   padding: 0.12rem 1.75rem 0.12rem 0.1rem;
+}
+
+/* `.definition-item textarea` (line ~1101) sets a uniform `padding: 0.35rem`
+   that, being more specific than the `.definition-inline-textarea` classes,
+   clobbers their right padding — so the editable gathered/assumption text box
+   would otherwise run under the top-right overlay controls. Restore the right
+   clearance with a selector specific enough to win. The goal-summary textarea
+   is excluded: it has no overlay controls, so it should keep full width. */
+.definition-item .definition-inline-textarea:not(.definition-inline-textarea-goal) {
+  padding-right: 1.75rem;
 }
 
 .definition-inline-textarea-goal {
