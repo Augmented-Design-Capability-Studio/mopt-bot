@@ -17,6 +17,7 @@ from app.problem_brief import (
     CONFIG_ITEM_PREFIX,
     merge_problem_brief_patch,
     normalize_problem_brief,
+    seed_new_goal_term_weights_by_type,
 )
 
 from . import helpers
@@ -1043,6 +1044,13 @@ def apply_brief_patch_with_cleanup(
     merged = merge_problem_brief_patch(
         base_problem_brief, patch_payload, cleanup_mode_override=cleanup_mode
     )
+    # Enforce the ~1/10/100 weight rule deterministically: a newly-committed
+    # goal term's weight is seeded from its type (objective 1 / soft 10 / hard
+    # 100), overriding whatever magnitude the LLM emitted (it kept picking
+    # unit-calibrated 50/1000). Existing terms are untouched, so retunes survive.
+    # Runs BEFORE the cold-start extractor below, so a port's intentional seed
+    # defaults (knapsack 40/0.5) are never overwritten.
+    merged = seed_new_goal_term_weights_by_type(base_problem_brief, merged)
     # Tutorial Runs 1+2 run-ack strip: the bubble drives the next step, so a
     # post-run agent reply that adds new OQs (waterfall) or new assumption
     # rows / goal_term keys (agile) is exactly the noise we want to suppress.

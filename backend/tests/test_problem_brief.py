@@ -698,6 +698,40 @@ def test_consolidate_runs_noop_when_not_run_ack():
     assert out["runs"] == []
 
 
+def test_seed_new_goal_term_weights_by_type():
+    """New terms are pinned to their type tier (1/10/100), overriding whatever
+    magnitude the LLM emitted; ``custom`` and existing terms are untouched."""
+    from app.problem_brief import seed_new_goal_term_weights_by_type
+
+    base = {"goal_terms": {"travel_time": {"weight": 1.0, "type": "objective"}}}
+    merged = {
+        "goal_terms": {
+            "travel_time": {"weight": 1.0, "type": "objective"},      # existing
+            "lateness_penalty": {"weight": 50.0, "type": "soft"},     # new → 10
+            "capacity_penalty": {"weight": 1000.0, "type": "hard"},   # new → 100
+            "second_objective": {"weight": 50.0, "type": "objective"},  # new → 1
+            "manual_term": {"weight": 250.0, "type": "custom"},       # custom untouched
+        }
+    }
+    gt = seed_new_goal_term_weights_by_type(base, merged)["goal_terms"]
+    assert gt["lateness_penalty"]["weight"] == 10.0
+    assert gt["capacity_penalty"]["weight"] == 100.0
+    assert gt["second_objective"]["weight"] == 1.0
+    assert gt["manual_term"]["weight"] == 250.0
+    assert gt["travel_time"]["weight"] == 1.0
+
+
+def test_seed_preserves_existing_term_retune():
+    """An existing term bumped past its tier keeps the new value — only
+    brand-new terms are seeded, so agent/participant retunes survive."""
+    from app.problem_brief import seed_new_goal_term_weights_by_type
+
+    base = {"goal_terms": {"capacity_penalty": {"weight": 100.0, "type": "hard"}}}
+    merged = {"goal_terms": {"capacity_penalty": {"weight": 5000.0, "type": "hard"}}}
+    out = seed_new_goal_term_weights_by_type(base, merged)
+    assert out["goal_terms"]["capacity_penalty"]["weight"] == 5000.0
+
+
 def test_priority_line_renders_from_ranks():
     """``priority_line`` is server-managed — recomputed from
     ``goal_terms[K].rank`` on every normalize pass and ignored if the LLM

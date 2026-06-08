@@ -1438,6 +1438,49 @@ def _merge_goal_terms_maps(
     return merged
 
 
+# Study-wide weight tiers by goal-term type. Mirrors the participant panel's
+# TIER_BASE_WEIGHT (frontend ProblemConfigBlocks.tsx). The agent reliably picks
+# the *type* well but kept reaching for unit-calibrated magnitudes (lateness 50,
+# capacity 1000) no matter what the prompt said — so the SERVER owns the starting
+# number: a newly-committed term is seeded to its type's tier. The agent retunes
+# freely on later turns (existing terms are never re-seeded).
+GOAL_TERM_TYPE_TIER_WEIGHT: dict[str, float] = {
+    "objective": 1.0,
+    "soft": 10.0,
+    "hard": 100.0,
+}
+
+
+def seed_new_goal_term_weights_by_type(
+    base_brief: dict[str, Any] | None, merged_brief: dict[str, Any]
+) -> dict[str, Any]:
+    """Force each NEWLY-committed goal term's weight to its type tier
+    (objective 1 / soft 10 / hard 100), enforcing the ~1/10/100 rule
+    deterministically rather than relying on the prompt.
+
+    Only brand-new keys are touched: a key already in ``base_brief.goal_terms``
+    keeps its weight, so agent/participant retunes (any magnitude, well past the
+    tier) survive. ``custom`` is left alone — it is the explicit manual-weight
+    type. Runs on the agent-commit path BEFORE the cold-start extractor, so a
+    port's intentional seed defaults (e.g. knapsack's 40/0.5) are never
+    overwritten."""
+    if not isinstance(merged_brief, dict):
+        return merged_brief
+    gt = merged_brief.get("goal_terms")
+    if not isinstance(gt, dict) or not gt:
+        return merged_brief
+    base_gt = base_brief.get("goal_terms") if isinstance(base_brief, dict) else None
+    base_keys = set(base_gt) if isinstance(base_gt, dict) else set()
+    for key, entry in gt.items():
+        if not isinstance(entry, dict) or key in base_keys:
+            continue
+        term_type = str(entry.get("type") or "objective").strip().lower()
+        tier = GOAL_TERM_TYPE_TIER_WEIGHT.get(term_type)
+        if tier is not None:  # skips ``custom`` (and any unknown type)
+            entry["weight"] = tier
+    return merged_brief
+
+
 def _normalize_item(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
