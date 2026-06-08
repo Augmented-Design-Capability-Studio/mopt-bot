@@ -37,6 +37,24 @@ function rankNudgeFactor(rankIndex: number, count: number): number {
   return 1 + RANK_NUDGE * ((mid - rankIndex) / mid);
 }
 
+// When a term's TYPE changes after it's been tuned, rescale its weight
+// PROPORTIONALLY (weight × tier(new)/tier(old)) instead of resetting to the
+// tier base — so tuning accumulated across runs survives a recategorize. A
+// fresh term still at its tier lands exactly on the new tier; a term tuned to
+// 30× its tier stays 30× the new tier (a hard term at 3000 → soft becomes 300,
+// not 10). `custom` has no tier, so changing to/from it keeps the current value.
+function rescaleWeightForTypeChange(
+  currentWeight: number,
+  oldType: ConstraintType,
+  newType: ConstraintType,
+): number {
+  const oldTier = TIER_BASE_WEIGHT[oldType as "objective" | "soft" | "hard"];
+  const newTier = TIER_BASE_WEIGHT[newType as "objective" | "soft" | "hard"];
+  if (!oldTier || !newTier) return currentWeight; // custom involved → keep as-is
+  if (!Number.isFinite(currentWeight) || currentWeight <= 0) return newTier;
+  return Math.max(0.1, Math.round((currentWeight * newTier) / oldTier * 100) / 100);
+}
+
 function orderedDisplayWeightKeys(
   weights: Record<string, number>,
   definitionOrder: string[],
@@ -225,21 +243,24 @@ export function ProblemConfigBlocks({
   function handleConstraintTypeChange(key: string, type: ConstraintType) {
     runEditingAction(() => {
       const currentConstraintTypes = { ...problem.constraint_types };
-      const rankIndex = displayWeightKeys.indexOf(key);
-      let newWeight = problem.weights[key] ?? 0;
+      // Old type drives the proportional rescale; "objective" is the implicit
+      // default when a key carries no explicit constraint_type tag.
+      const oldType: ConstraintType = currentConstraintTypes[key] ?? "objective";
+      const currentWeight = problem.weights[key] ?? 0;
+      let newWeight = currentWeight;
       let newLocked = [...problem.locked_goal_terms];
 
       if (type === "objective" || type === "soft") {
-        // Both are agent-managed; "objective" removes the explicit tag (it's the default)
-        newWeight = suggestedWeightForType(key, type, rankIndex);
+        // Rescale proportionally so tuning survives the recategorize (don't snap
+        // back to the tier base). "objective" removes the explicit tag.
+        newWeight = rescaleWeightForTypeChange(currentWeight, oldType, type);
         newLocked = newLocked.filter((k) => k !== key);
         delete currentConstraintTypes[key]; // "objective" is implicit; "soft" stored below
         if (type === "soft") currentConstraintTypes[key] = "soft";
       } else if (type === "hard") {
-        // Hard sits in the top tier (~100) but is still rank-nudged, so a hard
-        // term can move up or down a little with its priority. Don't auto-lock —
-        // leave the existing lock state alone (user can lock manually if they want).
-        newWeight = suggestedWeightForType(key, type, rankIndex);
+        // Same proportional rescale into the hard tier (a tuned term keeps its
+        // multiple of the tier). Don't auto-lock — leave lock state alone.
+        newWeight = rescaleWeightForTypeChange(currentWeight, oldType, type);
         currentConstraintTypes[key] = "hard";
       } else {
         // custom: weight unchanged, lock it (custom = user-managed weight,
