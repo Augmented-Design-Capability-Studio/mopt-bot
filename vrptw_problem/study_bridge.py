@@ -527,6 +527,7 @@ def _vehicle_summaries_for_schedule(
 ) -> list[dict[str, Any]]:
     ensure_vrptw_on_path()
     from vrptw_problem.vehicles import VEHICLES
+    from vrptw_problem.traffic_api import ZONE_NAMES
 
     by_vehicle: dict[int, list[dict[str, Any]]] = {}
     for stop in stops:
@@ -534,6 +535,10 @@ def _vehicle_summaries_for_schedule(
 
     summaries: list[dict[str, Any]] = []
     for v_idx, vehicle in enumerate(VEHICLES):
+        start_zone = int(vehicle.start_zone)
+        start_region_name = (
+            ZONE_NAMES[start_zone] if 0 <= start_zone < len(ZONE_NAMES) else "Depot"
+        )
         vehicle_routes = routes[v_idx] if v_idx < len(routes) else []
         vehicle_stops = by_vehicle.get(v_idx, [])
         assigned_units = sum(int(orders[o_idx].size) for o_idx in vehicle_routes)
@@ -555,6 +560,8 @@ def _vehicle_summaries_for_schedule(
                     max(0, assigned_units - int(vehicle.capacity))
                 ),
                 "shift_start_minutes": int(vehicle.shift_start_min),
+                "start_region_index": start_zone,
+                "start_region_name": start_region_name,
                 "display_end_minutes": float(max(max_departure, max_close)),
                 "shift_limit_minutes": float(vehicle.max_hours * 60),
                 "stop_count": len(vehicle_stops),

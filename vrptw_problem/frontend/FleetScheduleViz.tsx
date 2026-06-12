@@ -87,8 +87,12 @@ function FleetScheduleVizInner({
   const stopContext = useMemo(() => {
     const context = new Map<string, { origin: string; destination: string; driveMinutes: number }>();
     for (const [vehicleIndex, list] of stopsByVehicle.entries()) {
-      let prevDeparture = schedule.vehicle_summaries.find((v) => v.vehicle_index === vehicleIndex)?.shift_start_minutes ?? 0;
-      let prevRegion = "Depot";
+      const summary = schedule.vehicle_summaries.find((v) => v.vehicle_index === vehicleIndex);
+      let prevDeparture = summary?.shift_start_minutes ?? 0;
+      // Origin of the first leg is the vehicle's own start region (e.g. Eve
+      // begins at Zone E, not the Depot). Falls back to Depot for older runs
+      // whose schedule payload predates start_region_name.
+      let prevRegion = summary?.start_region_name ?? "Depot";
       for (const stop of list) {
         const key = `${stop.vehicle_index}:${stop.task_index ?? stop.task_id}`;
         const driveMinutes = Math.max(0, stop.arrival_minutes - prevDeparture);

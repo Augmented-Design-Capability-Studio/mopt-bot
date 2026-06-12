@@ -574,6 +574,8 @@ export type RunVehicleSummary = {
   assigned_units: number;
   capacity_overflow_units: number;
   shift_start_minutes: number;
+  start_region_index?: number;
+  start_region_name?: string;
   display_end_minutes: number;
   shift_limit_minutes: number;
   stop_count: number;
