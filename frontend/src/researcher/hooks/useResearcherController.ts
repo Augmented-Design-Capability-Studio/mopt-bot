@@ -328,6 +328,39 @@ export function useResearcherController() {
     }
   }
 
+  async function resetStuckRun() {
+    if (!selected || !savedToken.trim()) return;
+    const sessionId = selected;
+    detailPollGen.current += 1;
+    setBusy(true);
+    try {
+      const result = await apiFetch<{ signalled: boolean; cleared: number }>(
+        `/sessions/${sessionId}/runs/reset-stuck`,
+        savedToken.trim(),
+        { method: "POST" },
+      );
+      const [nextDetail, nextRuns] = await Promise.all([
+        apiFetch<Session>(`/sessions/${sessionId}/researcher`, savedToken.trim()),
+        apiFetch<RunResult[]>(`/sessions/${sessionId}/runs`, savedToken.trim()),
+      ]);
+      if (sessionId !== selectedRef.current) return;
+      setDetail(nextDetail);
+      setRuns(nextRuns);
+      await refreshList();
+      setError(null);
+      setNotice(
+        result.cleared > 0
+          ? `Cleared ${result.cleared} stuck run${result.cleared === 1 ? "" : "s"}.`
+          : "No stuck run found.",
+      );
+    } catch (e) {
+      setNotice(null);
+      setError(describeApiError(e, "Reset stuck run failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeSession() {
     if (!selected || !savedToken.trim()) return;
     if (!window.confirm("Delete this session and all logs?")) return;
@@ -619,6 +652,7 @@ export function useResearcherController() {
     sendSteer,
     terminate,
     resetSession,
+    resetStuckRun,
     resyncPanelFromBrief,
     resyncBriefFromPanel,
     removeSession,

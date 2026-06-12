@@ -1287,6 +1287,27 @@ def post_cancel_optimization_alt_path(
     return _post_optimization_cancel(session_id, db)
 
 
+@router.post("/{session_id}/runs/reset-stuck")
+def post_reset_stuck_runs(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Researcher recovery: clear a hung/stuck in-progress run so the
+    participant UI stops showing a permanent spinner. Signals any still-live
+    solver to stop and marks non-terminal placeholder run rows as failed."""
+    from app.solve_cancel import request_cancel
+
+    row = db.get(StudySession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    signalled = request_cancel(session_id)
+    cleared = helpers.terminate_stuck_runs(db, session_id, "Run reset by researcher")
+    if cleared:
+        db.commit()
+    return {"signalled": signalled, "cleared": cleared}
+
+
 @router.post("/{session_id}/runs", response_model=RunOut)
 def post_run(
     session_id: str,

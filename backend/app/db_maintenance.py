@@ -31,6 +31,7 @@ def ensure_database_shape() -> None:
     _backfill_optimization_gate_engaged()
     _ensure_runs_session_index_column()
     _backfill_runs_session_index()
+    _terminate_orphaned_runs()
 
 
 def _ensure_sessions_test_problem_id_column() -> None:
@@ -313,6 +314,26 @@ def _ensure_runs_session_index_column() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE runs ADD COLUMN session_run_index INTEGER"))
     log.info("Added runs.session_run_index column")
+
+
+def _terminate_orphaned_runs() -> None:
+    """Optimization runs solve synchronously in-process, so any run that is
+    still non-terminal at startup (ok=False, no result, no error) was orphaned
+    by a server restart or crash mid-solve — it can never complete. Mark these
+    failed so the participant UI doesn't show a permanent in-progress spinner
+    (see frontend isRunStillPending)."""
+    inspector = inspect(engine)
+    if not inspector.has_table("runs"):
+        return
+    with Session(engine) as db:
+        from app.routers.sessions.helpers import terminate_stuck_runs
+
+        count = terminate_stuck_runs(
+            db, None, "Optimization interrupted (server restarted before it finished)"
+        )
+        if count:
+            db.commit()
+            log.info("Terminated %s orphaned in-progress run(s) on startup", count)
 
 
 def _backfill_runs_session_index() -> None:

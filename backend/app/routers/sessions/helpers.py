@@ -342,3 +342,28 @@ def next_session_run_number(db: Session, session_id: str) -> int:
         .scalar()
     )
     return 1 if current_max is None else int(current_max) + 1
+
+
+# A run row is "stuck" / non-terminal when it was committed as a placeholder
+# (ok=False) before the synchronous solve, but the solve never wrote a result
+# or an error_message. The participant UI treats such a row as "still running"
+# forever (see frontend isRunStillPending), so a hung solver or a server
+# restart that kills the in-process solve leaves a permanent fake spinner.
+def stuck_runs_query(db: Session, session_id: str | None = None):
+    q = db.query(OptimizationRun).filter(
+        OptimizationRun.ok.is_(False),
+        OptimizationRun.result_json.is_(None),
+        OptimizationRun.error_message.is_(None),
+    )
+    if session_id is not None:
+        q = q.filter(OptimizationRun.session_id == session_id)
+    return q
+
+
+def terminate_stuck_runs(db: Session, session_id: str | None, message: str) -> int:
+    """Mark non-terminal placeholder runs as failed so the UI stops treating
+    them as in-progress. Returns the number of rows updated. The caller commits."""
+    rows = stuck_runs_query(db, session_id).all()
+    for run in rows:
+        run.error_message = message
+    return len(rows)

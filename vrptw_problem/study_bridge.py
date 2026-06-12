@@ -7,6 +7,7 @@ Loaded with this package root on sys.path. Uses ``app.*`` when run inside the MO
 from __future__ import annotations
 
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from copy import deepcopy
 from pathlib import Path
@@ -880,6 +881,11 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
     from vrptw_problem.orders import get_orders
     from vrptw_problem.optimizer import OptimizationCancelled, QuickBiteOptimizer
 
+    # Always hand the solver a cancel flag we control, even when the caller did
+    # not pass one, so the timeout path below can stop the worker the same
+    # cooperative way the Cancel button does (checked inside obj_func).
+    effective_cancel = cancel_event if cancel_event is not None else threading.Event()
+
     def _work():
         candidate_seed_vectors = [
             encode_routes_as_vector(routes)
@@ -900,19 +906,32 @@ def run_optimize(cfg: dict[str, Any], timeout_sec: float, cancel_event: Any | No
             early_stop=cfg["early_stop"],
             early_stop_patience=cfg["early_stop_patience"],
             early_stop_epsilon=cfg["early_stop_epsilon"],
-            cancel_event=cancel_event,
+            cancel_event=effective_cancel,
             use_greedy_init=cfg.get("use_greedy_init", True),
             initial_solutions=candidate_seed_vectors,
         )
 
-    with ThreadPoolExecutor(max_workers=1) as ex:
+    # NOTE: do not use `with ThreadPoolExecutor(...)` — its __exit__ calls
+    # shutdown(wait=True), which blocks until the worker finishes. A slow or
+    # stuck solve would then hang the HTTP request regardless of the timeout.
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
         fut = ex.submit(_work)
         try:
             result = fut.result(timeout=timeout_sec)
         except FuturesTimeout:
+            # Signal the worker to stop at its next objective evaluation
+            # (sub-millisecond in a normal solve), then stop waiting on it. We
+            # deliberately don't block on the thread: a pathologically stuck
+            # single eval must not be allowed to hang the request — that thread
+            # dies with the process. This is also why the timeout is now an
+            # enforced wall-clock bound rather than a best-effort one.
+            effective_cancel.set()
             raise TimeoutError("Optimization exceeded time limit") from None
         except OptimizationCancelled:
             raise RunCancelled() from None
+    finally:
+        ex.shutdown(wait=False)
 
     orders = get_orders(seed=None)
     visits = _visits_from_evaluator_records(result.visits)

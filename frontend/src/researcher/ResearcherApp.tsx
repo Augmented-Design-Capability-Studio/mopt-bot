@@ -83,6 +83,7 @@ export function ResearcherApp() {
           onExportJson={researcher.exportJson}
           onCopySessionLink={researcher.copySessionLink}
           onResetSession={researcher.resetSession}
+          onResetStuckRun={researcher.resetStuckRun}
           onResyncPanelFromBrief={researcher.resyncPanelFromBrief}
           onResyncBriefFromPanel={researcher.resyncBriefFromPanel}
           onTerminate={researcher.terminate}

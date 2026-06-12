@@ -44,6 +44,7 @@ type ResearcherDetailProps = {
   onExportJson: () => void | Promise<void>;
   onCopySessionLink: () => void | Promise<void>;
   onResetSession: () => void | Promise<void>;
+  onResetStuckRun: () => void | Promise<void>;
   onResyncPanelFromBrief: () => void | Promise<void>;
   onResyncBriefFromPanel: () => void | Promise<void>;
   onTerminate: () => void | Promise<void>;
@@ -79,6 +80,7 @@ export function ResearcherDetail({
   onExportJson,
   onCopySessionLink,
   onResetSession,
+  onResetStuckRun,
   onResyncPanelFromBrief,
   onResyncBriefFromPanel,
   onTerminate,
@@ -161,6 +163,20 @@ export function ResearcherDetail({
             <button type="button" disabled={busy} onClick={() => void onResetSession()}>
               Reset session
             </button>
+            {(() => {
+              const hasStuckRun = runs.some((r) => !r.ok && r.result == null && !r.error_message);
+              return (
+                <button
+                  type="button"
+                  disabled={busy}
+                  className={hasStuckRun ? "btn-save-attention" : undefined}
+                  title="Clear a hung/stuck in-progress run so the participant UI stops showing a permanent spinner. Keeps all other runs."
+                  onClick={() => void onResetStuckRun()}
+                >
+                  Reset stuck run
+                </button>
+              );
+            })()}
             <button type="button" disabled={busy} onClick={() => void onTerminate()}>
               Terminate session
             </button>

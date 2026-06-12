@@ -175,7 +175,13 @@ export function ResultsPanel({
         ? currentResult.algorithm
         : null;
   const hasResult = currentResult !== null;
-  const showOptimizeProgress = optimizing || isRunStillPending(currentRun);
+  // The progress overlay is per-run: it shows only while the *currently
+  // selected* run is still pending. This lets the participant click back to a
+  // completed run's tab and inspect its visualization even while a newer run is
+  // in flight. (`optimizing` is the global flag — it still gates the Run button
+  // and keeps Cancel enabled, but must not blank out other runs' viz.)
+  const showOptimizeProgress = isRunStillPending(currentRun);
+  const anyOptimizeInFlight = optimizing || runs.some(isRunStillPending);
   const convergence = currentResult?.convergence ?? [];
   const runtimeSeconds =
     typeof currentResult?.runtime_seconds === "number" && Number.isFinite(currentResult.runtime_seconds)
@@ -426,7 +432,7 @@ export function ResultsPanel({
           <button
             type="button"
             className="results-main-action-btn"
-            disabled={!showOptimizeProgress || sessionTerminated}
+            disabled={!anyOptimizeInFlight || sessionTerminated}
             onClick={() => void onCancelOptimize()}
             title="Ask the server to stop the current optimization early"
           >
