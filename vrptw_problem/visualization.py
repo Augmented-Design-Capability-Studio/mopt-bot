@@ -27,10 +27,15 @@ VEHICLE_COLORS = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]
 
 
 def _get_route_zone_sequence(routes: list[list[int]], orders: list[Order]) -> list[list[tuple[int, int]]]:
-    """For each vehicle, return list of (order_idx, zone) in visit order. Includes depot start/end."""
+    """For each vehicle, return list of (order_idx, zone) in visit order.
+
+    Starts at the vehicle's own start_zone (e.g. Eve begins at Zone E, not the
+    Depot) and ends at the Depot, matching simulate_routes in evaluator.py.
+    """
     sequences = []
-    for route in routes:
-        seq = [(0, 0)]
+    for v_idx, route in enumerate(routes):
+        start_zone = VEHICLES[v_idx].start_zone if v_idx < len(VEHICLES) else 0
+        seq = [(0, start_zone)]
         for o_idx in route:
             seq.append((o_idx, orders[o_idx].zone))
         seq.append((0, 0))
