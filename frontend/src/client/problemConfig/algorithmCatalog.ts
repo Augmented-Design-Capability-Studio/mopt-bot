@@ -13,6 +13,22 @@ export const ALGORITHM_DESC: Record<string, string> = {
   ACOR: "Ant Colony Optimization (Continuous) - guides search by modelling pheromone accumulation along good paths.",
 };
 
+/** Full canonical set (mirrors backend CANONICAL_ALGORITHM_NAMES). */
+export const ALL_ALGORITHMS = ["GA", "PSO", "SA", "SwarmSA", "ACOR"] as const;
+
+/**
+ * Algorithms hidden from the study but kept in this catalog (descriptions,
+ * params) so they can be re-enabled by removing them here. Mirrors backend
+ * STUDY_DISABLED_ALGORITHM_NAMES. SwarmSA is disabled because it runs an order
+ * of magnitude slower than the other methods (would confound the UX study).
+ */
+export const STUDY_DISABLED_ALGORITHMS: readonly string[] = ["SwarmSA"];
+
+/** Methods actually offered in the config-panel dropdown. */
+export const STUDY_ENABLED_ALGORITHMS: readonly string[] = ALL_ALGORITHMS.filter(
+  (name) => !STUDY_DISABLED_ALGORITHMS.includes(name),
+);
+
 export const DEFAULT_EPOCHS = 100;
 export const DEFAULT_POP_SIZE = 50;
 

@@ -119,7 +119,7 @@ def load_user_input(path: Optional[Path] = None) -> dict[str, Any]:
         "soft_constraints": ["tw_violation", "capacity", "shift_limit"]
     }
 
-    Supported algorithms: GA, PSO, SA, SwarmSA, ACOR. algorithm, algorithm_params, epochs, pop_size optional.
+    Supported algorithms: GA, PSO, SA, ACOR. algorithm, algorithm_params, epochs, pop_size optional.
 
     Returns:
         Dict with: weights, max_shift_hours, driver_preferences,

@@ -1192,8 +1192,8 @@ STUDY_CHAT_SEARCH_STRATEGY_ANCHORING = """
 
 Search settings live on `goal_terms.search_strategy.properties`: `algorithm`,
 `epochs` (iterations), `pop_size` (population), `algorithm_params`. Set them
-only once the brief records a chosen algorithm (a row naming GA/PSO/SA/SwarmSA/
-ACOR or a nickname); a chat-only mention isn't enough. When you change one,
+only once the brief records a chosen algorithm (a row naming GA/PSO/SA/ACOR
+or a nickname); a chat-only mention isn't enough. When you change one,
 put the concrete value in the carrier the SAME turn — replying "200
 iterations" without `properties.epochs: 200` does NOT apply it. `early_stop`
 ("stop at plateau") caps the ACTUAL iterations run, so raising `epochs` alone
@@ -1245,14 +1245,14 @@ propose or ask about a search method) followed by the participant's reply.
 Decide which search method the PARTICIPANT settled on for the optimizer
 (the "which search method should we use?" question).
 
-Return JSON only: {"algorithm": "<one of GA | PSO | SA | SwarmSA | ACOR | none>"}.
+Return JSON only: {"algorithm": "<one of GA | PSO | SA | ACOR | none>"}.
 
 Map everyday names to the canonical token:
 - genetic / genetic algorithm / evolutionary → GA
 - particle swarm / swarm / PSO → PSO
 - simulated annealing / annealing / SA → SA
-- swarm-based simulated annealing / SwarmSA → SwarmSA
 - ant colony / ACO / ACOR → ACOR
+(Swarm-based simulated annealing / SwarmSA is not available — return none.)
 
 Report a method when EITHER:
 - the participant names it themselves, OR

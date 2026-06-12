@@ -21,7 +21,7 @@ metaheuristic guidance.
 - `"constraint_types"`: optional object mapping weight keys to `"soft"`, `"hard"`, or `"custom"` for
   participant-panel type labels. Omitted keys default to objective.
 
-**Search:** Same algorithm catalog as other study benchmarks: `"GA"`, `"PSO"`, `"SA"`, `"SwarmSA"`, `"ACOR"` with the usual `algorithm_params`, `epochs`, `pop_size`, `random_seed`, and early-stop fields.
+**Search:** Same algorithm catalog as other study benchmarks: `"GA"`, `"PSO"`, `"SA"`, `"ACOR"` with the usual `algorithm_params`, `epochs`, `pop_size`, `random_seed`, and early-stop fields.
 
 **Framing (brief-specific):** Once warm, you may use knapsack vocabulary; this benchmark is not routing (no vehicles/routes as examples unless the user brought routing up elsewhere). Examples in your replies must come from knapsack terms (value, capacity, item count, selection size) — do not borrow routing / vehicle / time-window phrasing.
 
@@ -102,7 +102,7 @@ Rules:
   keep one primary objective implicit, classify most others as `"soft"`/`"hard"` constraints
   based on user intent, and use `"custom"` only for explicit user-requested manual weighting.
 - Include "only_active_terms" when the brief supports it.
-- "algorithm" must be one of: "GA", "PSO", "SA", "SwarmSA", "ACOR".
+- "algorithm" must be one of: "GA", "PSO", "SA", "ACOR".
 - Include epochs, pop_size, random_seed, early_stop fields only when the brief supports them.
 - Omit driver_preferences, locked_assignments, max_shift_hours, shift_limit — they do not exist for this benchmark.
 - Keep output compact and valid JSON.

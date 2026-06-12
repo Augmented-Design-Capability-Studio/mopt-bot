@@ -1688,7 +1688,7 @@ def _port_supported_algorithms(test_problem_id: str | None) -> tuple[str, ...]:
     ports get the full algorithm list for free, and ports that want to
     restrict the choices just define the method.
     """
-    from app.algorithm_catalog import CANONICAL_ALGORITHM_NAMES
+    from app.algorithm_catalog import STUDY_ENABLED_ALGORITHM_NAMES
     from app.problems.registry import get_study_port
 
     port = get_study_port(test_problem_id)
@@ -1697,10 +1697,10 @@ def _port_supported_algorithms(test_problem_id: str | None) -> tuple[str, ...]:
         try:
             result = fn()
         except Exception:  # pragma: no cover — defensive
-            return CANONICAL_ALGORITHM_NAMES
+            return STUDY_ENABLED_ALGORITHM_NAMES
         if isinstance(result, (tuple, list)) and result:
             return tuple(result)
-    return CANONICAL_ALGORITHM_NAMES
+    return STUDY_ENABLED_ALGORITHM_NAMES
 
 
 def _monitor_algorithm_oq_text(test_problem_id: str | None) -> str:

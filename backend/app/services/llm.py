@@ -16,6 +16,7 @@ from app.problem_brief import (
     locked_goal_terms_prompt_section,
     surface_problem_brief_for_chat_prompt,
 )
+from app.algorithm_catalog import STUDY_ENABLED_ALGORITHM_NAMES
 from app.problems.registry import get_study_port
 from app.problems.schema_shared import goal_terms_schema
 
@@ -467,7 +468,9 @@ USER_ALGORITHM_CHOICE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "properties": {
         "algorithm": {
             "type": "string",
-            "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR", "none"],
+            # Study-enabled methods only (+ "none"); disabled methods like
+            # SwarmSA are intentionally not selectable. See algorithm_catalog.
+            "enum": [*STUDY_ENABLED_ALGORITHM_NAMES, "none"],
         },
     },
     "required": ["algorithm"],
@@ -518,7 +521,7 @@ def classify_user_search_strategy_choice(
         log.warning("User search-strategy classify failed (%s); skipping (fail-safe)", exc)
         return None
     algo = (parsed or {}).get("algorithm") if isinstance(parsed, dict) else None
-    return algo if algo in {"GA", "PSO", "SA", "SwarmSA", "ACOR"} else None
+    return algo if algo in set(STUDY_ENABLED_ALGORITHM_NAMES) else None
 
 
 def check_changes_acknowledged(
@@ -1247,7 +1250,7 @@ _MAIN_TURN_OUTPUT_RULES = (
     "or budgets.\n\n"
     "**Algorithm carrier.** When committing a search-strategy algorithm, "
     "populate `problem_brief_patch.goal_terms.search_strategy.properties."
-    "algorithm` with one of: GA, PSO, SA, SwarmSA, ACOR.\n\n"
+    "algorithm` with one of: GA, PSO, SA, ACOR.\n\n"
     "**Open questions.** Every OQ you emit MUST have a `topic` field set to "
     "one of `upload`, `primary_goal`, `search_strategy`, or `other`. The "
     "first three are server-managed — the server surfaces canonical rows "

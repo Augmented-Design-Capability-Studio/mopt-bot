@@ -4,6 +4,7 @@ import {
   ALGORITHM_PARAM_FIELD_META,
   DEFAULT_EPOCHS,
   DEFAULT_POP_SIZE,
+  STUDY_ENABLED_ALGORITHMS,
   defaultParamsForAlgorithm,
 } from "./algorithmCatalog";
 import { FieldRow } from "./layout";
@@ -57,7 +58,7 @@ export function SearchStrategySection({
             focusKey="search-algorithm"
             style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
           >
-            {["GA", "PSO", "SA", "SwarmSA", "ACOR"].map((algorithm) => (
+            {STUDY_ENABLED_ALGORITHMS.map((algorithm) => (
               <option key={algorithm} value={algorithm}>
                 {algorithm}
               </option>

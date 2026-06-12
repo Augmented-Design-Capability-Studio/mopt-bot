@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.algorithm_catalog import STUDY_ENABLED_ALGORITHM_NAMES
 from app.problems.schema_shared import (
     ALGORITHM_PARAMS_SCHEMA,
     CONSTRAINT_TYPES_SCHEMA,
@@ -32,7 +33,7 @@ KNAPSACK_PROBLEM_PATCH_SCHEMA: dict[str, Any] = {
         "only_active_terms": {"type": "boolean"},
         "algorithm": {
             "type": "string",
-            "enum": ["GA", "PSO", "SA", "SwarmSA", "ACOR"],
+            "enum": list(STUDY_ENABLED_ALGORITHM_NAMES),
         },
         "algorithm_params": ALGORITHM_PARAMS_SCHEMA,
         "constraint_types": CONSTRAINT_TYPES_SCHEMA,

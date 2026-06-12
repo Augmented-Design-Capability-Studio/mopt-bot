@@ -68,13 +68,14 @@ class StudyProblemPort(Protocol):
         row (agile/demo). Order matters: the **first** entry is treated as
         the agile-mode default that the assumption row commits.
 
-        Default: all of ``CANONICAL_ALGORITHM_NAMES``. Ports override to
-        restrict the option set when a solver doesn't make sense for this
-        problem (e.g. a problem whose encoding rules out PSO).
+        Default: the study-enabled set (``STUDY_ENABLED_ALGORITHM_NAMES`` =
+        canonical minus any algorithm disabled for the study). Ports override
+        to further restrict the option set when a solver doesn't make sense for
+        this problem (e.g. a problem whose encoding rules out PSO).
         """
-        from app.algorithm_catalog import CANONICAL_ALGORITHM_NAMES
+        from app.algorithm_catalog import STUDY_ENABLED_ALGORITHM_NAMES
 
-        return CANONICAL_ALGORITHM_NAMES
+        return STUDY_ENABLED_ALGORITHM_NAMES
 
     def weight_display_keys(self) -> list[str]:
         """Ordered weight keys used for the agile-mode gate check and config-panel display order.

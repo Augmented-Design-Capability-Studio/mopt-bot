@@ -29,8 +29,7 @@ ALGORITHM_PARAMS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": (
         "Optional tuning object. Only use keys that exist for the selected algorithm — "
-        "GA: pc, pm. PSO: c1, c2, w. SA: temp_init, cooling_rate. SwarmSA: max_sub_iter, t0, t1, "
-        "move_count, mutation_rate, mutation_step_size, mutation_step_size_damp. "
+        "GA: pc, pm. PSO: c1, c2, w. SA: temp_init, cooling_rate. "
         "ACOR: sample_count, intent_factor, zeta. "
         "Omit unless the user discussed hyperparameters; never invent other names."
     ),

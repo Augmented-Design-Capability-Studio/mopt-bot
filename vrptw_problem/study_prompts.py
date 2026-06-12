@@ -93,7 +93,7 @@ the user clearly brings up the related concept.
 | arriving too early, idle wait before window | `waiting_time` |
 | maximum shift duration limit, max hours per driver | `max_shift_hours` |
 | "must assign X to Y", fixed assignments | `locked_assignments` |
-| algorithm choice (GA / PSO / SA / SwarmSA / ACOR), greedy init, run budget | `algorithm`, `use_greedy_init`, `epochs`, `pop_size` |
+| algorithm choice (GA / PSO / SA / ACOR), greedy init, run budget | `algorithm`, `use_greedy_init`, `epochs`, `pop_size` |
 
 **Disambiguation — generic "priority" vs express SLA:** bare "priority" /
 "top priority" / "prioritize on-time" → `lateness_penalty`, not
@@ -184,7 +184,6 @@ shape is in the `DRIVER_PREFERENCES_BRIEF_CONTRACT` section below.
 method commits the panel — emit `algorithm` even when embedded in a
 sentence about another setting. Canonical mappings:
 GA / genetic / evolutionary → `GA`; PSO / particle swarm → `PSO`;
-SA / simulated annealing → `SA`; SwarmSA / swarm-based annealing →
-`SwarmSA`; ACOR / ant colony → `ACOR`. If the same row also names
-greedy init, emit `use_greedy_init` alongside.
+SA / simulated annealing → `SA`; ACOR / ant colony → `ACOR`. If the
+same row also names greedy init, emit `use_greedy_init` alongside.
 """.strip() + "\n\n" + DRIVER_PREFERENCES_BRIEF_CONTRACT

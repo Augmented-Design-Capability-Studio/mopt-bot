@@ -15,6 +15,25 @@ DEFAULT_POP_SIZE = 50
 CANONICAL_ALGORITHM_NAMES: tuple[str, ...] = ("GA", "PSO", "SA", "SwarmSA", "ACOR")
 
 
+# Algorithms intentionally hidden from the live study but kept in the canonical
+# catalog above (and in the optimizer, defaults, normalization, and alias maps)
+# so they can be re-enabled by removing them from this set — no other code
+# changes needed. SwarmSA is disabled because its triple-nested inner loop
+# (max_sub_iter × pop_size × move_count) makes runs an order of magnitude slower
+# than the other methods, which would confound the UX study. Disabled 2026-06-12.
+STUDY_DISABLED_ALGORITHM_NAMES: frozenset[str] = frozenset({"SwarmSA"})
+
+
+# The set actually surfaced to participants: canonical minus disabled. Every
+# participant-facing surface (config-panel dropdown, panel/LLM schemas, the
+# search-strategy OQ text, agile default, config derivation) renders from this,
+# NOT from CANONICAL_ALGORITHM_NAMES. Order is preserved so element 0 stays the
+# agile-mode default.
+STUDY_ENABLED_ALGORITHM_NAMES: tuple[str, ...] = tuple(
+    name for name in CANONICAL_ALGORITHM_NAMES if name not in STUDY_DISABLED_ALGORITHM_NAMES
+)
+
+
 # Plain-language aliases the participant or LLM may use in chat. Lowercase
 # so callers can do case-insensitive substring matching without re-casing.
 # Single source of truth — duplicated lists in prompts or anchoring should
@@ -78,10 +97,10 @@ ALGORITHM_PARTICIPANT_NICKNAMES_MAP: dict[str, str] = {
     "ACOR": "ant colony (ACOR)",
 }
 
-# Ordered tuple, kept for compatibility with callers that want a positional
-# list aligned with ``CANONICAL_ALGORITHM_NAMES``.
+# Ordered tuple of participant-facing nicknames, aligned with the study-enabled
+# set (disabled algorithms are not offered, so they are not listed in prompts).
 ALGORITHM_NICKNAMES_PARTICIPANT: tuple[str, ...] = tuple(
-    ALGORITHM_PARTICIPANT_NICKNAMES_MAP[name] for name in CANONICAL_ALGORITHM_NAMES
+    ALGORITHM_PARTICIPANT_NICKNAMES_MAP[name] for name in STUDY_ENABLED_ALGORITHM_NAMES
 )
 
 

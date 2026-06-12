@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.algorithm_catalog import ALLOWED_ALGORITHM_PARAMS
+from app.algorithm_catalog import STUDY_ENABLED_ALGORITHM_NAMES
 from app.problems.registry import get_study_port
 from app.services.chat_context_policy import ContextTemperature
 
@@ -14,7 +14,7 @@ _ALGO_FAMILY_MAP: dict[str, str] = {
 
 
 def _algorithms_section(*, mention_mealpy: bool) -> str:
-    families = [_ALGO_FAMILY_MAP.get(name, "stochastic search") for name in ALLOWED_ALGORITHM_PARAMS.keys()]
+    families = [_ALGO_FAMILY_MAP.get(name, "stochastic search") for name in STUDY_ENABLED_ALGORITHM_NAMES]
     deduped = list(dict.fromkeys(families))
     prefix = "Solver families available"
     if mention_mealpy:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, Callable
 
 from app.algorithm_catalog import DEFAULT_EPOCHS, DEFAULT_POP_SIZE
@@ -114,7 +116,7 @@ def solve_request_to_result(
     from knapsack_problem.cost_breakdown import SPECS as COST_TERM_SPECS
     from knapsack_problem.evaluator import evaluate_selection
     from knapsack_problem.instance import get_items
-    from knapsack_problem.mealpy_solve import OptimizationCancelled, solve
+    from knapsack_problem.mealpy_solve import solve
 
     run_type = (body.get("type") or "optimize").lower()
     if run_type == "evaluate":
@@ -123,8 +125,14 @@ def solve_request_to_result(
     cfg = parse_problem_config(body.get("problem") or body, filter_algorithm_params=filter_algorithm_params)
     weight_warnings: list[str] = cfg.pop("weight_warnings", [])
     items, capacity = get_items(seed=0)
-    try:
-        cost, sol, convergence, runtime, algo = solve(
+
+    # Always hand the solver a cancel flag we control so the timeout path can
+    # stop the worker the same cooperative way the Cancel button does (checked
+    # inside the objective). Mirrors vrptw_problem/study_bridge.run_optimize.
+    effective_cancel = cancel_event if cancel_event is not None else threading.Event()
+
+    def _work():
+        return solve(
             items,
             capacity,
             cfg["weights"],
@@ -137,10 +145,25 @@ def solve_request_to_result(
             cfg["early_stop"],
             cfg["early_stop_patience"],
             cfg["early_stop_epsilon"],
-            cancel_event=cancel_event,
+            cancel_event=effective_cancel,
         )
-    except OptimizationCancelled:
-        raise
+
+    # Not a `with` block: ThreadPoolExecutor.__exit__ does shutdown(wait=True),
+    # which would block the request until a slow/stuck solve finishes. Detach
+    # instead (shutdown(wait=False)) so timeout_sec is an enforced wall-clock
+    # bound and a stuck eval can't hang the HTTP request. An OptimizationCancelled
+    # from a cooperative cancel propagates out of fut.result() and is mapped to
+    # RunCancelled by the caller (study_port).
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = ex.submit(_work)
+        try:
+            cost, sol, convergence, runtime, algo = fut.result(timeout=timeout_sec)
+        except FuturesTimeout:
+            effective_cancel.set()
+            raise TimeoutError("Optimization exceeded time limit") from None
+    finally:
+        ex.shutdown(wait=False)
 
     _, metrics = evaluate_selection(sol, items, capacity, cfg["weights"])
     sel = (np.asarray(sol, dtype=float).ravel() >= 0.5).astype(int)
