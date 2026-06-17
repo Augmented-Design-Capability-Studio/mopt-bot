@@ -175,6 +175,12 @@ select:focus-visible {
 
 .grid-3 > * {
   min-height: 0;
+  /* Grid items default to min-width:auto, so a track can't shrink below its
+     content's intrinsic min-content width. Without this, a single chat message
+     with an unbreakable run (long URL/token or a wide GFM table) forces the
+     chat column past its 3fr share and squeezes the other panels. min-width:0
+     lets the track honor 3fr and pushes overflow into .chat-log's scroll. */
+  min-width: 0;
 }
 
 .grid-3.grid-chat-only {
@@ -694,6 +700,21 @@ select:focus-visible {
 
 .bubble-markdown > :first-child {
   margin-top: 0.25rem;
+}
+
+/* Break long unbreakable runs (URLs, tokens, JSON blobs) so they wrap inside
+   the bubble instead of forcing the chat column wider. Pairs with min-width:0
+   on the grid item above. */
+.bubble-markdown {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Wide GFM tables scroll within the bubble rather than stretching the panel. */
+.bubble-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .bubble-markdown p {
