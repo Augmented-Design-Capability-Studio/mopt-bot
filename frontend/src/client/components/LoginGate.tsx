@@ -69,7 +69,7 @@ export function LoginGate({
         <form onSubmit={submitSaveToken}>
           {pendingUrlSessionId ? (
             <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
-              Accessed through a session link. Enter the access token and start to join.
+              Accessed through a session link. Enter the access token and save it to join this session.
             </p>
           ) : (
             <label>
@@ -101,9 +101,11 @@ export function LoginGate({
             }}
           >
             <button type="submit">Save token</button>
-            <button type="button" disabled={busy || !token.trim()} onClick={() => void onStartSession()}>
-              Start session
-            </button>
+            {!pendingUrlSessionId && (
+              <button type="button" disabled={busy || !token.trim()} onClick={() => void onStartSession()}>
+                Start session
+              </button>
+            )}
           </div>
         </form>
         <details style={{ marginTop: "1.25rem" }} className="login-recent-sessions">
