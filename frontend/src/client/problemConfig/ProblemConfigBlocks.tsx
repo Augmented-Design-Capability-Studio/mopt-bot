@@ -250,23 +250,22 @@ export function ProblemConfigBlocks({
       let newWeight = currentWeight;
       let newLocked = [...problem.locked_goal_terms];
 
-      if (type === "objective" || type === "soft") {
-        // Rescale proportionally so tuning survives the recategorize (don't snap
-        // back to the tier base). "objective" removes the explicit tag.
-        newWeight = rescaleWeightForTypeChange(currentWeight, oldType, type);
-        newLocked = newLocked.filter((k) => k !== key);
-        delete currentConstraintTypes[key]; // "objective" is implicit; "soft" stored below
-        if (type === "soft") currentConstraintTypes[key] = "soft";
-      } else if (type === "hard") {
-        // Same proportional rescale into the hard tier (a tuned term keeps its
-        // multiple of the tier). Don't auto-lock — leave lock state alone.
-        newWeight = rescaleWeightForTypeChange(currentWeight, oldType, type);
-        currentConstraintTypes[key] = "hard";
-      } else {
+      if (type === "custom") {
         // custom: weight unchanged, lock it (custom = user-managed weight,
         // and the lock flag protects it from any future automation paths).
         if (!newLocked.includes(key)) newLocked = [...newLocked, key];
         currentConstraintTypes[key] = "custom";
+      } else {
+        // Any non-custom type (objective / soft / hard) releases the lock that
+        // switching to "custom" imposes — locking is the custom type's job, so
+        // moving off it unlocks automatically (one less manual step for
+        // participants). objective/soft/hard rescale proportionally so tuning
+        // survives the recategorize (they don't snap back to the tier base).
+        newWeight = rescaleWeightForTypeChange(currentWeight, oldType, type);
+        newLocked = newLocked.filter((k) => k !== key);
+        delete currentConstraintTypes[key]; // "objective" is implicit; soft/hard stored below
+        if (type === "soft") currentConstraintTypes[key] = "soft";
+        else if (type === "hard") currentConstraintTypes[key] = "hard";
       }
 
       updateProblem({

@@ -191,7 +191,8 @@
       "Bash(./node_modules/.bin/tsc --noEmit -p tsconfig.json)",
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(cat backend/.env)",
-      "Bash(cat .env)"
+      "Bash(cat .env)",
+      "Bash(python3 -)"
     ]
   }
 }

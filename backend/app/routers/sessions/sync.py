@@ -1308,6 +1308,79 @@ def gapfill_brief_companions_from_panel(
     return updated
 
 
+def realign_brief_locks_from_panel(
+    row: StudySession, db: Session, problem_brief: dict, *, commit: bool = True
+) -> dict:
+    """Mirror the panel's authoritative lock set into the brief's per-term
+    ``goal_terms[key].locked``, so both surfaces show one lock state. Idempotent.
+
+    Lock is one concept stored in two places: the panel's ``locked_goal_terms``
+    list (where the Config lock button and the "custom" type switch write, and
+    what the solver / chat prompt read) and the brief's ``goal_terms[key].locked``
+    flag (what the Definition-tab lock icon reads). The panel is authoritative —
+    the participant sets locks in the Config UI.
+
+    On a brief→panel derive turn ``_mirror_locked_from_brief`` already folds any
+    brief-side opinion into the panel list AND preserves panel-only locks, so the
+    panel list is the merged truth. But nothing teaches the *brief* about a
+    panel-only lock (e.g. the participant switched a term to "custom" in Config,
+    whose lock never round-tripped through a panel Save). The brief then has no
+    ``locked`` key while the panel has ``locked: True`` — which S5 reports as
+    ``locked`` None(brief) vs True(panel) drift the retry can never clear, and
+    the Definition tab shows the term as unlocked. This deterministic mirror
+    closes that loop: after the derive settled the panel lock set, write it back
+    into the brief so the two agree.
+
+    Companion to ``realign_panel_scalars_from_brief`` (brief→panel scalars) and
+    ``gapfill_brief_companions_from_panel`` (panel→brief companions); this is the
+    panel→brief direction for locks.
+    """
+    if not isinstance(problem_brief, dict):
+        return problem_brief
+    brief_goal_terms = problem_brief.get("goal_terms")
+    if not isinstance(brief_goal_terms, dict) or not brief_goal_terms:
+        return problem_brief
+    panel = helpers.panel_dict(row)
+    problem = panel.get("problem") if isinstance(panel, dict) else None
+    if not isinstance(problem, dict):
+        return problem_brief
+    # The panel's authoritative lock store is the `locked_goal_terms` list; the
+    # per-term `goal_terms[key].locked=True` projection is a superset backup.
+    locked_keys: set[str] = set()
+    raw_list = problem.get("locked_goal_terms")
+    if isinstance(raw_list, list):
+        locked_keys.update(k for k in raw_list if isinstance(k, str))
+    panel_goal_terms = problem.get("goal_terms")
+    if isinstance(panel_goal_terms, dict):
+        for key, entry in panel_goal_terms.items():
+            if isinstance(key, str) and isinstance(entry, dict) and entry.get("locked") is True:
+                locked_keys.add(key)
+
+    changed = False
+    for key, entry in brief_goal_terms.items():
+        if not isinstance(key, str) or key in CARRIER_ONLY_GOAL_TERM_KEYS or not isinstance(entry, dict):
+            continue
+        if key in locked_keys:
+            if entry.get("locked") is not True:
+                entry["locked"] = True
+                changed = True
+        else:
+            # Unlocked is represented as an absent key (matching the panel's
+            # True-or-absent convention) so a stale True / explicit False can't
+            # re-open the mismatch from the brief side.
+            if "locked" in entry:
+                entry.pop("locked", None)
+                changed = True
+    if not changed:
+        return problem_brief
+    row.problem_brief_json = json.dumps(problem_brief)
+    row.updated_at = datetime.now(timezone.utc)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return problem_brief
+
+
 def sync_problem_brief_from_panel(
     row: StudySession,
     db: Session,

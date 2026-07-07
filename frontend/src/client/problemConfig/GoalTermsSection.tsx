@@ -417,10 +417,11 @@ function reorderKeys(arr: string[], from: string, to: string, insertBefore: bool
   return result;
 }
 
-/** Infer effective constraint type. Lock and type are independent — a locked
- *  term keeps its own type (a locked objective stays "objective"). Only an
- *  explicit type changes it. The reverse coupling (custom ⇒ lock) lives in the
- *  constraint-type change handler. */
+/** Infer effective constraint type. Type doesn't follow the lock icon — a
+ *  term the participant locked with the 🔒 button keeps its own type (a locked
+ *  objective stays "objective"). The one type→lock coupling lives in the
+ *  constraint-type change handler: switching to "custom" locks the term, and
+ *  switching to any other type releases that lock. */
 function effectiveType(
   key: string,
   constraintTypes: Record<string, ConstraintType>,

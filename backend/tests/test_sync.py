@@ -578,6 +578,66 @@ def test_mirror_locked_from_brief_ignores_key_absent_from_panel():
     assert next_problem.get("locked_goal_terms", []) == []
 
 
+def test_realign_brief_locks_from_panel_mirrors_panel_only_lock():
+    """A term locked via the Config 'custom' switch (panel `locked_goal_terms`)
+    that never round-tripped into the brief is reconciled: the brief gains
+    `locked: True` and the brief↔panel drift clears. This is the P12 bug
+    (`lateness_penalty.locked` None vs True) — a panel-only lock the brief
+    never learned about."""
+    panel = {
+        "problem": {
+            "goal_terms": {
+                "lateness_penalty": {"weight": 35.0, "type": "custom", "rank": 2, "locked": True},
+                "travel_time": {"weight": 1.1, "type": "objective", "rank": 1},
+            },
+            "locked_goal_terms": ["lateness_penalty"],
+        }
+    }
+    brief = {
+        "goal_terms": {
+            "lateness_penalty": {"weight": 35.0, "type": "custom", "rank": 2},  # no locked
+            "travel_time": {"weight": 1.1, "type": "objective", "rank": 1},
+        }
+    }
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(panel),
+        problem_brief_json=json.dumps(brief),
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+    out = sync.realign_brief_locks_from_panel(row, _DummyDb(), brief, commit=True)
+    assert out["goal_terms"]["lateness_penalty"]["locked"] is True
+    assert "locked" not in out["goal_terms"]["travel_time"]
+    assert sync.compute_brief_panel_drift(out, panel, "vrptw") == []
+    # Idempotent — re-running finds nothing to change.
+    again = sync.realign_brief_locks_from_panel(row, _DummyDb(), out, commit=True)
+    assert again["goal_terms"]["lateness_penalty"]["locked"] is True
+
+
+def test_realign_brief_locks_from_panel_clears_stale_brief_lock():
+    """When the panel no longer locks a term, a stale brief `locked: True` is
+    dropped so 'unlocked' is one shared absent-key state (matches the panel's
+    True-or-absent convention) and no drift re-opens from the brief side."""
+    panel = {
+        "problem": {
+            "goal_terms": {"lateness_penalty": {"weight": 35.0, "type": "soft", "rank": 2}},
+            "locked_goal_terms": [],
+        }
+    }
+    brief = {
+        "goal_terms": {"lateness_penalty": {"weight": 35.0, "type": "soft", "rank": 2, "locked": True}}
+    }
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(panel),
+        problem_brief_json=json.dumps(brief),
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+    out = sync.realign_brief_locks_from_panel(row, _DummyDb(), brief, commit=True)
+    assert "locked" not in out["goal_terms"]["lateness_penalty"]
+    assert sync.compute_brief_panel_drift(out, panel, "vrptw") == []
+
+
 def test_p_l7_replay_panel_derive_yields_no_brief_panel_mismatch(monkeypatch):
     """End-to-end P_l7 msg-1688 replay through sync_panel_from_problem_brief.
 

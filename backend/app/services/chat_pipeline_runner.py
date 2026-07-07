@@ -1556,6 +1556,13 @@ def _run_verify_config_stage(
             # the brief so the brief↔panel mirror agrees (otherwise the retry can
             # never clear the mismatch) and the def row shows the cap.
             brief = sync.gapfill_brief_companions_from_panel(row, db, brief, commit=True)
+            # The panel is authoritative for locks (the Config lock button / the
+            # "custom" type switch write `locked_goal_terms`). A panel-only lock
+            # the brief never recorded shows up as `locked` None(brief) vs
+            # True(panel) drift the retry can't clear, and leaves the Definition
+            # tab showing the term as unlocked — mirror the settled panel lock set
+            # back into the brief so both surfaces agree.
+            brief = sync.realign_brief_locks_from_panel(row, db, brief, commit=True)
         panel = helpers.panel_dict(row)
     issues = pipeline_verification.verify_panel_consistency(
         brief=brief,
