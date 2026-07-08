@@ -1,77 +1,72 @@
-/**
- * Shape of a single session as the analyzer consumes it. Matches
- * `GET /sessions/{id}/export` (the researcher JSON export) one-to-one so
- * the JSON path stays a direct passthrough; the .db loader synthesises the
- * same shape from raw SQLite rows.
- */
-export type SessionArchive = {
-  export_schema_version: number | string;
-  exported_at?: string;
-  /** JSON exports include this pre-built; .db-derived archives omit it
-   *  and let `buildTimelineFromArchive` rebuild from messages/runs/snapshots. */
-  timeline?: TimelineRow[];
-  session: SessionHeader;
-  messages: ArchiveMessage[];
-  runs: ArchiveRun[];
-  snapshots: ArchiveSnapshot[];
-};
+// Types mirroring the backend /analysis payloads.
 
-export type SessionHeader = {
+export interface LoadedCounts {
+  messages: number;
+  runs: number;
+  snapshots: number;
+  annotations: number;
+  pauses: number;
+}
+
+export interface LoadedSummary {
   id: string;
-  created_at: string;
-  updated_at: string;
-  workflow_mode: string;
-  participant_number?: string | null;
-  test_problem_id?: string;
-  status: string;
-  panel_config: Record<string, unknown> | null;
-  problem_brief: Record<string, unknown> | null;
-  [extra: string]: unknown;
-};
+  source_session_id: string | null;
+  participant_number: string | null;
+  workflow_mode: string | null;
+  test_problem_id: string | null;
+  source_kind: string;
+  source_filename: string | null;
+  loaded_at: string | null;
+  video_filename: string | null;
+  video_duration_sec: number | null;
+  clock_offset_sec: number | null;
+  t0_video_pos: number | null;
+  t0_iso: string | null;
+  counts: LoadedCounts;
+}
 
-export type ArchiveMessage = {
-  id: number;
-  created_at: string;
-  role: string;
-  content: string;
-  visible_to_participant: boolean;
-  kind: string;
-  meta?: Record<string, unknown> | null;
-};
+export type AnnoType = "code" | "note" | "marker";
 
-export type ArchiveRun = {
+export interface Annotation {
   id: number;
-  session_run_index?: number | null;
-  run_number?: number;
-  created_at: string;
-  run_type: string;
-  ok: boolean;
-  cost: number | null;
-  reference_cost: number | null;
-  error_message: string | null;
-  request: Record<string, unknown> | null;
-  result: Record<string, unknown> | null;
-};
+  anno_type: AnnoType;
+  label: string | null;
+  color: string | null;
+  text: string | null;
+  video_pos_sec: number | null;
+  row_ref: string | null;
+}
 
-export type ArchiveSnapshot = {
+export interface Pause {
   id: number;
-  created_at: string;
+  start_video_pos: number;
+  end_video_pos: number | null;
+  note: string | null;
+}
+
+export interface TimelineRow {
+  kind: string; // message | run | snapshot | code | marker | note
+  timestamp_iso: string | null;
+  epoch: number | null;
+  time_since_start: number | null;
+  time_since_start_raw: number | null;
+  video_pos: number | null;
   event_type: string;
-  problem_brief: Record<string, unknown> | null;
-  panel_config: Record<string, unknown> | null;
-};
+  role: string | null;
+  label: string | null;
+  summary: string | null;
+  definition_change: string | null;
+  config_change: string | null;
+  latest_run: string | null;
+  color: string | null;
+  note: string | null;
+  annotation_id: number | null;
+  row_ref: string | null;
+}
 
-export type TimelineRow = {
-  kind: string;
-  at: string;
-  label: string;
-  payload_summary: string;
-  ref?: Record<string, unknown>;
-};
-
-/** Container the UI selects against — JSON gives one session, .db gives many. */
-export type SessionStore = {
-  source: "json" | "db";
-  sourceName: string;
-  sessions: SessionArchive[];
-};
+export interface LoadedDetail {
+  session: LoadedSummary;
+  annotations: Annotation[];
+  pauses: Pause[];
+  timeline: TimelineRow[];
+}

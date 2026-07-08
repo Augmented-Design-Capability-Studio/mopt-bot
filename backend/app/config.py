@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     port: int = 8000
     public_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./data/mopt_study.db"
+    # Separate, durable store for the session-coding analysis tool. Kept apart
+    # from the study DB so coding work never risks the raw study data and the
+    # study schema can drift without touching the analysis schema.
+    analysis_database_url: str = "sqlite:///./data/mopt_analysis.db"
+    # When true, mount the built frontend (frontend/dist) so the whole tool can
+    # be hosted through the backend as well as via the Vite dev server. Skipped
+    # gracefully when frontend_dist_dir is absent (pure Vite dev).
+    serve_frontend: bool = True
+    # Repo-relative (to backend/) or absolute path to the built SPA bundle.
+    frontend_dist_dir: str = "../frontend/dist"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     client_secret: str = "dev-client"
     researcher_secret: str = "dev-researcher"

@@ -1,12 +1,17 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from app.analysis_db import ensure_analysis_db_shape
 from app.config import get_settings
 from app.db_maintenance import ensure_database_shape
-from app.routers import meta, sessions
+from app.routers import analysis, meta, sessions
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 LOG_FORMAT = "%(asctime)s %(levelname)s: %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -36,6 +41,7 @@ log = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     configure_logging()
     ensure_database_shape()
+    ensure_analysis_db_shape()
     yield
 
 
@@ -56,10 +62,23 @@ def create_app() -> FastAPI:
     )
     app.include_router(sessions.router)
     app.include_router(meta.router)
+    app.include_router(analysis.router)
 
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    # Serve the built frontend (frontend/dist) so the tool can be hosted through
+    # the backend, not only via the Vite dev server. Mounted LAST so the API
+    # routers above always win; skipped when the bundle is absent (pure dev).
+    if settings.serve_frontend:
+        dist = Path(settings.frontend_dist_dir)
+        if not dist.is_absolute():
+            dist = (_BACKEND_DIR / dist).resolve()
+        if dist.is_dir():
+            app.mount("/", StaticFiles(directory=str(dist), html=True), name="frontend")
+        else:
+            log.warning("serve_frontend on but dist dir not found: %s", dist)
 
     return app
 
