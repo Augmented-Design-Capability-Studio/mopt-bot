@@ -856,6 +856,20 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
             .first()
         )
         user_text = last_user.content if last_user else ""
+        # Reconstruct the researcher steers that were fresh for THIS paused
+        # turn so a participant-clicked Retry preserves them. (The automatic
+        # in-process S5 retry already carries them via retry_context; this is
+        # the resume-from-pause path, which rebuilds context from the DB.)
+        # Uses the shared freshness rule anchored on the triggering user
+        # message, so the paused turn's own placeholder reply doesn't count as
+        # having applied the steer.
+        from app.routers.sessions.context import load_fresh_researcher_steers
+
+        researcher_steers = (
+            load_fresh_researcher_steers(db, session_id, last_user.id)
+            if last_user is not None
+            else None
+        )
     pipeline = meta.get("pipeline") if isinstance(meta, dict) else {}
     flavor = (
         pipeline.get("flavor") if isinstance(pipeline, dict) else None
@@ -887,7 +901,7 @@ def _rebuild_runner_context(*, session_id: str, message_id: int) -> dict[str, An
         api_key=api_key,
         model_name=str(row.gemini_model or ""),
         history_lines=[],
-        researcher_steers=None,
+        researcher_steers=researcher_steers,
         recent_runs_summary=None,
         base_problem_brief=base_brief,
         base_panel=base_panel,
