@@ -502,22 +502,29 @@ def gate_unauthorized_search_strategy_commit(
     possibly-stripped brief plus the OQ actions the caller should still
     apply.
     """
-    if str(workflow_mode or "").strip().lower() != "waterfall":
-        return effective_brief, oq_actions
     if not isinstance(effective_brief, dict):
         return effective_brief, oq_actions
 
-    # Authorization by explicit participant choice: when the main-turn LLM
-    # reports that the PARTICIPANT named an algorithm this turn (their answer to
-    # the search-strategy question, as a structured field — not parsed from the
-    # reply), commit it deterministically. The server, not the LLM, sets the
-    # carrier, so a chat answer no longer depends on the model also emitting a
-    # `mark_answered` OQ action it was told not to touch. The downstream monitor
-    # then clears the OQ because the carrier now reads present. This is the
-    # chat-side twin of the panel answer path (`classify_answered_open_questions`).
+    # Authorization by explicit participant choice: when the classifier reports
+    # that the PARTICIPANT named an algorithm this turn (read from their own
+    # message — not parsed from the model's reply), commit it deterministically.
+    # The server, not the LLM, sets the carrier, so a chat answer no longer
+    # depends on the model also populating `properties.algorithm` (it often
+    # writes only the prose row + rationale and forgets the carrier, so the
+    # panel never changes). This runs in BOTH modes: a USER-initiated
+    # search-strategy change is symmetric — only the INITIAL default policy and
+    # the forgery guard below are waterfall-specific axes. The downstream
+    # monitor reconciles the visible row (waterfall OQ clears; agile assumption
+    # row tracks the committed algorithm).
     user_choice = _validated_algorithm_name(user_search_strategy_choice)
     if user_choice:
         return _set_search_strategy_algorithm(effective_brief, user_choice), oq_actions
+
+    # The forgery guard below (strip an algorithm the user never authorized) is
+    # a waterfall axis: agile commits the algorithm as a fait-accompli
+    # assumption, so there is nothing to strip.
+    if str(workflow_mode or "").strip().lower() != "waterfall":
+        return effective_brief, oq_actions
 
     # Resolve which OQ ids are the search-strategy question. The canonical
     # monitor id is the usual case; topic is the robust signal in case a

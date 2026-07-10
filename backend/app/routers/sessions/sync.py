@@ -1154,6 +1154,18 @@ def sync_panel_from_problem_brief(
                         and carrier_val
                     ):
                         next_problem[carrier_key] = carrier_val
+            # algorithm_params: give an explicitly-committed parameter set the
+            # same deterministic safety net epochs/pop_size already have. The
+            # main-turn model puts a chat-requested param change (e.g. inertia
+            # → 0.6) in the carrier, but nothing forwarded it to the panel, so
+            # the panel-derive LLM could silently drop it and the change never
+            # ran. Forward a non-empty carrier param map here; sanitize drops
+            # keys not used by the (possibly just-changed) algorithm, and the
+            # solver overlays whatever survives onto that algorithm's defaults —
+            # so an explicit value wins and unmentioned params still default.
+            carrier_params = ss_carrier.get("algorithm_params")
+            if isinstance(carrier_params, dict) and carrier_params:
+                next_problem["algorithm_params"] = deepcopy(carrier_params)
 
     # Brief → panel deterministic mirror for `goal_terms[K].{weight, type,
     # rank}`. The brief is authoritative for those scalars on chat-origin

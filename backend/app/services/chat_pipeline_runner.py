@@ -61,6 +61,25 @@ def _has_open_search_strategy_oq(brief: dict[str, Any] | None) -> bool:
     return False
 
 
+def _turn_touches_search_strategy(turn: Any) -> bool:
+    """True iff this turn's main-model patch acts on the search strategy.
+
+    Signals a participant-driven algorithm **change** (e.g. "try swarm
+    search") after the initial choice is already committed and its open
+    question closed — the state `_has_open_search_strategy_oq` no longer
+    catches. When the agent emits a `goal_terms.search_strategy` entry it
+    believes it is switching the method, so we run the deterministic
+    user-choice classifier to pin the algorithm from the participant's own
+    message rather than trusting the model to populate the carrier (it often
+    writes the prose row + rationale but forgets
+    `properties.algorithm`, so the panel never changes)."""
+    patch = getattr(turn, "problem_brief_patch", None)
+    if not isinstance(patch, dict):
+        return False
+    goal_terms = patch.get("goal_terms")
+    return isinstance(goal_terms, dict) and "search_strategy" in goal_terms
+
+
 def _read_pipeline_meta(message_id: int) -> dict[str, Any] | None:
     """Best-effort read of ``meta.pipeline`` for a message."""
     with SessionLocal() as db:
@@ -1296,13 +1315,23 @@ def _apply_stage(
         # Authorize a chat answer to the search-strategy question by reading the
         # PARTICIPANT'S own message with a focused classifier — independent of
         # how the main-turn model phrased its patch (it tends to forge the
-        # carrier + drop the OQ, which the gate correctly distrusts). Only when
-        # waterfall and the question is actually open, so it's a few early turns
-        # at most. Fail-safe (None → gate falls back to its forgery guard).
+        # carrier + drop the OQ, which the gate correctly distrusts). Fail-safe
+        # (None → gate falls back to its forgery guard).
+        #
+        # Fires in two states: (1) the search-strategy OQ is still open — the
+        # initial choice (waterfall); (2) THIS turn's patch touches
+        # `search_strategy` — a participant-driven CHANGE (e.g. "try swarm
+        # search"), which applies in BOTH modes. Without (2) a change after the
+        # initial choice had no deterministic commit path: the model wrote the
+        # prose row + rationale ("switched to PSO") but omitted the carrier
+        # `properties.algorithm`, so the panel algorithm never moved off its old
+        # value (session 7d4b9eaf: Run #8 still ran GA). Running it in agile too
+        # keeps user-initiated search-strategy changes symmetric across modes —
+        # the gate commits the participant's explicit choice regardless of mode;
+        # only the forgery guard stays waterfall-only. On a non-algorithm turn
+        # the classifier returns None, so this is a safe no-op.
         user_ss_choice: str | None = None
-        if str(workflow_mode or "").strip().lower() == "waterfall" and _has_open_search_strategy_oq(
-            base_problem_brief
-        ):
+        if _has_open_search_strategy_oq(base_problem_brief) or _turn_touches_search_strategy(turn):
             from app.services import llm
 
             # The agent's immediately-preceding visible message — what the

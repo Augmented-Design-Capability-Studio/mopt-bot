@@ -56,6 +56,51 @@ def test_sync_panel_from_brief_preserves_locked_goal_terms(monkeypatch):
     assert panel["problem"]["locked_goal_terms"] == [_W1]
 
 
+def test_carrier_algorithm_params_mirror_reaches_panel():
+    """An explicitly-committed algorithm parameter in the search-strategy
+    carrier (e.g. a chat request "set inertia to 0.6") must reach the panel —
+    the same deterministic safety net epochs/pop_size already have. Without the
+    mirror the derive path could drop it and the run would use the default."""
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {
+                "problem": {
+                    "weights": {_W1: 1.0},
+                    "algorithm": "GA",
+                    "algorithm_params": {"pc": 0.9, "pm": 0.05},
+                    "epochs": 100,
+                    "pop_size": 50,
+                }
+            }
+        ),
+        workflow_mode="waterfall",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+    brief = {
+        "items": [
+            {"id": "config-search-strategy", "text": "Search strategy: PSO",
+             "kind": "gathered", "source": "user"}
+        ],
+        "open_questions": [],
+        "goal_terms": {
+            _W1: {"weight": 1.0, "type": "objective", "rank": 1},
+            "search_strategy": {
+                "weight": 1.0, "type": "custom", "rank": 2,
+                "properties": {"algorithm": "PSO", "algorithm_params": {"w": 0.6}},
+            },
+        },
+    }
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row, db=_DummyDb(), problem_brief=brief, api_key=None, model_name=None,
+    )
+    prob = panel["problem"]
+    assert prob["algorithm"] == "PSO"
+    # The explicit inertia survived (stale GA params were dropped by sanitize).
+    assert prob["algorithm_params"].get("w") == 0.6
+    assert "pc" not in prob["algorithm_params"]  # GA's param filtered out for PSO
+
+
 def test_panel_derive_drops_goal_terms_not_in_brief():
     """Brief-as-source enforcement: when the LLM-derived panel proposes a
     goal-term key (e.g. ``travel_time``) that the brief's ``goal_terms`` map

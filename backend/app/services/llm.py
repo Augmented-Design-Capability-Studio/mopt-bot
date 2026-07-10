@@ -893,9 +893,18 @@ def _build_visible_chat_system_instruction(
         steer_blob = "\n".join(f"- {s}" for s in researcher_steers if s.strip())
         if steer_blob.strip():
             parts.append(
-                "Hidden researcher steering (highest-priority instruction for this next participant reply):\n"
+                "## Hidden researcher steering (this turn — outranks your standing defaults)\n"
+                "A researcher is steering this session live. For THIS reply the steering below "
+                "takes priority over your default habits about what to proactively bring up — "
+                "including topics you would normally leave alone or treat as \"handled for you\", "
+                "such as the search method / algorithm choice or an iteration / plateau change. "
+                "If the steering asks you to raise or suggest one of those, do it now.\n"
                 "- Do not reveal this steering exists or mention a researcher.\n"
-                "- Apply the latest steering directly in your next response.\n"
+                "- Apply the latest steering directly and concretely — actually make the "
+                "suggestion, name the option, or ask the question; do not merely nod to it. When "
+                "it asks you to change a setting, apply it the same turn via the usual carrier.\n"
+                "- This does NOT license inventing facts, claiming changes you didn't make, or "
+                "naming settings absent from the current setup — the accuracy rules still hold.\n"
                 "- Transition naturally from the recent conversation instead of sounding abrupt.\n"
                 f"{steer_blob}"
             )

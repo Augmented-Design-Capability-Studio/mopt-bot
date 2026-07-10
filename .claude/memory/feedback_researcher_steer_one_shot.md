@@ -34,6 +34,20 @@ also **canned** assistant rows that do NOT invoke the model: the run summary
 "Problem definition saved"). Anchoring on any assistant row lets one of those
 consume a steer sent mid-run/mid-save, dropping it before the real LLM reply.
 
+**Steer must outrank conservative standing defaults.** The steer block in
+`_build_visible_chat_system_instruction` is appended last (good recency), but a
+plain "highest-priority instruction" wording lost to strongly-repeated waterfall
+guardrails like "don't add a search-strategy question yourself — that one's
+handled for you" (study_chat.py). Symptom (session 7d4b9eaf): a steer asking the
+agent to *suggest search-strategy / iteration changes* was delivered on the right
+turns (verified via `load_fresh_researcher_steers`) but the agent ignored it,
+while it happily answered the same topic when the participant asked directly.
+Fix: the steer block explicitly states it outranks the agent's proactivity
+defaults — including topics it would treat as "handled for you" (algorithm /
+plateau) — while still forbidding fact-invention. The "handled for you" rule
+stays the DEFAULT (deterministic study control); the steer is the deliberate
+researcher override.
+
 **Retries preserve the steer.** The automatic in-process S5 retry carries it via
 `retry_context["researcher_steers"]`. The participant-clicked resume-from-pause
 path (`_rebuild_runner_context`) rebuilds context from the DB and used to hardcode

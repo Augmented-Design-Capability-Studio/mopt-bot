@@ -1244,6 +1244,132 @@ def test_waterfall_gate_commits_user_chat_choice_even_without_carrier():
         assert not any(q["id"] == "oq-monitor-algorithm" for q in restored["open_questions"])
 
 
+def test_turn_touches_search_strategy_detects_change_patch():
+    """The trigger that runs the deterministic user-choice classifier on an
+    algorithm CHANGE (after the initial choice) fires only when the turn's
+    patch acts on `search_strategy`."""
+    from types import SimpleNamespace
+
+    from app.services.chat_pipeline_runner import _turn_touches_search_strategy
+
+    change = SimpleNamespace(
+        problem_brief_patch={"goal_terms": {"search_strategy": {"weight": 1, "type": "custom", "rank": 4}}}
+    )
+    weight = SimpleNamespace(
+        problem_brief_patch={"goal_terms": {"travel_time": {"weight": 2.0, "type": "objective"}}}
+    )
+    assert _turn_touches_search_strategy(change) is True
+    assert _turn_touches_search_strategy(weight) is False
+    assert _turn_touches_search_strategy(SimpleNamespace(problem_brief_patch=None)) is False
+
+
+def test_waterfall_gate_commits_algorithm_change_after_oq_closed():
+    """Session 7d4b9eaf: after the algorithm was decided (GA committed, OQ
+    closed), the participant asked to switch to swarm search. The model wrote
+    the prose row + rationale ("switched to PSO") but omitted the carrier
+    `properties.algorithm`, so the panel never moved off GA. Now the change
+    turn re-runs the user-choice classifier (patch touches `search_strategy`)
+    and the gate commits the participant's choice deterministically — even
+    though the base brief was already authorized for GA."""
+    base_brief = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "search_strategy": {
+                    "weight": 1.0,
+                    "type": "custom",
+                    "rank": 2,
+                    "properties": {"algorithm": "GA"},
+                },
+            },
+            open_questions=[],  # the algorithm OQ was resolved earlier
+            topic_engaged=True,
+        )
+    )
+    # What the model emitted this turn: touches search_strategy but leaves the
+    # carrier at the stale GA (no new properties.algorithm), plus a PSO rationale.
+    effective = normalize_problem_brief(
+        _minimal_brief(
+            goal_terms={
+                "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                "search_strategy": {
+                    "weight": 1.0,
+                    "type": "custom",
+                    "rank": 2,
+                    "properties": {"algorithm": "GA"},
+                    "ambiguity_note": {"chosen_rationale": "Switched to swarm search (PSO) as requested."},
+                },
+            },
+            open_questions=[],
+            topic_engaged=True,
+        )
+    )
+    gated, _actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=base_brief,
+        oq_actions=[],
+        workflow_mode="waterfall",
+        user_search_strategy_choice="swarm search",  # classifier output for "try swarm search"
+    )
+    assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "PSO"
+
+
+def test_user_choice_commits_symmetrically_in_agile_and_waterfall():
+    """A user-initiated search-strategy change is symmetric across modes: the
+    participant's explicit choice commits the carrier deterministically in BOTH
+    agile and waterfall (only the INITIAL default policy and the forgery guard
+    are waterfall axes). Previously the deterministic commit was waterfall-only,
+    so an agile "switch to swarm search" relied entirely on the model
+    remembering the carrier."""
+    def _brief_with_ga_carrier():
+        return normalize_problem_brief(
+            _minimal_brief(
+                goal_terms={
+                    "travel_time": {"weight": 1.0, "type": "objective", "rank": 1},
+                    "search_strategy": {
+                        "weight": 1.0, "type": "custom", "rank": 2,
+                        "properties": {"algorithm": "GA"},
+                    },
+                },
+                open_questions=[],
+                topic_engaged=True,
+            )
+        )
+
+    base_brief = _brief_with_ga_carrier()
+    for mode in ("agile", "waterfall", "demo"):
+        effective = _brief_with_ga_carrier()
+        effective["goal_terms"]["search_strategy"]["ambiguity_note"] = {
+            "chosen_rationale": "Switched to swarm search (PSO)."
+        }
+        gated, _actions = gate_unauthorized_search_strategy_commit(
+            effective_brief=effective,
+            base_brief=base_brief,
+            oq_actions=[],
+            workflow_mode=mode,
+            user_search_strategy_choice="swarm search",
+        )
+        assert (
+            gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "PSO"
+        ), f"mode={mode} should commit PSO"
+
+
+def test_agile_no_user_choice_keeps_llm_carrier_commit():
+    """Symmetry must not regress the agile axis: with NO explicit user choice,
+    the agile fait-accompli carrier the model committed is left intact (the
+    forgery guard that would strip it is waterfall-only)."""
+    base = normalize_problem_brief(_minimal_brief(topic_engaged=True))
+    effective = _ss_carrier_brief()  # model committed a GA carrier
+    gated, _actions = gate_unauthorized_search_strategy_commit(
+        effective_brief=effective,
+        base_brief=base,
+        oq_actions=[{"id": "oq-monitor-algorithm", "action": "drop"}],
+        workflow_mode="agile",
+        user_search_strategy_choice=None,
+    )
+    assert gated["goal_terms"]["search_strategy"]["properties"]["algorithm"] == "GA"
+
+
 def test_waterfall_gate_ignores_invalid_user_choice():
     """An unrecognized ``user_search_strategy_choice`` must NOT authorize a
     commit — it falls through to the normal forgery guard (no carrier present,
