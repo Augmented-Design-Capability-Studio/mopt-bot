@@ -70,3 +70,16 @@ export interface LoadedDetail {
   pauses: Pause[];
   timeline: TimelineRow[];
 }
+
+export interface AggregateRow {
+  loaded_id: string;
+  participant: string | null;
+  workflow_mode: string | null;
+  initial_prompt_words: number | null;
+  expertise_score: number | null;
+}
+
+export interface AggregateResponse {
+  rows: AggregateRow[];
+  expertise_available: boolean;
+}

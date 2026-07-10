@@ -475,5 +475,212 @@ class VrptwStudyPort:
             return f"Run #{session_run_number} failed: {error_message or 'error'}."
         return f"Run #{session_run_number} finished. I've updated the fleet schedule timeline and route details for this run — open them in the Results & Visualization panel."
 
+    # Traffic is stochastic, so a single-seed canonical score is noisy (a schedule
+    # can swing ±100s of cost by seed). Average over this many traffic draws.
+    _CANON_SEEDS = 10
+    _MAX_SHIFT_MIN = 8.0 * 60
+    _N_ORDERS = 30
+
+    def canonical_evaluation_for_result(self, result_json: dict[str, Any]) -> dict[str, Any] | None:
+        """Re-score a run's produced schedule under the OFFICIAL (canonical)
+        objective AND check the true hard constraints — averaged over several
+        traffic seeds so the value is robust, not a lucky single draw.
+
+        Returns mean canonical cost + its std (for error bars), the fraction of
+        seeds that are feasible, and a robust ``feasible`` flag (feasible on the
+        large majority of traffic draws). Hard constraints (per the handout):
+        lateness (time-window), capacity overflow, shift (>8h); plus full order
+        coverage. None if the result has no usable schedule.
+        """
+        try:
+            import numpy as np
+
+            from vrptw_problem.orders import get_orders
+            from vrptw_problem.researcher.official_evaluator import evaluate_official
+
+            raw = ((result_json or {}).get("schedule") or {}).get("routes")
+            if not raw:
+                return None
+            routes = [
+                r.get("task_indices", [])
+                for r in sorted(raw, key=lambda x: x.get("vehicle_index", 0))
+            ]
+            orders = get_orders(seed=None)
+            # Order coverage is traffic-independent — check once.
+            flat = [o for route in routes for o in route]
+            covered = set(flat) == set(range(self._N_ORDERS)) and len(flat) == len(set(flat))
+
+            costs, feas, lateness, capacity, shift_over = [], [], [], [], []
+            for s in range(self._CANON_SEEDS):
+                cost, m = evaluate_official(routes, orders, np.random.RandomState(s))
+                late = float(m.get("tw_violation_min", 0) or 0)
+                cap = float(m.get("capacity_overflow", 0) or 0)
+                shifts = m.get("shift_durations", []) or []
+                over = any(sd > self._MAX_SHIFT_MIN for sd in shifts)
+                costs.append(float(cost))
+                lateness.append(late)
+                capacity.append(cap)
+                shift_over.append(over)
+                feas.append(late == 0 and cap == 0 and not over and covered)
+
+            feasible_frac = float(np.mean(feas))
+            return {
+                "canonical_cost": float(np.mean(costs)),
+                "canonical_cost_std": float(np.std(costs)),
+                "feasible_frac": feasible_frac,
+                "feasible": feasible_frac >= 0.8,  # robust: valid on most traffic draws
+                "lateness_min": float(np.mean(lateness)),
+                "capacity_overflow": float(np.mean(capacity)),
+                "shift_over_8h": float(np.mean(shift_over)) > 0.5,
+                "all_orders_covered": bool(covered),
+            }
+        except Exception:
+            return None
+
+    def canonical_cost_for_result(self, result_json: dict[str, Any]) -> float | None:
+        """Canonical cost only (thin wrapper over ``canonical_evaluation_for_result``)."""
+        ev = self.canonical_evaluation_for_result(result_json)
+        return ev["canonical_cost"] if ev else None
+
+    def hard_constraint_origins(self, briefs: list[dict[str, Any]]) -> dict[str, str]:
+        """Classify who ORIGINATED each hard constraint, from structured brief
+        provenance across a session's snapshots (no text parsing):
+
+        - user_volunteered: entered as a `gathered` item, no OQ raised.
+        - agent_asked:      an open_question with that goal_key was raised
+                            (waterfall's ask-then-confirm; the OQ drops on commit).
+        - agent_assumed:    entered as a `kind: assumption` item (agile fait accompli).
+        - mixed / present_other / absent otherwise.
+        """
+        HARD = ("lateness_penalty", "capacity_penalty", "shift_limit")
+        out: dict[str, str] = {}
+        last_terms = (briefs[-1].get("goal_terms") or {}) if briefs else {}
+        for k in HARD:
+            gathered = assumed = oq_any = False
+            for b in briefs:
+                for it in (b.get("items") or []):
+                    if it.get("goal_key") == k:
+                        if it.get("kind") == "assumption":
+                            assumed = True
+                        elif it.get("kind") == "gathered":
+                            gathered = True
+                for q in (b.get("open_questions") or []):
+                    if q.get("goal_key") == k:
+                        oq_any = True
+            if assumed and oq_any:
+                out[k] = "mixed"
+            elif assumed:
+                out[k] = "agent_assumed"
+            elif oq_any:
+                out[k] = "agent_asked"
+            elif gathered:
+                out[k] = "user_volunteered"
+            elif k in last_terms:
+                out[k] = "present_other"
+            else:
+                out[k] = "absent"
+        return out
+
+    def formulation_quality_for_config(self, panel_config: dict[str, Any]) -> dict[str, Any] | None:
+        """Score how well a config captures the true problem (specification level).
+
+        All-positive score, no deductions:
+            formulation_score = coverage + hard_bonus + objective_bonus
+          - coverage        : +1 per canonical term identified (present & active) — max 7
+                              (travel_time + 3 hard + 3 soft).
+          - hard_bonus      : +1 per hard constraint correctly BINDING (type 'hard'
+                              OR weight > every non-hard term's weight) — max 3.
+          - objective_bonus : +1 if travel_time is present AND not marked 'hard'
+                              (i.e., it's serving as the target, not a constraint).
+
+        Soft/preference terms only earn their coverage point (their type is up to
+        interpretation). ``objective_as_hard`` and ``soft_as_hard`` are reported as
+        DESCRIPTIVE behavioral columns and are NOT part of the score. Feasibility
+        (computed separately over traffic seeds) is the outcome cross-check.
+        """
+        try:
+            HARD = ("lateness_penalty", "capacity_penalty", "shift_limit")
+            OBJECTIVE = ("travel_time",)
+            SOFT = ("worker_preference", "workload_balance", "express_miss_penalty")
+
+            prob = (panel_config or {}).get("problem") or panel_config or {}
+            gts = prob.get("goal_terms") or {}
+            weights = prob.get("weights") or {}
+
+            def wt(key: str, term: Any) -> float | None:
+                w = term.get("weight") if isinstance(term, dict) else None
+                if w is None:
+                    w = weights.get(key)
+                try:
+                    return float(w)
+                except (TypeError, ValueError):
+                    return None
+
+            def active(key: str, term: Any) -> bool:
+                w = wt(key, term)
+                return w is not None and w != 0
+
+            non_hard_ws = [wt(k, v) for k, v in gts.items() if k not in HARD and wt(k, v) is not None]
+            max_non_hard = max(non_hard_ws) if non_hard_ws else 0.0
+
+            hard_status: dict[str, str] = {}
+            for k in HARD:
+                v = gts.get(k)
+                if not v:
+                    hard_status[k] = "absent"
+                    continue
+                t = v.get("type") if isinstance(v, dict) else None
+                w = wt(k, v)
+                if t == "hard":
+                    hard_status[k] = "hard"
+                elif w is not None and w > max_non_hard and w > 0:
+                    hard_status[k] = "binding_by_weight"
+                elif active(k, v):
+                    hard_status[k] = "weak"
+                else:
+                    hard_status[k] = "absent"
+
+            def covered(k: str) -> bool:
+                return k in gts and active(k, gts[k])
+
+            # coverage = every goal term the user defined (present & active), REGARDLESS
+            # of type; the algorithm carrier is not a requirement, so it's excluded.
+            NON_REQUIREMENT = ("search_strategy", "algorithm")
+            coverage = sum(1 for k, v in gts.items() if k not in NON_REQUIREMENT and active(k, v))
+            # hard_bonus = # hard constraints correctly binding.
+            hard_bonus = sum(1 for s in hard_status.values() if s in ("hard", "binding_by_weight"))
+            # objective_bonus = travel_time present AND not marked hard (serving as target).
+            objective_present = covered("travel_time")
+            objective_as_hard = int(
+                objective_present
+                and isinstance(gts.get("travel_time"), dict)
+                and gts["travel_time"].get("type") == "hard"
+            )
+            objective_bonus = int(objective_present and not objective_as_hard)
+            soft_covered = sum(1 for k in SOFT if covered(k))
+            soft_as_hard = sum(
+                1 for k in SOFT
+                if isinstance(gts.get(k), dict) and gts[k].get("type") == "hard"
+            )
+            return {
+                "coverage": coverage,
+                "hard_bonus": hard_bonus,
+                "objective_present": objective_present,
+                "objective_bonus": objective_bonus,
+                "soft_covered": soft_covered,
+                "hard_status": hard_status,
+                # --- descriptive behavioral columns, NOT part of the score ---
+                "objective_as_hard": objective_as_hard,
+                "soft_as_hard": soft_as_hard,
+                "n_custom_hard": sum(
+                    1 for k in HARD
+                    if isinstance(gts.get(k), dict) and gts[k].get("type") == "custom"
+                ),
+                # Score = coverage + hard_bonus + objective_bonus (higher = better).
+                "formulation_score": coverage + hard_bonus + objective_bonus,
+            }
+        except Exception:
+            return None
+
 
 STUDY_PORT = VrptwStudyPort()

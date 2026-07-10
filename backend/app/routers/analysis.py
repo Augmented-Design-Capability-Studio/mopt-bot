@@ -22,12 +22,15 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.analysis import models as m
+from app.analysis.metrics import initial_prompt_word_count
 from app.analysis.rows import CSV_COLUMNS, build_coding_rows
+from app.analysis.survey import extract_named_metrics, normalize_pid, parse_survey_csv
 from app.analysis.timeutil import iso_and_epoch, to_epoch
 from app.analysis_db import get_analysis_db
 from app.auth import Principal, require_researcher
 from app.database import get_db
 from app.models import ChatMessage, OptimizationRun, SessionSnapshot, StudySession
+from app.problems import get_study_port
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -528,6 +531,384 @@ def delete_loaded(
     if loaded is not None:
         adb.delete(loaded)
         adb.commit()
+
+
+@router.post("/delete-loaded")
+def delete_loaded_bulk(
+    body: dict = Body(...),
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Remove several loaded sessions at once (child rows cascade at the DB
+    level via the FK ON DELETE CASCADE + PRAGMA foreign_keys=ON)."""
+    ids = body.get("ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="ids must be a list")
+    if not ids:
+        return {"deleted": 0}
+    deleted = (
+        adb.query(m.LoadedSession)
+        .filter(m.LoadedSession.id.in_(ids))
+        .delete(synchronize_session=False)
+    )
+    adb.commit()
+    return {"deleted": deleted}
+
+
+# --------------------------------------------------------------------------- #
+# Surveys + cross-session aggregate (notebook tab)
+# --------------------------------------------------------------------------- #
+
+@router.post("/surveys/upload")
+async def upload_survey(
+    request: Request,
+    phase: str = "pre",
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Ingest a pre/post-task survey CSV (raw body). Replaces any prior rows for
+    the same phase. Email/PII columns are dropped before storage."""
+    if phase not in ("pre", "post"):
+        raise HTTPException(status_code=400, detail="phase must be 'pre' or 'post'")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    records = parse_survey_csv(data, phase)
+    adb.query(m.SurveyResponse).filter(m.SurveyResponse.phase == phase).delete()
+    for rec in records:
+        adb.add(
+            m.SurveyResponse(
+                participant_id=rec["participant_id"],
+                phase=phase,
+                expertise_score=rec["expertise_score"],
+                data_json=json.dumps(rec["data"]),
+            )
+        )
+    adb.commit()
+    return {"phase": phase, "count": len(records)}
+
+
+@router.get("/surveys")
+def survey_status(
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    rows = adb.query(m.SurveyResponse).all()
+    by_phase: dict[str, int] = {}
+    for r in rows:
+        by_phase[r.phase] = by_phase.get(r.phase, 0) + 1
+    return {"counts": by_phase}
+
+
+@router.get("/notebook")
+def get_notebook(
+    name: str = "aggregate",
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    doc = adb.get(m.NotebookDoc, name)
+    cells = None
+    if doc and doc.cells_json:
+        try:
+            cells = json.loads(doc.cells_json)
+        except json.JSONDecodeError:
+            cells = None
+    return {
+        "name": name,
+        "cells": cells,
+        "updated_at": doc.updated_at.isoformat() if doc and doc.updated_at else None,
+    }
+
+
+@router.put("/notebook")
+def put_notebook(
+    body: dict = Body(...),
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    name = body.get("name") or "aggregate"
+    cells = body.get("cells")
+    if not isinstance(cells, list):
+        raise HTTPException(status_code=400, detail="cells must be a list")
+    doc = adb.get(m.NotebookDoc, name)
+    if doc is None:
+        doc = m.NotebookDoc(name=name)
+        adb.add(doc)
+    doc.cells_json = json.dumps(cells)
+    adb.commit()
+    return {"name": name, "saved": len(cells)}
+
+
+@router.get("/aggregate")
+def aggregate(
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Per-loaded-session metrics joined to survey expertise, for the plot."""
+    expertise: dict[str, float] = {
+        r.participant_id: r.expertise_score
+        for r in adb.query(m.SurveyResponse).filter(
+            m.SurveyResponse.phase == "pre", m.SurveyResponse.expertise_score.isnot(None)
+        )
+    }
+    rows: list[dict[str, Any]] = []
+    for loaded in adb.query(m.LoadedSession).all():
+        pid = normalize_pid(loaded.participant_number)
+        rows.append(
+            {
+                "loaded_id": loaded.id,
+                "participant": loaded.participant_number,
+                "workflow_mode": loaded.workflow_mode,
+                "initial_prompt_words": initial_prompt_word_count(loaded.messages),
+                "expertise_score": expertise.get(pid),
+            }
+        )
+    return {"rows": rows, "expertise_available": bool(expertise)}
+
+
+def _survey_metrics(data_json: str | None) -> dict[str, float | None]:
+    """Short-named single-column metrics (confidence, est_time_minutes) for the
+    notebook. Free-text (where identifying info could hide) never leaves here."""
+    if not data_json:
+        return {}
+    try:
+        row = json.loads(data_json)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return extract_named_metrics(row or {})
+
+
+@router.get("/dataset")
+def dataset(
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """De-identified tidy tables for the in-browser (Pyodide) notebook.
+
+    Data minimization: participant ids are the study's anonymized labels; survey
+    free-text and any email/PII were already dropped at ingest, and only numeric
+    survey answers are surfaced here. No researcher token is embedded.
+    """
+    loaded = adb.query(m.LoadedSession).all()
+
+    _ports: dict[str, Any] = {}
+
+    def _port(pid: str | None):
+        if pid not in _ports:
+            try:
+                _ports[pid] = get_study_port(pid)
+            except Exception:
+                _ports[pid] = None
+        return _ports[pid]
+
+    def _origins(s) -> dict[str, str]:
+        fn = getattr(_port(s.test_problem_id), "hard_constraint_origins", None)
+        if fn is None:
+            return {}
+        # Reconstruct the brief per assistant TURN from message meta
+        # (pre_turn_state / v2_turn_snapshot), not the sparse run/save snapshots —
+        # otherwise an OQ raised and answered in chat between snapshots is missed
+        # and mis-attributed to the user.
+        briefs = []
+        for msg in sorted(s.messages, key=lambda x: x.id):
+            if not msg.meta_json:
+                continue
+            try:
+                mj = json.loads(msg.meta_json)
+            except json.JSONDecodeError:
+                continue
+            pre = (mj.get("pre_turn_state") or {}).get("problem_brief")
+            if isinstance(pre, dict):
+                briefs.append(pre)
+            v2 = mj.get("v2_turn_snapshot")
+            b2 = (v2 or {}).get("problem_brief") if isinstance(v2, dict) else None
+            if isinstance(b2, dict):
+                briefs.append(b2)
+        if not briefs:  # fallback for data without per-turn meta
+            for sn in sorted(s.snapshots, key=lambda x: x.id):
+                if sn.problem_brief_json:
+                    try:
+                        briefs.append(json.loads(sn.problem_brief_json))
+                    except json.JSONDecodeError:
+                        pass
+        try:
+            return fn(briefs)
+        except Exception:
+            return {}
+
+    sessions = [
+        {
+            "loaded_id": s.id,
+            "participant": s.participant_number,
+            "workflow_mode": s.workflow_mode,
+            "test_problem_id": s.test_problem_id,
+            "hard_origins": _origins(s),
+        }
+        for s in loaded
+    ]
+    messages = [
+        {
+            "loaded_id": msg.loaded_session_id,
+            "source_id": msg.source_id,
+            "ts_epoch": msg.ts_epoch,
+            "role": msg.role,
+            "kind": msg.kind,
+            "content": msg.content,
+        }
+        for s in loaded
+        for msg in s.messages
+    ]
+    # Canonical (official) re-scoring of each run's schedule — comparable across
+    # users regardless of their chosen weights. Routed through the problem port
+    # so the main backend stays problem-agnostic (port hook is optional).
+    _EMPTY_CANON = {
+        "canonical_cost": None, "canonical_cost_std": None, "feasible": None,
+        "feasible_frac": None, "lateness_min": None, "capacity_overflow": None,
+        "shift_over_8h": None, "all_orders_covered": None,
+    }
+
+    def _canon(pid: str | None, result_json: str | None) -> dict[str, Any]:
+        if pid not in _ports:
+            try:
+                _ports[pid] = get_study_port(pid)
+            except Exception:
+                _ports[pid] = None
+        port = _ports[pid]
+        fn = getattr(port, "canonical_evaluation_for_result", None)
+        if fn is None or not result_json:
+            return _EMPTY_CANON
+        try:
+            return fn(json.loads(result_json)) or _EMPTY_CANON
+        except Exception:
+            return _EMPTY_CANON
+
+    runs = [
+        {
+            "loaded_id": r.loaded_session_id,
+            "source_id": r.source_id,
+            "session_run_index": r.session_run_index,
+            "ts_epoch": r.ts_epoch,
+            "run_type": r.run_type,
+            "cost": r.cost,
+            "reference_cost": r.reference_cost,
+            "ok": r.ok,
+            **_canon(s.test_problem_id, r.result_json),
+        }
+        for s in loaded
+        for r in s.runs
+    ]
+    annotations = [
+        {
+            "loaded_id": a.loaded_session_id,
+            "anno_type": a.anno_type,
+            "label": a.label,
+            "video_pos_sec": a.video_pos_sec,
+            "row_ref": a.row_ref,
+        }
+        for s in loaded
+        for a in s.annotations
+    ]
+    # Snapshot event timing/type + derived formulation-quality scores (NOT the
+    # raw brief/panel JSON) — lets the notebook chart formulation over time.
+    def _form(pid: str | None, panel_json: str | None) -> dict[str, Any]:
+        if pid not in _ports:
+            try:
+                _ports[pid] = get_study_port(pid)
+            except Exception:
+                _ports[pid] = None
+        fn = getattr(_ports.get(pid), "formulation_quality_for_config", None)
+        if fn is None or not panel_json:
+            return {}
+        try:
+            r = fn(json.loads(panel_json)) or {}
+        except Exception:
+            return {}
+        return {
+            "coverage": r.get("coverage"),
+            "hard_bonus": r.get("hard_bonus"),
+            "objective_present": r.get("objective_present"),
+            "objective_bonus": r.get("objective_bonus"),
+            "soft_covered": r.get("soft_covered"),
+            # descriptive, NOT scored:
+            "objective_as_hard": r.get("objective_as_hard"),
+            "soft_as_hard": r.get("soft_as_hard"),
+            "n_custom_hard": r.get("n_custom_hard"),
+            "formulation_score": r.get("formulation_score"),
+        }
+
+    # Goal-term edit counts per snapshot (weight / type / rank / add-remove),
+    # by diffing each snapshot's goal_terms against the previous one. Structural
+    # (no text parsing); captures the participant's tradeoff-balancing activity.
+    def _goal_terms(panel_json: str | None) -> dict:
+        try:
+            p = json.loads(panel_json or "{}")
+        except json.JSONDecodeError:
+            return {}
+        prob = p.get("problem") or p
+        return prob.get("goal_terms") or {}
+
+    def _rank_order(terms: dict, keys) -> list:
+        return sorted(
+            keys,
+            key=lambda k: (
+                terms[k].get("rank") if isinstance(terms[k], dict) and terms[k].get("rank") is not None else 10**9,
+                k,
+            ),
+        )
+
+    edit_by_snap: dict[int, dict[str, int]] = {}
+    for s in loaded:
+        prev = None
+        for sn in sorted(s.snapshots, key=lambda x: x.id):
+            g = _goal_terms(sn.panel_config_json)
+            we = te = reranked = added = removed = 0
+            if prev is not None:
+                common = set(prev) & set(g)
+                for k in common:  # weight/type edits: per-term, only on terms that persisted
+                    a, b = prev[k], g[k]
+                    if isinstance(a, dict) and isinstance(b, dict):
+                        we += a.get("weight") != b.get("weight")
+                        te += a.get("type") != b.get("type")
+                # A genuine RE-RANK = the relative order of the *common* terms changed
+                # (excludes the renumbering cascade caused by add/remove).
+                reranked = int(_rank_order(prev, common) != _rank_order(g, common))
+                added = len(set(g) - set(prev))
+                removed = len(set(prev) - set(g))
+            edit_by_snap[sn.id] = {
+                "weight_edits": we, "type_edits": te, "reranked": reranked,
+                "terms_added": added, "terms_removed": removed,
+            }
+            prev = g
+
+    snapshots = [
+        {
+            "loaded_id": sn.loaded_session_id,
+            "source_id": sn.source_id,
+            "ts_epoch": sn.ts_epoch,
+            "event_type": sn.event_type,
+            **edit_by_snap.get(sn.id, {}),
+            **_form(s.test_problem_id, sn.panel_config_json),
+        }
+        for s in loaded
+        for sn in s.snapshots
+    ]
+    surveys = [
+        {
+            "participant_id": sv.participant_id,
+            "phase": sv.phase,
+            "expertise_score": sv.expertise_score,
+            **_survey_metrics(sv.data_json),
+        }
+        for sv in adb.query(m.SurveyResponse).all()
+    ]
+    return {
+        "sessions": sessions,
+        "messages": messages,
+        "runs": runs,
+        "annotations": annotations,
+        "snapshots": snapshots,
+        "surveys": surveys,
+    }
 
 
 @router.get("/loaded/{loaded_id}/export.csv")

@@ -1,7 +1,13 @@
 // Typed wrappers over the backend /analysis endpoints.
 import { apiFetch, apiFetchBlob } from "@shared/api";
 
-import type { Annotation, LoadedDetail, LoadedSummary, Pause } from "./types";
+import type {
+  AggregateResponse,
+  Annotation,
+  LoadedDetail,
+  LoadedSummary,
+  Pause,
+} from "./types";
 
 export function listLoaded(token: string): Promise<{ loaded: LoadedSummary[] }> {
   return apiFetch<{ loaded: LoadedSummary[] }>("/analysis/loaded", token);
@@ -93,6 +99,47 @@ export function deletePause(token: string, id: string, pauseId: number): Promise
 
 export function deleteLoaded(token: string, id: string): Promise<unknown> {
   return apiFetch<unknown>(`/analysis/loaded/${id}`, token, { method: "DELETE" });
+}
+
+export function deleteLoadedBulk(token: string, ids: string[]): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>("/analysis/delete-loaded", token, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export async function uploadSurvey(
+  token: string,
+  file: File,
+  phase: "pre" | "post",
+): Promise<{ phase: string; count: number }> {
+  const buf = await file.arrayBuffer();
+  return apiFetch<{ phase: string; count: number }>(
+    `/analysis/surveys/upload?phase=${phase}`,
+    token,
+    { method: "POST", body: buf, headers: { "Content-Type": "text/csv" } },
+  );
+}
+
+export function getAggregate(token: string): Promise<AggregateResponse> {
+  return apiFetch<AggregateResponse>("/analysis/aggregate", token);
+}
+
+export function getDataset(token: string): Promise<Record<string, unknown[]>> {
+  return apiFetch<Record<string, unknown[]>>("/analysis/dataset", token);
+}
+
+export function getNotebook(
+  token: string,
+): Promise<{ name: string; cells: string[] | null; updated_at: string | null }> {
+  return apiFetch("/analysis/notebook", token);
+}
+
+export function saveNotebook(token: string, cells: string[]): Promise<{ saved: number }> {
+  return apiFetch<{ saved: number }>("/analysis/notebook", token, {
+    method: "PUT",
+    body: JSON.stringify({ cells }),
+  });
 }
 
 export async function downloadCsv(token: string, id: string): Promise<void> {

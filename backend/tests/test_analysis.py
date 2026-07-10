@@ -8,6 +8,8 @@ pure-function tests.
 
 from __future__ import annotations
 
+import glob
+import os
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +25,21 @@ from app.analysis_db import AnalysisBase, get_analysis_db
 from app.config import get_settings
 from app.main import app
 
-_EXPORT_DB = Path(__file__).resolve().parent.parent / "data" / "mopt-sessions-12.db"
+_DATA = Path(__file__).resolve().parent.parent / "data"
+
+
+def _newest(pattern: str) -> Path:
+    """Pick the most recently modified matching data file so tests track the
+    current export (filenames change as more sessions are collected)."""
+    cands = glob.glob(str(_DATA / pattern))
+    return Path(max(cands, key=os.path.getmtime)) if cands else _DATA / "__missing__"
+
+
+# Prefer a multi-session export (…-NN-MM.db) over the tiny -1/-2 fixtures.
+_EXPORT_DB = _newest("mopt-sessions-*[0-9]-*.db")
+if not _EXPORT_DB.exists():
+    _EXPORT_DB = _newest("mopt-sessions-*.db")
+_PRE_CSV = _newest("*- Pre-Task-*.csv")  # not the "…- Post-Task-…" file
 _TOKEN = get_settings().researcher_secret
 
 
@@ -86,6 +102,107 @@ def test_upload_counts_timeline_and_csv(client: TestClient):
     text = csv_res.text
     assert text.splitlines()[0] == ",".join(CSV_COLUMNS)
     assert len(text.splitlines()) > 1
+
+
+@pytest.mark.skipif(
+    not (_EXPORT_DB.exists() and _PRE_CSV.exists()), reason="sample data not present"
+)
+def test_aggregate_joins_survey_expertise(client: TestClient):
+    client.post(
+        "/analysis/upload?filename=mopt-sessions-12.db",
+        content=_EXPORT_DB.read_bytes(),
+        headers={**_auth(), "Content-Type": "application/octet-stream"},
+    )
+    sres = client.post(
+        "/analysis/surveys/upload?phase=pre",
+        content=_PRE_CSV.read_bytes(),
+        headers={**_auth(), "Content-Type": "text/csv"},
+    )
+    assert sres.status_code == 200, sres.text
+
+    agg = client.get("/analysis/aggregate", headers=_auth()).json()
+    assert agg["expertise_available"] is True
+    rows = agg["rows"]
+    assert rows, "expected aggregate rows"
+    # At least one session joins to an expertise score in the valid 1–7 range
+    # and has a computed initial-prompt word count. (Values not hard-coded —
+    # the sample export grows as more sessions are collected.)
+    joined = [r for r in rows if r["expertise_score"] is not None]
+    assert joined, "no session joined to a pre-task expertise score"
+    r = joined[0]
+    assert 1.0 <= r["expertise_score"] <= 7.0
+    assert any(isinstance(x["initial_prompt_words"], int) for x in rows)
+
+
+@pytest.mark.skipif(not _EXPORT_DB.exists(), reason="sample export DB not present")
+def test_dataset_has_canonical_cost(client: TestClient):
+    client.post(
+        "/analysis/upload?filename=export.db",
+        content=_EXPORT_DB.read_bytes(),
+        headers={**_auth(), "Content-Type": "application/octet-stream"},
+    )
+    ds = client.get("/analysis/dataset", headers=_auth()).json()
+    runs = ds["runs"]
+    assert runs, "expected run rows"
+    scored = [x for x in runs if x.get("canonical_cost") is not None]
+    # VRPTW sessions should re-score most runs under the canonical objective.
+    assert scored, "no runs got a canonical cost"
+    assert all(x["canonical_cost"] > 0 for x in scored)
+
+
+@pytest.mark.skipif(not _EXPORT_DB.exists(), reason="sample export DB not present")
+def test_bulk_delete_loaded(client: TestClient):
+    client.post(
+        "/analysis/upload?filename=mopt-sessions-12.db",
+        content=_EXPORT_DB.read_bytes(),
+        headers={**_auth(), "Content-Type": "application/octet-stream"},
+    )
+    loaded = client.get("/analysis/loaded", headers=_auth()).json()["loaded"]
+    ids = [s["id"] for s in loaded[:3]]
+    res = client.post("/analysis/delete-loaded", json={"ids": ids}, headers=_auth())
+    assert res.status_code == 200
+    assert res.json()["deleted"] == 3
+    remaining = client.get("/analysis/loaded", headers=_auth()).json()["loaded"]
+    assert len(remaining) == len(loaded) - 3
+
+
+@pytest.mark.skipif(
+    not (_EXPORT_DB.exists() and _PRE_CSV.exists()), reason="sample data not present"
+)
+def test_dataset_is_deidentified(client: TestClient):
+    client.post(
+        "/analysis/upload?filename=mopt-sessions-12.db",
+        content=_EXPORT_DB.read_bytes(),
+        headers={**_auth(), "Content-Type": "application/octet-stream"},
+    )
+    client.post(
+        "/analysis/surveys/upload?phase=pre",
+        content=_PRE_CSV.read_bytes(),
+        headers={**_auth(), "Content-Type": "text/csv"},
+    )
+    ds = client.get("/analysis/dataset", headers=_auth()).json()
+    assert {"sessions", "messages", "runs", "annotations", "surveys"} <= ds.keys()
+    assert len(ds["sessions"]) >= 1
+    assert ds["messages"], "expected message rows"
+    # Surveys expose only numeric fields — no free-text (e.g. the "describe your
+    # experience" column) and no email leaks into the browser payload.
+    for row in ds["surveys"]:
+        for key, val in row.items():
+            if key in ("participant_id", "phase"):
+                continue
+            assert isinstance(val, (int, float)) or val is None
+            assert "email" not in key.lower()
+            assert "describe" not in key.lower()
+
+
+def test_notebook_persist_roundtrip(client: TestClient):
+    assert client.get("/analysis/notebook", headers=_auth()).json()["cells"] is None
+    client.put("/analysis/notebook", json={"cells": ["print(1)", "print(2)"]}, headers=_auth())
+    got = client.get("/analysis/notebook", headers=_auth()).json()
+    assert got["cells"] == ["print(1)", "print(2)"]
+    # overwrite (single shared doc)
+    client.put("/analysis/notebook", json={"cells": ["print(3)"]}, headers=_auth())
+    assert client.get("/analysis/notebook", headers=_auth()).json()["cells"] == ["print(3)"]
 
 
 def test_diff_is_change_only():

@@ -160,3 +160,36 @@ class Pause(AnalysisBase):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped["LoadedSession"] = relationship(back_populates="pauses")
+
+
+class NotebookDoc(AnalysisBase):
+    """A saved aggregate notebook — the ordered code cells, as JSON.
+
+    Single shared document by default (``name='aggregate'``); server-side so it
+    persists across reloads and is the same from any machine hitting the API.
+    """
+
+    __tablename__ = "notebook_docs"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True, default="aggregate")
+    cells_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class SurveyResponse(AnalysisBase):
+    """One participant's pre- or post-task survey row (PII stripped).
+
+    Not tied to a loaded session — joined by normalized participant id at
+    aggregate time, so surveys can be loaded before or after the sessions.
+    """
+
+    __tablename__ = "survey_responses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    participant_id: Mapped[str] = mapped_column(String(64), index=True)
+    phase: Mapped[str] = mapped_column(String(8))  # pre | post
+    expertise_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    data_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

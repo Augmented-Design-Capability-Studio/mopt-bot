@@ -106,6 +106,16 @@ export function useAnalysisController() {
     [token, withBusy, refreshList, selectedId],
   );
 
+  const removeManyLoaded = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      await withBusy(() => api.deleteLoadedBulk(token.trim(), ids), "Bulk delete failed.");
+      if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+      await refreshList();
+    },
+    [token, withBusy, refreshList, selectedId],
+  );
+
   const patchMeta = useCallback(
     async (patch: Record<string, unknown>) => {
       if (!selectedId) return;
@@ -192,6 +202,7 @@ export function useAnalysisController() {
     uploadFile,
     loadLive,
     removeLoaded,
+    removeManyLoaded,
     patchMeta,
     addAnnotation,
     editAnnotation,
