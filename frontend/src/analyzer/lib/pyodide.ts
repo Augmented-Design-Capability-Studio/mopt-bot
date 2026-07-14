@@ -233,7 +233,7 @@ export async function getPyodide(onStatus?: (s: string) => void): Promise<Pyodid
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const py = await (window as any).loadPyodide({ indexURL: idx });
     onStatus?.("loading pandas + matplotlib…");
-    await py.loadPackage(["pandas", "matplotlib"]);
+    await py.loadPackage(["pandas", "matplotlib", "scipy"]);
     await py.runPythonAsync(RUNNER_PY);
     onStatus?.("ready");
     return py;

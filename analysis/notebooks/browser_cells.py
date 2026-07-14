@@ -221,10 +221,10 @@ ax.set_xlim(0, 3)
 ax.set_xlabel("Hard constraints captured (0-3)")
 ax.set_title("Final formulation: hard constraints captured (color = workflow)")
 print(final[["participant", "workflow_mode", "expertise_score", "hard_bonus",
-             "soft_covered", "objective_as_hard", "soft_as_hard"]].to_string(index=False))
+             "objective_as_hard", "soft_as_hard"]].to_string(index=False))
 print("\n(objective_as_hard / soft_as_hard are DESCRIPTIVE — not scored)")
 print("by workflow (mean):")
-print(final.groupby("workflow_mode")[["hard_bonus", "soft_covered"]].mean().round(2).to_string())
+print(final.groupby("workflow_mode")[["hard_bonus"]].mean().round(2).to_string())
 
 # %%
 # Heatmap: formulation quality (hard constraints captured, 0-3) over time.
@@ -288,10 +288,10 @@ ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(final["participant"], final["
 ax.set_xlabel("Formulation score = coverage + hard-bonus + objective-bonus (0-11)")
 ax.set_title("Holistic formulation score (color = workflow)")
 print(final[["participant", "workflow_mode", "coverage", "hard_bonus", "objective_bonus",
-             "soft_covered", "objective_as_hard", "soft_as_hard", "formulation_score"]].to_string(index=False))
+             "objective_as_hard", "soft_as_hard", "formulation_score"]].to_string(index=False))
 print("\n(objective_as_hard / soft_as_hard are DESCRIPTIVE — not scored)")
 print("by workflow (mean):")
-print(final.groupby("workflow_mode")[["coverage", "hard_bonus", "objective_bonus", "soft_covered", "formulation_score"]].mean().round(2).to_string())
+print(final.groupby("workflow_mode")[["coverage", "hard_bonus", "objective_bonus", "formulation_score"]].mean().round(2).to_string())
 
 # %%
 # Goal-term balancing timeline: when did each participant work on the WEIGHT /
@@ -352,3 +352,48 @@ ax.set_ylabel("Formulation score (higher = better)")
 ax.set_title("Formulation score over time, by participant")
 ax.legend(handles=[Line2D([0], [0], color=c, label=w) for w, c in PALETTE.items()
                    if w in set(fs["workflow_mode"].dropna())], title="workflow")
+
+# %%
+# Formulation quality: agile vs waterfall, and does expertise matter? (n=16 — EXPLORATORY)
+from scipy import stats
+fq = (snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "ts_epoch"])
+      .groupby("loaded_id").tail(1)
+      .merge(part[["loaded_id", "participant", "workflow_mode", "expertise_score"]], on="loaded_id"))
+a = fq[fq.workflow_mode == "agile"]["formulation_score"]
+w = fq[fq.workflow_mode == "waterfall"]["formulation_score"]
+_se = lambda x: x.std(ddof=1) / np.sqrt(len(x))
+print(f"agile     n={len(a)}  mean={a.mean():.2f} +/- {_se(a):.2f} (SE)   sd={a.std(ddof=1):.2f}")
+print(f"waterfall n={len(w)}  mean={w.mean():.2f} +/- {_se(w):.2f} (SE)   sd={w.std(ddof=1):.2f}")
+t, pt = stats.ttest_ind(a, w, equal_var=False)
+u, pu = stats.mannwhitneyu(a, w, alternative="two-sided")
+pooled = np.sqrt(((len(a)-1)*a.var(ddof=1) + (len(w)-1)*w.var(ddof=1)) / (len(a)+len(w)-2))
+d = (w.mean() - a.mean()) / pooled
+se_diff = np.sqrt(a.var(ddof=1)/len(a) + w.var(ddof=1)/len(w))
+diff = w.mean() - a.mean()
+print(f"diff (waterfall-agile) = {diff:.2f}  ~95% CI [{diff-1.96*se_diff:.2f}, {diff+1.96*se_diff:.2f}]")
+print(f"Welch t={t:.2f}, p={pt:.3f} | Mann-Whitney U={u:.0f}, p={pu:.3f} | Cohen d={d:.2f}")
+print("\nExpertise vs formulation quality:")
+r, pr = stats.pearsonr(fq.expertise_score, fq.formulation_score)
+rs, ps = stats.spearmanr(fq.expertise_score, fq.formulation_score)
+print(f"  overall  Pearson r={r:.2f} p={pr:.3f} | Spearman rho={rs:.2f} p={ps:.3f}")
+for wf in ["agile", "waterfall"]:
+    g = fq[fq.workflow_mode == wf]
+    rr, pp = stats.pearsonr(g.expertise_score, g.formulation_score)
+    print(f"  within {wf:<9} r={rr:.2f} p={pp:.3f} slope={np.polyfit(g.expertise_score, g.formulation_score, 1)[0]:.2f}")
+print("\nNOTE: n=16 (8/group) — underpowered; read effect sizes + CIs, treat p-values cautiously.")
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
+for i, (wf, g) in enumerate([("agile", a), ("waterfall", w)]):
+    ax1.bar(i, g.mean(), yerr=_se(g), color=PALETTE.get(wf, "#7c3aed"), alpha=0.8, capsize=6)
+    ax1.scatter(np.full(len(g), i) + np.linspace(-0.05, 0.05, len(g)), g, color="black", alpha=0.5, s=20, zorder=3)
+ax1.set_xticks([0, 1]); ax1.set_xticklabels(["agile", "waterfall"])
+ax1.set_ylabel("Formulation score"); ax1.set_title(f"By workflow (mean +/- SE; MW p={pu:.3f}, d={d:.2f})")
+for wf in ["agile", "waterfall"]:
+    g = fq[fq.workflow_mode == wf]
+    ax2.scatter(g.expertise_score, g.formulation_score, color=PALETTE.get(wf, "#7c3aed"), label=wf, s=45)
+    b = np.polyfit(g.expertise_score, g.formulation_score, 1)
+    xs = np.array([g.expertise_score.min(), g.expertise_score.max()])
+    ax2.plot(xs, np.polyval(b, xs), color=PALETTE.get(wf, "#7c3aed"), lw=1.2, alpha=0.7)
+ax2.set_xlabel("Self-rated expertise"); ax2.set_ylabel("Formulation score")
+ax2.set_title(f"vs expertise (overall r={r:.2f}, p={pr:.3f})"); ax2.legend()
+fig.tight_layout()
