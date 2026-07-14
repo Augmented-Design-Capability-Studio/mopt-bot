@@ -2205,6 +2205,20 @@ def sync_problem_brief_from_panel(
                             for it in merged.get("items") or []
                         ):
                             ss_carrier["evidence_item_ids"] = ["config-search-strategy"]
+            # Mirror the panel's early_stop toggle INTO the carrier too, for the
+            # same reason as algorithm (P_0602): the panel is authoritative for
+            # what the solver runs, so a Config-tab change to plateau
+            # early-stopping must follow into the carrier — otherwise the
+            # forward carrier→panel mirror would clobber the user's edit back on
+            # the next chat derive. Only an existing carrier is updated.
+            panel_early_stop = panel_problem.get("early_stop")
+            if isinstance(panel_early_stop, bool):
+                props = ss_carrier.get("properties")
+                if not isinstance(props, dict):
+                    props = {}
+                    ss_carrier["properties"] = props
+                if props.get("early_stop") != panel_early_stop:
+                    props["early_stop"] = panel_early_stop
         merged["goal_terms"] = {**panel_goal_terms, **preserved_carriers}
 
         # Diff classification for user-triggered panel saves.

@@ -359,6 +359,58 @@ for wf in ["agile", "waterfall"]:
 ax2.set_xlabel("Self-rated expertise"); ax2.set_ylabel("Formulation score")
 ax2.set_title(f"vs expertise (overall r={r:.2f}, p={pr:.3f})"); ax2.legend()
 fig.tight_layout()`,
+  `# Post-session ratings: agile vs waterfall (part already carries the post columns).
+from scipy import stats
+_need = ["viz_clarity", "comm_accuracy", "solution_confidence"]
+if not all(c in part.columns for c in _need) or part[_need].dropna(how="all").empty:
+    print("Post ratings not found — upload the POST-task CSV and restart the backend (new survey fields), then Reload data.")
+else:
+    items = [("viz_clarity", "Visualization"), ("comm_accuracy", "Communication"),
+             ("solution_confidence", "Solution confidence")]
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharey=True)
+    for ax, (col, name) in zip(axes, items):
+        a = part[part.workflow_mode == "agile"][col].dropna()
+        w = part[part.workflow_mode == "waterfall"][col].dropna()
+        _se = lambda x: x.std(ddof=1) / np.sqrt(len(x))
+        u, p = stats.mannwhitneyu(a, w, alternative="two-sided")
+        ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
+               color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
+        ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
+        ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
+        ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"]); ax.set_title(f"{name} (MW p={p:.2f})")
+        print(f"{name:>20}: agile {a.mean():.2f}+/-{_se(a):.2f}  waterfall {w.mean():.2f}+/-{_se(w):.2f}  MW p={p:.3f}")
+    axes[0].set_ylabel("Rating (1-7)"); axes[0].set_ylim(0, 7.5); fig.tight_layout()
+    print("NOTE: n=16, ratings ceilinged (~5-6/7) — underpowered; treat as exploratory.")`,
+  `# Calibration: does post-session CONFIDENCE track ACTUAL solution quality?
+from scipy import stats
+if "solution_confidence" not in part.columns or part["solution_confidence"].isna().all():
+    print("Post ratings not found — upload the POST-task CSV and restart the backend (new survey fields), then Reload data.")
+else:
+    bf = runs[runs["feasible"] == True].groupby("loaded_id")["canonical_cost"].min().rename("best_feasible")
+    ever = runs.assign(_f=runs["feasible"] == True).groupby("loaded_id")["_f"].any().rename("ever_feasible")
+    cal = part.merge(bf, on="loaded_id", how="left").merge(ever, on="loaded_id", how="left")
+    ok = cal.dropna(subset=["solution_confidence", "best_feasible"])
+    r, p = stats.pearsonr(ok["solution_confidence"], np.log10(ok["best_feasible"]))
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for wf in ["agile", "waterfall"]:
+        g = ok[ok.workflow_mode == wf]
+        ax.scatter(g["solution_confidence"], g["best_feasible"], color=PALETTE.get(wf), label=wf, s=55)
+        for _, row in g.iterrows():
+            ax.annotate(row["participant"], (row["solution_confidence"], row["best_feasible"]),
+                        fontsize=7, xytext=(4, 0), textcoords="offset points")
+    ax.set_yscale("log")
+    ymax = ok["best_feasible"].max() * 3
+    nf = cal[(cal["ever_feasible"] != True) & cal["solution_confidence"].notna()]
+    for _, row in nf.iterrows():
+        ax.scatter(row["solution_confidence"], ymax, marker="X", color="red", s=90, zorder=5)
+        ax.annotate(str(row["participant"]) + " (never feasible)", (row["solution_confidence"], ymax),
+                    fontsize=7, color="red", xytext=(4, 0), textcoords="offset points")
+    ax.set_xlabel("Post-session confidence (1-7)")
+    ax.set_ylabel("Best-feasible canonical cost (log — lower = better)")
+    ax.set_title(f"Confidence vs actual quality: r={r:.2f}, p={p:.2f} (flat/scattered = poor calibration)")
+    ax.legend(); fig.tight_layout()
+    print(f"confidence vs log(best-feasible cost): Pearson r={r:+.2f} p={p:.3f} (~0 => confidence does NOT track quality)")
+    print("Red X = participants who NEVER produced a feasible solution; note any rating high confidence.")`,
 ];
 
 interface Cell {

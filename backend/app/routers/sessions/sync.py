@@ -1154,6 +1154,17 @@ def sync_panel_from_problem_brief(
                         and carrier_val
                     ):
                         next_problem[carrier_key] = carrier_val
+            # early_stop: boolean carrier — same authoritative rule as
+            # algorithm/epochs/pop_size, but gate on `isinstance(bool)` NOT
+            # truthiness. `false` is the MEANINGFUL value here (run through the
+            # plateau), so a falsy carrier is a real commitment, not "unset".
+            # This is the only chat→panel path to the toggle; without it a
+            # researcher/user request to disable early stopping never reaches
+            # the solver and the assistant can only describe a change it can't
+            # apply.
+            carrier_early_stop = ss_carrier.get("early_stop")
+            if isinstance(carrier_early_stop, bool):
+                next_problem["early_stop"] = carrier_early_stop
             # algorithm_params: give an explicitly-committed parameter set the
             # same deterministic safety net epochs/pop_size already have. The
             # main-turn model puts a chat-requested param change (e.g. inertia

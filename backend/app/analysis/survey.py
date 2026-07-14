@@ -25,8 +25,13 @@ EXPERTISE_KEYWORDS = [
 # Single-column pre-task metrics, exposed under short canonical names so the
 # notebook can reference them directly (surveys.confidence, surveys.est_time_minutes).
 NAMED_FIELDS: dict[str, str] = {
+    # pre-task
     "confidence": "how confident are you",
     "est_time_minutes": "how many minutes do you expect",
+    # post-task Likert (1–7)
+    "viz_clarity": "visualizations provided a clear understanding",
+    "comm_accuracy": "accurately represented my formulation",
+    "solution_confidence": "confident in the quality of the final solution",
 }
 
 _ID_HEADERS = ("participant id", "participant")

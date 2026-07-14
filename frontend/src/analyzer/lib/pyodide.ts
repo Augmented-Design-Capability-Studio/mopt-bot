@@ -89,6 +89,11 @@ if not part.empty:
         keep = [c for c in ["participant_id", "expertise_score", "confidence", "est_time_minutes"]
                 if c in pre.columns]
         part = part.merge(pre[keep].rename(columns={"participant_id": "pid"}), on="pid", how="left")
+        post = surveys[surveys.phase == "post"] if "phase" in surveys.columns else surveys.iloc[0:0]
+        pkeep = [c for c in ["participant_id", "viz_clarity", "comm_accuracy", "solution_confidence"]
+                 if c in post.columns]
+        if pkeep and not post.empty:
+            part = part.merge(post[pkeep].rename(columns={"participant_id": "pid"}), on="pid", how="left")
 
     # --- effort / interaction metrics (interaction = user msgs + manual saves) ---
     _rn = runs.groupby("loaded_id").size() if not runs.empty else pd.Series(dtype="int64")

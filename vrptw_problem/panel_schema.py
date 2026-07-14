@@ -102,6 +102,18 @@ VRPTW_GOAL_TERM_PROPERTIES_SCHEMA: dict[str, Any] = {
                 "extraction from items[] prose."
             ),
         },
+        "early_stop": {
+            "type": "boolean",
+            "description": (
+                "Search-strategy carrier for plateau early-stopping. `true` "
+                "stops the search once the best cost plateaus; `false` runs the "
+                "full `epochs` budget. Populate (usually `false`) when the "
+                "visible reply or user message commits to letting the search "
+                "run all its iterations instead of stopping early. The "
+                "panel-derive step reads this directly — no extraction from "
+                "items[] prose."
+            ),
+        },
     },
     "additionalProperties": False,
 }

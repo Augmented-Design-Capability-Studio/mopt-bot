@@ -481,3 +481,72 @@ def test_lock_search_settings_fills_defaults_once_algorithm_chosen():
     )
     assert none_yet["problem"].get("use_greedy_init") is None
     assert none_yet["problem"].get("early_stop") is None
+
+
+def test_carrier_early_stop_false_reaches_panel(monkeypatch):
+    """Forward carrier→panel mirror for `early_stop`.
+
+    A chat/steer request to run through the plateau commits
+    `search_strategy.properties.early_stop = false`; the deterministic mirror
+    must carry it onto `panel.problem.early_stop` even though the panel default
+    is True. Regression: before this wire the only chat path to the toggle was
+    missing, so the assistant could describe the change but the solver never
+    saw it (P17 — early_stop stayed True across all 24 runs)."""
+    row = SimpleNamespace(
+        panel_config_json=json.dumps(
+            {"problem": {"weights": {"travel_time": 1.0}, "algorithm": "GA",
+                         "epochs": 100, "early_stop": True}}
+        ),
+        workflow_mode="agile",
+        test_problem_id="vrptw",
+        updated_at=None,
+    )
+
+    def _fake_derive(self, _brief):
+        return {"problem": {"weights": {"travel_time": 1.0}, "algorithm": "GA"}}
+
+    monkeypatch.setattr(VrptwStudyPort, "derive_problem_panel_from_brief", _fake_derive)
+
+    brief = {
+        "items": [{"id": "config-search-strategy", "text": "Genetic search (GA)."}],
+        "goal_terms": {
+            "search_strategy": {
+                "type": "objective", "weight": 1, "rank": 1,
+                "properties": {"algorithm": "GA", "early_stop": False},
+                "evidence_item_ids": ["config-search-strategy"],
+            }
+        },
+    }
+    panel, _warnings = sync.sync_panel_from_problem_brief(
+        row=row, db=_DummyDb(), problem_brief=brief, api_key=None, model_name=None
+    )
+    # `False` must survive — it is the meaningful value, not "unset".
+    assert panel["problem"]["early_stop"] is False
+
+
+def test_panel_early_stop_edit_mirrors_back_into_carrier():
+    """Reverse panel→carrier mirror for `early_stop`.
+
+    A Config-tab toggle is authoritative for what the solver runs, so it must
+    follow into the carrier — otherwise the forward mirror would clobber the
+    user's edit back on the next chat derive (the P_0602 ACOR-freeze class,
+    applied to the plateau toggle)."""
+    prior_brief = {
+        "goal_terms": {
+            "search_strategy": {
+                "type": "objective", "weight": 1, "rank": 1,
+                "properties": {"algorithm": "GA"},
+                "evidence_item_ids": ["config-search-strategy"],
+            }
+        },
+        "items": [{"id": "config-search-strategy", "text": "Genetic search (GA)."}],
+    }
+    from app.problem_brief import sync_problem_brief_from_panel
+
+    panel = {"problem": {"algorithm": "GA", "early_stop": False,
+                         "goal_terms": {"search_strategy": {"type": "objective", "weight": 1, "rank": 1}}}}
+    merged = sync_problem_brief_from_panel(prior_brief, panel, test_problem_id="vrptw", origin="user")
+    carrier_props = merged["goal_terms"]["search_strategy"]["properties"]
+    assert carrier_props.get("early_stop") is False
+    # The algorithm carrier is untouched by the early_stop mirror.
+    assert carrier_props.get("algorithm") == "GA"

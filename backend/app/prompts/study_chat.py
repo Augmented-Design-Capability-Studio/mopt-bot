@@ -1191,14 +1191,17 @@ STUDY_CHAT_SEARCH_STRATEGY_ANCHORING = """
 ## Search-strategy anchoring
 
 Search settings live on `goal_terms.search_strategy.properties`: `algorithm`,
-`epochs` (iterations), `pop_size` (population), `algorithm_params`. Set them
-only once the brief records a chosen algorithm (a row naming GA/PSO/SA/ACOR
-or a nickname); a chat-only mention isn't enough. When you change one,
-put the concrete value in the carrier the SAME turn — replying "200
-iterations" without `properties.epochs: 200` does NOT apply it. `early_stop`
-("stop at plateau") caps the ACTUAL iterations run, so raising `epochs` alone
-may not help while it's on — weigh that when proposing or asking about an
-iteration change.
+`epochs` (iterations), `pop_size` (population), `early_stop` (boolean: `true`
+= stop when the best cost plateaus, `false` = run the full `epochs` budget),
+and `algorithm_params`. Set them only once the brief records a chosen
+algorithm (a row naming GA/PSO/SA/ACOR or a nickname); a chat-only mention
+isn't enough. When you change one, put the concrete value in the carrier the
+SAME turn — replying "200 iterations" without `properties.epochs: 200`, or
+"let it run through the plateau" / "don't stop early" without
+`properties.early_stop: false`, does NOT apply it and leaves you describing a
+change that never reaches the solver. Because `early_stop` caps the ACTUAL
+iterations run, raising `epochs` alone may not help while it's on — to truly
+exhaust the budget, set `properties.early_stop: false`.
 """.strip()
 
 

@@ -79,15 +79,22 @@ def parse_problem_config(
     if not isinstance(early_stop, bool):
         raise ValueError("early_stop must be a boolean")
 
+    # Patience / epsilon are plateau-tuning knobs the solver only consults while
+    # early stopping is ON; when it's off they are pure don't-cares. The panel
+    # schema permits any integer, so a panel derive (or LLM) can leave a stale or
+    # zero value behind — clamp into the valid range rather than failing the run
+    # (the Config UI clamps identically). A run must never crash on a knob it may
+    # not even use. See session-8745c964 (knapsack tutorial): early_stop=False
+    # with a derived early_stop_patience=0 hard-failed Runs #3–5.
     es_patience_raw = raw.get("early_stop_patience")
-    early_stop_patience = int(es_patience_raw) if es_patience_raw is not None else _EARLY_STOP_PATIENCE
-    if early_stop_patience < 1 or early_stop_patience > 5000:
-        raise ValueError("early_stop_patience must be between 1 and 5000")
+    early_stop_patience = (
+        max(1, min(5000, int(es_patience_raw))) if es_patience_raw is not None else _EARLY_STOP_PATIENCE
+    )
 
     es_eps_raw = raw.get("early_stop_epsilon")
     early_stop_epsilon = float(es_eps_raw) if es_eps_raw is not None else _EARLY_STOP_EPSILON
     if early_stop_epsilon <= 0:
-        raise ValueError("early_stop_epsilon must be > 0")
+        early_stop_epsilon = _EARLY_STOP_EPSILON
 
     return {
         "weights": weights,
