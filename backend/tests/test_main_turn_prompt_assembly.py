@@ -249,3 +249,59 @@ def test_main_turn_stays_under_word_ceiling(scenario):
         f"{ceiling} ceiling (+{words - ceiling}). Review the added content; if "
         f"intended, raise the ceiling in WORD_BUDGET_CEILING."
     )
+
+
+_STEER_HEADING = "## Hidden researcher steering"
+
+
+@pytest.mark.parametrize("mode", ["agile", "waterfall"])
+@pytest.mark.parametrize("with_retry", [False, True])
+def test_researcher_steer_block_is_the_final_block(mode, with_retry):
+    """A hidden steer must be the LAST block of the main-turn prompt so its
+    "outranks your standing defaults" claim is backed by recency. Regression:
+    it used to be appended inside base_system (~60% in), buried behind ~17k
+    chars of grounding/output disciplines — and the model ignored it (session
+    910b3236). Also asserts it lands AFTER the retry-feedback block. Runs in
+    both modes because `_researcher_steer_block` takes no workflow argument —
+    the block is mode-agnostic by construction, so relocating it never perturbs
+    the four canonical agile/waterfall differences."""
+    kwargs = dict(
+        test_problem_id="vrptw",
+        api_key=None,
+        model_name=None,
+        user_text="what do you suggest?",
+        current_problem_brief=_warm_brief(),
+        workflow_mode=mode,
+        researcher_steers=["invite the participant to look at the config panel"],
+    )
+    if with_retry:
+        kwargs["verification_issues"] = [
+            {"category": "unanchored_goal_term", "severity": "error", "message": "x"}
+        ]
+    instruction = build_main_turn_system_instruction(**kwargs)
+
+    idx = instruction.find(_STEER_HEADING)
+    assert idx != -1, "steer block missing from the assembled prompt"
+    after = instruction[idx + len(_STEER_HEADING):]
+    # No named block — and no second steer heading — may follow the steer.
+    later = {key for key, marker in BLOCK_MARKERS.items() if marker in after}
+    assert later == set(), f"blocks appear after the steer: {sorted(later)}"
+    assert _STEER_HEADING not in after, "steer block emitted twice"
+    if with_retry:
+        assert instruction.find("Verification feedback (retry)") < idx, (
+            "steer must come after the retry-feedback block"
+        )
+
+
+def test_no_steer_block_when_no_steer():
+    """Absent steers → no steer block (and no dangling heading)."""
+    instruction = build_main_turn_system_instruction(
+        test_problem_id="vrptw",
+        api_key=None,
+        model_name=None,
+        user_text="hi",
+        current_problem_brief=_warm_brief(),
+        workflow_mode="agile",
+        researcher_steers=None,
+    )
+    assert _STEER_HEADING not in instruction

@@ -11,8 +11,9 @@ in the upcoming reply, then stop being re-raised unless the researcher sends
 them again.
 
 **Why:** they're injected into the chat system prompt as "apply the latest
-steering directly in your next response" (`_build_visible_chat_system_instruction`
-in `services/llm.py`). The steer is NOT a Gemini history turn — it rides in the
+steering directly in your next response" (built by `_researcher_steer_block` and
+appended last in `build_main_turn_system_instruction`, `services/llm.py`). The
+steer is NOT a Gemini history turn — it rides in the
 system instruction as a `researcher_steers: list[str]`. Originally
 `context.load_turn_context` re-queried the last 4 researcher rows **every turn**
 with no new-vs-old distinction, so an already-applied steer kept getting re-fed
@@ -34,19 +35,33 @@ also **canned** assistant rows that do NOT invoke the model: the run summary
 "Problem definition saved"). Anchoring on any assistant row lets one of those
 consume a steer sent mid-run/mid-save, dropping it before the real LLM reply.
 
-**Steer must outrank conservative standing defaults.** The steer block in
-`_build_visible_chat_system_instruction` is appended last (good recency), but a
-plain "highest-priority instruction" wording lost to strongly-repeated waterfall
-guardrails like "don't add a search-strategy question yourself — that one's
-handled for you" (study_chat.py). Symptom (session 7d4b9eaf): a steer asking the
-agent to *suggest search-strategy / iteration changes* was delivered on the right
-turns (verified via `load_fresh_researcher_steers`) but the agent ignored it,
-while it happily answered the same topic when the participant asked directly.
-Fix: the steer block explicitly states it outranks the agent's proactivity
-defaults — including topics it would treat as "handled for you" (algorithm /
-plateau) — while still forbidding fact-invention. The "handled for you" rule
-stays the DEFAULT (deterministic study control); the steer is the deliberate
-researcher override.
+**Steer must outrank conservative standing defaults.** The steer wording lost to
+strongly-repeated waterfall guardrails like "don't add a search-strategy question
+yourself — that one's handled for you" (study_chat.py). Symptom (session 7d4b9eaf):
+a steer asking the agent to *suggest search-strategy / iteration changes* was
+delivered on the right turns (verified via `load_fresh_researcher_steers`) but the
+agent ignored it, while it happily answered the same topic when the participant
+asked directly. Fix: the steer block explicitly states it outranks the agent's
+proactivity defaults — including topics it would treat as "handled for you"
+(algorithm / plateau) — while still forbidding fact-invention. The "handled for
+you" rule stays the DEFAULT (deterministic study control); the steer is the
+deliberate researcher override.
+
+**Placement = recency: the steer block must be the LAST block in the full
+main-turn prompt.** It USED to be appended inside `_build_visible_chat_system_instruction`,
+whose "appended last" only meant last within `base_system` — but `base_system` is
+just the FIRST of ~9 blocks `build_main_turn_system_instruction` stacks (brief-update,
+items, grounding, hard-constraint, ambiguity, out-of-scope, output rules, retry
+feedback…). So the steer landed ~60% into a ~46k-char prompt with ~17k chars of
+conservative disciplines AFTER it, and the model ignored it. Symptom (session
+910b3236, agile): two steers "invite the participant to look at the config panel"
+were both loaded correctly yet neither reply complied. Fix: extracted the block
+into `_researcher_steer_block(researcher_steers)` and append it as the FINAL part
+of `build_main_turn_system_instruction` (after the retry-feedback block too), so
+its "outranks your standing defaults" claim is backed by genuine last-position
+recency. Block is workflow-agnostic (no mode arg) → never perturbs the four
+canonical agile/waterfall differences. Guarded by
+`tests/test_main_turn_prompt_assembly.py::test_researcher_steer_block_is_the_final_block`.
 
 **Retries preserve the steer.** The automatic in-process S5 retry carries it via
 `retry_context["researcher_steers"]`. The participant-clicked resume-from-pause
