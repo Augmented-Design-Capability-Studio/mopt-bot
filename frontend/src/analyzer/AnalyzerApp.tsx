@@ -83,12 +83,17 @@ export function AnalyzerApp() {
         </div>
       ) : null}
 
+      {/* Both tabs stay mounted; the inactive one is only hidden. Unmounting
+          would throw away expensive local state on every switch — the Pyodide
+          notebook's runtime + rendered cell outputs, and the coding tab's
+          loaded video / playhead. */}
       <div style={{ height: "calc(100% - 5rem)", minHeight: 0 }}>
-        {tab === "coding" ? (
+        <div style={{ height: "100%", minHeight: 0, display: tab === "coding" ? "block" : "none" }}>
           <SessionCodingTab ctl={ctl} />
-        ) : (
+        </div>
+        <div style={{ height: "100%", minHeight: 0, display: tab === "aggregate" ? "block" : "none" }}>
           <AggregateTab token={ctl.token} />
-        )}
+        </div>
       </div>
     </div>
   );

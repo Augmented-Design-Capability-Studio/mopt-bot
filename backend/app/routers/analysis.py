@@ -47,27 +47,17 @@ def _row_get(row: Any, key: str, default: Any = None) -> Any:
     return val if val is not None else default
 
 
-def _import_one(
+def _populate_children(
     adb: Session,
-    *,
-    source_kind: str,
-    source_filename: str | None,
-    session_fields: dict[str, Any],
+    loaded: m.LoadedSession,
     messages: list[dict[str, Any]],
     runs: list[dict[str, Any]],
     snapshots: list[dict[str, Any]],
-) -> m.LoadedSession:
-    loaded = m.LoadedSession(
-        source_session_id=session_fields.get("id"),
-        participant_number=session_fields.get("participant_number"),
-        workflow_mode=session_fields.get("workflow_mode"),
-        test_problem_id=session_fields.get("test_problem_id"),
-        source_kind=source_kind,
-        source_filename=source_filename,
-    )
-    adb.add(loaded)
-    adb.flush()  # assign loaded.id
-
+) -> None:
+    """Insert the study-data copies (messages/runs/snapshots) for a loaded
+    session. On re-import the caller clears these first; manual coding rows
+    (annotations/pauses) and the video↔clock metadata are keyed on the stable
+    source ids, so they are never touched here."""
     for msg in messages:
         iso, epoch = iso_and_epoch(msg.get("created_at"))
         adb.add(
@@ -114,10 +104,58 @@ def _import_one(
                 panel_config_json=snap.get("panel_config_json"),
             )
         )
-    return loaded
 
 
-def _import_from_sqlite(adb: Session, data: bytes, filename: str | None) -> list[m.LoadedSession]:
+def _upsert_one(
+    adb: Session,
+    *,
+    source_kind: str,
+    source_filename: str | None,
+    session_fields: dict[str, Any],
+    messages: list[dict[str, Any]],
+    runs: list[dict[str, Any]],
+    snapshots: list[dict[str, Any]],
+) -> tuple[m.LoadedSession, bool]:
+    """Load one session, replacing an existing copy of the same source session
+    in place (add-or-refresh). Returns ``(loaded, created)``.
+
+    Re-importing refreshes only the study-data copy (the participant/workflow
+    fields + messages/runs/snapshots). Manual coding — annotations, notes,
+    pauses, and the video↔clock alignment — is preserved: those rows either
+    live on the ``LoadedSession`` row itself (kept) or reference events by the
+    stable study ``source_id`` (so replacing the message/run/snapshot copies
+    keeps every annotation anchored)."""
+    sid = session_fields.get("id")
+    loaded: m.LoadedSession | None = None
+    if sid is not None:
+        loaded = (
+            adb.query(m.LoadedSession)
+            .filter(m.LoadedSession.source_session_id == sid)
+            .first()
+        )
+    created = loaded is None
+    if loaded is None:
+        loaded = m.LoadedSession(source_session_id=sid)
+        adb.add(loaded)
+    else:
+        # Drop the stale study-data copies; coding rows survive (see docstring).
+        for child in (m.LoadedMessage, m.LoadedRun, m.LoadedSnapshot):
+            adb.query(child).filter(child.loaded_session_id == loaded.id).delete(
+                synchronize_session=False
+            )
+    loaded.participant_number = session_fields.get("participant_number")
+    loaded.workflow_mode = session_fields.get("workflow_mode")
+    loaded.test_problem_id = session_fields.get("test_problem_id")
+    loaded.source_kind = source_kind
+    loaded.source_filename = source_filename
+    adb.flush()  # assign loaded.id for new rows / expose it after the delete
+    _populate_children(adb, loaded, messages, runs, snapshots)
+    return loaded, created
+
+
+def _import_from_sqlite(
+    adb: Session, data: bytes, filename: str | None
+) -> list[tuple[m.LoadedSession, bool]]:
     fd, path = tempfile.mkstemp(prefix="mopt-analysis-src-", suffix=".db")
     os.close(fd)
     try:
@@ -130,7 +168,7 @@ def _import_from_sqlite(adb: Session, data: bytes, filename: str | None) -> list
         except sqlite3.Error as exc:
             raise HTTPException(status_code=400, detail=f"Not a study .db: {exc}") from exc
 
-        out: list[m.LoadedSession] = []
+        out: list[tuple[m.LoadedSession, bool]] = []
         for srow in session_rows:
             sid = _row_get(srow, "id")
             msgs = [
@@ -149,7 +187,7 @@ def _import_from_sqlite(adb: Session, data: bytes, filename: str | None) -> list
                 ).fetchall()
             ]
             out.append(
-                _import_one(
+                _upsert_one(
                     adb,
                     source_kind="db",
                     source_filename=filename,
@@ -170,7 +208,9 @@ def _import_from_sqlite(adb: Session, data: bytes, filename: str | None) -> list
             pass
 
 
-def _import_from_json(adb: Session, data: bytes, filename: str | None) -> list[m.LoadedSession]:
+def _import_from_json(
+    adb: Session, data: bytes, filename: str | None
+) -> list[tuple[m.LoadedSession, bool]]:
     try:
         env = json.loads(data.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -202,7 +242,7 @@ def _import_from_json(adb: Session, data: bytes, filename: str | None) -> list[m
         for snap in (env.get("snapshots") or [])
     ]
     return [
-        _import_one(
+        _upsert_one(
             adb,
             source_kind="json",
             source_filename=filename,
@@ -306,11 +346,16 @@ async def upload_session(
     stripped = data.lstrip()
     is_json = name.endswith(".json") or stripped[:1] in (b"{", b"[")
     if is_json:
-        loaded = _import_from_json(adb, data, filename)
+        results = _import_from_json(adb, data, filename)
     else:
-        loaded = _import_from_sqlite(adb, data, filename)
+        results = _import_from_sqlite(adb, data, filename)
     adb.commit()
-    return {"loaded": [_loaded_summary(x) for x in loaded]}
+    added = sum(1 for _, created in results if created)
+    return {
+        "loaded": [_loaded_summary(x) for x, _ in results],
+        "added": added,
+        "updated": len(results) - added,
+    }
 
 
 @router.post("/load-live")
@@ -351,7 +396,7 @@ def load_live_session(
         }
         for x in db.query(SessionSnapshot).filter(SessionSnapshot.session_id == sid).order_by(SessionSnapshot.id).all()
     ]
-    loaded = _import_one(
+    loaded, created = _upsert_one(
         adb,
         source_kind="live",
         source_filename=None,
@@ -362,7 +407,11 @@ def load_live_session(
         messages=msgs, runs=runs, snapshots=snaps,
     )
     adb.commit()
-    return {"loaded": [_loaded_summary(loaded)]}
+    return {
+        "loaded": [_loaded_summary(loaded)],
+        "added": int(created),
+        "updated": int(not created),
+    }
 
 
 @router.get("/loaded")

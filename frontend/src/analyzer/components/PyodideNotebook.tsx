@@ -316,7 +316,7 @@ ax.set_ylabel("Formulation score (higher = better)")
 ax.set_title("Formulation score over time, by participant")
 ax.legend(handles=[Line2D([0], [0], color=c, label=w) for w, c in PALETTE.items()
                    if w in set(fs["workflow_mode"].dropna())], title="workflow")`,
-  `# Formulation quality: agile vs waterfall, and does expertise matter? (n=16 — EXPLORATORY)
+  `# Formulation quality: agile vs waterfall, and does expertise matter? (EXPLORATORY — small n)
 from scipy import stats
 fq = (snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "ts_epoch"])
       .groupby("loaded_id").tail(1)
@@ -342,7 +342,7 @@ for wf in ["agile", "waterfall"]:
     g = fq[fq.workflow_mode == wf]
     rr, pp = stats.pearsonr(g.expertise_score, g.formulation_score)
     print(f"  within {wf:<9} r={rr:.2f} p={pp:.3f} slope={np.polyfit(g.expertise_score, g.formulation_score, 1)[0]:.2f}")
-print("\\nNOTE: n=16 (8/group) — underpowered; read effect sizes + CIs, treat p-values cautiously.")
+print(f"\\nNOTE: n={len(fq)} ({len(a)} agile / {len(w)} waterfall) — small sample; read effect sizes + CIs, treat p-values cautiously.")
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
 for i, (wf, g) in enumerate([("agile", a), ("waterfall", w)]):
@@ -380,7 +380,8 @@ else:
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"]); ax.set_title(f"{name} (MW p={p:.2f})")
         print(f"{name:>20}: agile {a.mean():.2f}+/-{_se(a):.2f}  waterfall {w.mean():.2f}+/-{_se(w):.2f}  MW p={p:.3f}")
     axes[0].set_ylabel("Rating (1-7)"); axes[0].set_ylim(0, 7.5); fig.tight_layout()
-    print("NOTE: n=16, ratings ceilinged (~5-6/7) — underpowered; treat as exploratory.")`,
+    _n_post = int(part[_need].notna().any(axis=1).sum())
+    print(f"NOTE: n={_n_post} with post ratings, ceilinged (~5-6/7) — small sample; treat as exploratory.")`,
   `# Calibration: does post-session CONFIDENCE track ACTUAL solution quality?
 from scipy import stats
 if "solution_confidence" not in part.columns or part["solution_confidence"].isna().all():
