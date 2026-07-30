@@ -129,6 +129,10 @@ class OptimizationRun(Base):
     cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     reference_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Participant-facing failure text — kept clean/generic (see the run router).
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Researcher-only raw diagnostic (exception type + message + traceback tail).
+    # Never surfaced to participants; gated in run_to_out by principal.
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped["StudySession"] = relationship("StudySession", back_populates="runs")

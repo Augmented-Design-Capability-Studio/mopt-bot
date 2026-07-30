@@ -89,6 +89,7 @@ def _populate_children(
                 reference_cost=run.get("reference_cost"),
                 ok=run.get("ok"),
                 error_message=run.get("error_message"),
+                error_detail=run.get("error_detail"),
             )
         )
     for snap in snapshots:

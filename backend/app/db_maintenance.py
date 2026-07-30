@@ -30,6 +30,7 @@ def ensure_database_shape() -> None:
     _ensure_sessions_embedding_model_column()
     _backfill_optimization_gate_engaged()
     _ensure_runs_session_index_column()
+    _ensure_runs_error_detail_column()
     _backfill_runs_session_index()
     _terminate_orphaned_runs()
 
@@ -314,6 +315,18 @@ def _ensure_runs_session_index_column() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE runs ADD COLUMN session_run_index INTEGER"))
     log.info("Added runs.session_run_index column")
+
+
+def _ensure_runs_error_detail_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("runs"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("runs")}
+    if "error_detail" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE runs ADD COLUMN error_detail TEXT"))
+    log.info("Added runs.error_detail column")
 
 
 def _terminate_orphaned_runs() -> None:

@@ -657,6 +657,9 @@ export type RunResult = {
   cost: number | null;
   reference_cost: number | null;
   error_message: string | null;
+  /** Researcher-only raw failure diagnostic (exception type + traceback).
+   *  Present only in researcher-authenticated run payloads; never sent to participants. */
+  error_detail?: string | null;
   request: {
     type?: string;
     problem?: Record<string, unknown>;

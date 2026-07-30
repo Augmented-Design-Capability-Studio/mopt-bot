@@ -614,6 +614,9 @@ class RunOut(BaseModel):
     cost: float | None
     reference_cost: float | None
     error_message: str | None
+    # Researcher-only raw failure diagnostic; omitted for participant callers
+    # (run_to_out only populates it when include_detail is set).
+    error_detail: str | None = None
     request: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
 

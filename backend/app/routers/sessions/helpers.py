@@ -308,7 +308,7 @@ def embedding_model_for(row: StudySession | None) -> str:
     return get_settings().default_embedding_model
 
 
-def run_to_out(row: OptimizationRun) -> RunOut:
+def run_to_out(row: OptimizationRun, include_detail: bool = False) -> RunOut:
     req = None
     if row.request_json:
         try:
@@ -330,6 +330,8 @@ def run_to_out(row: OptimizationRun) -> RunOut:
         cost=row.cost,
         reference_cost=row.reference_cost,
         error_message=row.error_message,
+        # Raw diagnostic is researcher-only — never leak internals to participants.
+        error_detail=(getattr(row, "error_detail", None) if include_detail else None),
         request=req,
         result=res,
     )

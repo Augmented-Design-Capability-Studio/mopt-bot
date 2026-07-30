@@ -760,7 +760,14 @@ def parse_problem_config(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("driver_preferences must be a list")
     driver_preferences = _validate_driver_preferences(driver_preferences_raw)
 
-    shift_hard = float(raw.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS))
+    # NB: dict.get(key, default) only falls back when the key is ABSENT. The
+    # config panel sends max_shift_hours: null for "no shift cap", so the key is
+    # present-with-None and .get returns None -> float(None) would raise a
+    # TypeError that the run router swallows into an opaque "Optimization failed".
+    # Treat null the same as omitted (fall back to the default cap), mirroring
+    # user_input.build_problem_config. See "Run never crashes on a tuning knob".
+    raw_shift = raw.get("max_shift_hours", DEFAULT_MAX_SHIFT_HOURS)
+    shift_hard = float(DEFAULT_MAX_SHIFT_HOURS if raw_shift is None else raw_shift)
 
     locked = _validate_locked_assignments(raw.get("locked_assignments"))
 

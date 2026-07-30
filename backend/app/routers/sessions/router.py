@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+import traceback
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -1390,14 +1391,24 @@ def post_run(
         run_row.error_message = "Optimization cancelled"
     except TimeoutError:
         run_row.error_message = "Optimization timed out"
+        run_row.error_detail = f"Solve exceeded {timeout}s timeout"
     except ValueError as e:
+        # Validation messages are already participant-safe; show them directly
+        # and mirror into the diagnostic so the researcher console has it too.
         run_row.error_message = str(e)
+        run_row.error_detail = f"ValueError: {e}"
     except ImportError as e:
         log.exception("Optimization import error for session %s", session_id)
         run_row.error_message = f"Solver import error: {e}"
-    except Exception:
+        run_row.error_detail = f"ImportError: {e}"
+    except Exception as e:
+        # Unexpected failure (e.g. a per-problem parse/solve bug). Keep the
+        # participant-facing message clean and generic, but capture the real
+        # cause in error_detail so it is legible in the researcher console
+        # instead of an opaque "error" (session-73906e05).
         log.exception("Optimization run failed for session %s", session_id)
         run_row.error_message = "Optimization failed"
+        run_row.error_detail = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
     finally:
         if cancel_ev is not None:
             clear_cancel_event(session_id)
@@ -1591,7 +1602,10 @@ def list_runs(
         .order_by(OptimizationRun.id.asc())
         .all()
     )
-    return [helpers.run_to_out(r) for r in rows]
+    # Only the researcher console gets the raw failure diagnostic; participants
+    # never receive internal error details in their run payloads.
+    include_detail = principal != Principal.client
+    return [helpers.run_to_out(r, include_detail=include_detail) for r in rows]
 
 
 @router.delete("/{session_id}/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2368,6 +2382,7 @@ def export_session(
                 "cost": r.cost,
                 "reference_cost": r.reference_cost,
                 "error_message": r.error_message,
+                "error_detail": getattr(r, "error_detail", None),
                 "request": json.loads(r.request_json) if r.request_json else None,
                 "result": json.loads(r.result_json) if r.result_json else None,
             }

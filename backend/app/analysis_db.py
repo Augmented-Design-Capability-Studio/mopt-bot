@@ -9,7 +9,7 @@ touched by the analysis tool.
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
@@ -55,3 +55,18 @@ def ensure_analysis_db_shape() -> None:
     from app.analysis import models  # noqa: F401  (registers tables)
 
     AnalysisBase.metadata.create_all(bind=analysis_engine)
+    _ensure_loaded_runs_error_detail_column()
+
+
+def _ensure_loaded_runs_error_detail_column() -> None:
+    """create_all only creates missing tables, never adds columns to existing
+    ones. Add loaded_runs.error_detail on pre-existing analysis DBs so imported
+    archives can carry the researcher-only failure diagnostic."""
+    inspector = inspect(analysis_engine)
+    if not inspector.has_table("loaded_runs"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("loaded_runs")}
+    if "error_detail" in columns:
+        return
+    with analysis_engine.begin() as conn:
+        conn.execute(text("ALTER TABLE loaded_runs ADD COLUMN error_detail TEXT"))

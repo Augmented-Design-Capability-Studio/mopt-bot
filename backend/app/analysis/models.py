@@ -99,6 +99,8 @@ class LoadedRun(AnalysisBase):
     reference_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Researcher-only raw failure diagnostic carried over from the study export.
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped["LoadedSession"] = relationship(back_populates="runs")
 

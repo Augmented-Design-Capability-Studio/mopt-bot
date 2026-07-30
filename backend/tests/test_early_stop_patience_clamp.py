@@ -47,3 +47,15 @@ def test_out_of_range_patience_clamps_to_bounds(problem_id):
 def test_nonpositive_epsilon_falls_back_to_default(problem_id):
     cfg = _cfg(problem_id, early_stop_epsilon=0.0)
     assert cfg["early_stop_epsilon"] > 0
+
+
+def test_null_max_shift_hours_falls_back_to_default():
+    """Regression for session-73906e05 (VRPTW): the config panel sends
+    ``max_shift_hours: null`` for "no shift cap". The key is present-with-None,
+    so ``dict.get(key, default)`` returned None and ``float(None)`` raised a
+    TypeError the run router swallowed into an opaque "Optimization failed" for
+    four runs. Null must fall back to the default cap, like an omitted key."""
+    absent = _cfg("vrptw")
+    nulled = _cfg("vrptw", max_shift_hours=None)
+    assert nulled["max_shift_hours"] == absent["max_shift_hours"]
+    assert nulled["max_shift_hours"] > 0

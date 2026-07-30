@@ -609,7 +609,8 @@ export function ResearcherDetail({
                 {runs.map((run) => (
                   <details key={run.id}>
                     <summary className="mono" style={{ cursor: "pointer" }}>
-                      Run #{displayRunNumber(run)} · {run.run_type} · {run.ok ? "ok" : "error"} · cost {run.cost ?? "-"} ·{" "}
+                      Run #{displayRunNumber(run)} · {run.run_type} ·{" "}
+                      {run.ok ? "ok" : `failed: ${run.error_message ?? "unknown error"}`} · cost {run.cost ?? "-"} ·{" "}
                       {parseServerDate(run.created_at).toLocaleString()}
                     </summary>
                     <div style={{ marginTop: "0.35rem" }}>
@@ -618,6 +619,24 @@ export function ResearcherDetail({
                           Delete run
                         </button>
                       </div>
+                      {!run.ok && (run.error_detail || run.error_message) && (
+                        <pre
+                          className="mono"
+                          style={{
+                            fontSize: "0.75rem",
+                            maxHeight: "240px",
+                            overflow: "auto",
+                            margin: "0 0 0.35rem",
+                            padding: "0.5rem",
+                            border: "1px solid #d9534f",
+                            borderRadius: "4px",
+                            background: "rgba(217, 83, 79, 0.08)",
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {run.error_detail ?? run.error_message}
+                        </pre>
+                      )}
                       <pre
                         className="mono"
                         style={{ fontSize: "0.75rem", maxHeight: "240px", overflow: "auto", margin: 0 }}
