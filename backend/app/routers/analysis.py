@@ -879,6 +879,10 @@ def dataset(
             "objective_present": r.get("objective_present"),
             "objective_bonus": r.get("objective_bonus"),
             "soft_covered": r.get("soft_covered"),
+            # list of present & active constraint terms (3 hard + 3 soft) at this
+            # snapshot — drives the "all constraints captured" heatmap + the
+            # per-constraint identification-timing chart in the notebook.
+            "captured_constraints": r.get("captured_constraints"),
             # descriptive, NOT scored:
             "objective_as_hard": r.get("objective_as_hard"),
             "soft_as_hard": r.get("soft_as_hard"),

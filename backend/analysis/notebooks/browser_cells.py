@@ -13,8 +13,12 @@
 #                duration_min, active_min, runs_per_min, min_per_run,
 #                runs_per_active_min)
 #   plot_xy(xcol, ycol, xlabel, ylabel, title)  -> colored scatter by workflow
+#   heatmap_over_time(points, value_col, title, vmin, vmax) -> expertise-ranked heatmap
 #   PALETTE   -> {"agile": ..., "waterfall": ...}
-#   pd, plt   -> pandas, matplotlib.pyplot
+#   pd, plt, np -> pandas, matplotlib.pyplot, numpy
+#
+# The next markdown cell explains HOW the backend derives every non-raw metric
+# (canonical cost, feasibility, formulation score, constraint origins, edits).
 
 # %%
 # --- Preview of the loaded DataFrames ---
@@ -26,58 +30,128 @@ print("\npart columns:", list(part.columns))
 print("\npart preview (one row per session):")
 print(part.head(8).to_string())
 
+# %% [markdown]
+# ## How the backend derives each metric
+#
+# Everything below is computed server-side (problem-specific logic lives in the
+# VRPTW **study port**, `vrptw_problem/study_port.py`) and shipped ready-to-plot,
+# so the notebook never re-implements scoring. Reference for the columns you'll use:
+#
+# **Per-run outcome quality** (`runs`, from `canonical_evaluation_for_result`):
+# each run's produced *schedule* is re-scored under the **official 7-term objective**
+# — independent of whatever weights the participant chose — averaged over
+# `_CANON_SEEDS` random traffic draws.
+#   - `canonical_cost` / `canonical_cost_std` = mean / std across those seeds
+#     (the std is the error bar). Log scale everywhere; **lower = better**.
+#   - `feasible` = robust flag: valid on >= 80% of traffic draws, where "valid" means
+#     lateness = 0 **and** no capacity overflow **and** every shift <= 8h **and**
+#     all orders covered. A low cost bought by breaking a hard rule does NOT count.
+#
+# **Per-config formulation quality** (`snapshots`, from `formulation_quality_for_config`).
+# All-positive, no deductions: `formulation_score = coverage + hard_bonus + objective_bonus`
+# (0-11, **higher = better**):
+#   - `coverage` (0-7): +1 per canonical term present & active (nonzero weight),
+#     regardless of type = travel_time + 3 hard + 3 soft.
+#   - `hard_bonus` (0-3): +1 per hard constraint correctly **binding** (type `hard`
+#     OR weight > every non-hard term's weight).
+#   - `objective_bonus` (0-1): +1 if travel_time is present AND not marked `hard`
+#     (i.e. it's the target, not a constraint).
+#   - `soft_covered` (0-3): soft prefs present (driver pref / workload / express).
+#   - `captured_constraints`: the list of the 6 constraint terms (3 hard + 3 soft)
+#     present & active at that snapshot — "identified", NOT necessarily binding.
+#   - `objective_as_hard`, `soft_as_hard`: DESCRIPTIVE behavioral flags — NOT scored.
+#
+# **Constraint origins** (`sessions.hard_origins`, from `hard_constraint_origins`):
+# who originated each hard constraint, reconstructed per assistant TURN from message
+# provenance (not the sparse save snapshots): `user_volunteered` (stated it),
+# `agent_asked` (raised an open-question — waterfall's ask), `agent_assumed`
+# (committed silently — agile's fait accompli), else `mixed`/`present_other`/`absent`.
+#
+# **Goal-term edits** (`snapshots`): `weight_edits` / `type_edits` / `reranked` /
+# `terms_added` / `terms_removed`, from structurally diffing each config against the
+# previous one (no text parsing). `reranked` = a genuine reorder of terms that
+# persisted (excludes the renumbering caused by add/remove).
+
 # %%
+# --- Shared helpers (run this cell before the plots below) -------------------
+from matplotlib.lines import Line2D
+
+
+def elapsed(df, cols=()):
+    """Add elapsed_min = minutes since that session's FIRST message — the
+    wall-clock x-axis for every over-time plot. Optionally left-merge extra
+    per-session columns from `part` (e.g. participant, workflow_mode)."""
+    start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
+    d = df.merge(start, on="loaded_id", how="left")
+    d["elapsed_min"] = (d["ts_epoch"] - d["start"]) / 60.0
+    if cols:
+        d = d.merge(part[["loaded_id", *cols]], on="loaded_id", how="left")
+    return d
+
+
+def wf_legend(ax, present, title="workflow"):
+    """Workflow color legend, showing only the modes that appear in `present`."""
+    seen = set(pd.Series(list(present)).dropna())
+    ax.legend(handles=[Line2D([0], [0], color=c, label=w)
+                       for w, c in PALETTE.items() if w in seen], title=title)
+
+
+def expertise_rows():
+    """Session rows ranked low->high expertise, plus a loaded_id -> y-index map.
+    Shared by every 'one row per participant' timeline/heatmap below."""
+    order = part.sort_values("expertise_score", na_position="last").reset_index(drop=True)
+    return order, {lid: i for i, lid in enumerate(order["loaded_id"])}
+
+
+def rank_yticks(ax, order):
+    """Label y ticks '<participant> (e=<expertise>)' for an expertise-ranked axis."""
+    ax.set_yticks(range(len(order)))
+    ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(order["participant"], order["expertise_score"])])
+
+# %%
+# init_words = length of the participant's FIRST REAL prompt. The synthetic
+# upload notice ("I'm uploading the following file(s): ...") is skipped when it
+# comes first, so this measures how much the participant actually specified up
+# front (see backend metrics.initial_prompt_word_count / SETUP's _first_prompt_words).
 plot_xy("expertise_score", "init_words",
-        "Self-rated expertise", "Initial prompt words",
-        "Initial prompt length × expertise")
+        "Self-rated expertise", "Initial prompt words (upload notice excluded)",
+        "Initial prompt length x expertise")
 
 # %%
 plot_xy("expertise_score", "confidence",
-        "Self-rated expertise", "Confidence to solve (1–7)",
-        "Confidence × expertise")
+        "Self-rated expertise", "Confidence to solve (1-7)",
+        "Confidence x expertise")
 
 # %%
 plot_xy("expertise_score", "est_time_minutes",
         "Self-rated expertise", "Estimated minutes to solve",
-        "Estimated time × expertise")
+        "Estimated time x expertise")
 
 # %%
-# interaction = user messages + manual saves (see part[["n_user_msgs","n_saves"]]).
+# interaction = user messages + manual saves (part[["n_user_msgs","n_saves"]]).
 plot_xy("expertise_score", "runs_per_interaction",
         "Self-rated expertise", "Runs / interaction",
-        "Runs-to-interaction ratio × expertise")
+        "Runs-to-interaction ratio x expertise")
 
 # %%
-# Run timeline: x = minutes since first message; rows ranked by expertise (low→high).
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-r = runs.merge(start, on="loaded_id", how="left").merge(
-    part[["loaded_id", "participant", "workflow_mode", "expertise_score"]],
-    on="loaded_id", how="left")
-r["elapsed_min"] = (r["ts_epoch"] - r["start"]) / 60.0
-
-order = part.sort_values("expertise_score", na_position="last").reset_index(drop=True)
-ypos = {lid: i for i, lid in enumerate(order["loaded_id"])}
-
+# Run timeline: x = minutes since first message; rows ranked by expertise (low->high).
+order, ypos = expertise_rows()
+r = elapsed(runs, ["workflow_mode"]).dropna(subset=["elapsed_min"])
 fig, ax = plt.subplots(figsize=(9, 6))
-rr = r.dropna(subset=["elapsed_min"])
-for lid, g in rr.groupby("loaded_id"):
-    y = ypos.get(lid)
-    ax.hlines(y, g["elapsed_min"].min(), g["elapsed_min"].max(), color="#cbd5e1", lw=1, zorder=1)
-for wf, g in rr.groupby("workflow_mode"):
+for lid, g in r.groupby("loaded_id"):  # faint spine spanning each participant's runs
+    ax.hlines(ypos.get(lid), g["elapsed_min"].min(), g["elapsed_min"].max(), color="#cbd5e1", lw=1, zorder=1)
+for wf, g in r.groupby("workflow_mode"):
     ax.scatter(g["elapsed_min"], g["loaded_id"].map(ypos), s=55, alpha=0.85,
                color=PALETTE.get(wf, "#7c3aed"), label=wf, zorder=3)
-ax.set_yticks(range(len(order)))
-ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(order["participant"], order["expertise_score"])])
+rank_yticks(ax, order)
 ax.set_xlabel("Minutes since first message")
-ax.set_title("Run timeline — rows ranked by expertise (low → high)")
+ax.set_title("Run timeline - rows ranked by expertise (low -> high)")
 ax.legend(title="workflow")
 
 # %%
-# Canonical solution cost per run — one curve per participant, colored by
-# workflow. Canonical = each run's schedule re-scored under the OFFICIAL 7-term
-# objective, so quality is comparable regardless of the weights the user chose.
-# (runs["canonical_cost"] is computed backend-side and shipped in the dataset.)
-from matplotlib.lines import Line2D
+# Canonical cost per RUN INDEX, one curve per participant, colored by workflow.
+# Canonical = re-scored under the official objective, so quality is comparable
+# regardless of the weights the user chose (see the metrics explanation cell).
 rc = runs.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id", how="left")
 rc = rc.dropna(subset=["canonical_cost"]).sort_values(["loaded_id", "session_run_index"])
 fig, ax = plt.subplots(figsize=(9, 6))
@@ -85,60 +159,47 @@ for lid, g in rc.groupby("loaded_id"):
     wf = g["workflow_mode"].iloc[0]
     ax.errorbar(g["session_run_index"], g["canonical_cost"], yerr=g["canonical_cost_std"],
                 marker="o", ms=3, lw=1.4, alpha=0.75, color=PALETTE.get(wf, "#7c3aed"),
-                elinewidth=0.6, capsize=1.5)  # error bars = +/-1 std over 10 traffic seeds
+                elinewidth=0.6, capsize=1.5)  # error bar = +/-1 std over the traffic seeds
     last = g.iloc[-1]
     ax.annotate(last["participant"], (last["session_run_index"], last["canonical_cost"]),
                 fontsize=7, xytext=(3, 0), textcoords="offset points")
-ax.set_yscale("log")
+ax.set_yscale("log")  # canonical cost spans orders of magnitude
 ax.set_xlabel("Run index")
-ax.set_ylabel("Canonical cost (log scale — lower is better)")
+ax.set_ylabel("Canonical cost (log scale - lower is better)")
 ax.set_title("Canonical solution cost per run, by participant")
-ax.legend(handles=[Line2D([0], [0], color=c, label=w) for w, c in PALETTE.items()
-                   if w in set(rc["workflow_mode"].dropna())], title="workflow")
+wf_legend(ax, rc["workflow_mode"])
 
 # %%
 # Same canonical cost, but x = MINUTES since first message (wall-clock, not run index).
-from matplotlib.lines import Line2D
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-rc = runs.merge(start, on="loaded_id", how="left").merge(
-    part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id", how="left")
-rc = rc.dropna(subset=["canonical_cost"]).copy()
-rc["elapsed_min"] = (rc["ts_epoch"] - rc["start"]) / 60.0
+rc = elapsed(runs, ["participant", "workflow_mode"]).dropna(subset=["canonical_cost"])
 rc = rc.sort_values(["loaded_id", "elapsed_min"])
 fig, ax = plt.subplots(figsize=(9, 6))
 for lid, g in rc.groupby("loaded_id"):
     wf = g["workflow_mode"].iloc[0]
     ax.errorbar(g["elapsed_min"], g["canonical_cost"], yerr=g["canonical_cost_std"],
                 marker="o", ms=3, lw=1.4, alpha=0.75, color=PALETTE.get(wf, "#7c3aed"),
-                elinewidth=0.6, capsize=1.5)  # error bars = +/-1 std over 10 traffic seeds
+                elinewidth=0.6, capsize=1.5)  # error bar = +/-1 std over the traffic seeds
     last = g.iloc[-1]
     ax.annotate(last["participant"], (last["elapsed_min"], last["canonical_cost"]),
                 fontsize=7, xytext=(3, 0), textcoords="offset points")
 ax.set_yscale("log")
 ax.set_xlabel("Minutes since first message")
-ax.set_ylabel("Canonical cost (log — lower is better)")
+ax.set_ylabel("Canonical cost (log - lower is better)")
 ax.set_title("Canonical solution cost over time, by participant")
-ax.legend(handles=[Line2D([0], [0], color=c, label=w) for w, c in PALETTE.items()
-                   if w in set(rc["workflow_mode"].dropna())], title="workflow")
+wf_legend(ax, rc["workflow_mode"])
 
 # %%
-# Cumulative-best FEASIBLE cost over time — de-noises the curves AND only counts
-# schedules that satisfy the true hard constraints (lateness, capacity, shift<=8h,
-# all orders covered). A low cost bought by violating constraints doesn't count.
-from matplotlib.lines import Line2D
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-rc = runs.merge(start, on="loaded_id").merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id")
-rc = rc.dropna(subset=["canonical_cost"]).copy()
-rc["elapsed_min"] = (rc["ts_epoch"] - rc["start"]) / 60.0
+# Cumulative-best FEASIBLE cost over time. De-noises the raw curves AND only
+# counts schedules that satisfy the true hard constraints (feasible == valid on
+# >=80% of traffic seeds; see metrics cell). A cheap-but-infeasible run is ignored.
+rc = elapsed(runs, ["participant", "workflow_mode"]).dropna(subset=["canonical_cost"])
 feas = rc[rc["feasible"] == True].sort_values(["loaded_id", "elapsed_min"])  # noqa: E712
 fig, ax = plt.subplots(figsize=(9, 6))
 for lid, g in feas.groupby("loaded_id"):
-    g = g.sort_values("elapsed_min")
     wf = g["workflow_mode"].iloc[0]
     col = PALETTE.get(wf, "#7c3aed")
-    best = g["canonical_cost"].cummin()
-    is_min = g["canonical_cost"] <= best  # rows that (re)set the running best
-    best_std = g["canonical_cost_std"].where(is_min).ffill()  # std of the best-so-far run
+    best = g["canonical_cost"].cummin()               # running best-so-far
+    best_std = g["canonical_cost_std"].where(g["canonical_cost"] <= best).ffill()  # std of that best run
     ax.plot(g["elapsed_min"], best, drawstyle="steps-post", lw=1.8, alpha=0.85, color=col)
     ax.errorbar(g["elapsed_min"], best, yerr=best_std, fmt="none", ecolor=col,
                 elinewidth=0.6, capsize=1.5, alpha=0.7)
@@ -148,18 +209,16 @@ ax.set_yscale("log")
 ax.set_xlabel("Minutes since first message")
 ax.set_ylabel("Best FEASIBLE canonical cost so far (log)")
 ax.set_title("Cumulative-best feasible solution over time")
-ax.legend(handles=[Line2D([0], [0], color=c, label=w) for w, c in PALETTE.items()
-                   if w in set(feas["workflow_mode"].dropna())], title="workflow")
+wf_legend(ax, feas["workflow_mode"])
 
 # %%
-# Feasibility flag: is each participant's LOWEST-cost run actually valid?
+# Feasibility check: is each participant's LOWEST-cost run actually valid?
 # (A low canonical cost can be "bought" by violating hard constraints.)
 rc = runs.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id").dropna(subset=["canonical_cost"])
 rows = []
 for lid, g in rc.groupby("loaded_id"):
-    g = g.sort_values("session_run_index")
-    best = g.loc[g["canonical_cost"].idxmin()]
-    fe = g[g["feasible"] == True]  # noqa: E712
+    best = g.loc[g["canonical_cost"].idxmin()]          # the single cheapest run
+    fe = g[g["feasible"] == True]                        # noqa: E712  (its feasible runs)
     rows.append(dict(
         participant=g["participant"].iloc[0], workflow=g["workflow_mode"].iloc[0],
         best_cost=round(best["canonical_cost"]), best_feasible=bool(best["feasible"]),
@@ -174,18 +233,17 @@ print(fs.groupby("workflow")["feasible_rate"].median().round(2).to_string())
 # %%
 # User-action timeline: rows ranked by expertise, faint workflow band per row,
 # markers for each participant action (message | save | run).
-order = part.sort_values("expertise_score", na_position="last").reset_index(drop=True)
-ypos = {lid: i for i, lid in enumerate(order["loaded_id"])}
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
+order, ypos = expertise_rows()
 
-def _ev(df):
-    d = df.merge(start, on="loaded_id", how="left")
-    d["elapsed_min"] = (d["ts_epoch"] - d["start"]) / 60.0
+
+def _ev(df):  # add elapsed_min + a y-position, dropping rows we can't place
+    d = elapsed(df)
     d["y"] = d["loaded_id"].map(ypos)
     return d.dropna(subset=["y", "elapsed_min"])
 
+
 um = messages[messages["role"].str.lower() == "user"].copy()
-um = um[~um["content"].fillna("").str.strip().str.lower().str.startswith("i'm uploading")]
+um = um[~um["content"].fillna("").str.strip().str.lower().str.startswith("i'm uploading")]  # drop upload notice
 um, ru = _ev(um), _ev(runs)
 sv = _ev(snapshots[snapshots["event_type"] == "manual_save"]) if not snapshots.empty else runs.iloc[0:0]
 
@@ -197,17 +255,15 @@ ax.scatter(um["elapsed_min"], um["y"], marker="|", s=120, color="#475569", label
 if len(sv):
     ax.scatter(sv["elapsed_min"], sv["y"], marker="s", s=26, color="#f59e0b", label="save", alpha=0.85)
 ax.scatter(ru["elapsed_min"], ru["y"], marker="o", s=34, color="#10b981", label="run", alpha=0.85)
-ax.set_yticks(range(len(order)))
-ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(order["participant"], order["expertise_score"])])
+rank_yticks(ax, order)
 ax.set_xlabel("Minutes since first message")
-ax.set_title("User-action timeline — rows ranked by expertise (band = workflow)")
+ax.set_title("User-action timeline - rows ranked by expertise (band = workflow)")
 ax.legend(loc="upper right")
 
 # %%
-# Final formulation quality (from each session's last snapshot), expertise-ranked.
-# hard_bonus 0-3 = the handout's hard constraints (lateness, capacity, shift)
-# that are binding (type 'hard' OR weight > every non-hard term). soft_covered =
-# of {driver pref, workload, express}. objective_as_hard / soft_as_hard = descriptive (not scored).
+# Final formulation quality (from each session's LAST snapshot), expertise-ranked.
+# hard_bonus (0-3) = hard constraints correctly binding (see metrics cell);
+# objective_as_hard / soft_as_hard are DESCRIPTIVE (not scored).
 sp = snapshots.dropna(subset=["hard_bonus"]).sort_values(["loaded_id", "ts_epoch"])
 final = sp.groupby("loaded_id").tail(1).merge(
     part[["loaded_id", "participant", "workflow_mode", "expertise_score"]], on="loaded_id")
@@ -218,51 +274,72 @@ ax.barh(range(len(final)), final["hard_bonus"],
 ax.set_yticks(range(len(final)))
 ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(final["participant"], final["expertise_score"])])
 ax.set_xlim(0, 3)
-ax.set_xlabel("Hard constraints captured (0-3)")
-ax.set_title("Final formulation: hard constraints captured (color = workflow)")
+ax.set_xlabel("Hard constraints binding (0-3)")
+ax.set_title("Final formulation: hard constraints binding (color = workflow)")
 print(final[["participant", "workflow_mode", "expertise_score", "hard_bonus",
              "objective_as_hard", "soft_as_hard"]].to_string(index=False))
-print("\n(objective_as_hard / soft_as_hard are DESCRIPTIVE — not scored)")
+print("\n(objective_as_hard / soft_as_hard are DESCRIPTIVE - not scored)")
 print("by workflow (mean):")
 print(final.groupby("workflow_mode")[["hard_bonus"]].mean().round(2).to_string())
 
 # %%
-# Heatmap: formulation quality (hard constraints captured, 0-3) over time.
-# Rows ranked by expertise; blue=agile / red=waterfall; darker = more captured.
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-sp = snapshots.dropna(subset=["hard_bonus"]).merge(start, on="loaded_id", how="left")
-sp["elapsed_min"] = (sp["ts_epoch"] - sp["start"]) / 60.0
-sp = sp[sp["elapsed_min"] >= 0]
-heatmap_over_time(sp, "hard_bonus", "Hard constraints captured over time (darker = more, 0-3)", vmin=0, vmax=3)
+# Constraint IDENTIFICATION over time — two coordinated views over ALL 6
+# constraints (3 hard + 3 soft), not just the hard ones. "Captured/identified"
+# = the term is present & active in the config (NOT necessarily binding); it
+# comes from the backend `captured_constraints` list (see metrics cell).
+if "captured_constraints" not in snapshots.columns:
+    print("`captured_constraints` missing from the dataset.")
+    print("-> restart the backend (new field) and click Reload data, then re-run.")
+else:
+    CONSTRAINTS = ["lateness_penalty", "capacity_penalty", "shift_limit",       # 3 hard
+                   "worker_preference", "workload_balance", "express_miss_penalty"]  # 3 soft
+    CLABEL = {"lateness_penalty": "lateness", "capacity_penalty": "capacity", "shift_limit": "shift",
+              "worker_preference": "driver pref", "workload_balance": "workload", "express_miss_penalty": "express"}
+    sp = elapsed(snapshots).dropna(subset=["elapsed_min"])
+    sp = sp[sp["elapsed_min"] >= 0].copy()
+    sp["cc"] = sp["captured_constraints"].apply(lambda v: v if isinstance(v, list) else [])
 
-# %%
-# Heatmap: best-FEASIBLE canonical cost over time (darker = lower cost = better).
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-rc = runs.merge(start, on="loaded_id").dropna(subset=["canonical_cost"]).copy()
-rc["elapsed_min"] = (rc["ts_epoch"] - rc["start"]) / 60.0
-rc = rc[rc["feasible"] == True].sort_values(["loaded_id", "elapsed_min"])  # noqa: E712
-rc["best_so_far"] = rc.groupby("loaded_id")["canonical_cost"].cummin()
-rc["quality"] = -np.log10(rc["best_so_far"].clip(lower=1))  # higher = better = darker
-heatmap_over_time(rc, "quality", "Best feasible cost over time (darker = lower cost)")
+    # (a) HOW MANY of the 6 constraints captured, over time -> heatmap (0-6).
+    sp["n_constraints"] = sp["cc"].apply(len)
+    heatmap_over_time(sp, "n_constraints",
+                      "All constraints captured over time (darker = more, 0-6)", vmin=0, vmax=6)
+
+    # (b) WHEN each INDIVIDUAL constraint was first identified, per participant.
+    order, ypos = expertise_rows()
+    ex = sp.explode("cc").dropna(subset=["cc"])                       # one row per (snapshot, constraint)
+    first = ex.groupby(["loaded_id", "cc"])["elapsed_min"].min().reset_index()  # earliest capture time
+    cidx = {k: plt.cm.tab10(i) for i, k in enumerate(CONSTRAINTS)}    # one color per constraint
+    fig, ax = plt.subplots(figsize=(10, 7))
+    for lid, i in ypos.items():
+        wf = order.loc[order["loaded_id"] == lid, "workflow_mode"].iloc[0]
+        ax.axhspan(i - 0.5, i + 0.5, color=PALETTE.get(wf, "#7c3aed"), alpha=0.05)  # band = workflow
+    for k in CONSTRAINTS:
+        g = first[first["cc"] == k]
+        ax.scatter(g["elapsed_min"], g["loaded_id"].map(ypos), s=70, color=cidx[k],
+                   label=CLABEL[k], edgecolor="white", linewidth=0.8, zorder=3)
+    rank_yticks(ax, order)
+    ax.set_xlabel("Minutes since first message")
+    ax.set_title("When each constraint was first identified (row band = workflow)")
+    ax.legend(title="constraint", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
 
 # %%
 # Origin of each hard constraint per participant (from structured brief provenance,
-# reconstructed per assistant turn). user_volunteered = user stated it;
-# agent_asked = agent raised an open-question (waterfall's ask); agent_assumed =
-# agent committed it silently (agile fait accompli).
+# reconstructed per assistant turn — see metrics cell). user_volunteered = user
+# stated it; agent_asked = agent raised an open-question (waterfall's ask);
+# agent_assumed = agent committed it silently (agile fait accompli).
 import matplotlib.patches as mpatches
 COLORS = {"user_volunteered": "#16a34a", "agent_asked": "#2563eb", "agent_assumed": "#f59e0b",
           "mixed": "#a855f7", "present_other": "#94a3b8", "absent": "#e5e7eb"}
 HARD = ["lateness_penalty", "capacity_penalty", "shift_limit"]
 srt = sessions.copy()
-srt["wf_order"] = srt["workflow_mode"].map({"waterfall": 0, "agile": 1}).fillna(2)
+srt["wf_order"] = srt["workflow_mode"].map({"waterfall": 0, "agile": 1}).fillna(2)  # group by workflow
 srt = srt.sort_values(["wf_order", "participant"]).reset_index(drop=True)
 fig, ax = plt.subplots(figsize=(6, 8))
 for i, row in srt.iterrows():
     origins = row["hard_origins"] if isinstance(row["hard_origins"], dict) else {}
     for j, k in enumerate(HARD):
-        o = origins.get(k, "absent")
-        ax.add_patch(mpatches.Rectangle((j, i), 1, 1, facecolor=COLORS.get(o, "#e5e7eb"), edgecolor="white"))
+        ax.add_patch(mpatches.Rectangle((j, i), 1, 1, facecolor=COLORS.get(origins.get(k, "absent"), "#e5e7eb"),
+                                        edgecolor="white"))
 ax.set_xlim(0, len(HARD)); ax.set_ylim(0, len(srt)); ax.invert_yaxis()
 ax.set_xticks([x + 0.5 for x in range(len(HARD))]); ax.set_xticklabels(["lateness", "capacity", "shift"])
 ax.set_yticks([y + 0.5 for y in range(len(srt))])
@@ -289,21 +366,18 @@ ax.set_xlabel("Formulation score = coverage + hard-bonus + objective-bonus (0-11
 ax.set_title("Holistic formulation score (color = workflow)")
 print(final[["participant", "workflow_mode", "coverage", "hard_bonus", "objective_bonus",
              "objective_as_hard", "soft_as_hard", "formulation_score"]].to_string(index=False))
-print("\n(objective_as_hard / soft_as_hard are DESCRIPTIVE — not scored)")
+print("\n(objective_as_hard / soft_as_hard are DESCRIPTIVE - not scored)")
 print("by workflow (mean):")
 print(final.groupby("workflow_mode")[["coverage", "hard_bonus", "objective_bonus", "formulation_score"]].mean().round(2).to_string())
 
 # %%
 # Goal-term balancing timeline: when did each participant work on the WEIGHT /
-# TYPE / RANK of goal terms? (edits detected structurally by diffing configs.)
-order = part.sort_values("expertise_score", na_position="last").reset_index(drop=True)
-ypos = {lid: i for i, lid in enumerate(order["loaded_id"])}
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-sp = snapshots.merge(start, on="loaded_id", how="left")
-sp["elapsed_min"] = (sp["ts_epoch"] - sp["start"]) / 60.0
+# TYPE / RANK of goal terms? Edits are detected STRUCTURALLY by diffing each
+# config against the previous one (see metrics cell) - no text parsing.
+order, ypos = expertise_rows()
+sp = elapsed(snapshots)
 sp["y"] = sp["loaded_id"].map(ypos)
-ru = runs.merge(start, on="loaded_id", how="left")
-ru["elapsed_min"] = (ru["ts_epoch"] - ru["start"]) / 60.0
+ru = elapsed(runs)
 ru["y"] = ru["loaded_id"].map(ypos)
 fig, ax = plt.subplots(figsize=(10, 7))
 for lid, i in ypos.items():
@@ -311,7 +385,8 @@ for lid, i in ypos.items():
     ax.axhspan(i - 0.5, i + 0.5, color=PALETTE.get(wf, "#7c3aed"), alpha=0.05)
 ax.scatter(ru["elapsed_min"], ru["y"], marker="o", s=16, color="#cbd5e1", label="run", zorder=1)
 sp["addrm"] = sp["terms_added"] + sp["terms_removed"]
-# reranked = a genuine reorder of existing terms (not the add/remove cascade).
+# Each edit family gets its own vertical offset; marker size scales with # terms
+# touched (rerank is a single reorder event, so it's unsized).
 for col, color, off, lab, sized in [("weight_edits", "#2563eb", -0.28, "weight", True),
                                     ("type_edits", "#f59e0b", -0.09, "type/role", True),
                                     ("reranked", "#16a34a", 0.09, "rerank", False),
@@ -319,8 +394,7 @@ for col, color, off, lab, sized in [("weight_edits", "#2563eb", -0.28, "weight",
     e = sp[sp[col] > 0].dropna(subset=["y", "elapsed_min"])
     ax.scatter(e["elapsed_min"], e["y"] + off, marker="s", color=color, alpha=0.85,
                s=(e[col].clip(upper=5) * 16 if sized else 40), label=lab, zorder=3)
-ax.set_yticks(range(len(order)))
-ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(order["participant"], order["expertise_score"])])
+rank_yticks(ax, order)
 ax.set_xlabel("Minutes since first message")
 ax.set_title("Goal-term balancing over time (weight/type sized by # terms; rerank = reorder event)")
 ax.legend(loc="upper right", fontsize=8)
@@ -332,13 +406,8 @@ print(tot.groupby("workflow_mode")[["weight_edits", "type_edits", "reranked", "a
 # %%
 # Formulation score over time, one curve per participant (from config snapshots).
 # Score = coverage + hard_bonus + objective_bonus (higher = better).
-from matplotlib.lines import Line2D
-start = messages.groupby("loaded_id")["ts_epoch"].min().rename("start")
-fs = snapshots.dropna(subset=["formulation_score"]).merge(start, on="loaded_id", how="left")
-fs["elapsed_min"] = (fs["ts_epoch"] - fs["start"]) / 60.0
-fs = fs[fs["elapsed_min"] >= 0].merge(
-    part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id", how="left")
-fs = fs.sort_values(["loaded_id", "elapsed_min"])
+fs = elapsed(snapshots, ["participant", "workflow_mode"]).dropna(subset=["formulation_score"])
+fs = fs[fs["elapsed_min"] >= 0].sort_values(["loaded_id", "elapsed_min"])
 fig, ax = plt.subplots(figsize=(9, 6))
 for lid, g in fs.groupby("loaded_id"):
     wf = g["workflow_mode"].iloc[0]
@@ -350,52 +419,78 @@ for lid, g in fs.groupby("loaded_id"):
 ax.set_xlabel("Minutes since first message")
 ax.set_ylabel("Formulation score (higher = better)")
 ax.set_title("Formulation score over time, by participant")
-ax.legend(handles=[Line2D([0], [0], color=c, label=w) for w, c in PALETTE.items()
-                   if w in set(fs["workflow_mode"].dropna())], title="workflow")
+wf_legend(ax, fs["workflow_mode"])
 
 # %%
-# Formulation quality: agile vs waterfall, and does expertise matter? (n=16 — EXPLORATORY)
+# Formulation quality: agile vs waterfall, BROKEN OUT into the score's three
+# components, plus vs expertise (n=16 - EXPLORATORY). Total score and each of
+# coverage / hard_bonus / objective_bonus (all from the last snapshot per session).
 from scipy import stats
 fq = (snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "ts_epoch"])
       .groupby("loaded_id").tail(1)
       .merge(part[["loaded_id", "participant", "workflow_mode", "expertise_score"]], on="loaded_id"))
-a = fq[fq.workflow_mode == "agile"]["formulation_score"]
-w = fq[fq.workflow_mode == "waterfall"]["formulation_score"]
-_se = lambda x: x.std(ddof=1) / np.sqrt(len(x))
+_se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
+
+
+def _by_workflow(col):
+    """agile vs waterfall arrays for one metric column."""
+    return (fq[fq.workflow_mode == "agile"][col].dropna(),
+            fq[fq.workflow_mode == "waterfall"][col].dropna())
+
+
+def _bar(ax, col, name):
+    """Mean +/- SE bar (agile vs waterfall) with jittered points + Mann-Whitney p."""
+    a, w = _by_workflow(col)
+    u, p = stats.mannwhitneyu(a, w, alternative="two-sided")
+    ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
+           color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
+    ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.45, s=18)
+    ax.scatter(np.ones(len(w)), w, color="k", alpha=0.45, s=18)
+    ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
+    ax.set_title(f"{name}\n(MW p={p:.2f})")
+    return a, w
+
+# --- inferential detail on the TOTAL score (the headline comparison) ---------
+a, w = _by_workflow("formulation_score")
 print(f"agile     n={len(a)}  mean={a.mean():.2f} +/- {_se(a):.2f} (SE)   sd={a.std(ddof=1):.2f}")
 print(f"waterfall n={len(w)}  mean={w.mean():.2f} +/- {_se(w):.2f} (SE)   sd={w.std(ddof=1):.2f}")
-t, pt = stats.ttest_ind(a, w, equal_var=False)
-u, pu = stats.mannwhitneyu(a, w, alternative="two-sided")
-pooled = np.sqrt(((len(a)-1)*a.var(ddof=1) + (len(w)-1)*w.var(ddof=1)) / (len(a)+len(w)-2))
-d = (w.mean() - a.mean()) / pooled
-se_diff = np.sqrt(a.var(ddof=1)/len(a) + w.var(ddof=1)/len(w))
+t, pt = stats.ttest_ind(a, w, equal_var=False)              # Welch (unequal variance)
+u, pu = stats.mannwhitneyu(a, w, alternative="two-sided")   # rank-based (robust for n=16)
+pooled = np.sqrt(((len(a) - 1) * a.var(ddof=1) + (len(w) - 1) * w.var(ddof=1)) / (len(a) + len(w) - 2))
+d = (w.mean() - a.mean()) / pooled                          # Cohen's d (effect size)
 diff = w.mean() - a.mean()
-print(f"diff (waterfall-agile) = {diff:.2f}  ~95% CI [{diff-1.96*se_diff:.2f}, {diff+1.96*se_diff:.2f}]")
+se_diff = np.sqrt(a.var(ddof=1) / len(a) + w.var(ddof=1) / len(w))
+print(f"diff (waterfall-agile) = {diff:.2f}  ~95% CI [{diff - 1.96 * se_diff:.2f}, {diff + 1.96 * se_diff:.2f}]")
 print(f"Welch t={t:.2f}, p={pt:.3f} | Mann-Whitney U={u:.0f}, p={pu:.3f} | Cohen d={d:.2f}")
-print("\nExpertise vs formulation quality:")
 r, pr = stats.pearsonr(fq.expertise_score, fq.formulation_score)
-rs, ps = stats.spearmanr(fq.expertise_score, fq.formulation_score)
-print(f"  overall  Pearson r={r:.2f} p={pr:.3f} | Spearman rho={rs:.2f} p={ps:.3f}")
+print("\nExpertise vs formulation quality:")
+print(f"  overall  Pearson r={r:.2f} p={pr:.3f} | Spearman rho={stats.spearmanr(fq.expertise_score, fq.formulation_score)[0]:.2f}")
 for wf in ["agile", "waterfall"]:
     g = fq[fq.workflow_mode == wf]
     rr, pp = stats.pearsonr(g.expertise_score, g.formulation_score)
     print(f"  within {wf:<9} r={rr:.2f} p={pp:.3f} slope={np.polyfit(g.expertise_score, g.formulation_score, 1)[0]:.2f}")
-print("\nNOTE: n=16 (8/group) — underpowered; read effect sizes + CIs, treat p-values cautiously.")
+print("\nNOTE: n=16 (8/group) - underpowered; read effect sizes + CIs, treat p-values cautiously.")
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
-for i, (wf, g) in enumerate([("agile", a), ("waterfall", w)]):
-    ax1.bar(i, g.mean(), yerr=_se(g), color=PALETTE.get(wf, "#7c3aed"), alpha=0.8, capsize=6)
-    ax1.scatter(np.full(len(g), i) + np.linspace(-0.05, 0.05, len(g)), g, color="black", alpha=0.5, s=20, zorder=3)
-ax1.set_xticks([0, 1]); ax1.set_xticklabels(["agile", "waterfall"])
-ax1.set_ylabel("Formulation score"); ax1.set_title(f"By workflow (mean +/- SE; MW p={pu:.3f}, d={d:.2f})")
+# --- total score + its 3 components, agile vs waterfall ----------------------
+fig, axes = plt.subplots(1, 4, figsize=(14, 4))
+_bar(axes[0], "formulation_score", "TOTAL score (0-11)")
+_bar(axes[1], "coverage", "coverage (0-7)")
+_bar(axes[2], "hard_bonus", "hard bonus (0-3)")
+_bar(axes[3], "objective_bonus", "objective bonus (0-1)")
+axes[0].set_ylabel("mean +/- SE")
+fig.suptitle("Formulation score and its components: agile vs waterfall")
+fig.tight_layout()
+
+# --- total score vs expertise (fit line per workflow) ------------------------
+fig, ax = plt.subplots(figsize=(7, 5))
 for wf in ["agile", "waterfall"]:
     g = fq[fq.workflow_mode == wf]
-    ax2.scatter(g.expertise_score, g.formulation_score, color=PALETTE.get(wf, "#7c3aed"), label=wf, s=45)
+    ax.scatter(g.expertise_score, g.formulation_score, color=PALETTE.get(wf, "#7c3aed"), label=wf, s=45)
     b = np.polyfit(g.expertise_score, g.formulation_score, 1)
     xs = np.array([g.expertise_score.min(), g.expertise_score.max()])
-    ax2.plot(xs, np.polyval(b, xs), color=PALETTE.get(wf, "#7c3aed"), lw=1.2, alpha=0.7)
-ax2.set_xlabel("Self-rated expertise"); ax2.set_ylabel("Formulation score")
-ax2.set_title(f"vs expertise (overall r={r:.2f}, p={pr:.3f})"); ax2.legend()
+    ax.plot(xs, np.polyval(b, xs), color=PALETTE.get(wf, "#7c3aed"), lw=1.2, alpha=0.7)
+ax.set_xlabel("Self-rated expertise"); ax.set_ylabel("Formulation score")
+ax.set_title(f"Formulation quality vs expertise (overall r={r:.2f}, p={pr:.3f})"); ax.legend()
 fig.tight_layout()
 
 # %%
@@ -403,15 +498,15 @@ fig.tight_layout()
 from scipy import stats
 _need = ["viz_clarity", "comm_accuracy", "solution_confidence"]
 if not all(c in part.columns for c in _need) or part[_need].dropna(how="all").empty:
-    print("Post ratings not found — upload the POST-task CSV and restart the backend (new survey fields), then Reload data.")
+    print("Post ratings not found - upload the POST-task CSV and restart the backend (new survey fields), then Reload data.")
 else:
     items = [("viz_clarity", "Visualization"), ("comm_accuracy", "Communication"),
              ("solution_confidence", "Solution confidence")]
+    _se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
     fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharey=True)
     for ax, (col, name) in zip(axes, items):
         a = part[part.workflow_mode == "agile"][col].dropna()
         w = part[part.workflow_mode == "waterfall"][col].dropna()
-        _se = lambda x: x.std(ddof=1) / np.sqrt(len(x))
         u, p = stats.mannwhitneyu(a, w, alternative="two-sided")
         ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
                color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
@@ -420,16 +515,16 @@ else:
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"]); ax.set_title(f"{name} (MW p={p:.2f})")
         print(f"{name:>20}: agile {a.mean():.2f}+/-{_se(a):.2f}  waterfall {w.mean():.2f}+/-{_se(w):.2f}  MW p={p:.3f}")
     axes[0].set_ylabel("Rating (1-7)"); axes[0].set_ylim(0, 7.5); fig.tight_layout()
-    print("NOTE: n=16, ratings ceilinged (~5-6/7) — underpowered; treat as exploratory.")
+    print("NOTE: n=16, ratings ceilinged (~5-6/7) - underpowered; treat as exploratory.")
 
 # %%
 # Calibration: does post-session CONFIDENCE track ACTUAL solution quality?
 from scipy import stats
 if "solution_confidence" not in part.columns or part["solution_confidence"].isna().all():
-    print("Post ratings not found — upload the POST-task CSV and restart the backend (new survey fields), then Reload data.")
+    print("Post ratings not found - upload the POST-task CSV and restart the backend (new survey fields), then Reload data.")
 else:
-    bf = runs[runs["feasible"] == True].groupby("loaded_id")["canonical_cost"].min().rename("best_feasible")
-    ever = runs.assign(_f=runs["feasible"] == True).groupby("loaded_id")["_f"].any().rename("ever_feasible")
+    bf = runs[runs["feasible"] == True].groupby("loaded_id")["canonical_cost"].min().rename("best_feasible")  # noqa: E712
+    ever = runs.assign(_f=runs["feasible"] == True).groupby("loaded_id")["_f"].any().rename("ever_feasible")  # noqa: E712
     cal = part.merge(bf, on="loaded_id", how="left").merge(ever, on="loaded_id", how="left")
     ok = cal.dropna(subset=["solution_confidence", "best_feasible"])
     r, p = stats.pearsonr(ok["solution_confidence"], np.log10(ok["best_feasible"]))
@@ -441,15 +536,65 @@ else:
             ax.annotate(row["participant"], (row["solution_confidence"], row["best_feasible"]),
                         fontsize=7, xytext=(4, 0), textcoords="offset points")
     ax.set_yscale("log")
+    # Participants who NEVER reached feasibility have no best-feasible cost; park them
+    # at the top of the plot as X markers, but COLOR them by workflow (red edge marks
+    # the "never feasible" status) so they read consistently with the feasible points.
     ymax = ok["best_feasible"].max() * 3
-    nf = cal[(cal["ever_feasible"] != True) & cal["solution_confidence"].notna()]
+    nf = cal[(cal["ever_feasible"] != True) & cal["solution_confidence"].notna()]  # noqa: E712
     for _, row in nf.iterrows():
-        ax.scatter(row["solution_confidence"], ymax, marker="X", color="red", s=90, zorder=5)
-        ax.annotate(str(row["participant"]) + " (never feasible)", (row["solution_confidence"], ymax),
-                    fontsize=7, color="red", xytext=(4, 0), textcoords="offset points")
+        col = PALETTE.get(row["workflow_mode"], "#7c3aed")
+        ax.scatter(row["solution_confidence"], ymax, marker="X", s=120,
+                   color=col, edgecolor="red", linewidth=1.6, zorder=5)
+        ax.annotate(f'{row["participant"]} (never feasible)', (row["solution_confidence"], ymax),
+                    fontsize=7, color=col, xytext=(4, 0), textcoords="offset points")
     ax.set_xlabel("Post-session confidence (1-7)")
-    ax.set_ylabel("Best-feasible canonical cost (log — lower = better)")
+    ax.set_ylabel("Best-feasible canonical cost (log - lower = better)")
     ax.set_title(f"Confidence vs actual quality: r={r:.2f}, p={p:.2f} (flat/scattered = poor calibration)")
     ax.legend(); fig.tight_layout()
     print(f"confidence vs log(best-feasible cost): Pearson r={r:+.2f} p={p:.3f} (~0 => confidence does NOT track quality)")
-    print("Red X = participants who NEVER produced a feasible solution; note any rating high confidence.")
+    print("X (red-edged, colored by workflow) = participants who NEVER produced a feasible solution.")
+
+# %%
+# Initial prompt length vs OUTCOME quality (best feasible cost).
+# init_words already excludes the synthetic upload notice (see cell 3 / metrics cell).
+# best_feasible = lowest canonical cost among that participant's FEASIBLE runs
+# (lower = better); participants who never reached feasibility are dropped.
+from scipy import stats
+bf = runs[runs["feasible"] == True].groupby("loaded_id")["canonical_cost"].min().rename("best_feasible")  # noqa: E712
+d = part.merge(bf, on="loaded_id", how="left").dropna(subset=["init_words", "best_feasible"])
+fig, ax = plt.subplots(figsize=(7, 5))
+for wf, g in d.groupby("workflow_mode"):
+    ax.scatter(g["init_words"], g["best_feasible"], s=110, alpha=0.85, label=wf,
+               color=PALETTE.get(wf, "#7c3aed"), edgecolor="white", linewidth=1.4, zorder=3)
+    for _, rr in g.iterrows():
+        ax.annotate(rr["participant"], (rr["init_words"], rr["best_feasible"]),
+                    fontsize=8, xytext=(5, 5), textcoords="offset points")
+ax.set_yscale("log")  # best-feasible cost spans orders of magnitude
+ax.set_xlabel("Initial prompt words (upload notice excluded)")
+ax.set_ylabel("Best feasible canonical cost (log - lower = better)")
+_title = "Initial prompt length x best feasible cost"
+if len(d) >= 3:
+    rho, pp = stats.spearmanr(d["init_words"], d["best_feasible"])  # rank corr (robust to log-scale outliers)
+    _title += f" (Spearman rho={rho:.2f}, p={pp:.2f})"
+ax.set_title(_title); ax.legend(title="workflow"); fig.tight_layout()
+
+# %%
+# Initial prompt length vs FINAL formulation quality (score 0-11; higher = better).
+from scipy import stats
+ffq = (snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "ts_epoch"])
+       .groupby("loaded_id").tail(1)[["loaded_id", "formulation_score"]])
+d = part.merge(ffq, on="loaded_id", how="left").dropna(subset=["init_words", "formulation_score"])
+fig, ax = plt.subplots(figsize=(7, 5))
+for wf, g in d.groupby("workflow_mode"):
+    ax.scatter(g["init_words"], g["formulation_score"], s=110, alpha=0.85, label=wf,
+               color=PALETTE.get(wf, "#7c3aed"), edgecolor="white", linewidth=1.4, zorder=3)
+    for _, rr in g.iterrows():
+        ax.annotate(rr["participant"], (rr["init_words"], rr["formulation_score"]),
+                    fontsize=8, xytext=(5, 5), textcoords="offset points")
+ax.set_xlabel("Initial prompt words (upload notice excluded)")
+ax.set_ylabel("Final formulation score (0-11)")
+_title = "Initial prompt length x formulation quality"
+if len(d) >= 3:
+    r_, p_ = stats.pearsonr(d["init_words"], d["formulation_score"])
+    _title += f" (Pearson r={r_:.2f}, p={p_:.2f})"
+ax.set_title(_title); ax.legend(title="workflow"); fig.tight_layout()

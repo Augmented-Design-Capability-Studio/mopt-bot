@@ -643,6 +643,12 @@ class VrptwStudyPort:
             def covered(k: str) -> bool:
                 return k in gts and active(k, gts[k])
 
+            # The 6 constraint terms (3 hard + 3 soft); the objective (travel_time)
+            # is NOT a constraint. "Captured" here = present & active (identified in
+            # the formulation), regardless of whether it is binding — the notebook
+            # uses this per-snapshot set to chart WHEN each constraint first appeared.
+            captured_constraints = [k for k in (HARD + SOFT) if covered(k)]
+
             # coverage = every goal term the user defined (present & active), REGARDLESS
             # of type; the algorithm carrier is not a requirement, so it's excluded.
             NON_REQUIREMENT = ("search_strategy", "algorithm")
@@ -669,6 +675,9 @@ class VrptwStudyPort:
                 "objective_bonus": objective_bonus,
                 "soft_covered": soft_covered,
                 "hard_status": hard_status,
+                # present & active constraint terms (3 hard + 3 soft), for the
+                # per-constraint identification-timing chart in the notebook.
+                "captured_constraints": captured_constraints,
                 # --- descriptive behavioral columns, NOT part of the score ---
                 "objective_as_hard": objective_as_hard,
                 "soft_as_hard": soft_as_hard,
