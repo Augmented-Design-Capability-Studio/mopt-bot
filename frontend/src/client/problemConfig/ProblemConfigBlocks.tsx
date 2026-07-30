@@ -198,9 +198,21 @@ export function ProblemConfigBlocks({
     };
     // Merge all patch fields (including non-base, problem-module-specific ones) into outerRaw
     // so serializeBaseProblemConfig preserves them unchanged in the output JSON.
-    const updatedOuterRaw = hasProblemKey
-      ? { ...outerRaw, problem: { ...(outerRaw.problem as Record<string, unknown>), ...patch } }
-      : { ...outerRaw, ...patch };
+    const baseRaw = (hasProblemKey ? (outerRaw.problem as Record<string, unknown>) : outerRaw) ?? {};
+    const mergedRaw: Record<string, unknown> = { ...baseRaw, ...patch };
+    // A patch value of `undefined` means "drop this key" rather than write it.
+    // Removing a parent goal term must DELETE its companion carrier, not leave a
+    // dangling sentinel (e.g. `max_shift_hours: null`): the generic serializer
+    // preserves unknown keys, so a lingering null would be serialized into the
+    // config and shipped verbatim in the run payload, crashing the solver
+    // (session-73906e05). Deleting keeps the removed term fully gone.
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        delete mergedRaw[key];
+        delete (nextProblem as Record<string, unknown>)[key];
+      }
+    }
+    const updatedOuterRaw = hasProblemKey ? { ...outerRaw, problem: mergedRaw } : mergedRaw;
     onChange(serializeBaseProblemConfig(updatedOuterRaw, hasProblemKey, nextProblem));
   }
 

@@ -751,10 +751,7 @@ def dataset(
                 _ports[pid] = None
         return _ports[pid]
 
-    def _origins(s) -> dict[str, str]:
-        fn = getattr(_port(s.test_problem_id), "hard_constraint_origins", None)
-        if fn is None:
-            return {}
+    def _briefs(s) -> list:
         # Reconstruct the brief per assistant TURN from message meta
         # (pre_turn_state / v2_turn_snapshot), not the sparse run/save snapshots —
         # otherwise an OQ raised and answered in chat between snapshots is missed
@@ -781,21 +778,35 @@ def dataset(
                         briefs.append(json.loads(sn.problem_brief_json))
                     except json.JSONDecodeError:
                         pass
+        return briefs
+
+    def _origins(s) -> dict[str, str]:
+        """Origin (user_volunteered / agent_asked / agent_assumed / …) of EVERY
+        goal term for a session — see VrptwStudyPort.goal_term_origins."""
+        fn = getattr(_port(s.test_problem_id), "goal_term_origins", None)
+        if fn is None:
+            return {}
         try:
-            return fn(briefs)
+            return fn(_briefs(s)) or {}
         except Exception:
             return {}
 
-    sessions = [
-        {
-            "loaded_id": s.id,
-            "participant": s.participant_number,
-            "workflow_mode": s.workflow_mode,
-            "test_problem_id": s.test_problem_id,
-            "hard_origins": _origins(s),
-        }
-        for s in loaded
-    ]
+    _HARD_KEYS = ("lateness_penalty", "capacity_penalty", "shift_limit")
+    sessions = []
+    for s in loaded:
+        origins = _origins(s)  # all goal terms; computed once per session
+        sessions.append(
+            {
+                "loaded_id": s.id,
+                "participant": s.participant_number,
+                "workflow_mode": s.workflow_mode,
+                "test_problem_id": s.test_problem_id,
+                # origin of every goal term (objective + hard + soft + custom):
+                "term_origins": origins,
+                # hard-only subset kept for backward compatibility:
+                "hard_origins": {k: origins.get(k, "absent") for k in _HARD_KEYS},
+            }
+        )
     messages = [
         {
             "loaded_id": msg.loaded_session_id,
@@ -879,10 +890,10 @@ def dataset(
             "objective_present": r.get("objective_present"),
             "objective_bonus": r.get("objective_bonus"),
             "soft_covered": r.get("soft_covered"),
-            # list of present & active constraint terms (3 hard + 3 soft) at this
-            # snapshot — drives the "all constraints captured" heatmap + the
-            # per-constraint identification-timing chart in the notebook.
-            "captured_constraints": r.get("captured_constraints"),
+            # list of present & active goal terms (objective + 3 hard + 3 soft +
+            # custom) at this snapshot — drives the "goal terms captured" heatmap
+            # (== coverage) + the per-term identification-timing chart in the notebook.
+            "captured_terms": r.get("captured_terms"),
             # descriptive, NOT scored:
             "objective_as_hard": r.get("objective_as_hard"),
             "soft_as_hard": r.get("soft_as_hard"),

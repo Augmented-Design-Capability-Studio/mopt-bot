@@ -1309,6 +1309,43 @@ def post_reset_stuck_runs(
     return {"signalled": signalled, "cleared": cleared}
 
 
+def _prune_orphaned_companions(
+    problem: dict[str, Any], companion_map: dict[str, str]
+) -> list[str]:
+    """Drop each companion child carrier whose parent goal term is no longer
+    active. Universal: driven entirely by the port's
+    ``gate_conditional_companions`` map (parent goal-term key -> child field), so
+    it is a no-op for problems that declare no companions.
+
+    A "complex" goal term (e.g. VRPTW ``shift_limit`` / ``worker_preference``)
+    owns a structured child carrier at the top level of ``problem`` (e.g.
+    ``max_shift_hours`` / ``driver_preferences``). When the participant removes
+    the parent in EITHER surface — the config panel or the problem definition —
+    the child can be left dangling, and a dangling ``max_shift_hours: null``
+    crashed the solver (session-73906e05). Removing the parent here removes its
+    child too, so the two can never disagree at solve time. This never fires on
+    an edit-panel revert: a revert brings the parent back, so it is active again
+    and its child is kept.
+
+    Returns the dropped field names (for logging); mutates ``problem`` in place.
+    """
+    if not companion_map:
+        return []
+    active: set[str] = set()
+    goal_terms = problem.get("goal_terms")
+    if isinstance(goal_terms, dict):
+        active |= {k for k, v in goal_terms.items() if isinstance(v, dict)}
+    weights = problem.get("weights")
+    if isinstance(weights, dict):
+        active |= set(weights.keys())
+    dropped: list[str] = []
+    for parent_key, child_field in companion_map.items():
+        if parent_key not in active and child_field in problem:
+            problem.pop(child_field, None)
+            dropped.append(child_field)
+    return dropped
+
+
 @router.post("/{session_id}/runs", response_model=RunOut)
 def post_run(
     session_id: str,
@@ -1352,6 +1389,20 @@ def post_run(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Optimization is not allowed (researcher block, or intrinsic readiness not met and no permit)",
+            )
+
+    # Universal companion hygiene: if a "complex" goal term was removed in either
+    # edit surface, drop its now-orphaned child carrier before the config is
+    # persisted or solved. Driven by the port's declared companion map, so it is
+    # neutral for problems (and terms) without companions.
+    if run_type == "optimize" and isinstance(body.problem, dict):
+        companion_map = get_study_port(row.test_problem_id).gate_conditional_companions() or {}
+        dropped_companions = _prune_orphaned_companions(body.problem, companion_map)
+        if dropped_companions:
+            log.info(
+                "Dropped orphaned companion field(s) %s for session %s (parent goal term removed)",
+                dropped_companions,
+                session_id,
             )
 
     payload = {

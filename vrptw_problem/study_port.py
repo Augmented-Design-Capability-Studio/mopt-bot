@@ -542,20 +542,44 @@ class VrptwStudyPort:
         ev = self.canonical_evaluation_for_result(result_json)
         return ev["canonical_cost"] if ev else None
 
-    def hard_constraint_origins(self, briefs: list[dict[str, Any]]) -> dict[str, str]:
-        """Classify who ORIGINATED each hard constraint, from structured brief
-        provenance across a session's snapshots (no text parsing):
+    def goal_term_origins(self, briefs: list[dict[str, Any]]) -> dict[str, str]:
+        """Classify who ORIGINATED each goal term, from structured brief provenance
+        across a session's turns (no text parsing). Works for EVERY goal term
+        (objective + hard + soft + custom), not just hard constraints.
 
-        - user_volunteered: entered as a `gathered` item, no OQ raised.
-        - agent_asked:      an open_question with that goal_key was raised
-                            (waterfall's ask-then-confirm; the OQ drops on commit).
-        - agent_assumed:    entered as a `kind: assumption` item (agile fait accompli).
-        - mixed / present_other / absent otherwise.
+        For a term's ``goal_key`` we scan every turn-brief and read two structured
+        signals — the requirement ``items`` (each carries a ``kind``) and the
+        ``open_questions`` (each may carry a ``goal_key``):
+
+        - user_volunteered: appeared as a ``kind: gathered`` item, and no OQ ever
+                            targeted it -> the user stated it themselves.
+        - agent_asked:      an ``open_question`` targeted its goal_key (waterfall's
+                            ask-then-confirm; the OQ drops once committed).
+        - agent_assumed:    appeared as a ``kind: assumption`` item (agile's silent
+                            fait accompli).
+        - mixed:            both an assumption item AND an OQ were seen for it.
+        - present_other:    in the final config but with no provenance signal
+                            (e.g. a seeded default, or a panel edit with no brief item).
+        - absent:           never present.
+
+        The ``goal_key`` is the stable join between a requirement/OQ and the goal
+        term it feeds, so no natural-language matching is involved.
         """
-        HARD = ("lateness_penalty", "capacity_penalty", "shift_limit")
-        out: dict[str, str] = {}
+        # Every goal key that appears anywhere: final terms, requirement items, or OQs.
+        keys: set[str] = set()
+        for b in briefs:
+            keys |= set((b.get("goal_terms") or {}).keys())
+            for it in (b.get("items") or []):
+                if it.get("goal_key"):
+                    keys.add(it["goal_key"])
+            for q in (b.get("open_questions") or []):
+                if q.get("goal_key"):
+                    keys.add(q["goal_key"])
+        keys -= {"search_strategy", "algorithm"}  # carriers, not requirements
+
         last_terms = (briefs[-1].get("goal_terms") or {}) if briefs else {}
-        for k in HARD:
+        out: dict[str, str] = {}
+        for k in keys:
             gathered = assumed = oq_any = False
             for b in briefs:
                 for it in (b.get("items") or []):
@@ -580,6 +604,13 @@ class VrptwStudyPort:
             else:
                 out[k] = "absent"
         return out
+
+    def hard_constraint_origins(self, briefs: list[dict[str, Any]]) -> dict[str, str]:
+        """Origins for just the 3 hard constraints (thin filter over
+        ``goal_term_origins``; kept for callers that only want the hard keys)."""
+        HARD = ("lateness_penalty", "capacity_penalty", "shift_limit")
+        allo = self.goal_term_origins(briefs)
+        return {k: allo.get(k, "absent") for k in HARD}
 
     def formulation_quality_for_config(self, panel_config: dict[str, Any]) -> dict[str, Any] | None:
         """Score how well a config captures the true problem (specification level).
@@ -643,16 +674,17 @@ class VrptwStudyPort:
             def covered(k: str) -> bool:
                 return k in gts and active(k, gts[k])
 
-            # The 6 constraint terms (3 hard + 3 soft); the objective (travel_time)
-            # is NOT a constraint. "Captured" here = present & active (identified in
-            # the formulation), regardless of whether it is binding — the notebook
-            # uses this per-snapshot set to chart WHEN each constraint first appeared.
-            captured_constraints = [k for k in (HARD + SOFT) if covered(k)]
-
             # coverage = every goal term the user defined (present & active), REGARDLESS
             # of type; the algorithm carrier is not a requirement, so it's excluded.
             NON_REQUIREMENT = ("search_strategy", "algorithm")
-            coverage = sum(1 for k, v in gts.items() if k not in NON_REQUIREMENT and active(k, v))
+            # Every goal term present & active (identified) at this snapshot — the
+            # objective (travel_time) + 3 hard + 3 soft + any custom term. This is
+            # exactly the `coverage` set (len == coverage); the notebook uses the
+            # per-snapshot list to chart WHEN each goal term first appeared.
+            captured_terms = [
+                k for k, v in gts.items() if k not in NON_REQUIREMENT and active(k, v)
+            ]
+            coverage = len(captured_terms)
             # hard_bonus = # hard constraints correctly binding.
             hard_bonus = sum(1 for s in hard_status.values() if s in ("hard", "binding_by_weight"))
             # objective_bonus = travel_time present AND not marked hard (serving as target).
@@ -675,9 +707,9 @@ class VrptwStudyPort:
                 "objective_bonus": objective_bonus,
                 "soft_covered": soft_covered,
                 "hard_status": hard_status,
-                # present & active constraint terms (3 hard + 3 soft), for the
-                # per-constraint identification-timing chart in the notebook.
-                "captured_constraints": captured_constraints,
+                # present & active goal terms (objective + 3 hard + 3 soft + custom),
+                # for the per-term identification-timing chart in the notebook.
+                "captured_terms": captured_terms,
                 # --- descriptive behavioral columns, NOT part of the score ---
                 "objective_as_hard": objective_as_hard,
                 "soft_as_hard": soft_as_hard,

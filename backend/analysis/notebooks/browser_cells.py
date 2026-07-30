@@ -57,15 +57,19 @@ print(part.head(8).to_string())
 #   - `objective_bonus` (0-1): +1 if travel_time is present AND not marked `hard`
 #     (i.e. it's the target, not a constraint).
 #   - `soft_covered` (0-3): soft prefs present (driver pref / workload / express).
-#   - `captured_constraints`: the list of the 6 constraint terms (3 hard + 3 soft)
-#     present & active at that snapshot — "identified", NOT necessarily binding.
+#   - `captured_terms`: the list of ALL goal terms present & active at that snapshot
+#     (objective + 3 hard + 3 soft + custom) — this is the `coverage` set
+#     (len == coverage), "identified" NOT necessarily binding.
 #   - `objective_as_hard`, `soft_as_hard`: DESCRIPTIVE behavioral flags — NOT scored.
 #
-# **Constraint origins** (`sessions.hard_origins`, from `hard_constraint_origins`):
-# who originated each hard constraint, reconstructed per assistant TURN from message
-# provenance (not the sparse save snapshots): `user_volunteered` (stated it),
-# `agent_asked` (raised an open-question — waterfall's ask), `agent_assumed`
-# (committed silently — agile's fait accompli), else `mixed`/`present_other`/`absent`.
+# **Goal-term origins** (`sessions.term_origins`, from `goal_term_origins`; the
+# hard-only subset is also kept as `sessions.hard_origins`): who originated each
+# goal term, reconstructed per assistant TURN from structured brief provenance —
+# joined by `goal_key`, NO text parsing (not the sparse save snapshots). For a term:
+# `user_volunteered` (appeared as a `gathered` item, no OQ), `agent_asked` (an
+# open-question targeted it — waterfall's ask), `agent_assumed` (a `kind: assumption`
+# item — agile's fait accompli), else `mixed` (assumption + OQ) / `present_other`
+# (in the config but no provenance signal) / `absent`.
 #
 # **Goal-term edits** (`snapshots`): `weight_edits` / `type_edits` / `reranked` /
 # `terms_added` / `terms_removed`, from structurally diffing each config against the
@@ -283,72 +287,108 @@ print("by workflow (mean):")
 print(final.groupby("workflow_mode")[["hard_bonus"]].mean().round(2).to_string())
 
 # %%
-# Constraint IDENTIFICATION over time — two coordinated views over ALL 6
-# constraints (3 hard + 3 soft), not just the hard ones. "Captured/identified"
-# = the term is present & active in the config (NOT necessarily binding); it
-# comes from the backend `captured_constraints` list (see metrics cell).
-if "captured_constraints" not in snapshots.columns:
-    print("`captured_constraints` missing from the dataset.")
+# GOAL-TERM IDENTIFICATION over time — two coordinated views over ALL goal terms:
+# the travel-time OBJECTIVE + 3 hard + 3 soft (+ any custom). This is coverage
+# (0-7 canonical). "Captured/identified" = the term is present & active in the
+# config (NOT necessarily binding); from the backend `captured_terms` list
+# (== the coverage set; see metrics cell).
+if "captured_terms" not in snapshots.columns:
+    print("`captured_terms` missing from the dataset.")
     print("-> restart the backend (new field) and click Reload data, then re-run.")
 else:
-    CONSTRAINTS = ["lateness_penalty", "capacity_penalty", "shift_limit",       # 3 hard
-                   "worker_preference", "workload_balance", "express_miss_penalty"]  # 3 soft
-    CLABEL = {"lateness_penalty": "lateness", "capacity_penalty": "capacity", "shift_limit": "shift",
+    # Canonical display order (objective first, then hard, then soft); unknown
+    # custom terms fall back to their raw key and sort last.
+    TLABEL = {"travel_time": "travel time (obj)",
+              "lateness_penalty": "lateness", "capacity_penalty": "capacity", "shift_limit": "shift",
               "worker_preference": "driver pref", "workload_balance": "workload", "express_miss_penalty": "express"}
+    ORDER = list(TLABEL)  # canonical ordering for colors + legend
     sp = elapsed(snapshots).dropna(subset=["elapsed_min"])
     sp = sp[sp["elapsed_min"] >= 0].copy()
-    sp["cc"] = sp["captured_constraints"].apply(lambda v: v if isinstance(v, list) else [])
+    sp["ct"] = sp["captured_terms"].apply(lambda v: v if isinstance(v, list) else [])
 
-    # (a) HOW MANY of the 6 constraints captured, over time -> heatmap (0-6).
-    sp["n_constraints"] = sp["cc"].apply(len)
-    heatmap_over_time(sp, "n_constraints",
-                      "All constraints captured over time (darker = more, 0-6)", vmin=0, vmax=6)
+    # (a) HOW MANY goal terms captured (= coverage), over time -> heatmap.
+    # vmax adapts: 7 canonical, or higher if a custom term (e.g. waiting_time) is used.
+    sp["n_terms"] = sp["ct"].apply(len)
+    vmax = int(max(sp["n_terms"].max(), 7))
+    heatmap_over_time(sp, "n_terms",
+                      f"Goal terms captured over time (coverage; darker = more, 0-{vmax})", vmin=0, vmax=vmax)
 
-    # (b) WHEN each INDIVIDUAL constraint was first identified, per participant.
+    # (b) WHEN each INDIVIDUAL goal term was first identified, per participant.
     order, ypos = expertise_rows()
-    ex = sp.explode("cc").dropna(subset=["cc"])                       # one row per (snapshot, constraint)
-    first = ex.groupby(["loaded_id", "cc"])["elapsed_min"].min().reset_index()  # earliest capture time
-    cidx = {k: plt.cm.tab10(i) for i, k in enumerate(CONSTRAINTS)}    # one color per constraint
+    ex = sp.explode("ct").dropna(subset=["ct"])                       # one row per (snapshot, goal term)
+    first = ex.groupby(["loaded_id", "ct"])["elapsed_min"].min().reset_index()  # earliest capture time
+    terms = [k for k in ORDER if k in set(first["ct"])] + \
+            sorted(set(first["ct"]) - set(ORDER))                    # canonical first, custom last
+    cidx = {k: plt.cm.tab10(i % 10) for i, k in enumerate(terms)}    # one color per goal term
     fig, ax = plt.subplots(figsize=(10, 7))
     for lid, i in ypos.items():
         wf = order.loc[order["loaded_id"] == lid, "workflow_mode"].iloc[0]
         ax.axhspan(i - 0.5, i + 0.5, color=PALETTE.get(wf, "#7c3aed"), alpha=0.05)  # band = workflow
-    for k in CONSTRAINTS:
-        g = first[first["cc"] == k]
+    for k in terms:
+        g = first[first["ct"] == k]
         ax.scatter(g["elapsed_min"], g["loaded_id"].map(ypos), s=70, color=cidx[k],
-                   label=CLABEL[k], edgecolor="white", linewidth=0.8, zorder=3)
+                   label=TLABEL.get(k, k), edgecolor="white", linewidth=0.8, zorder=3)
     rank_yticks(ax, order)
     ax.set_xlabel("Minutes since first message")
-    ax.set_title("When each constraint was first identified (row band = workflow)")
-    ax.legend(title="constraint", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    ax.set_title("When each goal term was first identified (row band = workflow)")
+    ax.legend(title="goal term", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
 
 # %%
-# Origin of each hard constraint per participant (from structured brief provenance,
-# reconstructed per assistant turn — see metrics cell). user_volunteered = user
-# stated it; agent_asked = agent raised an open-question (waterfall's ask);
-# agent_assumed = agent committed it silently (agile fait accompli).
+# Origin of EVERY goal term per participant (objective + hard + soft + custom;
+# was: hard constraints only).
+#
+# HOW ORIGINS ARE IDENTIFIED — from structured brief provenance reconstructed per
+# assistant TURN, NO natural-language parsing (backend goal_term_origins). Each
+# goal term is joined by its `goal_key`; across every turn-brief we read two
+# structured signals — the requirement `items` (each carries a `kind`) and the
+# `open_questions` (each may carry a `goal_key`) — and classify:
+#   user_volunteered = appeared as a `gathered` item and NO OQ ever targeted it
+#                      (the user stated it themselves);
+#   agent_asked      = an open-question targeted its goal_key (waterfall's
+#                      ask-then-confirm; the OQ drops once committed);
+#   agent_assumed    = appeared as a `kind: assumption` item (agile's silent
+#                      fait accompli);
+#   mixed            = both an assumption item AND an OQ were seen for it;
+#   present_other    = in the final config but with no provenance signal
+#                      (a seeded default, or a panel edit with no brief item);
+#   absent           = never present.
 import matplotlib.patches as mpatches
-COLORS = {"user_volunteered": "#16a34a", "agent_asked": "#2563eb", "agent_assumed": "#f59e0b",
-          "mixed": "#a855f7", "present_other": "#94a3b8", "absent": "#e5e7eb"}
-HARD = ["lateness_penalty", "capacity_penalty", "shift_limit"]
-srt = sessions.copy()
-srt["wf_order"] = srt["workflow_mode"].map({"waterfall": 0, "agile": 1}).fillna(2)  # group by workflow
-srt = srt.sort_values(["wf_order", "participant"]).reset_index(drop=True)
-fig, ax = plt.subplots(figsize=(6, 8))
-for i, row in srt.iterrows():
-    origins = row["hard_origins"] if isinstance(row["hard_origins"], dict) else {}
-    for j, k in enumerate(HARD):
-        ax.add_patch(mpatches.Rectangle((j, i), 1, 1, facecolor=COLORS.get(origins.get(k, "absent"), "#e5e7eb"),
-                                        edgecolor="white"))
-ax.set_xlim(0, len(HARD)); ax.set_ylim(0, len(srt)); ax.invert_yaxis()
-ax.set_xticks([x + 0.5 for x in range(len(HARD))]); ax.set_xticklabels(["lateness", "capacity", "shift"])
-ax.set_yticks([y + 0.5 for y in range(len(srt))])
-ax.set_yticklabels([f"{p} ({str(w)[:4]})" for p, w in zip(srt["participant"], srt["workflow_mode"])])
-ax.set_title("Origin of hard constraints per participant")
-labels = [("user volunteered", "user_volunteered"), ("agent asked (OQ)", "agent_asked"),
-          ("agent assumed", "agent_assumed"), ("mixed", "mixed"), ("absent", "absent")]
-ax.legend(handles=[mpatches.Patch(color=COLORS[c], label=l) for l, c in labels],
-          bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+if "term_origins" not in sessions.columns:
+    print("`term_origins` missing from the dataset.")
+    print("-> restart the backend (new field) and click Reload data, then re-run.")
+else:
+    COLORS = {"user_volunteered": "#16a34a", "agent_asked": "#2563eb", "agent_assumed": "#f59e0b",
+              "mixed": "#a855f7", "present_other": "#94a3b8", "absent": "#e5e7eb"}
+    TLABEL = {"travel_time": "travel time", "lateness_penalty": "lateness",
+              "capacity_penalty": "capacity", "shift_limit": "shift", "worker_preference": "driver pref",
+              "workload_balance": "workload", "express_miss_penalty": "express"}
+    CANON = list(TLABEL)  # objective, then 3 hard, then 3 soft
+
+    def _od(v):  # origins dict, robust to NaN/None
+        return v if isinstance(v, dict) else {}
+
+    seen = set().union(*[set(_od(v)) for v in sessions["term_origins"]]) if len(sessions) else set()
+    terms = [k for k in CANON if k in seen] + sorted(seen - set(CANON))  # canonical first, custom last
+    srt = sessions.copy()
+    srt["wf_order"] = srt["workflow_mode"].map({"waterfall": 0, "agile": 1}).fillna(2)  # group by workflow
+    srt = srt.sort_values(["wf_order", "participant"]).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(1.1 * len(terms) + 2, 8))
+    for i, row in srt.iterrows():
+        origins = _od(row["term_origins"])
+        for j, k in enumerate(terms):  # one cell per (participant, goal term)
+            ax.add_patch(mpatches.Rectangle((j, i), 1, 1, edgecolor="white",
+                                            facecolor=COLORS.get(origins.get(k, "absent"), "#e5e7eb")))
+    ax.set_xlim(0, len(terms)); ax.set_ylim(0, len(srt)); ax.invert_yaxis()
+    ax.set_xticks([x + 0.5 for x in range(len(terms))])
+    ax.set_xticklabels([TLABEL.get(k, k) for k in terms], rotation=40, ha="right")
+    ax.set_yticks([y + 0.5 for y in range(len(srt))])
+    ax.set_yticklabels([f"{p} ({str(w)[:4]})" for p, w in zip(srt["participant"], srt["workflow_mode"])])
+    ax.set_title("Origin of each goal term per participant")
+    labels = [("user volunteered", "user_volunteered"), ("agent asked (OQ)", "agent_asked"),
+              ("agent assumed", "agent_assumed"), ("mixed", "mixed"),
+              ("present (other)", "present_other"), ("absent", "absent")]
+    ax.legend(handles=[mpatches.Patch(color=COLORS[c], label=l) for l, c in labels],
+              bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
 
 # %%
 # Holistic formulation score (final config) = coverage + hard_bonus + objective_bonus (0-11).

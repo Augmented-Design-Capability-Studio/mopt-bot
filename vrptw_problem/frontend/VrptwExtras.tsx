@@ -397,7 +397,9 @@ function MaxShiftHoursDetails({
                       fieldName: "max_shift_hours",
                     });
                     updateProblem({
-                      max_shift_hours: null,
+                      // Delete the carrier (not null): a lingering null serializes
+                      // into the run payload and crashes the solver (session-73906e05).
+                      max_shift_hours: undefined,
                       locked_goal_terms: removeLockedGoalTerm(problem.locked_goal_terms, "max_shift_hours"),
                     });
                   })
@@ -634,11 +636,13 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
                 (problem.locked_goal_terms.includes("worker_preference") ? "custom" : "objective")
               }
               onConstraintTypeChange={(type) => p.onConstraintTypeChange("worker_preference", type)}
-              // Removing the parent worker_preference clears its child rules in the
+              // Removing the parent worker_preference drops its child rules in the
               // same update — otherwise leftover driver_preferences keep the block
               // visible (showWorkerBlock) and the user is forced to delete each
-              // child first. Restore brings the rules back.
-              extraRemovePatch={{ driver_preferences: [] }}
+              // child first. `undefined` deletes the carrier outright (see
+              // updateProblem) rather than leaving an empty sentinel that would be
+              // serialized into the run payload. Restore brings the rules back.
+              extraRemovePatch={{ driver_preferences: undefined }}
               extraRestorePatch={
                 problem.driver_preferences.length > 0
                   ? { driver_preferences: problem.driver_preferences }
@@ -674,10 +678,12 @@ export function buildVrptwGoalTermsExtension(p: VrptwGoalTermsExtensionProps): G
           />
         ),
         // Parent-"X" parity with worker_preference: removing the shift_limit row
-        // also clears its companion (max_shift_hours) so the whole term goes away
-        // in one click instead of lingering via getAdditionalGoalTermKeys; restore
-        // brings the cap back.
-        extraRemovePatch: { max_shift_hours: null },
+        // also drops its companion (max_shift_hours) so the whole term goes away
+        // in one click instead of lingering via getAdditionalGoalTermKeys. Use
+        // `undefined` to DELETE the carrier (see updateProblem) — a lingering
+        // `max_shift_hours: null` would be serialized into the run payload and
+        // crash the solver (session-73906e05). Restore brings the cap back.
+        extraRemovePatch: { max_shift_hours: undefined },
         extraRestorePatch:
           problem.max_shift_hours !== null ? { max_shift_hours: problem.max_shift_hours } : undefined,
       },

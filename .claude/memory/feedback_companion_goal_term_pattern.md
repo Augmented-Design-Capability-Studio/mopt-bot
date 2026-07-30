@@ -61,3 +61,23 @@ copies for generic rows); `ProblemModule.definitionRowFootnote` hints the def ro
 Decision with user: empty parent shows ONLY when a child was actually given (B1
 vs B2). See [[feedback_structured_carrier_same_turn]], [[feedback_no_regex_for_nl]],
 [[feedback_no_prompt_bandages]].
+
+**Parent removed → child MUST be dropped, universally (session-73906e05).** The
+child is a *separate top-level* carrier in the config panel (nested under
+`goal_terms[parent].properties` only in the brief). So removing the parent in the
+config panel left `max_shift_hours: null` / `driver_preferences: []` dangling, and
+the run ships the live config verbatim (skips the save serializer) → the null
+crashed the solver. Three layers, all keyed on the SAME `gate_conditional_companions`
+map so it's universal (no per-term hacks):
+1. **Authoritative:** `router._prune_orphaned_companions(problem, port.gate_conditional_companions())`
+   runs in the optimize path before persist/solve — drops a child whose parent is
+   absent from `goal_terms`/`weights`. Covers BOTH surfaces + `loadConfigFromRun`.
+   Revert-safe by construction: fires only when the parent is actually gone.
+2. **Frontend cleanliness:** generic `ProblemConfigBlocks.updateProblem` treats a
+   patch value of `undefined` as DELETE-the-key (not merge); the VRPTW
+   `extraRemovePatch`es use `undefined` (was `null`/`[]`). Restore via
+   `restorePatch`/`fieldName` re-adds the captured value → revert brings child back.
+3. **Safety net:** the run parser treats a null companion scalar as its default
+   (see [[feedback_run_error_detail_split]] for the `.get` present-null pitfall).
+Definition surface was already clean (child nested under the parent term → retiring
+the parent drops it, and `brief_seed` only emits the carrier when present).
