@@ -7,6 +7,7 @@ import type {
   LoadedDetail,
   LoadedSummary,
   Pause,
+  SurveyStatus,
 } from "./types";
 
 export function listLoaded(token: string): Promise<{ loaded: LoadedSummary[] }> {
@@ -38,6 +39,16 @@ export function loadLive(
 
 export function getTimeline(token: string, id: string): Promise<LoadedDetail> {
   return apiFetch<LoadedDetail>(`/analysis/loaded/${id}/timeline`, token);
+}
+
+export function classifyOrigin(
+  token: string,
+  body: { api_key: string; model: string; loaded_id?: string },
+): Promise<{ sessions: number; classified_messages: number; ran_llm: boolean }> {
+  return apiFetch("/analysis/classify-origin", token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function patchCodingMeta(
@@ -77,6 +88,23 @@ export function updateAnnotation(
 export function deleteAnnotation(token: string, id: string, annoId: number): Promise<unknown> {
   return apiFetch<unknown>(`/analysis/loaded/${id}/annotations/${annoId}`, token, {
     method: "DELETE",
+  });
+}
+
+export function setLocked(
+  token: string,
+  id: string,
+  locked: boolean,
+): Promise<{ session: LoadedSummary }> {
+  return apiFetch<{ session: LoadedSummary }>(`/analysis/loaded/${id}/lock`, token, {
+    method: "POST",
+    body: JSON.stringify({ locked }),
+  });
+}
+
+export function resetTags(token: string, id: string): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>(`/analysis/loaded/${id}/reset-tags`, token, {
+    method: "POST",
   });
 }
 
@@ -121,6 +149,10 @@ export async function uploadSurvey(
   );
 }
 
+export function getSurveyStatus(token: string): Promise<SurveyStatus> {
+  return apiFetch<SurveyStatus>("/analysis/surveys", token);
+}
+
 export function getAggregate(token: string): Promise<AggregateResponse> {
   return apiFetch<AggregateResponse>("/analysis/aggregate", token);
 }
@@ -139,6 +171,30 @@ export function saveNotebook(token: string, cells: string[]): Promise<{ saved: n
   return apiFetch<{ saved: number }>("/analysis/notebook", token, {
     method: "PUT",
     body: JSON.stringify({ cells }),
+  });
+}
+
+export async function downloadCodingBackup(token: string): Promise<void> {
+  const { blob, filename } = await apiFetchBlob("/analysis/coding-backup.json", token);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename ?? "mopt-coding-backup.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function restoreCoding(
+  token: string,
+  file: File,
+): Promise<{ sessions: number; annotations: number }> {
+  const buf = await file.arrayBuffer();
+  return apiFetch<{ sessions: number; annotations: number }>("/analysis/coding-restore", token, {
+    method: "POST",
+    body: buf,
+    headers: { "Content-Type": "application/json" },
   });
 }
 

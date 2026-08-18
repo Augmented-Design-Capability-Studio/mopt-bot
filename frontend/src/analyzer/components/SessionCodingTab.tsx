@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { DialogShell } from "@shared/components/DialogShell";
+
 import type { AnalysisController } from "../hooks/useAnalysisController";
-import type { TimelineRow } from "../lib/types";
+import { changeKey, changeToBody } from "../lib/facets";
+import type { Annotation, ChangeTag, TimelineRow } from "../lib/types";
 import { AnchorControls } from "./AnchorControls";
 import { EventList } from "./EventList";
+import { OriginClassifyDialog } from "./OriginClassifyDialog";
 import { VideoPane } from "./VideoPane";
 
 /** Tab 1 — individual session coding against the video. */
@@ -11,6 +15,10 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
   const [playhead, setPlayhead] = useState(0);
   const [liveId, setLiveId] = useState("");
   const [videoReady, setVideoReady] = useState(false);
+  // Video coding is paused by default: code the chat/action log on wall-clock
+  // alone. Flip this on to re-enable the video pane + clock anchoring.
+  const [videoMode, setVideoMode] = useState(false);
+  const [showOriginDialog, setShowOriginDialog] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "date">("date");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -98,6 +106,48 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
     if (existing) void ctl.editAnnotation(existing.id, { text: trimmed });
     else if (trimmed) void ctl.addAnnotation({ anno_type: "note", row_ref: row.row_ref, text: trimmed });
   }
+
+  function addChange(row: TimelineRow, change: Omit<ChangeTag, "id">) {
+    if (!row.row_ref) return;
+    void ctl.addAnnotation({ ...changeToBody(change), row_ref: row.row_ref });
+  }
+
+  function editChange(annoId: number, change: Omit<ChangeTag, "id">) {
+    void ctl.editAnnotation(annoId, changeToBody(change));
+  }
+
+  function acceptAllSuggestions() {
+    const rows = detail?.timeline ?? [];
+    const bodies: Partial<Annotation>[] = [];
+    for (const r of rows) {
+      if (!r.row_ref) continue;
+      const existing = new Set(r.changes.map(changeKey));
+      for (const s of r.suggested_changes) {
+        if (existing.has(changeKey(s))) continue;
+        existing.add(changeKey(s));
+        bodies.push({ ...changeToBody(s), row_ref: r.row_ref });
+      }
+    }
+    if (bodies.length) void ctl.addManyAnnotations(bodies);
+  }
+
+  const tagCount = (detail?.annotations ?? []).filter((a) => a.anno_type === "code").length;
+
+  function resetTags() {
+    if (tagCount === 0) {
+      alert("No coded tags to reset for this session.");
+      return;
+    }
+    if (confirm(`Remove all ${tagCount} coded tag(s) for this session? This can't be undone.`)) {
+      void ctl.resetTags();
+    }
+  }
+
+  const suggestionCount = (detail?.timeline ?? []).reduce((n, r) => {
+    if (!r.row_ref) return n;
+    const existing = new Set(r.changes.map(changeKey));
+    return n + r.suggested_changes.filter((s) => !existing.has(changeKey(s))).length;
+  }, 0);
 
   const hasVideo = videoReady;
 
@@ -196,6 +246,25 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
             </div>
             <button
               type="button"
+              title={s.locked ? "Coding locked — click to unlock editing" : "Lock coding (mark done)"}
+              onClick={(e) => {
+                e.stopPropagation();
+                void ctl.setLocked(s.id, !s.locked);
+              }}
+              style={{
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                background: "none",
+                border: "none",
+                padding: 0,
+                lineHeight: 1,
+                opacity: s.locked ? 1 : 0.4,
+              }}
+            >
+              {s.locked ? "🔒" : "🔓"}
+            </button>
+            <button
+              type="button"
               title="remove"
               onClick={(e) => {
                 e.stopPropagation();
@@ -215,88 +284,183 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
           <p className="muted">Load an export, then pick a session to code.</p>
         ) : (
           <>
-            <div
-              style={{
-                width: "38%",
-                minWidth: 320,
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.5rem",
-                overflow: "auto",
-              }}
-            >
-              <VideoPane
-                playhead={playhead}
-                onPlayheadChange={setPlayhead}
-                onDurationChange={(d) => {
-                  if (d != null) void ctl.patchMeta({ video_duration_sec: d });
+            {videoMode ? (
+              <div
+                style={{
+                  width: "38%",
+                  minWidth: 320,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                  overflow: "auto",
                 }}
-                onVideoElReady={(el) => {
-                  videoElRef.current = el;
-                  setVideoReady(el != null);
-                }}
-                onFileChosen={(name) => void ctl.patchMeta({ video_filename: name })}
-              />
-              <AnchorControls
-                summary={summary}
-                playhead={playhead}
-                hasVideo={hasVideo}
-                anchorCandidates={anchorCandidates}
-                onSetOffset={(offset) => void ctl.patchMeta({ clock_offset_sec: offset })}
-                onMarkFirstKeystroke={() => void ctl.patchMeta({ t0_video_pos: playhead })}
-                onMarkReady={() =>
-                  void ctl.addAnnotation({
-                    anno_type: "marker",
-                    label: "declared-ready",
-                    color: "#0ea5e9",
-                    video_pos_sec: playhead,
-                  })
-                }
-                onAddPause={(start, end) => void ctl.addPause({ start_video_pos: start, end_video_pos: end })}
-                onSetT0Iso={(iso) => void ctl.patchMeta({ t0_iso: iso })}
-              />
-              <button
-                type="button"
-                style={{ fontSize: "0.85rem", padding: "0.35rem" }}
-                onClick={() => void ctl.exportCsv()}
               >
-                Export CSV
-              </button>
-              {detail && detail.pauses.length > 0 ? (
-                <div style={{ fontSize: "0.8rem" }}>
-                  <div style={{ fontWeight: 600 }}>Pauses</div>
-                  {detail.pauses.map((p) => (
-                    <div key={p.id} style={{ display: "flex", gap: "0.35rem" }}>
-                      <span className="muted">
-                        {p.start_video_pos.toFixed(0)}s → {p.end_video_pos?.toFixed(0) ?? "?"}s
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void ctl.removePause(p.id)}
-                        style={{ fontSize: "0.7rem", cursor: "pointer" }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+                <VideoPane
+                  playhead={playhead}
+                  onPlayheadChange={setPlayhead}
+                  onDurationChange={(d) => {
+                    if (d != null) void ctl.patchMeta({ video_duration_sec: d });
+                  }}
+                  onVideoElReady={(el) => {
+                    videoElRef.current = el;
+                    setVideoReady(el != null);
+                  }}
+                  onFileChosen={(name) => void ctl.patchMeta({ video_filename: name })}
+                />
+                <AnchorControls
+                  summary={summary}
+                  playhead={playhead}
+                  hasVideo={hasVideo}
+                  anchorCandidates={anchorCandidates}
+                  onSetOffset={(offset) => void ctl.patchMeta({ clock_offset_sec: offset })}
+                  onMarkFirstKeystroke={() => void ctl.patchMeta({ t0_video_pos: playhead })}
+                  onMarkReady={() =>
+                    void ctl.addAnnotation({
+                      anno_type: "marker",
+                      label: "declared-ready",
+                      color: "#0ea5e9",
+                      video_pos_sec: playhead,
+                    })
+                  }
+                  onAddPause={(start, end) => void ctl.addPause({ start_video_pos: start, end_video_pos: end })}
+                  onSetT0Iso={(iso) => void ctl.patchMeta({ t0_iso: iso })}
+                />
+                {detail && detail.pauses.length > 0 ? (
+                  <div style={{ fontSize: "0.8rem" }}>
+                    <div style={{ fontWeight: 600 }}>Pauses</div>
+                    {detail.pauses.map((p) => (
+                      <div key={p.id} style={{ display: "flex", gap: "0.35rem" }}>
+                        <span className="muted">
+                          {p.start_video_pos.toFixed(0)}s → {p.end_video_pos?.toFixed(0) ?? "?"}s
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void ctl.removePause(p.id)}
+                          style={{ fontSize: "0.7rem", cursor: "pointer" }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              {summary.locked ? (
+                <div
+                  className="banner-info"
+                  style={{ display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "0.82rem" }}
+                >
+                  <span>🔒 Coding locked — editing is disabled for this session.</span>
+                  <button
+                    type="button"
+                    style={{ fontSize: "0.78rem", padding: "0.2rem 0.55rem", cursor: "pointer", marginLeft: "auto" }}
+                    onClick={() => ctl.selectedId && void ctl.setLocked(ctl.selectedId, false)}
+                  >
+                    Unlock
+                  </button>
                 </div>
               ) : null}
-            </div>
-
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", fontSize: "0.8rem" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={videoMode}
+                    onChange={(e) => setVideoMode(e.target.checked)}
+                  />
+                  Video coding
+                </label>
+                <button
+                  type="button"
+                  style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
+                  disabled={suggestionCount === 0}
+                  onClick={acceptAllSuggestions}
+                  title="Materialize every deterministic suggestion as an editable tag"
+                >
+                  Accept all suggestions ({suggestionCount})
+                </button>
+                <button
+                  type="button"
+                  style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
+                  onClick={() => void ctl.exportCsv()}
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
+                  onClick={() => void ctl.backupCoding()}
+                  title="Download a portable JSON backup of all your coding"
+                >
+                  Back up labels
+                </button>
+                <label
+                  style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem", border: "1px solid #999", borderRadius: 4, cursor: "pointer" }}
+                  title="Restore coding from a backup JSON (non-destructive)"
+                >
+                  Restore…
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.currentTarget.value = "";
+                      if (f && confirm(`Restore coding from "${f.name}"? Existing tags are kept; duplicates are skipped.`)) {
+                        void ctl.restoreCoding(f).then((res) => {
+                          if (res) alert(`Restored ${res.annotations} tag(s) across ${res.sessions} session(s).`);
+                        });
+                      }
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  style={{
+                    fontSize: "0.8rem",
+                    padding: "0.25rem 0.6rem",
+                    border: "1px solid #dc2626",
+                    borderRadius: 4,
+                    background: "rgba(220,38,38,0.08)",
+                    color: "#dc2626",
+                    cursor: tagCount ? "pointer" : "not-allowed",
+                  }}
+                  disabled={tagCount === 0}
+                  onClick={resetTags}
+                  title="Delete every coded tag for this session (notes are kept)"
+                >
+                  Reset tags ({tagCount})
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    fontSize: "0.8rem",
+                    padding: "0.25rem 0.6rem",
+                    marginLeft: "auto",
+                    fontWeight: 600,
+                    border: "1px solid #8b5cf6",
+                    borderRadius: 4,
+                    background: "rgba(139,92,246,0.1)",
+                    color: "#8b5cf6",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setShowOriginDialog(true)}
+                  title="Read the user messages with an LLM to attribute origin reliably (cached)"
+                >
+                  ✨ Auto-detect origin (LLM)
+                </button>
+              </div>
               <EventList
                 rows={detail?.timeline ?? []}
+                goalTermKeys={detail?.goal_term_keys ?? []}
                 playhead={playhead}
                 offsetSet={summary.clock_offset_sec != null}
+                videoMode={videoMode}
                 onSeek={seek}
-                onAddCode={(label, color) =>
-                  void ctl.addAnnotation({
-                    anno_type: "code",
-                    label,
-                    color,
-                    video_pos_sec: playhead,
-                  })
-                }
+                onAddChange={addChange}
+                onEditChange={editChange}
                 onSaveNote={saveNote}
                 onDeleteAnnotation={(id) => void ctl.removeAnnotation(id)}
               />
@@ -304,6 +468,34 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
           </>
         )}
       </main>
+
+      <OriginClassifyDialog
+        open={showOriginDialog}
+        onClose={() => setShowOriginDialog(false)}
+        currentLoadedId={ctl.selectedId}
+        onRun={(body) => ctl.classifyOrigin(body)}
+      />
+
+      <DialogShell
+        open={ctl.unlockPromptOpen}
+        title="Session coding is locked"
+        titleId="unlock-coding-dialog"
+        maxWidth="420px"
+      >
+        <p className="muted" style={{ fontSize: "0.85rem", marginTop: 0 }}>
+          This session is marked <strong>done</strong>, so edits are disabled to protect the
+          finished coding. Unlock it to make changes — you can re-lock it from the session list
+          (🔒) at any time.
+        </p>
+        <div className="dialog-actions">
+          <button type="button" onClick={ctl.closeUnlockPrompt}>
+            Keep locked
+          </button>
+          <button type="button" onClick={() => void ctl.unlockSelected()}>
+            Unlock &amp; edit
+          </button>
+        </div>
+      </DialogShell>
     </div>
   );
 }

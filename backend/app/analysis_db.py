@@ -56,6 +56,7 @@ def ensure_analysis_db_shape() -> None:
 
     AnalysisBase.metadata.create_all(bind=analysis_engine)
     _ensure_loaded_runs_error_detail_column()
+    _ensure_loaded_sessions_locked_column()
 
 
 def _ensure_loaded_runs_error_detail_column() -> None:
@@ -70,3 +71,18 @@ def _ensure_loaded_runs_error_detail_column() -> None:
         return
     with analysis_engine.begin() as conn:
         conn.execute(text("ALTER TABLE loaded_runs ADD COLUMN error_detail TEXT"))
+
+
+def _ensure_loaded_sessions_locked_column() -> None:
+    """Add loaded_sessions.locked on pre-existing analysis DBs (create_all won't
+    alter an existing table). Existing rows default to unlocked."""
+    inspector = inspect(analysis_engine)
+    if not inspector.has_table("loaded_sessions"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("loaded_sessions")}
+    if "locked" in columns:
+        return
+    with analysis_engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE loaded_sessions ADD COLUMN locked BOOLEAN NOT NULL DEFAULT 0")
+        )

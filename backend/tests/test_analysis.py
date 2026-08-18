@@ -9,6 +9,7 @@ pure-function tests.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -166,6 +167,67 @@ def test_bulk_delete_loaded(client: TestClient):
     assert len(remaining) == len(loaded) - 3
 
 
+@pytest.fixture
+def seeded_client(tmp_path):
+    """Client with the analysis DB pre-seeded with one bare loaded session, so
+    lock/guard behaviour can be tested without a sample export."""
+    from app.analysis import models as m
+
+    url = f"sqlite:///{(tmp_path / 'analysis_lock.db').as_posix()}"
+    engine = create_engine(url, connect_args={"check_same_thread": False})
+    AnalysisBase.metadata.create_all(bind=engine)
+    Local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    db = Local()
+    loaded = m.LoadedSession(source_session_id="s1", participant_number="P01", workflow_mode="agile")
+    db.add(loaded)
+    db.commit()
+    lid = loaded.id
+    db.close()
+
+    def _override():
+        d = Local()
+        try:
+            yield d
+        finally:
+            d.close()
+
+    app.dependency_overrides[get_analysis_db] = _override
+    yield TestClient(app), lid
+    app.dependency_overrides.pop(get_analysis_db, None)
+
+
+def test_lock_blocks_edits_then_unlock_restores(seeded_client):
+    """A locked session rejects every coding mutation (423) but the lock toggle
+    and unlock stay reachable; classify-origin skips locked sessions instead of
+    erroring."""
+    client, lid = seeded_client
+    note = {"anno_type": "note", "text": "x"}
+
+    # editable while unlocked
+    assert client.post(f"/analysis/loaded/{lid}/annotations", json=note, headers=_auth()).status_code == 200
+
+    # lock it
+    r = client.post(f"/analysis/loaded/{lid}/lock", json={"locked": True}, headers=_auth())
+    assert r.status_code == 200 and r.json()["session"]["locked"] is True
+
+    # every mutation now rejected with 423 Locked
+    assert client.post(f"/analysis/loaded/{lid}/annotations", json=note, headers=_auth()).status_code == 423
+    assert client.post(f"/analysis/loaded/{lid}/reset-tags", headers=_auth()).status_code == 423
+    assert client.patch(
+        f"/analysis/loaded/{lid}/coding-meta", json={"video_filename": "v.mp4"}, headers=_auth()
+    ).status_code == 423
+
+    # classify-origin skips locked sessions rather than rewriting their cache
+    r = client.post("/analysis/classify-origin", json={"loaded_id": lid}, headers=_auth())
+    assert r.status_code == 200 and r.json()["sessions"] == 0 and r.json()["skipped_locked"] == 1
+
+    # unlock re-enables editing
+    r = client.post(f"/analysis/loaded/{lid}/lock", json={"locked": False}, headers=_auth())
+    assert r.status_code == 200 and r.json()["session"]["locked"] is False
+    assert client.post(f"/analysis/loaded/{lid}/annotations", json=note, headers=_auth()).status_code == 200
+
+
 @pytest.mark.skipif(
     not (_EXPORT_DB.exists() and _PRE_CSV.exists()), reason="sample data not present"
 )
@@ -220,6 +282,53 @@ def test_diff_is_change_only():
     assert 1 in changes and "definition_change" in changes[1] and "config_change" in changes[1]
     assert 2 not in changes
     assert 3 in changes and "definition_change" in changes[3] and "config_change" not in changes[3]
+
+
+class _FakePort:
+    def weight_display_keys(self):
+        return ["lateness_penalty", "travel_time", "capacity_penalty"]
+
+    def formulation_quality_for_config(self, panel):
+        prob = panel.get("problem") or panel
+        gt = prob.get("goal_terms") or {}
+        return {"captured_terms": [k for k, v in gt.items() if (v.get("weight") or 0) != 0]}
+
+
+def test_turn_derivations_emit_composite_changes():
+    """A reply's changes are tagged on the exchange that produced them (the diff
+    of that reply's pre-state vs its result), as composite {origin, type, term,
+    effect} records. Origin comes from the brief's provenance (gathered ⇒ user)."""
+    from app.analysis.coding_suggestions import build_turn_derivations
+
+    def msg(i, prob, items=None):
+        brief = {"goal_terms": prob["goal_terms"], "items": items or []}
+        meta = {"pre_turn_state": {"problem_brief": brief, "panel_config": {"problem": prob}}}
+        return SimpleNamespace(id=i, source_id=i, ts_epoch=float(i), meta_json=json.dumps(meta))
+
+    m1 = msg(1, {"algorithm": "GA", "goal_terms": {
+        "lateness_penalty": {"weight": 5, "type": "hard", "rank": 1},
+        "travel_time": {"weight": 1, "type": "objective", "rank": 2},
+    }})
+    m2 = msg(2, {"algorithm": "PSO", "goal_terms": {  # search-strategy change
+        "lateness_penalty": {"weight": 10, "type": "hard", "rank": 1},  # weight change
+        "travel_time": {"weight": 1, "type": "objective", "rank": 2},
+        "capacity_penalty": {"weight": 3, "type": "hard", "rank": 3},  # added (user)
+    }}, items=[  # the resulting brief records user-gathered provenance
+        {"id": "i-cap", "kind": "gathered", "goal_key": "capacity_penalty"},
+        {"id": "i-lat", "kind": "gathered", "goal_key": "lateness_penalty"},
+    ])
+
+    # The reply at m1 produces the state seen in m2, so its changes are tagged on
+    # message:1 (diff of m1's pre-state vs its result m2).
+    d = build_turn_derivations([m1, m2], _FakePort())["message:1"]
+    changes = d["changes"]
+    kinds = {(c["type"], c["term"]) for c in changes}
+    assert ("weight", "lateness_penalty") in kinds
+    assert ("goal-term", "capacity_penalty") in kinds
+    assert ("search-strategy", None) in kinds
+    cap = next(c for c in changes if c["term"] == "capacity_penalty")
+    assert cap["origin"] == "user" and cap["effect"] == "applied" and cap["captured"]
+    assert d["config_change"] is not None and d["definition_change"] is not None
 
 
 def test_time_since_start_is_pause_aware():

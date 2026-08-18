@@ -33,6 +33,10 @@ class LoadedSession(AnalysisBase):
     source_kind: Mapped[str] = mapped_column(String(16), default="db")  # db | json | live
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Researcher-set "coding done" flag: when true the front end blocks every
+    # coding edit (unlock to resume). The server also rejects mutations (423) as
+    # a backstop — see the guard in routers/analysis.py.
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
 
     # --- video ↔ DB clock alignment / coding metadata ---
     video_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -162,6 +166,26 @@ class Pause(AnalysisBase):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped["LoadedSession"] = relationship(back_populates="pauses")
+
+
+class OriginClassification(AnalysisBase):
+    """Cached LLM origin classification for one loaded session.
+
+    ``data_json`` maps a user message's ``source_id`` (str) → the list of
+    goal-term keys that message raised. Computed once via the "Auto-detect
+    origin" pass and reused on every timeline load so we never re-hit the API on
+    a refresh. Cascades away with its loaded session."""
+
+    __tablename__ = "origin_classifications"
+
+    loaded_session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("loaded_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    data_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class NotebookDoc(AnalysisBase):

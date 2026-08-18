@@ -22,6 +22,7 @@ export interface LoadedSummary {
   clock_offset_sec: number | null;
   t0_video_pos: number | null;
   t0_iso: string | null;
+  locked: boolean;
   counts: LoadedCounts;
 }
 
@@ -44,10 +45,30 @@ export interface Pause {
   note: string | null;
 }
 
+/** One coded information-exchange on a row: a single change described by all
+ * four facets together (a `code` annotation whose text holds this JSON). */
+export interface ChangeTag {
+  id: number;
+  origin: string | null; // user | agent
+  type: string | null; // goal-term | weight | term-type | ranking | search-strategy | search-param
+  term: string | null; // which goal term (null for search-strategy/param)
+  effect: string | null; // applied | acknowledged | dropped
+}
+
+/** A deterministic, structurally-derived change suggestion for a row. */
+export interface SuggestedChange {
+  origin: string | null;
+  type: string | null;
+  term: string | null;
+  effect: string | null;
+  captured?: boolean | null; // term active in the resulting config
+}
+
 export interface TimelineRow {
   kind: string; // message | run | snapshot | code | marker | note
   timestamp_iso: string | null;
   epoch: number | null;
+  t_rel: number | null; // seconds since the first message (video-independent)
   time_since_start: number | null;
   time_since_start_raw: number | null;
   video_pos: number | null;
@@ -58,10 +79,24 @@ export interface TimelineRow {
   definition_change: string | null;
   config_change: string | null;
   latest_run: string | null;
+  problem_def: string | null; // full brief JSON as of this chat turn
+  problem_config: string | null; // full panel config JSON as of this chat turn
+  user_prompt: string | null; // the user turn(s) that prompted this agent response
+  codeable: boolean; // whether this row is a coding target (agent reply / manual save)
+  changes: ChangeTag[]; // manual coded changes on this row
+  suggested_changes: SuggestedChange[]; // deterministic suggestions
+  captured_terms: string[];
   color: string | null;
   note: string | null;
   annotation_id: number | null;
   row_ref: string | null;
+  // Outcome/formulation scores + session-best flags (run rows carry the
+  // canonical fields, codeable message rows carry formulation_score).
+  canonical_cost?: number | null; // official re-scored run cost — lower is better
+  canonical_feasible?: boolean | null; // valid on the majority of traffic draws
+  formulation_score?: number | null; // 0–11 config quality — higher is better
+  best_canonical?: boolean; // this run achieved the session's best canonical cost
+  best_formulation?: boolean; // this exchange reached the session's peak formulation score
 }
 
 export interface LoadedDetail {
@@ -69,6 +104,7 @@ export interface LoadedDetail {
   annotations: Annotation[];
   pauses: Pause[];
   timeline: TimelineRow[];
+  goal_term_keys: string[];
 }
 
 export interface AggregateRow {
@@ -82,4 +118,9 @@ export interface AggregateRow {
 export interface AggregateResponse {
   rows: AggregateRow[];
   expertise_available: boolean;
+}
+
+export interface SurveyStatus {
+  counts: Partial<Record<"pre" | "post", number>>;
+  uploaded_at: Partial<Record<"pre" | "post", string>>;
 }

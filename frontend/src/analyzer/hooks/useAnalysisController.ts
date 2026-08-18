@@ -72,6 +72,41 @@ export function useAnalysisController() {
     [],
   );
 
+  // "Coding done" lock. When the selected session is locked, every edit is
+  // intercepted here and turned into an unlock prompt instead of a mutation —
+  // a single chokepoint so no UI path can slip past it.
+  const [unlockPromptOpen, setUnlockPromptOpen] = useState(false);
+
+  const isSelectedLocked = useCallback(
+    () => !!loaded.find((s) => s.id === selectedId)?.locked,
+    [loaded, selectedId],
+  );
+
+  /** True if the edit is BLOCKED (session locked); opens the unlock dialog. */
+  const blockedByLock = useCallback(() => {
+    if (isSelectedLocked()) {
+      setUnlockPromptOpen(true);
+      return true;
+    }
+    return false;
+  }, [isSelectedLocked]);
+
+  const setLocked = useCallback(
+    async (id: string, locked: boolean) => {
+      await withBusy(() => api.setLocked(token.trim(), id, locked), "Lock toggle failed.");
+      await refreshList();
+      if (selectedId === id) await refreshDetail(selectedId);
+    },
+    [token, withBusy, refreshList, refreshDetail, selectedId],
+  );
+
+  const closeUnlockPrompt = useCallback(() => setUnlockPromptOpen(false), []);
+
+  const unlockSelected = useCallback(async () => {
+    setUnlockPromptOpen(false);
+    if (selectedId) await setLocked(selectedId, false);
+  }, [selectedId, setLocked]);
+
   const uploadFile = useCallback(
     async (file: File) => {
       const res = await withBusy(() => api.uploadFile(token.trim(), file), "Upload failed.");
@@ -118,7 +153,7 @@ export function useAnalysisController() {
 
   const patchMeta = useCallback(
     async (patch: Record<string, unknown>) => {
-      if (!selectedId) return;
+      if (!selectedId || blockedByLock()) return;
       await withBusy(
         () => api.patchCodingMeta(token.trim(), selectedId, patch),
         "Update failed.",
@@ -126,67 +161,115 @@ export function useAnalysisController() {
       await refreshDetail(selectedId);
       await refreshList();
     },
-    [token, selectedId, withBusy, refreshDetail, refreshList],
+    [token, selectedId, blockedByLock, withBusy, refreshDetail, refreshList],
   );
 
   const addAnnotation = useCallback(
     async (body: Partial<Annotation>) => {
-      if (!selectedId) return;
+      if (!selectedId || blockedByLock()) return;
       await withBusy(
         () => api.createAnnotation(token.trim(), selectedId, body),
         "Add annotation failed.",
       );
       await refreshDetail(selectedId);
     },
-    [token, selectedId, withBusy, refreshDetail],
+    [token, selectedId, blockedByLock, withBusy, refreshDetail],
+  );
+
+  const addManyAnnotations = useCallback(
+    async (bodies: Partial<Annotation>[]) => {
+      if (!selectedId || !bodies.length || blockedByLock()) return;
+      await withBusy(async () => {
+        for (const body of bodies) {
+          await api.createAnnotation(token.trim(), selectedId, body);
+        }
+      }, "Bulk add annotations failed.");
+      await refreshDetail(selectedId);
+    },
+    [token, selectedId, blockedByLock, withBusy, refreshDetail],
   );
 
   const editAnnotation = useCallback(
     async (annoId: number, body: Partial<Annotation>) => {
-      if (!selectedId) return;
+      if (!selectedId || blockedByLock()) return;
       await withBusy(
         () => api.updateAnnotation(token.trim(), selectedId, annoId, body),
         "Edit annotation failed.",
       );
       await refreshDetail(selectedId);
     },
-    [token, selectedId, withBusy, refreshDetail],
+    [token, selectedId, blockedByLock, withBusy, refreshDetail],
   );
 
   const removeAnnotation = useCallback(
     async (annoId: number) => {
-      if (!selectedId) return;
+      if (!selectedId || blockedByLock()) return;
       await withBusy(
         () => api.deleteAnnotation(token.trim(), selectedId, annoId),
         "Delete annotation failed.",
       );
       await refreshDetail(selectedId);
     },
-    [token, selectedId, withBusy, refreshDetail],
+    [token, selectedId, blockedByLock, withBusy, refreshDetail],
   );
 
   const addPause = useCallback(
     async (body: Partial<Pause>) => {
-      if (!selectedId) return;
+      if (!selectedId || blockedByLock()) return;
       await withBusy(() => api.createPause(token.trim(), selectedId, body), "Add pause failed.");
       await refreshDetail(selectedId);
     },
-    [token, selectedId, withBusy, refreshDetail],
+    [token, selectedId, blockedByLock, withBusy, refreshDetail],
   );
 
   const removePause = useCallback(
     async (pauseId: number) => {
-      if (!selectedId) return;
+      if (!selectedId || blockedByLock()) return;
       await withBusy(() => api.deletePause(token.trim(), selectedId, pauseId), "Delete pause failed.");
       await refreshDetail(selectedId);
     },
-    [token, selectedId, withBusy, refreshDetail],
+    [token, selectedId, blockedByLock, withBusy, refreshDetail],
+  );
+
+  const resetTags = useCallback(async () => {
+    if (!selectedId || blockedByLock()) return null;
+    const res = await withBusy(() => api.resetTags(token.trim(), selectedId), "Reset tags failed.");
+    if (res) await refreshDetail(selectedId);
+    return res;
+  }, [token, selectedId, blockedByLock, withBusy, refreshDetail]);
+
+  const classifyOrigin = useCallback(
+    async (body: { api_key: string; model: string; loaded_id?: string }) => {
+      const res = await withBusy(
+        () => api.classifyOrigin(token.trim(), body),
+        "Origin classification failed.",
+      );
+      if (res && selectedId) await refreshDetail(selectedId);
+      return res;
+    },
+    [token, withBusy, selectedId, refreshDetail],
   );
 
   const exportCsv = useCallback(async () => {
     if (!selectedId) return;
     await withBusy(() => api.downloadCsv(token.trim(), selectedId), "CSV export failed.");
   }, [token, selectedId, withBusy]);
+
+  const backupCoding = useCallback(async () => {
+    await withBusy(() => api.downloadCodingBackup(token.trim()), "Backup download failed.");
+  }, [token, withBusy]);
+
+  const restoreCoding = useCallback(
+    async (file: File) => {
+      const res = await withBusy(() => api.restoreCoding(token.trim(), file), "Restore failed.");
+      if (res) {
+        await refreshList();
+        if (selectedId) await refreshDetail(selectedId);
+      }
+      return res;
+    },
+    [token, withBusy, refreshList, refreshDetail, selectedId],
+  );
 
   return {
     token,
@@ -205,11 +288,20 @@ export function useAnalysisController() {
     removeManyLoaded,
     patchMeta,
     addAnnotation,
+    addManyAnnotations,
     editAnnotation,
     removeAnnotation,
     addPause,
     removePause,
+    resetTags,
+    classifyOrigin,
     exportCsv,
+    backupCoding,
+    restoreCoding,
+    setLocked,
+    unlockPromptOpen,
+    closeUnlockPrompt,
+    unlockSelected,
   };
 }
 

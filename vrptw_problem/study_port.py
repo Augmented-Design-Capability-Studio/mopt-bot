@@ -617,8 +617,9 @@ class VrptwStudyPort:
 
         All-positive score, no deductions:
             formulation_score = coverage + hard_bonus + objective_bonus
-          - coverage        : +1 per canonical term identified (present & active) — max 7
-                              (travel_time + 3 hard + 3 soft).
+          - coverage        : +1 per CANONICAL term identified (present & active) — max 7
+                              (travel_time + 3 hard + 3 soft). Only the briefed terms
+                              count, so the score is comparable across sessions.
           - hard_bonus      : +1 per hard constraint correctly BINDING (type 'hard'
                               OR weight > every non-hard term's weight) — max 3.
           - objective_bonus : +1 if travel_time is present AND not marked 'hard'
@@ -628,6 +629,11 @@ class VrptwStudyPort:
         interpretation). ``objective_as_hard`` and ``soft_as_hard`` are reported as
         DESCRIPTIVE behavioral columns and are NOT part of the score. Feasibility
         (computed separately over traffic seeds) is the outcome cross-check.
+
+        Only the 7 briefed terms count toward coverage. Un-briefed terms a user may
+        surface (e.g. idle-wait ``waiting_time``) still appear in ``captured_terms``
+        (the full active set, for the identification-timing charts) but are NOT scored,
+        so the 0-11 total stays comparable across sessions.
         """
         try:
             HARD = ("lateness_penalty", "capacity_penalty", "shift_limit")
@@ -674,17 +680,20 @@ class VrptwStudyPort:
             def covered(k: str) -> bool:
                 return k in gts and active(k, gts[k])
 
-            # coverage = every goal term the user defined (present & active), REGARDLESS
-            # of type; the algorithm carrier is not a requirement, so it's excluded.
+            # The algorithm carrier is not a requirement, so it's never counted.
             NON_REQUIREMENT = ("search_strategy", "algorithm")
+            # The briefed problem = objective + 3 hard + 3 soft (7 canonical terms).
+            CANONICAL = OBJECTIVE + HARD + SOFT
             # Every goal term present & active (identified) at this snapshot — the
-            # objective (travel_time) + 3 hard + 3 soft + any custom term. This is
-            # exactly the `coverage` set (len == coverage); the notebook uses the
-            # per-snapshot list to chart WHEN each goal term first appeared.
+            # objective (travel_time) + 3 hard + 3 soft + any un-briefed/custom term
+            # (e.g. idle-wait). The notebook uses this per-snapshot list to chart WHEN
+            # each goal term first appeared (superset of the canonical `coverage` set).
             captured_terms = [
                 k for k, v in gts.items() if k not in NON_REQUIREMENT and active(k, v)
             ]
-            coverage = len(captured_terms)
+            # coverage = canonical (briefed) terms identified, REGARDLESS of type —
+            # kept to the 7-term spec so the score stays comparable across sessions.
+            coverage = sum(1 for k in CANONICAL if covered(k))
             # hard_bonus = # hard constraints correctly binding.
             hard_bonus = sum(1 for s in hard_status.values() if s in ("hard", "binding_by_weight"))
             # objective_bonus = travel_time present AND not marked hard (serving as target).
@@ -700,6 +709,7 @@ class VrptwStudyPort:
                 1 for k in SOFT
                 if isinstance(gts.get(k), dict) and gts[k].get("type") == "hard"
             )
+            score = coverage + hard_bonus + objective_bonus
             return {
                 "coverage": coverage,
                 "hard_bonus": hard_bonus,
@@ -707,8 +717,8 @@ class VrptwStudyPort:
                 "objective_bonus": objective_bonus,
                 "soft_covered": soft_covered,
                 "hard_status": hard_status,
-                # present & active goal terms (objective + 3 hard + 3 soft + custom),
-                # for the per-term identification-timing chart in the notebook.
+                # present & active goal terms (objective + 3 hard + 3 soft + any
+                # un-briefed/custom term), for the per-term identification-timing chart.
                 "captured_terms": captured_terms,
                 # --- descriptive behavioral columns, NOT part of the score ---
                 "objective_as_hard": objective_as_hard,
@@ -717,8 +727,8 @@ class VrptwStudyPort:
                     1 for k in HARD
                     if isinstance(gts.get(k), dict) and gts[k].get("type") == "custom"
                 ),
-                # Score = coverage + hard_bonus + objective_bonus (higher = better).
-                "formulation_score": coverage + hard_bonus + objective_bonus,
+                # Score = coverage + hard_bonus + objective_bonus (0-11, higher = better).
+                "formulation_score": score,
             }
         except Exception:
             return None

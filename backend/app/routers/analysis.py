@@ -15,6 +15,7 @@ import os
 import sqlite3
 import tempfile
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -22,8 +23,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.analysis import models as m
+from app.analysis.backup import auto_backup, dump_coding, restore_coding
+from app.analysis.coding_suggestions import build_turn_derivations, goal_term_keys
 from app.analysis.metrics import initial_prompt_word_count
-from app.analysis.rows import CSV_COLUMNS, build_coding_rows
+from app.analysis.origin_llm import classify_user_origins
+from app.analysis.rows import CHANGE_FIELDS, CSV_COLUMNS, build_coding_rows
 from app.analysis.survey import extract_named_metrics, normalize_pid, parse_survey_csv
 from app.analysis.timeutil import iso_and_epoch, to_epoch
 from app.analysis_db import get_analysis_db
@@ -274,6 +278,7 @@ def _loaded_summary(loaded: m.LoadedSession) -> dict[str, Any]:
         "clock_offset_sec": loaded.clock_offset_sec,
         "t0_video_pos": loaded.t0_video_pos,
         "t0_iso": loaded.t0_iso,
+        "locked": bool(loaded.locked),
         "counts": {
             "messages": len(loaded.messages),
             "runs": len(loaded.runs),
@@ -310,6 +315,195 @@ def _get_loaded(adb: Session, loaded_id: str) -> m.LoadedSession:
     if loaded is None:
         raise HTTPException(status_code=404, detail="Loaded session not found")
     return loaded
+
+
+def _require_unlocked(loaded: m.LoadedSession) -> m.LoadedSession:
+    """Backstop for the front-end lock: reject coding mutations on a locked
+    session (423) so a stale tab can't edit finished coding. The lock toggle
+    itself (POST .../lock) is intentionally NOT guarded."""
+    if loaded.locked:
+        raise HTTPException(
+            status_code=423,
+            detail="Session coding is locked. Unlock it before editing.",
+        )
+    return loaded
+
+
+def _user_raised_by_turn(
+    messages: list[m.LoadedMessage], classification: dict[str, list[str]]
+) -> dict[str, set[str]]:
+    """Fold the LLM per-user-message term lists onto the agent turn they
+    prompted (``message:{assistant source_id}``), mirroring the exchange
+    grouping — so a change on that turn can be forced ``origin: user``."""
+    out: dict[str, set[str]] = {}
+    pending: set[str] = set()
+    for msg in sorted(messages, key=lambda x: ((x.ts_epoch or 0.0), x.id)):
+        if msg.role == "user" and (msg.kind or "") == "chat":
+            # An "Answered N open questions" message is the user RESPONDING to an
+            # agent's OQ — the term was agent-asked, so it's NOT user-raised.
+            if (msg.content or "").startswith("Answered "):
+                continue
+            pending |= set(classification.get(str(msg.source_id), []))
+        elif msg.role == "assistant" and (msg.kind or "") == "chat":
+            if pending:
+                out[f"message:{msg.source_id}"] = set(pending)
+            pending = set()
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Outcome / formulation scoring for the timeline highlight.
+#
+# A run's ``result_json`` and an exchange's config JSON are immutable, so the
+# same string always scores the same — and the timeline is re-fetched after
+# every coding edit. We therefore memoize on the raw JSON string so only the
+# first load of a session pays the (seed-averaged) canonical re-scoring cost.
+# --------------------------------------------------------------------------- #
+
+@lru_cache(maxsize=8192)
+def _canonical_eval_cached(pid: str | None, result_json: str | None) -> tuple[float, bool] | None:
+    """``(canonical_cost, feasible)`` for a run's result JSON via the problem
+    port (official re-scoring, seed-averaged — lower cost is better), or None if
+    the run has no scorable schedule or the port lacks the hook."""
+    if not pid or not result_json:
+        return None
+    try:
+        port = get_study_port(pid)
+    except Exception:
+        return None
+    fn = getattr(port, "canonical_evaluation_for_result", None)
+    if fn is None:
+        return None
+    try:
+        ev = fn(json.loads(result_json))
+    except Exception:
+        return None
+    if not ev or ev.get("canonical_cost") is None:
+        return None
+    return float(ev["canonical_cost"]), bool(ev.get("feasible"))
+
+
+@lru_cache(maxsize=8192)
+def _formulation_score_cached(pid: str | None, panel_json: str | None) -> int | None:
+    """0–11 formulation score for a panel-config JSON via the problem port
+    (higher is better), or None if not scorable."""
+    if not pid or not panel_json:
+        return None
+    try:
+        port = get_study_port(pid)
+    except Exception:
+        return None
+    fn = getattr(port, "formulation_quality_for_config", None)
+    if fn is None:
+        return None
+    try:
+        res = fn(json.loads(panel_json))
+    except Exception:
+        return None
+    if not res or res.get("formulation_score") is None:
+        return None
+    return int(res["formulation_score"])
+
+
+def _attach_scores_and_bests(rows: list[dict[str, Any]], pid: str | None) -> None:
+    """Score each run/exchange and flag the session-best rows so the UI can
+    highlight them:
+
+    - **run** rows get ``canonical_cost`` + ``canonical_feasible``. The lowest
+      cost wins the ``best_canonical`` star, but a feasible run always beats an
+      infeasible one — a cheap cost bought by breaking a hard rule doesn't count,
+      so the star only falls on an infeasible run if the session has no feasible
+      run at all.
+    - **codeable message** rows (agent exchanges) get ``formulation_score``
+      (0–11). ``best_formulation`` marks EVERY exchange that reached the session's
+      peak score (a plateau, so "each exchange that achieved it" is visible)."""
+    best_cost: float | None = None
+    best_feasible = False
+    for r in rows:
+        if r.get("kind") == "run":
+            ev = _canonical_eval_cached(pid, r.get("latest_run"))
+            if ev is None:
+                continue
+            cost, feasible = ev
+            r["canonical_cost"] = cost
+            r["canonical_feasible"] = feasible
+            # A feasible run outranks any infeasible one; within a tier, lower cost wins.
+            if best_cost is None or (feasible, -cost) > (best_feasible, -best_cost):
+                best_cost, best_feasible = cost, feasible
+        elif r.get("kind") == "message" and r.get("codeable"):
+            score = _formulation_score_cached(pid, r.get("problem_config"))
+            if score is not None:
+                r["formulation_score"] = score
+
+    if best_cost is not None:
+        for r in rows:
+            if (
+                r.get("kind") == "run"
+                and r.get("canonical_cost") is not None
+                and bool(r.get("canonical_feasible")) == best_feasible
+                and abs(r["canonical_cost"] - best_cost) < 1e-9
+            ):
+                r["best_canonical"] = True
+
+    scores = [r["formulation_score"] for r in rows if r.get("formulation_score") is not None]
+    if scores:
+        top = max(scores)
+        for r in rows:
+            if r.get("formulation_score") == top:
+                r["best_formulation"] = True
+
+
+def _timeline_payload(adb: Session, loaded: m.LoadedSession) -> dict[str, Any]:
+    """Timeline rows + manual coding + deterministic per-row coding suggestions.
+
+    Derivation is structural (via the problem port), attached to rows here and
+    deliberately kept out of the CSV export (which carries only accepted codes):
+
+    - **assistant chat turns** are the only coding target — each turn's def/config
+      delta and info-type/term/effect suggestions come from diffing its
+      ``pre_turn_state`` against the next turn's (look-ahead attribution).
+    - **origin** is forced ``user`` for terms the cached LLM pass says the user
+      raised (see ``OriginClassification``); otherwise brief provenance.
+    - snapshots are reference-only (not coded — a manual save is already captured
+      by its "Definition edited" user message flowing into an exchange)."""
+    rows = build_coding_rows(
+        loaded, loaded.messages, loaded.runs, loaded.snapshots,
+        loaded.annotations, loaded.pauses,
+    )
+    port = get_study_port(loaded.test_problem_id)
+    doc = adb.get(m.OriginClassification, loaded.id)
+    classification: dict[str, list[str]] = {}
+    if doc and doc.data_json:
+        try:
+            classification = json.loads(doc.data_json)
+        except json.JSONDecodeError:
+            classification = {}
+    user_raised = _user_raised_by_turn(loaded.messages, classification)
+    turn_deriv = build_turn_derivations(loaded.messages, port, user_raised)
+    for row in rows:
+        d = turn_deriv.get(row.get("row_ref"))
+        if d is None:
+            continue
+        row["suggested_changes"] = d["changes"]
+        row["captured_terms"] = d["captured_terms"]
+        if d["definition_change"] is not None:
+            row["definition_change"] = d["definition_change"]
+        if d["config_change"] is not None:
+            row["config_change"] = d["config_change"]
+        # Show the agent-response (post-reply) def/config, not the user-send state.
+        if d.get("problem_def") is not None:
+            row["problem_def"] = d["problem_def"]
+        if d.get("problem_config") is not None:
+            row["problem_config"] = d["problem_config"]
+    # Score runs (canonical cost) + exchanges (formulation) and star the bests.
+    _attach_scores_and_bests(rows, loaded.test_problem_id)
+    return {
+        "session": _loaded_summary(loaded),
+        "annotations": [_annotation_out(a) for a in loaded.annotations],
+        "pauses": [_pause_out(p) for p in loaded.pauses],
+        "timeline": rows,
+        "goal_term_keys": goal_term_keys(loaded.snapshots, port),
+    }
 
 
 def _recompute_t0(loaded: m.LoadedSession) -> None:
@@ -431,15 +625,7 @@ def get_loaded(
     _: Principal = Depends(require_researcher),
 ):
     loaded = _get_loaded(adb, loaded_id)
-    return {
-        "session": _loaded_summary(loaded),
-        "annotations": [_annotation_out(a) for a in loaded.annotations],
-        "pauses": [_pause_out(p) for p in loaded.pauses],
-        "timeline": build_coding_rows(
-            loaded, loaded.messages, loaded.runs, loaded.snapshots,
-            loaded.annotations, loaded.pauses,
-        ),
-    }
+    return _timeline_payload(adb, loaded)
 
 
 @router.get("/loaded/{loaded_id}/timeline")
@@ -449,14 +635,49 @@ def get_timeline(
     _: Principal = Depends(require_researcher),
 ):
     loaded = _get_loaded(adb, loaded_id)
+    return _timeline_payload(adb, loaded)
+
+
+@router.post("/classify-origin")
+def classify_origin(
+    body: dict = Body(...),
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Run (and cache) the LLM origin pass: for each user message, which goal
+    terms did the user actually raise. Scope to one session via ``loaded_id`` or
+    run all loaded sessions. Without an ``api_key`` this is a safe no-op that
+    just clears/writes empty results. Cached results feed every later timeline
+    load, so a refresh never re-hits the API."""
+    api_key = (body.get("api_key") or "").strip()
+    model = (body.get("model") or "gemini-2.5-flash").strip()
+    loaded_id = body.get("loaded_id")
+
+    query = adb.query(m.LoadedSession)
+    if loaded_id:
+        query = query.filter(m.LoadedSession.id == loaded_id)
+    # Locked sessions are "coding done" — never rewrite their origin cache.
+    candidates = query.all()
+    sessions = [s for s in candidates if not s.locked]
+    skipped_locked = len(candidates) - len(sessions)
+
+    classified_messages = 0
+    for loaded in sessions:
+        port = get_study_port(loaded.test_problem_id)
+        result = classify_user_origins(loaded.messages, port, api_key, model)
+        doc = adb.get(m.OriginClassification, loaded.id)
+        if doc is None:
+            doc = m.OriginClassification(loaded_session_id=loaded.id)
+            adb.add(doc)
+        doc.data_json = json.dumps(result)
+        doc.model = model
+        classified_messages += len(result)
+    adb.commit()
     return {
-        "session": _loaded_summary(loaded),
-        "annotations": [_annotation_out(a) for a in loaded.annotations],
-        "pauses": [_pause_out(p) for p in loaded.pauses],
-        "timeline": build_coding_rows(
-            loaded, loaded.messages, loaded.runs, loaded.snapshots,
-            loaded.annotations, loaded.pauses,
-        ),
+        "sessions": len(sessions),
+        "classified_messages": classified_messages,
+        "ran_llm": bool(api_key),
+        "skipped_locked": skipped_locked,
     }
 
 
@@ -470,7 +691,7 @@ def patch_coding_meta(
     adb: Session = Depends(get_analysis_db),
     _: Principal = Depends(require_researcher),
 ):
-    loaded = _get_loaded(adb, loaded_id)
+    loaded = _require_unlocked(_get_loaded(adb, loaded_id))
     for field in _META_FIELDS:
         if field in body:
             setattr(loaded, field, body[field])
@@ -484,6 +705,22 @@ def patch_coding_meta(
     return {"session": _loaded_summary(loaded)}
 
 
+@router.post("/loaded/{loaded_id}/lock")
+def set_lock(
+    loaded_id: str,
+    body: dict = Body(...),
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Toggle the "coding done" lock. Deliberately un-guarded so it's always
+    reachable — it's the only way to unlock. Everything else on a locked session
+    is rejected by ``_require_unlocked``."""
+    loaded = _get_loaded(adb, loaded_id)
+    loaded.locked = bool(body.get("locked"))
+    adb.commit()
+    return {"session": _loaded_summary(loaded)}
+
+
 @router.post("/loaded/{loaded_id}/annotations")
 def create_annotation(
     loaded_id: str,
@@ -491,7 +728,7 @@ def create_annotation(
     adb: Session = Depends(get_analysis_db),
     _: Principal = Depends(require_researcher),
 ):
-    loaded = _get_loaded(adb, loaded_id)
+    loaded = _require_unlocked(_get_loaded(adb, loaded_id))
     anno = m.Annotation(
         loaded_session_id=loaded.id,
         anno_type=body.get("anno_type", "code"),
@@ -517,6 +754,7 @@ def update_annotation(
     anno = adb.get(m.Annotation, anno_id)
     if anno is None or anno.loaded_session_id != loaded_id:
         raise HTTPException(status_code=404, detail="Annotation not found")
+    _require_unlocked(_get_loaded(adb, loaded_id))
     for field in ("anno_type", "label", "color", "text", "video_pos_sec", "row_ref"):
         if field in body:
             setattr(anno, field, body[field])
@@ -533,8 +771,28 @@ def delete_annotation(
 ):
     anno = adb.get(m.Annotation, anno_id)
     if anno is not None and anno.loaded_session_id == loaded_id:
+        _require_unlocked(_get_loaded(adb, loaded_id))
         adb.delete(anno)
         adb.commit()
+
+
+@router.post("/loaded/{loaded_id}/reset-tags")
+def reset_tags(
+    loaded_id: str,
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Delete every coded change-tag (``anno_type='code'``) for this session.
+    Notes, markers and pauses are left untouched."""
+    loaded = _require_unlocked(_get_loaded(adb, loaded_id))
+    auto_backup(adb, [loaded.id], "reset-tags")
+    deleted = (
+        adb.query(m.Annotation)
+        .filter(m.Annotation.loaded_session_id == loaded.id, m.Annotation.anno_type == "code")
+        .delete(synchronize_session=False)
+    )
+    adb.commit()
+    return {"deleted": deleted}
 
 
 @router.post("/loaded/{loaded_id}/pauses")
@@ -544,7 +802,7 @@ def create_pause(
     adb: Session = Depends(get_analysis_db),
     _: Principal = Depends(require_researcher),
 ):
-    loaded = _get_loaded(adb, loaded_id)
+    loaded = _require_unlocked(_get_loaded(adb, loaded_id))
     if body.get("start_video_pos") is None:
         raise HTTPException(status_code=400, detail="start_video_pos is required")
     pause = m.Pause(
@@ -567,6 +825,7 @@ def delete_pause(
 ):
     pause = adb.get(m.Pause, pause_id)
     if pause is not None and pause.loaded_session_id == loaded_id:
+        _require_unlocked(_get_loaded(adb, loaded_id))
         adb.delete(pause)
         adb.commit()
 
@@ -579,6 +838,7 @@ def delete_loaded(
 ):
     loaded = adb.get(m.LoadedSession, loaded_id)
     if loaded is not None:
+        auto_backup(adb, [loaded.id], "delete-session")
         adb.delete(loaded)
         adb.commit()
 
@@ -596,6 +856,7 @@ def delete_loaded_bulk(
         raise HTTPException(status_code=400, detail="ids must be a list")
     if not ids:
         return {"deleted": 0}
+    auto_backup(adb, ids, "bulk-delete")
     deleted = (
         adb.query(m.LoadedSession)
         .filter(m.LoadedSession.id.in_(ids))
@@ -603,6 +864,41 @@ def delete_loaded_bulk(
     )
     adb.commit()
     return {"deleted": deleted}
+
+
+@router.get("/coding-backup.json")
+def download_coding_backup(
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Portable JSON of ALL coding (tags, notes, pauses, video-alignment, origin
+    classifications) — the off-machine / version-control safety copy."""
+    data = dump_coding(adb)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return StreamingResponse(
+        iter([json.dumps(data, indent=2, ensure_ascii=False)]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="mopt-coding-backup-{stamp}.json"'},
+    )
+
+
+@router.post("/coding-restore")
+async def restore_coding_backup(
+    request: Request,
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Restore coding from a backup JSON (raw body). Non-destructive: re-creates
+    tags on the matching loaded sessions, skipping exact duplicates."""
+    raw = await request.body()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid backup JSON: {exc}") from exc
+    try:
+        return restore_coding(adb, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -645,9 +941,14 @@ def survey_status(
 ):
     rows = adb.query(m.SurveyResponse).all()
     by_phase: dict[str, int] = {}
+    uploaded_at: dict[str, str] = {}
     for r in rows:
         by_phase[r.phase] = by_phase.get(r.phase, 0) + 1
-    return {"counts": by_phase}
+        if r.created_at is not None:
+            iso = r.created_at.isoformat()
+            if r.phase not in uploaded_at or iso > uploaded_at[r.phase]:
+                uploaded_at[r.phase] = iso
+    return {"counts": by_phase, "uploaded_at": uploaded_at}
 
 
 @router.get("/notebook")
@@ -987,11 +1288,21 @@ def export_csv(
         loaded, loaded.messages, loaded.runs, loaded.snapshots,
         loaded.annotations, loaded.pauses,
     )
+    def _cell(row: dict[str, Any], col: str) -> Any:
+        if col == "changes":  # composite change tags → "origin|type|term|effect"
+            parts = [
+                "|".join(str(c.get(f) or "") for f in CHANGE_FIELDS)
+                for c in (row.get("changes") or [])
+            ]
+            return "; ".join(parts)
+        val = row.get(col)
+        return "" if val is None else val
+
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(CSV_COLUMNS)
     for row in rows:
-        writer.writerow(["" if row.get(c) is None else row.get(c) for c in CSV_COLUMNS])
+        writer.writerow([_cell(row, c) for c in CSV_COLUMNS])
     label = loaded.participant_number or loaded.source_session_id or loaded.id
     filename = f"coding-{label}.csv"
     return StreamingResponse(
