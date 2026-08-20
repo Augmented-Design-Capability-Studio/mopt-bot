@@ -7,7 +7,7 @@ import { changeKey, changeToBody } from "../lib/facets";
 import type { Annotation, ChangeTag, TimelineRow } from "../lib/types";
 import { AnchorControls } from "./AnchorControls";
 import { EventList } from "./EventList";
-import { OriginClassifyDialog } from "./OriginClassifyDialog";
+import { LlmTagDialog } from "./LlmTagDialog";
 import { VideoPane } from "./VideoPane";
 
 /** Tab 1 — individual session coding against the video. */
@@ -110,6 +110,19 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
   function addChange(row: TimelineRow, change: Omit<ChangeTag, "id">) {
     if (!row.row_ref) return;
     void ctl.addAnnotation({ ...changeToBody(change), row_ref: row.row_ref });
+  }
+
+  /** Dismiss a suggested change: persisted as a `dismiss` annotation so the
+   * server filters it out of suggested_changes on every future load. */
+  function dismissSuggestion(row: TimelineRow, change: Omit<ChangeTag, "id">) {
+    if (!row.row_ref) return;
+    void ctl.addAnnotation({
+      anno_type: "dismiss",
+      row_ref: row.row_ref,
+      text: JSON.stringify({
+        origin: change.origin, type: change.type, term: change.term, effect: change.effect,
+      }),
+    });
   }
 
   function editChange(annoId: number, change: Omit<ChangeTag, "id">) {
@@ -447,9 +460,9 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
                     cursor: "pointer",
                   }}
                   onClick={() => setShowOriginDialog(true)}
-                  title="Read the user messages with an LLM to attribute origin reliably (cached)"
+                  title="Read every exchange with an LLM to suggest change tags (origin · type · term · effect, with rationale). Cached; lands as suggestions to accept."
                 >
-                  ✨ Auto-detect origin (LLM)
+                  ✨ LLM tagging
                 </button>
               </div>
               <EventList
@@ -460,6 +473,7 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
                 videoMode={videoMode}
                 onSeek={seek}
                 onAddChange={addChange}
+                onDismissSuggestion={dismissSuggestion}
                 onEditChange={editChange}
                 onSaveNote={saveNote}
                 onDeleteAnnotation={(id) => void ctl.removeAnnotation(id)}
@@ -469,11 +483,11 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
         )}
       </main>
 
-      <OriginClassifyDialog
+      <LlmTagDialog
         open={showOriginDialog}
         onClose={() => setShowOriginDialog(false)}
         currentLoadedId={ctl.selectedId}
-        onRun={(body) => ctl.classifyOrigin(body)}
+        onRun={(body) => ctl.runLlmTags(body)}
       />
 
       <DialogShell

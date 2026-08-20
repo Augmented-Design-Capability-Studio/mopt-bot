@@ -116,6 +116,49 @@ def rank_yticks(ax, order):
     ax.set_yticklabels([f"{p} (e={e})" for p, e in zip(order["participant"], order["expertise_score"])])
 
 # %%
+# Overall distribution of self-rated expertise, colored by workflow (agile/waterfall).
+# expertise_score = mean of the 5 pre-task Likert items (1-7). Stacked histogram, so
+# you see the overall shape AND the per-arm composition in one plot.
+_e = part.dropna(subset=["expertise_score"])
+_bins = np.arange(1, 7.5, 0.5)
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.hist([_e[_e.workflow_mode == wfm]["expertise_score"].values for wfm in ["agile", "waterfall"]],
+        bins=_bins, stacked=True, color=[PALETTE["agile"], PALETTE["waterfall"]],
+        label=["agile", "waterfall"], edgecolor="white")
+ax.set_xlabel("Self-rated expertise (mean of 5 Likert items, 1-7)")
+ax.set_ylabel("participants"); ax.set_title("Distribution of self-rated expertise (stacked by workflow)")
+ax.legend(title="workflow"); fig.tight_layout()
+print(f"overall: n={len(_e)}  mean={_e['expertise_score'].mean():.2f}  median={_e['expertise_score'].median():.2f}")
+for wfm in ["agile", "waterfall"]:
+    s = _e[_e.workflow_mode == wfm]["expertise_score"]
+    if len(s):
+        print(f"  {wfm:<9} n={len(s)}  mean={s.mean():.2f}  median={s.median():.2f}  "
+              f"sd={s.std(ddof=1):.2f}  range[{s.min():.1f}, {s.max():.1f}]")
+
+# %%
+# Does ELABORATION on the experience question track self-rated expertise? Hypothesis:
+# someone with real experience may write MORE on "Have you ever studied or worked with
+# optimization, operations research, ...", which need NOT match their self-perceived
+# expertise. experience_words = word count of that free-text answer (the TEXT stays
+# server-side; only the count is exposed). Counts are right-skewed (many 1-word "no"),
+# so read Spearman (rank) over Pearson.
+if "experience_words" not in part.columns:
+    print("experience_words not in `part` - restart the backend (new survey field), Reload data, re-run.")
+else:
+    from scipy import stats
+    _pe = part.dropna(subset=["experience_words", "expertise_score"])
+    plot_xy("experience_words", "expertise_score",
+            "Words in experience answer", "Self-rated expertise (1-7)",
+            "Self-rated expertise vs elaboration on the experience question")
+    r, pr = stats.pearsonr(_pe["experience_words"], _pe["expertise_score"])
+    rs, ps = stats.spearmanr(_pe["experience_words"], _pe["expertise_score"])
+    print(f"experience_words vs expertise_score (n={len(_pe)}):")
+    print(f"  Spearman rho={rs:.2f} p={ps:.3f}   (robust to the word-count skew)")
+    print(f"  Pearson  r={r:.2f} p={pr:.3f}")
+    print("  A weak correlation would mean elaboration captures experience that the")
+    print("  self-rating misses (or vice versa) - a measurement point worth noting.")
+
+# %%
 # init_words = length of the participant's FIRST REAL prompt. The synthetic
 # upload notice ("I'm uploading the following file(s): ...") is skipped when it
 # comes first, so this measures how much the participant actually specified up
@@ -139,6 +182,48 @@ plot_xy("expertise_score", "est_time_minutes",
 plot_xy("expertise_score", "runs_per_interaction",
         "Self-rated expertise", "Runs / interaction",
         "Runs-to-interaction ratio x expertise")
+
+# %%
+# Runs per time: agile vs waterfall. runs_per_min = runs / wall-clock minutes;
+# runs_per_active_min = runs / ACTIVE minutes (excludes >3min idle gaps). Both from
+# `part`. EXPLORATORY (n~13/group): report the effect size + 95% CI, not just a p.
+from scipy import stats
+_metrics = [("runs_per_min", "Runs / min"),
+            ("runs_per_active_min", "Runs / active min (excludes >3min inactivity)")]
+_have = [mt for mt in _metrics if mt[0] in part.columns]
+if not _have:
+    print("runs_per_min not in `part` - Reload data.")
+else:
+    _se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
+    fig, axes = plt.subplots(1, len(_have), figsize=(5 * len(_have), 4.4), squeeze=False)
+    for ax, (col, name) in zip(axes[0], _have):
+        a = part[part.workflow_mode == "agile"][col].dropna()
+        w = part[part.workflow_mode == "waterfall"][col].dropna()
+        diff = a.mean() - w.mean()                                  # agile - waterfall
+        sed = np.sqrt(a.var(ddof=1) / len(a) + w.var(ddof=1) / len(w))
+        lo, hi = diff - 1.96 * sed, diff + 1.96 * sed
+        pooled = np.sqrt(((len(a) - 1) * a.var(ddof=1) + (len(w) - 1) * w.var(ddof=1)) / (len(a) + len(w) - 2))
+        d = diff / pooled if pooled > 0 else 0.0                    # Cohen's d (+ = agile faster)
+        va, vw = a.var(ddof=1), w.var(ddof=1)
+        u_stat, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")   # U-test (ranks)
+        t_stat, pt = stats.ttest_ind(a, w, equal_var=False)              # Welch t-test (means)
+        dof = (sed**4 / ((va / len(a))**2 / (len(a) - 1) + (vw / len(w))**2 / (len(w) - 1))
+               if sed > 0 else float("nan"))                            # Welch-Satterthwaite df
+        ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
+               color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
+        ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
+        ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
+        ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
+        ax.set_title(f"{name}\nd={d:+.2f}  (t p={pt:.2f}, U p={pmw:.2f})")
+        print(f"\n{name}:")
+        print(f"   agile     mean={a.mean():.3f} sd={a.std(ddof=1):.3f} n={len(a)}")
+        print(f"   waterfall mean={w.mean():.3f} sd={w.std(ddof=1):.3f} n={len(w)}")
+        print(f"   diff(a-w)={diff:+.3f}   95% CI [{lo:+.3f}, {hi:+.3f}]   Cohen d={d:+.2f}")
+        print(f"   t-test (Welch, MEANS):        t({dof:.1f}) = {t_stat:+.2f}   p = {pt:.3f}")
+        print(f"   U-test (Mann-Whitney, RANKS): U = {u_stat:.0f}          p = {pmw:.3f}")
+    axes[0][0].set_ylabel("runs per minute")
+    fig.suptitle("Run frequency: agile vs waterfall"); fig.tight_layout()
+    print("\nEXPLORATORY (n~13/group): read the effect size + CI, not the p-value.")
 
 # %%
 # Run timeline: x = minutes since first message; rows ranked by expertise (low->high).
@@ -196,27 +281,111 @@ ax.set_title("Canonical solution cost over time, by participant")
 wf_legend(ax, rc["workflow_mode"])
 
 # %%
-# Cumulative-best FEASIBLE cost over time. De-noises the raw curves AND only
-# counts schedules that satisfy the true hard constraints (feasible == valid on
-# >=80% of traffic seeds; see metrics cell). A cheap-but-infeasible run is ignored.
+# Cumulative-best canonical cost over time (log): running best-so-far, one line per
+# participant, colored by workflow. LEFT counts only FEASIBLE schedules (valid on
+# >=80% of traffic seeds; a cheap-but-infeasible run is ignored). RIGHT uses ALL runs
+# (no feasibility filter), so a participant with NO feasible run still appears — and
+# some sit lower there because an infeasible schedule can be cheaper (rules violated).
 rc = elapsed(runs, ["participant", "workflow_mode"]).dropna(subset=["canonical_cost"])
-feas = rc[rc["feasible"] == True].sort_values(["loaded_id", "elapsed_min"])  # noqa: E712
-fig, ax = plt.subplots(figsize=(9, 6))
-for lid, g in feas.groupby("loaded_id"):
-    wf = g["workflow_mode"].iloc[0]
-    col = PALETTE.get(wf, "#7c3aed")
-    best = g["canonical_cost"].cummin()               # running best-so-far
-    best_std = g["canonical_cost_std"].where(g["canonical_cost"] <= best).ffill()  # std of that best run
-    ax.plot(g["elapsed_min"], best, drawstyle="steps-post", lw=1.8, alpha=0.85, color=col)
-    ax.errorbar(g["elapsed_min"], best, yerr=best_std, fmt="none", ecolor=col,
-                elinewidth=0.6, capsize=1.5, alpha=0.7)
-    ax.annotate(g.iloc[-1]["participant"], (g.iloc[-1]["elapsed_min"], best.iloc[-1]),
-                fontsize=7, xytext=(3, 0), textcoords="offset points")
-ax.set_yscale("log")
-ax.set_xlabel("Minutes since first message")
-ax.set_ylabel("Best FEASIBLE canonical cost so far (log)")
-ax.set_title("Cumulative-best feasible solution over time")
-wf_legend(ax, feas["workflow_mode"])
+
+
+def _best_over_time(ax, df):
+    for lid, g in df.sort_values(["loaded_id", "elapsed_min"]).groupby("loaded_id"):
+        wf = g["workflow_mode"].iloc[0]
+        col = PALETTE.get(wf, "#7c3aed")
+        best = g["canonical_cost"].cummin()               # running best-so-far
+        ax.plot(g["elapsed_min"], best, drawstyle="steps-post", lw=1.8, alpha=0.85, color=col)
+        ax.annotate(g.iloc[-1]["participant"], (g.iloc[-1]["elapsed_min"], best.iloc[-1]),
+                    fontsize=7, xytext=(3, 0), textcoords="offset points")
+    ax.set_yscale("log"); ax.set_xlabel("Minutes since first message")
+
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+_best_over_time(ax1, rc[rc["feasible"] == True])         # noqa: E712
+_best_over_time(ax2, rc)
+ax1.set_ylabel("Best canonical cost so far (log)")
+ax1.set_title("FEASIBLE only")
+ax2.set_title("ALL runs")
+wf_legend(ax1, rc["workflow_mode"])
+fig.suptitle("Cumulative-best canonical cost over time"); fig.tight_layout()
+
+# %%
+# Feasibility RATES: agile vs waterfall. (1) share of participants who EVER reached a
+# feasible solution (the achievement outcome — Fisher exact); (2) per-participant
+# fraction of runs that were feasible (how reliably they hit feasibility).
+from scipy import stats
+rc = runs.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id").dropna(subset=["canonical_cost"])
+rc["_feas"] = rc["feasible"] == True                     # noqa: E712
+_pf = rc.groupby(["loaded_id", "workflow_mode"]).agg(
+    ever=("_feas", "any"), rate=("_feas", "mean")).reset_index()
+order = [w for w in ["agile", "waterfall"] if w in set(_pf.workflow_mode)]
+_se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
+ever = _pf.groupby("workflow_mode")["ever"].agg(["sum", "count"])
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.2))
+# (1) EVER reached a feasible solution (proportion of participants) + Fisher exact
+props = [ever.loc[w, "sum"] / ever.loc[w, "count"] for w in order]
+ax1.bar(range(len(order)), props, color=[PALETTE.get(w, "#7c3aed") for w in order], alpha=0.85, width=0.6)
+for i, w in enumerate(order):
+    ax1.text(i, props[i] + 0.02, f"{int(ever.loc[w, 'sum'])}/{int(ever.loc[w, 'count'])}", ha="center", fontweight="bold")
+ax1.set_xticks(range(len(order))); ax1.set_xticklabels([w.capitalize() for w in order])
+ax1.set_ylim(0, 1.05); ax1.set_ylabel("share who EVER reached feasible"); ax1.set_title("Reached a feasible solution")
+if {"agile", "waterfall"} <= set(ever.index):
+    ay, an = int(ever.loc["agile", "sum"]), int(ever.loc["agile", "count"])
+    wy, wn = int(ever.loc["waterfall", "sum"]), int(ever.loc["waterfall", "count"])
+    _, pf = stats.fisher_exact([[ay, an - ay], [wy, wn - wy]])
+    ax1.text(0.98, 0.02, f"Fisher p={pf:.2f}", transform=ax1.transAxes, ha="right", va="bottom", fontsize=8, color="#555")
+# (2) per-participant fraction of runs feasible, by workflow (mean +/- SE + points)
+for i, w in enumerate(order):
+    vals = _pf[_pf.workflow_mode == w]["rate"]
+    ax2.bar(i, vals.mean(), yerr=_se(vals), color=PALETTE.get(w, "#7c3aed"), alpha=0.8, capsize=6, width=0.6)
+    ax2.scatter(np.full(len(vals), i), vals, color="k", alpha=0.5, s=18)
+ax2.set_xticks(range(len(order))); ax2.set_xticklabels([w.capitalize() for w in order])
+ax2.set_ylim(0, 1.05); ax2.set_ylabel("fraction of runs feasible (per participant)"); ax2.set_title("Feasible-run rate")
+fig.suptitle("Feasibility rates: agile vs waterfall"); fig.tight_layout()
+print("ever reached feasible:", {w: f"{int(ever.loc[w, 'sum'])}/{int(ever.loc[w, 'count'])}" for w in order})
+print("mean feasible-run rate:", {w: round(float(_pf[_pf.workflow_mode == w]['rate'].mean()), 2) for w in order})
+
+# %%
+# Compare the CUMULATIVE (best-achieved) canonical cost: agile vs waterfall. Each
+# participant contributes ONE number = the minimum cost they reached (the endpoint of
+# the cumulative-best curve). Lower = better. Cost spans orders of magnitude, so plot
+# on a LOG axis, summarize with the MEDIAN, and test on log10 (Welch t) + ranks (U).
+# LEFT = best FEASIBLE cost, among those who reached feasibility (the quality outcome,
+# reduced n). RIGHT = best cost over ALL runs — includes infeasible "cheap" schedules,
+# so it is NOT a clean quality measure (a never-feasible participant can look good).
+from scipy import stats
+rc = runs.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id").dropna(subset=["canonical_cost"])
+_bf = (rc[rc["feasible"] == True].groupby(["loaded_id", "workflow_mode"])["canonical_cost"]  # noqa: E712
+       .min().rename("best").reset_index())
+_ba = rc.groupby(["loaded_id", "workflow_mode"])["canonical_cost"].min().rename("best").reset_index()
+
+
+def _compare_cost(ax, frame, title):
+    order = [w for w in ["agile", "waterfall"] if w in set(frame.workflow_mode)]
+    vals = [frame[frame.workflow_mode == w]["best"].dropna() for w in order]
+    for i, (w, v) in enumerate(zip(order, vals)):
+        ax.scatter(np.full(len(v), i) + np.linspace(-0.05, 0.05, len(v)), v,
+                   color=PALETTE.get(w, "#7c3aed"), alpha=0.7, s=32)
+        ax.hlines(v.median(), i - 0.25, i + 0.25, color="black", lw=2)          # median
+    ax.set_yscale("log"); ax.set_xticks(range(len(order)))
+    ax.set_xticklabels([f"{w}\n(n={len(v)})" for w, v in zip(order, vals)])
+    ax.set_title(title)
+    if len(order) == 2 and all(len(v) > 1 for v in vals):
+        a, w = vals
+        _, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")               # ranks (scale-free)
+        _, pt = stats.ttest_ind(np.log10(a), np.log10(w), equal_var=False)       # Welch on log10 cost
+        ax.text(0.98, 0.97, f"median a={a.median():.0f}  w={w.median():.0f}\nt(log) p={pt:.2f}, U p={pmw:.2f}",
+                transform=ax.transAxes, ha="right", va="top", fontsize=8, color="#555")
+
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+_compare_cost(ax1, _bf, "Best FEASIBLE cost (quality)")
+_compare_cost(ax2, _ba, "Best cost, ALL runs (incl. infeasible)")
+ax1.set_ylabel("Best-achieved canonical cost (log; lower = better)")
+fig.suptitle("Cumulative-best canonical cost: agile vs waterfall"); fig.tight_layout()
+print("Best FEASIBLE cost (among reachers) — median by workflow:")
+print(_bf.groupby("workflow_mode")["best"].agg(["median", "count"]).round(0).to_string())
 
 # %%
 # Feasibility check: is each participant's LOWEST-cost run actually valid?
@@ -315,32 +484,156 @@ else:
     ax.legend(title="goal term", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
 
 # %%
-# GOAL-TERM ORIGINS — placeholder (coded by hand). The auto-derived brief-provenance
-# origin chart was removed: goal-term origins (who raised each term — user vs
-# agent-asked vs agent-assumed) are tagged MANUALLY in the Session-coding tab, which
-# is more reliable than the brief's provenance. Export those tags and plot them here.
-#
-# The one origin finding we keep here is IDLE-WAIT — an UNEXPECTED phenomenon (never
-# in the brief): several WATERFALL participants surfaced the `waiting_time` term
-# mid-session while NO AGILE participant ever did (the agile agent never revealed it).
-# All who raised it removed it before their final config, so it never entered the
-# formulation score — we report it qualitatively, not as a scored term.
+# GOAL-TERM ORIGINS + FATE — who INITIATED each goal term and what became of it,
+# from the MANUAL session-coding tags (annotations, anno_type='code').
+#   INITIATOR = origin (user|agent) of the EARLIEST coded tag for that term
+#               (row_ref "message:<id>" -> message time); sets the cell COLOR
+#               (user=green; agent colored by workflow).
+#   FATE (cell SHAPE):
+#     - full box            = applied when first coded (no earlier standalone mention)
+#     - lower-right half    = MENTIONED first, applied only LATER
+#     - X marker            = mentioned but NEVER applied (dropped/declined/ignored)
+# Reads live from the coded tags, so re-code + Reload data + re-run to refresh.
+import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D as _L2D
+_codes = (annotations[annotations.get("anno_type") == "code"].copy()
+          if (not annotations.empty and "anno_type" in annotations.columns) else pd.DataFrame())
+if "term" in _codes.columns:
+    _codes = _codes[_codes["term"].notna()]
+if _codes.empty:
+    print("No coded origin+term tags in the dataset yet. Tag goal-term changes")
+    print("(origin + term) in the Session-coding tab, then Reload data + re-run.")
+else:
+    # time of each coded change: row_ref "message:<source_id>" -> message ts_epoch
+    _mt = messages[["source_id", "ts_epoch"]].copy()
+    _mt["src"] = _mt["source_id"].astype(str)
+    _codes["src"] = _codes["row_ref"].fillna("").astype(str).str.split(":").str[-1]
+    _codes = _codes.merge(_mt[["src", "ts_epoch"]], on="src", how="left")
+
+    # Per (session, term): initiator = origin of the earliest tag; fate from the
+    # effect sequence. Within one exchange `applied` outranks a co-tagged mention
+    # (sort key), so "applied on its first coded exchange" reads as a full box.
+    _codes["_applied"] = _codes["effect"].isin(["applied", "removed"])  # removed ⇒ was applied
+    _c = _codes.sort_values(["ts_epoch", "_applied"], ascending=[True, False], na_position="last")
+    _g = _c.groupby(["loaded_id", "term"])
+    _init = _g.agg(origin=("origin", "first"), first_applied=("_applied", "first"),
+                   ever_applied=("_applied", "any")).reset_index()
+    _init["fate"] = np.where(_init["first_applied"], "applied",
+                    np.where(_init["ever_applied"], "applied_later", "never_applied"))
+    _init = _init.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id")
+
+    CANON = ["travel_time", "lateness_penalty", "capacity_penalty", "shift_limit",
+             "workload_balance", "worker_preference", "express_miss_penalty"]
+    TLABEL = {"travel_time": "travel time", "lateness_penalty": "lateness", "capacity_penalty": "capacity",
+              "shift_limit": "shift", "workload_balance": "workload", "worker_preference": "driver pref",
+              "express_miss_penalty": "express", "waiting_time": "idle wait (optional)"}
+    _seen = list(_init["term"].unique())
+    rows_terms = [t for t in CANON if t in _seen] + sorted(t for t in _seen if t not in CANON)
+    cols = (_init[["loaded_id", "participant", "workflow_mode"]].drop_duplicates()
+            .assign(_o=lambda d: d.workflow_mode.map({"agile": 0, "waterfall": 1}).fillna(2))
+            .sort_values(["_o", "participant"]).reset_index(drop=True))
+    import matplotlib.colors as _mcolors
+    import colorsys as _colorsys
+    USER, ABSENT = "#16a34a", "#eceff1"       # user=green; not coded/absent=light gray
+    OPTIONAL_TERMS = {"waiting_time"}         # un-briefed / optional goal terms
+    def _desat(color, sat=0.35):              # lower-saturation variant for optional rows
+        h, l, s = _colorsys.rgb_to_hls(*_mcolors.to_rgb(color))
+        return _colorsys.hls_to_rgb(h, l, s * sat)
+    def _cell(origin, wf, optional):
+        # user=green; agent-initiated colored BY WORKFLOW (agile=blue, waterfall=red).
+        if origin == "user":
+            col = USER
+        elif origin == "agent":
+            col = PALETTE.get(wf, "#7c3aed")
+        else:
+            return ABSENT
+        return _desat(col) if optional else col
+    _look = {(r.loaded_id, r.term): (r.origin, r.fate) for r in _init.itertuples()}
+    fig, ax = plt.subplots(figsize=(0.42 * len(cols) + 3.0, 0.5 * len(rows_terms) + 1.5))
+    for xi, c in cols.iterrows():
+        for yi, tm in enumerate(rows_terms):
+            origin, fate = _look.get((c.loaded_id, tm), (None, None))
+            col = _cell(origin, c.workflow_mode, tm in OPTIONAL_TERMS)
+            if fate == "applied":                      # full box
+                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor=col))
+            elif fate == "applied_later":              # mentioned first → lower-right half
+                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor="white"))
+                # y is inverted: (yi+1) is the visually LOWER edge of the cell.
+                ax.add_patch(mpatches.Polygon([(xi + 1, yi), (xi + 1, yi + 1), (xi, yi + 1)],
+                                              closed=True, edgecolor="white", facecolor=col))
+            elif fate == "never_applied":              # mentioned, never landed → X
+                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor="white"))
+                ax.plot([xi + 0.22, xi + 0.78], [yi + 0.22, yi + 0.78], color=col, lw=2.2, zorder=3)
+                ax.plot([xi + 0.22, xi + 0.78], [yi + 0.78, yi + 0.22], color=col, lw=2.2, zorder=3)
+            else:                                      # not coded / absent
+                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor=ABSENT))
+    _na = int((cols.workflow_mode == "agile").sum())          # agile | waterfall divider
+    if 0 < _na < len(cols):
+        ax.axvline(_na, color="black", lw=2)
+    ax.set_xlim(0, len(cols)); ax.set_ylim(0, len(rows_terms)); ax.invert_yaxis()
+    ax.set_xticks([x + 0.5 for x in range(len(cols))]); ax.set_xticklabels(cols["participant"], rotation=90, fontsize=7)
+    ax.set_yticks([y + 0.5 for y in range(len(rows_terms))]); ax.set_yticklabels([TLABEL.get(t, t) for t in rows_terms])
+    ax.set_title("Goal-term initiation + fate (manual codes)")
+    ax.legend(handles=[mpatches.Patch(color=USER, label="user-initiated"),
+                       mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
+                       mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)"),
+                       mpatches.Patch(facecolor="white", edgecolor="#9ca3af", label="full box = mentioned → applied immediately"),
+                       _L2D([0], [0], marker=6, ls="", color="#6b7280", label="half box = mentioned → applied later"),
+                       _L2D([0], [0], marker="x", ls="", color="#6b7280", markersize=9, markeredgewidth=2.2,
+                            label="X = mentioned → never applied"),
+                       mpatches.Patch(color=ABSENT, label="not coded / absent")],
+              bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+
+    # FATE SUMMARY — the "record this in our analysis" numbers: how many terms per
+    # fate, split by workflow and by initiator origin.
+    print("Goal-term fate counts (per session-term, from manual codes):")
+    print(_init.pivot_table(index="workflow_mode", columns="fate", values="term",
+                            aggfunc="count", fill_value=0).to_string())
+    print("\nBy initiator origin:")
+    print(_init.pivot_table(index="origin", columns="fate", values="term",
+                            aggfunc="count", fill_value=0).to_string())
+    _mna = _init[_init["fate"] == "never_applied"]
+    if len(_mna):
+        print("\nMentioned-but-never-applied terms:")
+        for r in _mna.sort_values(["workflow_mode", "participant"]).itertuples():
+            print(f"  {r.participant} ({r.workflow_mode}): {r.term} — raised by {r.origin or '?'}")
+    fig.tight_layout()
+
+    print("Initiator of each goal term (earliest coded change), by workflow:")
+    for wfm in ["agile", "waterfall"]:
+        s = _init[_init.workflow_mode == wfm]
+        ag, us = int((s.origin == "agent").sum()), int((s.origin == "user").sum())
+        print(f"  {wfm:<9} agent-initiated {ag:>2} / user-initiated {us:>2}"
+              + (f"  ({ag / (ag + us):.0%} agent)" if (ag + us) else ""))
+    print("\nPer-term agent-initiated count (agile | waterfall):")
+    for t in rows_terms:
+        line = f"  {TLABEL.get(t, t):<12}"
+        for wfm in ["agile", "waterfall"]:
+            s = _init[(_init.term == t) & (_init.workflow_mode == wfm)]
+            line += f"  {wfm[0]}:{int((s.origin == 'agent').sum())}/{len(s)}" if len(s) else f"  {wfm[0]}:-"
+        print(line)
+    print("\nNOTE: initiator = FIRST coded change for the term; re-code + Reload + re-run to update.")
+
+# %%
+# IDLE-WAIT — an UNEXPECTED phenomenon (qualitative, NOT scored). The un-briefed
+# `waiting_time` term was surfaced mid-session by several WATERFALL participants but
+# NO AGILE participant ever revealed it. All who raised it dropped it before their
+# final config, so it never entered the 0-11 formulation score. Snapshot-based ⇒ a
+# LOWER BOUND (a term set & removed between saves is missed).
+from scipy import stats
 _ever = (snapshots.groupby("loaded_id")["captured_terms"]
          .apply(lambda s: int(any("waiting_time" in (t or []) for t in s))))
 _iw = (_ever.rename("idle_wait_ever").reset_index()
-       .merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id"))
+       .merge(part[["loaded_id", "workflow_mode"]], on="loaded_id"))
 _tab = _iw.groupby("workflow_mode")["idle_wait_ever"].agg(["sum", "count"])
-print("Idle-wait (waiting_time) EVER surfaced during a session (snapshot-based lower bound):")
+print("Idle-wait (waiting_time) EVER surfaced during a session:")
 for wf, rr in _tab.iterrows():
     print(f"  {wf:<9} {int(rr['sum'])}/{int(rr['count'])}")
 if {"agile", "waterfall"} <= set(_tab.index):
-    from scipy import stats
     ay, an = int(_tab.loc["agile", "sum"]), int(_tab.loc["agile", "count"])
     wy, wn = int(_tab.loc["waterfall", "sum"]), int(_tab.loc["waterfall", "count"])
     _, pf = stats.fisher_exact([[ay, an - ay], [wy, wn - wy]], alternative="two-sided")
     print(f"  Fisher exact p={pf:.3f}   (agile never revealed idle-wait)")
-print("\nPLACEHOLDER: replace/augment with your MANUAL origin tags from the Session-coding")
-print("tab. Idle-wait stays a qualitative finding — it is NOT part of the 0-11 score.")
 
 # %%
 # Holistic formulation score (final config) = coverage + hard_bonus + objective_bonus (0-11).
@@ -414,99 +707,6 @@ ax.set_title("Formulation score over time, by participant")
 wf_legend(ax, fs["workflow_mode"])
 
 # %%
-# Formulation quality: agile vs waterfall (11-point total = coverage(0-7) +
-# hard_bonus(0-3) + objective_bonus(0-1)), from each session's FINAL snapshot.
-# Headline test + stacked composition + vs expertise (EXPLORATORY).
-from scipy import stats
-fq = (snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "ts_epoch"])
-      .groupby("loaded_id").tail(1)
-      .merge(part[["loaded_id", "participant", "workflow_mode", "expertise_score"]], on="loaded_id"))
-SCORE, COV = "formulation_score", "coverage"  # the briefed 7-term coverage / 0-11 total
-_se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
-
-
-def _by_workflow(col):
-    """agile vs waterfall arrays for one metric column."""
-    return (fq[fq.workflow_mode == "agile"][col].dropna(),
-            fq[fq.workflow_mode == "waterfall"][col].dropna())
-
-
-# --- headline significance test: WELCH'S two-sample t-test on the TOTAL score --
-# Simplest widely-understood test for "do two groups differ on a numeric score",
-# and — unlike Student's t or a pooled test — it does NOT assume the two groups
-# share the same spread (your "are the distributions similar enough?" worry). Read
-# the gap with a 95% CI + Cohen's d, not the p-value alone.
-a, w = _by_workflow(SCORE)
-diff = w.mean() - a.mean()                                       # waterfall - agile
-va, vw = a.var(ddof=1), w.var(ddof=1)
-se_diff = np.sqrt(va / len(a) + vw / len(w))
-t, pt = stats.ttest_ind(a, w, equal_var=False)                  # Welch (unequal variance)
-dof = se_diff**4 / ((va / len(a))**2 / (len(a) - 1) + (vw / len(w))**2 / (len(w) - 1))
-tcrit = stats.t.ppf(0.975, dof)
-pooled = np.sqrt(((len(a) - 1) * va + (len(w) - 1) * vw) / (len(a) + len(w) - 2))
-d = diff / pooled                                               # Cohen's d (effect size)
-print("TOTAL formulation score (0-11):")
-print(f"  agile     n={len(a)}  mean={a.mean():.2f} +/- {_se(a):.2f} (SE)   sd={a.std(ddof=1):.2f}")
-print(f"  waterfall n={len(w)}  mean={w.mean():.2f} +/- {_se(w):.2f} (SE)   sd={w.std(ddof=1):.2f}")
-print(f"  Welch t({dof:.1f}) = {t:.2f}, p = {pt:.3f}   <-- headline test")
-print(f"  gap (waterfall-agile) = {diff:.2f}   95% CI [{diff - tcrit * se_diff:.2f}, {diff + tcrit * se_diff:.2f}]   Cohen d = {d:.2f}")
-u, pu = stats.mannwhitneyu(a, w, alternative="two-sided")       # rank-based confirmation
-print(f"  Mann-Whitney U = {u:.0f}, p = {pu:.3f}   (nonparametric backup — also valid here)")
-print("  READ: a >1-SE gap is NOT significance. For p~0.05 the gap must clear ~2x the SE")
-print(f"        of the DIFFERENCE (wider than either group's SE). With n={len(a)}+{len(w)} this is")
-print("        underpowered — if the 95% CI spans 0, call 'waterfall better' suggestive.")
-
-# expertise correlation
-r, pr = stats.pearsonr(fq.expertise_score, fq[SCORE])
-print(f"\nExpertise vs formulation quality: Pearson r={r:.2f} p={pr:.3f} | "
-      f"Spearman rho={stats.spearmanr(fq.expertise_score, fq[SCORE])[0]:.2f}")
-
-# --- STACKED composition: the TOTAL height is the headline, its 3 parts are the
-# segments. coverage + hard_bonus + objective_bonus == the total EXACTLY, so the
-# stacked-bar height IS the mean total score; the error bar (SE) and the Welch p
-# sit on that total — the components are texture, not competing panels.
-comps = [(COV, "coverage (0-7)", "#3b82f6"),
-         ("hard_bonus", "hard constraints (0-3)", "#f59e0b"),
-         ("objective_bonus", "objective (0-1)", "#10b981")]
-groups = ["agile", "waterfall"]
-fig, ax = plt.subplots(figsize=(6, 5.5))
-xs = np.arange(len(groups))
-bottom = np.zeros(len(groups))
-for col, lab, color in comps:
-    vals = np.array([fq[fq.workflow_mode == g][col].mean() for g in groups])
-    ax.bar(xs, vals, bottom=bottom, width=0.62, color=color, edgecolor="white", label=lab)
-    for xi, v, b in zip(xs, vals, bottom):  # label a segment when it's tall enough to fit
-        if v >= 0.6:
-            ax.text(xi, b + v / 2, f"{v:.1f}", ha="center", va="center",
-                    color="white", fontsize=8, fontweight="bold")
-    bottom += vals
-for i, g in enumerate(groups):              # error bar (SE) + value on the TOTAL height
-    tt = fq[fq.workflow_mode == g][SCORE]
-    m, se = tt.mean(), _se(tt)
-    ax.errorbar(i, m, yerr=se, color="black", capsize=7, lw=1.6, zorder=5)
-    ax.text(i, m + se + 0.25, f"{m:.1f}", ha="center", fontweight="bold")
-ax.set_xticks(xs); ax.set_xticklabels([g.capitalize() for g in groups])
-ax.set_ylim(0, 11.5); ax.set_ylabel("Mean formulation score (0-11)")
-ax.set_title("Formulation score and its components: agile vs waterfall")
-ax.text(0.98, 0.02, f"total gap = {diff:+.1f}   (Welch p={pt:.2f}, d={d:.2f})",
-        transform=ax.transAxes, ha="right", va="bottom", fontsize=8, color="#555")
-ax.legend(loc="upper center", ncol=3, fontsize=7.5, framealpha=0.9,
-          bbox_to_anchor=(0.5, -0.09))
-fig.tight_layout()
-
-# --- total score vs expertise (fit line per workflow) ------------------------
-fig, ax = plt.subplots(figsize=(7, 5))
-for wf in ["agile", "waterfall"]:
-    g = fq[fq.workflow_mode == wf]
-    ax.scatter(g.expertise_score, g[SCORE], color=PALETTE.get(wf, "#7c3aed"), label=wf, s=45)
-    b = np.polyfit(g.expertise_score, g[SCORE], 1)
-    xs = np.array([g.expertise_score.min(), g.expertise_score.max()])
-    ax.plot(xs, np.polyval(b, xs), color=PALETTE.get(wf, "#7c3aed"), lw=1.2, alpha=0.7)
-ax.set_xlabel("Self-rated expertise"); ax.set_ylabel("Formulation score (0-11)")
-ax.set_title(f"Formulation quality vs expertise (overall r={r:.2f}, p={pr:.3f})"); ax.legend()
-fig.tight_layout()
-
-# %%
 # Does measuring each participant's BEST formulation instead of their FINAL config
 # change the agile-vs-waterfall picture? Formulations are non-monotonic (terms get
 # added then dropped), so the last snapshot can understate what a participant reached.
@@ -545,6 +745,117 @@ fig.tight_layout()
 print("\nNOTE: exploratory; 'max' = highest formulation_score at ANY snapshot (their peak).")
 
 # %%
+# Formulation quality: agile vs waterfall (11-point total = coverage(0-7) +
+# hard_bonus(0-3) + objective_bonus(0-1)). Headline test on the FINAL snapshot;
+# stacked composition for BOTH the FINAL config and each participant's best
+# (MAX-score) snapshot; plus vs expertise (EXPLORATORY).
+from scipy import stats
+fq = (snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "ts_epoch"])
+      .groupby("loaded_id").tail(1)
+      .merge(part[["loaded_id", "participant", "workflow_mode", "expertise_score"]], on="loaded_id"))
+# best (MAX-score) snapshot per session: sort by score then time, take the top (ties -> latest)
+fq_max = (snapshots.dropna(subset=["formulation_score"])
+          .sort_values(["loaded_id", "formulation_score", "ts_epoch"])
+          .groupby("loaded_id").tail(1)
+          .merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id"))
+SCORE, COV = "formulation_score", "coverage"  # the briefed 7-term coverage / 0-11 total
+_se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
+
+
+def _by_workflow(col):
+    """agile vs waterfall arrays for one metric column (FINAL snapshot)."""
+    return (fq[fq.workflow_mode == "agile"][col].dropna(),
+            fq[fq.workflow_mode == "waterfall"][col].dropna())
+
+
+# --- headline significance test: WELCH'S two-sample t-test on the FINAL TOTAL score
+# Simplest widely-understood test for "do two groups differ on a numeric score",
+# and — unlike Student's t or a pooled test — it does NOT assume the two groups
+# share the same spread (your "are the distributions similar enough?" worry). Read
+# the gap with a 95% CI + Cohen's d, not the p-value alone.
+a, w = _by_workflow(SCORE)
+diff = w.mean() - a.mean()                                       # waterfall - agile
+va, vw = a.var(ddof=1), w.var(ddof=1)
+se_diff = np.sqrt(va / len(a) + vw / len(w))
+t, pt = stats.ttest_ind(a, w, equal_var=False)                  # Welch (unequal variance)
+dof = se_diff**4 / ((va / len(a))**2 / (len(a) - 1) + (vw / len(w))**2 / (len(w) - 1))
+tcrit = stats.t.ppf(0.975, dof)
+pooled = np.sqrt(((len(a) - 1) * va + (len(w) - 1) * vw) / (len(a) + len(w) - 2))
+d = diff / pooled                                               # Cohen's d (effect size)
+print("TOTAL formulation score (0-11), FINAL config:")
+print(f"  agile     n={len(a)}  mean={a.mean():.2f} +/- {_se(a):.2f} (SE)   sd={a.std(ddof=1):.2f}")
+print(f"  waterfall n={len(w)}  mean={w.mean():.2f} +/- {_se(w):.2f} (SE)   sd={w.std(ddof=1):.2f}")
+print(f"  Welch t({dof:.1f}) = {t:.2f}, p = {pt:.3f}   <-- headline test")
+print(f"  gap (waterfall-agile) = {diff:.2f}   95% CI [{diff - tcrit * se_diff:.2f}, {diff + tcrit * se_diff:.2f}]   Cohen d = {d:.2f}")
+u, pu = stats.mannwhitneyu(a, w, alternative="two-sided")       # rank-based confirmation
+print(f"  Mann-Whitney U = {u:.0f}, p = {pu:.3f}   (nonparametric backup — also valid here)")
+print("  READ: a >1-SE gap is NOT significance. For p~0.05 the gap must clear ~2x the SE")
+print(f"        of the DIFFERENCE (wider than either group's SE). With n={len(a)}+{len(w)} this is")
+print("        underpowered — if the 95% CI spans 0, call 'waterfall better' suggestive.")
+
+# expertise correlation
+r, pr = stats.pearsonr(fq.expertise_score, fq[SCORE])
+print(f"\nExpertise vs formulation quality: Pearson r={r:.2f} p={pr:.3f} | "
+      f"Spearman rho={stats.spearmanr(fq.expertise_score, fq[SCORE])[0]:.2f}")
+
+# --- STACKED composition: total height = mean score, segments = its 3 parts
+# (coverage + hard_bonus + objective_bonus == the total EXACTLY). Two panels: the
+# FINAL config and each participant's BEST (MAX-score) snapshot; each panel carries
+# its own agile-vs-waterfall gap + Welch t p + Mann-Whitney U p.
+comps = [(COV, "coverage (0-7)", "#3b82f6"),
+         ("hard_bonus", "hard constraints (0-3)", "#f59e0b"),
+         ("objective_bonus", "objective (0-1)", "#10b981")]
+groups = ["agile", "waterfall"]
+
+
+def _stacked(ax, frame, title, show_labels):
+    bottom = np.zeros(len(groups))
+    for col, lab, color in comps:
+        vals = np.array([frame[frame.workflow_mode == g][col].mean() for g in groups])
+        ax.bar(np.arange(len(groups)), vals, bottom=bottom, width=0.62, color=color,
+               edgecolor="white", label=(lab if show_labels else None))
+        for xi, v, b in zip(range(len(groups)), vals, bottom):  # label tall-enough segments
+            if v >= 0.6:
+                ax.text(xi, b + v / 2, f"{v:.1f}", ha="center", va="center",
+                        color="white", fontsize=8, fontweight="bold")
+        bottom += vals
+    for i, g in enumerate(groups):              # error bar (SE) + value on the TOTAL height
+        tt = frame[frame.workflow_mode == g][SCORE]
+        m, se = tt.mean(), _se(tt)
+        ax.errorbar(i, m, yerr=se, color="black", capsize=7, lw=1.6, zorder=5)
+        ax.text(i, m + se + 0.25, f"{m:.1f}", ha="center", fontweight="bold")
+    _a = frame[frame.workflow_mode == "agile"][SCORE]
+    _w = frame[frame.workflow_mode == "waterfall"][SCORE]
+    if len(_a) and len(_w):                     # this panel's own gap + both tests
+        _, _pt = stats.ttest_ind(_a, _w, equal_var=False)              # Welch t-test (means)
+        _, _pu = stats.mannwhitneyu(_a, _w, alternative="two-sided")   # Mann-Whitney U (ranks)
+        ax.text(0.98, 0.02, f"gap={_w.mean() - _a.mean():+.1f} (t p={_pt:.2f}, U p={_pu:.2f})",
+                transform=ax.transAxes, ha="right", va="bottom", fontsize=8, color="#555")
+    ax.set_xticks(range(len(groups))); ax.set_xticklabels([g.capitalize() for g in groups])
+    ax.set_ylim(0, 11.5); ax.set_title(title)
+
+
+fig, axes = plt.subplots(1, 2, figsize=(11, 5.5), sharey=True)
+_stacked(axes[0], fq, "FINAL config", True)
+_stacked(axes[1], fq_max, "MAX (best snapshot)", False)
+axes[0].set_ylabel("Mean formulation score (0-11)")
+fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=3, fontsize=8)
+fig.suptitle("Formulation score and its components: agile vs waterfall (excluding the optional idle_wait goal term)")
+fig.tight_layout(rect=[0, 0.06, 1, 1])
+
+# --- total score vs expertise (fit line per workflow) ------------------------
+fig, ax = plt.subplots(figsize=(7, 5))
+for wf in ["agile", "waterfall"]:
+    g = fq[fq.workflow_mode == wf]
+    ax.scatter(g.expertise_score, g[SCORE], color=PALETTE.get(wf, "#7c3aed"), label=wf, s=45)
+    b = np.polyfit(g.expertise_score, g[SCORE], 1)
+    xs = np.array([g.expertise_score.min(), g.expertise_score.max()])
+    ax.plot(xs, np.polyval(b, xs), color=PALETTE.get(wf, "#7c3aed"), lw=1.2, alpha=0.7)
+ax.set_xlabel("Self-rated expertise"); ax.set_ylabel("Formulation score (0-11)")
+ax.set_title(f"Formulation quality vs expertise (overall r={r:.2f}, p={pr:.3f})"); ax.legend()
+fig.tight_layout()
+
+# %%
 # Post-session ratings: agile vs waterfall (part carries the post columns). n~13/group
 # and ratings ceiling (~5-6/7) => UNDERPOWERED. We report ESTIMATION (effect size +
 # 95% CI), not just a p. MW U is the a-priori test for these single Likert items;
@@ -574,7 +885,7 @@ else:
         ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
         ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
-        ax.set_title(f"{name}\nd={d:+.2f}  (MW p={pmw:.2f})")
+        ax.set_title(f"{name}\nd={d:+.2f}  (t p={pt:.2f}, U p={pmw:.2f})")
         print(f"{name:>20}: agile {a.mean():.2f}+/-{_se(a):.2f}  waterfall {w.mean():.2f}+/-{_se(w):.2f}  "
               f"diff(a-w)={diff:+.2f} 95%CI[{lo:+.2f},{hi:+.2f}]  d={d:+.2f}  MW p={pmw:.3f} | Welch p={pt:.3f}")
     axes[0].set_ylabel("Rating (1-7)"); axes[0].set_ylim(0, 7.5); fig.tight_layout()

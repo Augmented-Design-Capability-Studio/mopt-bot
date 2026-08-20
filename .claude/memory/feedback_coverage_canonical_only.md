@@ -37,6 +37,21 @@ constraints-binding barh) deleted; cell 22 replaced with a FINAL-vs-MAX formulat
 score agile/waterfall comparison (max = each participant's peak snapshot score;
 non-monotonic formulations mean max slightly sharpens the waterfall gap).
 
+**Canonical COST weight — w3 (time-window) raised 50→200 (2026-08).** The canonical
+cost objective is `DEFAULT_WEIGHTS` in `vrptw_problem/user_input.py` (single source;
+`evaluate_official`/`canonical_evaluation_for_result` re-score every run's schedule under
+it, seed-averaged; participant panel default too, but the study is DONE so this only
+affects our re-evaluation, not stored sessions). `w3` was the cheap hard constraint
+(50/min vs shift w2=500/min, capacity w4=1000/unit) — raised to 200/min (researcher
+decision, mid-way to shift; both are hard per-minute constraints). Effect: sharpens the
+agile-vs-waterfall gap in best-run canonical cost (agile median 3184→5200; waterfall
+~1029 unchanged since their best runs rarely violate TW). Hard-constraint HARDNESS is
+enforced by the binary `feasible` flag (any TW violation → infeasible), independent of
+w3 — the weight only sets continuous cost magnitude. The finding (workload_balance is
+the main term agile does worse on; agile also more TW-violations/infeasible bests) is
+ROBUST across w3∈{50..1000}. Weights are NOT directly comparable raw — different units;
+at w3=50 a typical TW violation (~52 min) already cost ~2600 ≈ capacity's ~4000.
+
 Notebook source of truth = `backend/analysis/notebooks/browser_cells.py`
 (re-imported via "Import .py"); keep the `PyodideNotebook.tsx` seed cells roughly in
 sync. Relates to [[project_session_coding_scheme]].

@@ -26,7 +26,7 @@ export interface LoadedSummary {
   counts: LoadedCounts;
 }
 
-export type AnnoType = "code" | "note" | "marker";
+export type AnnoType = "code" | "note" | "marker" | "dismiss";
 
 export interface Annotation {
   id: number;
@@ -52,16 +52,35 @@ export interface ChangeTag {
   origin: string | null; // user | agent
   type: string | null; // goal-term | weight | term-type | ranking | search-strategy | search-param
   term: string | null; // which goal term (null for search-strategy/param)
-  effect: string | null; // applied | acknowledged | dropped
+  effect: string | null; // applied | mentioned | dropped | declined | removed
 }
 
-/** A deterministic, structurally-derived change suggestion for a row. */
+/** A change suggestion for a row — deterministic (search tags) or from the
+ * cached ✨ LLM tagging pass (goal-term tags, which carry a rationale). */
 export interface SuggestedChange {
   origin: string | null;
   type: string | null;
   term: string | null;
   effect: string | null;
   captured?: boolean | null; // term active in the resulting config
+  rationale?: string | null; // LLM's one-line evidence (tooltip)
+}
+
+/** One changed field of a goal term / solver knob (from → to). */
+export interface ConfigFieldChange {
+  field: string;
+  from?: unknown;
+  to?: unknown;
+}
+
+/** Structured config diff for a row — rendered as chips in the cfg Δ column. */
+export interface ConfigDiff {
+  algorithm?: { from: string | null; to: string | null };
+  params?: ConfigFieldChange[];
+  terms?: { term: string; changes: ConfigFieldChange[] }[];
+  added?: { term: string; weight?: number | null; type?: string | null; rank?: number | null }[];
+  removed?: string[];
+  other?: boolean; // panel changed outside the modeled fields
 }
 
 export interface TimelineRow {
@@ -76,15 +95,16 @@ export interface TimelineRow {
   role: string | null;
   label: string | null;
   summary: string | null;
-  definition_change: string | null;
-  config_change: string | null;
+  definition_change: string | null; // stripped brief-side JSON (no goal_terms/runs)
+  config_change: ConfigDiff | null; // structured diff → chips
   latest_run: string | null;
   problem_def: string | null; // full brief JSON as of this chat turn
   problem_config: string | null; // full panel config JSON as of this chat turn
   user_prompt: string | null; // the user turn(s) that prompted this agent response
   codeable: boolean; // whether this row is a coding target (agent reply / manual save)
   changes: ChangeTag[]; // manual coded changes on this row
-  suggested_changes: SuggestedChange[]; // deterministic suggestions
+  dismissed?: ChangeTag[]; // dismissed suggestions (server filters these out)
+  suggested_changes: SuggestedChange[]; // search tags + cached LLM tags
   captured_terms: string[];
   color: string | null;
   note: string | null;

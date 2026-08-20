@@ -238,11 +238,11 @@ export function useAnalysisController() {
     return res;
   }, [token, selectedId, blockedByLock, withBusy, refreshDetail]);
 
-  const classifyOrigin = useCallback(
-    async (body: { api_key: string; model: string; loaded_id?: string }) => {
+  const runLlmTags = useCallback(
+    async (body: { api_key: string; model: string; loaded_id?: string; purge_tags?: boolean }) => {
       const res = await withBusy(
-        () => api.classifyOrigin(token.trim(), body),
-        "Origin classification failed.",
+        () => api.runLlmTags(token.trim(), body),
+        "LLM tagging failed.",
       );
       if (res && selectedId) await refreshDetail(selectedId);
       return res;
@@ -294,7 +294,7 @@ export function useAnalysisController() {
     addPause,
     removePause,
     resetTags,
-    classifyOrigin,
+    runLlmTags,
     exportCsv,
     backupCoding,
     restoreCoding,

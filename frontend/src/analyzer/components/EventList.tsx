@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { formatClock } from "../lib/format";
 import type { ChangeTag, TimelineRow } from "../lib/types";
 import { ChangeTagCell } from "./ChangeTagCell";
+import { ConfigDiffChips } from "./ConfigDiffChips";
 
 interface EventListProps {
   rows: TimelineRow[];
@@ -16,6 +17,8 @@ interface EventListProps {
   onSeek: (videoPos: number) => void;
   /** Create a coded change on a row. */
   onAddChange: (row: TimelineRow, change: Omit<ChangeTag, "id">) => void;
+  /** Dismiss a suggested change on a row (persisted; won't re-appear). */
+  onDismissSuggestion: (row: TimelineRow, change: Omit<ChangeTag, "id">) => void;
   /** Edit an existing coded change. */
   onEditChange: (annotationId: number, change: Omit<ChangeTag, "id">) => void;
   onSaveNote: (row: TimelineRow, text: string) => void;
@@ -106,6 +109,7 @@ export function EventList({
   videoMode,
   onSeek,
   onAddChange,
+  onDismissSuggestion,
   onEditChange,
   onSaveNote,
   onDeleteAnnotation,
@@ -168,6 +172,10 @@ export function EventList({
             // Captured ✓/✗ is meaningful wherever we derived config state:
             // snapshot rows and assistant chat turns (which carry pre_turn_state).
             const capturedKnown = r.kind === "snapshot" || r.kind === "message";
+            // Snapshot rows are reference-only (never coded — a manual save is
+            // already captured by its "Config edited" message flowing into an
+            // exchange), so grey them out to keep focus on the codeable rows.
+            const referenceOnly = r.kind === "snapshot";
             return (
               <tr
                 key={key}
@@ -182,7 +190,10 @@ export function EventList({
                         ? "rgba(234,179,8,0.12)"
                         : r.best_formulation
                           ? "rgba(16,185,129,0.10)"
-                          : undefined,
+                          : referenceOnly
+                            ? "rgba(148,163,184,0.08)"
+                            : undefined,
+                  opacity: referenceOnly && !active ? 0.55 : undefined,
                   cursor: videoMode && r.video_pos != null ? "pointer" : "default",
                 }}
                 onClick={() => {
@@ -285,8 +296,8 @@ export function EventList({
                 <td style={{ maxWidth: 140 }}>
                   <JsonCell value={r.definition_change} label="def" />
                 </td>
-                <td style={{ maxWidth: 140 }}>
-                  <JsonCell value={r.config_change} label="cfg" />
+                <td style={{ maxWidth: 200 }}>
+                  <ConfigDiffChips diff={r.config_change} />
                 </td>
                 <td style={{ maxWidth: 140 }}>
                   <JsonCell value={r.latest_run} label="result" />
@@ -300,6 +311,7 @@ export function EventList({
                       capturedTerms={r.captured_terms}
                       capturedKnown={capturedKnown}
                       onAdd={(change) => onAddChange(r, change)}
+                      onDismiss={(change) => onDismissSuggestion(r, change)}
                       onEdit={onEditChange}
                       onDelete={onDeleteAnnotation}
                     />

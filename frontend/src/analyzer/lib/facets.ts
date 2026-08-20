@@ -14,7 +14,7 @@ export const TYPE_VALUES = [
   "search-strategy",
   "search-param",
 ];
-export const EFFECT_VALUES = ["applied", "acknowledged", "dropped", "declined", "removed"];
+export const EFFECT_VALUES = ["applied", "mentioned", "dropped", "declined", "removed"];
 
 // The four fields of a change, with the dropdown label + fixed options. `term`
 // options are dynamic (the session's goal-term keys), so its list is empty here.
@@ -34,7 +34,7 @@ export const CHANGE_FIELDS: ChangeField[] = [
 const ORIGIN_COLOR: Record<string, string> = { user: "#3b82f6", agent: "#8b5cf6" };
 const EFFECT_COLOR: Record<string, string> = {
   applied: "#10b981",
-  acknowledged: "#f59e0b",
+  mentioned: "#f59e0b",
   dropped: "#ef4444",
   declined: "#a855f7",
   removed: "#6b7280",

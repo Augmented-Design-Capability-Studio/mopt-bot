@@ -16,7 +16,7 @@ WEIGHT_KEYS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8"]
 DEFAULT_WEIGHTS = {
     "w1": 1.0,      # total travel time
     "w2": 500.0,    # per minute over configurable max shift, summed across vehicles — panel alias `shift_limit`
-    "w3": 50.0,     # per minute TW violation
+    "w3": 200.0,    # per minute TW violation (evaluation objective; raised from 50 → 200: a hard per-minute constraint, mid-way to shift's 500, so time-window is no longer the cheap hard constraint)
     "w4": 1000.0,   # per unit capacity overflow
     "w5": 10.0,     # drive+service time variance across vehicles (excludes idle pre-window wait)
     "w6": 1.0,      # driver preference penalties

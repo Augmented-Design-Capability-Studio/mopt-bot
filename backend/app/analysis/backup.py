@@ -1,6 +1,6 @@
 """Durable, external backups of the researcher's coding labour.
 
-The coding (change-tags, notes, pauses, video-alignment, origin classifications)
+The coding (change-tags, notes, pauses, video-alignment, cached LLM tags)
 is the irreplaceable output — the loaded session copies can always be rebuilt
 from the study export. So a backup captures only the coding, as a portable JSON
 file written OUTSIDE the analysis DB (a sibling ``coding_backups/`` dir), so it
@@ -51,7 +51,7 @@ def dump_coding(adb: Session, loaded_ids: list[str] | None = None) -> dict[str, 
         query = query.filter(m.LoadedSession.id.in_(loaded_ids))
     sessions: list[dict[str, Any]] = []
     for loaded in query.all():
-        oc = adb.get(m.OriginClassification, loaded.id)
+        lt = adb.get(m.CodingLlmTags, loaded.id)
         sessions.append({
             "loaded_id": loaded.id,
             "source_session_id": loaded.source_session_id,
@@ -68,8 +68,9 @@ def dump_coding(adb: Session, loaded_ids: list[str] | None = None) -> dict[str, 
                 {"start_video_pos": p.start_video_pos, "end_video_pos": p.end_video_pos, "note": p.note}
                 for p in loaded.pauses
             ],
-            "origin_classification": (
-                {"data_json": oc.data_json, "model": oc.model} if oc is not None else None
+            # Cached LLM tag suggestions — paid API output, worth preserving.
+            "llm_tags": (
+                {"data_json": lt.data_json, "model": lt.model} if lt is not None else None
             ),
         })
     return {
@@ -147,5 +148,15 @@ def restore_coding(adb: Session, data: dict[str, Any]) -> dict[str, int]:
         for f, v in (s.get("coding_meta") or {}).items():
             if v is not None and getattr(loaded, f, None) is None:
                 setattr(loaded, f, v)
+
+        # Cached LLM tag suggestions: restore only when the target session has
+        # no cache row (never clobber a fresher local run).
+        lt = s.get("llm_tags")
+        if isinstance(lt, dict) and lt.get("data_json") and adb.get(m.CodingLlmTags, loaded.id) is None:
+            adb.add(m.CodingLlmTags(
+                loaded_session_id=loaded.id,
+                data_json=lt.get("data_json"),
+                model=lt.get("model"),
+            ))
     adb.commit()
     return {"sessions": restored_sessions, "annotations": restored_anns}

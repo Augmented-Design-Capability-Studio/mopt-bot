@@ -440,6 +440,21 @@ function parseCells(text: string): string[] {
   return cells.filter((c) => c.length > 0);
 }
 
+/** Serialize cells back to a jupytext-style `.py` (inverse of parseCells). A cell
+ *  whose every non-blank line is a comment is emitted as `# %% [markdown]` so the
+ *  browser_cells.py markdown/header cells round-trip; everything else is `# %%`. */
+function cellsToPy(codes: string[]): string {
+  const blocks = codes.map((code) => {
+    const body = code.replace(/\s+$/, "");
+    const lines = body.split(/\r?\n/);
+    const isMarkdown =
+      lines.some((l) => l.trim().length > 0) &&
+      lines.every((l) => l.trim() === "" || l.trimStart().startsWith("#"));
+    return `# %%${isMarkdown ? " [markdown]" : ""}\n${body}`;
+  });
+  return blocks.join("\n\n") + "\n";
+}
+
 const runBtn: React.CSSProperties = {
   fontSize: "0.78rem",
   padding: "0.2rem 0.6rem",
@@ -506,6 +521,20 @@ export function PyodideNotebook({ token }: { token: string }) {
     reader.readAsText(file);
   }
 
+  function exportPy() {
+    const text = cellsToPy(cells.map((c) => c.code));
+    const blob = new Blob([text], { type: "text/x-python" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "browser_cells.py";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setSavedNote("exported .py");
+  }
+
   async function runAll() {
     const py = pyRef.current;
     if (!py) return;
@@ -536,15 +565,22 @@ export function PyodideNotebook({ token }: { token: string }) {
     }
   }
 
+  // Re-fetch the de-identified dataset from the backend (which re-scores every run
+  // under the CURRENT canonical objective) AND re-run all cells, so a backend-side
+  // change — e.g. a canonical-weight edit — actually shows. "Run all" alone re-runs
+  // on the already-loaded frames; "Reload" alone refreshes the frames but leaves the
+  // rendered plots stale. This does both in one click.
   async function reloadData() {
     if (!pyRef.current) return;
     try {
-      setStatus("reloading data…");
+      setStatus("re-fetching data from backend…");
       const data = await getDataset(token.trim());
       await loadDataset(pyRef.current, data);
+      setStatus("re-running cells…");
+      await runAll();
       setStatus("ready");
     } catch (e) {
-      setError(describeApiError(e, "Failed to reload data."));
+      setError(describeApiError(e, "Failed to refresh data."));
     }
   }
 
@@ -594,8 +630,13 @@ export function PyodideNotebook({ token }: { token: string }) {
             >
               ▶▶ Run all
             </button>
-            <button type="button" style={{ fontSize: "0.78rem" }} onClick={() => void reloadData()}>
-              Reload data
+            <button
+              type="button"
+              style={{ ...runBtn, background: "#0d9488" }}
+              title="Re-fetch the dataset from the backend (re-scores every run under the current canonical objective) AND re-run all cells. Use this after a backend change, e.g. a canonical-weight edit."
+              onClick={() => void reloadData()}
+            >
+              ↻ Re-fetch &amp; run all
             </button>
             <label
               style={{ ...runBtn, background: "#0ea5e9", display: "inline-block" }}
@@ -613,6 +654,14 @@ export function PyodideNotebook({ token }: { token: string }) {
                 }}
               />
             </label>
+            <button
+              type="button"
+              style={{ ...runBtn, background: "#059669" }}
+              title="Download the current cells as browser_cells.py (# %% format); replace the repo file with it"
+              onClick={exportPy}
+            >
+              Export .py
+            </button>
             <button
               type="button"
               style={{ fontSize: "0.78rem" }}

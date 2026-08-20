@@ -36,9 +36,23 @@ NAMED_FIELDS: dict[str, str] = {
 
 _ID_HEADERS = ("participant id", "participant")
 
+# The pre-task free-text experience question ("Have you ever studied or worked with
+# optimization, operations research, …"). We surface only its WORD COUNT — a
+# de-identified number, a rough "how much did they elaborate" proxy — never the text.
+_EXPERIENCE_KEYWORD = "studied or worked"
+
 
 def normalize_pid(value: str | None) -> str:
     return (value or "").strip().upper()
+
+
+def experience_word_count(row: dict[str, str]) -> int | None:
+    """Word count of the free-text 'Have you ever studied or worked with
+    optimization…' answer. None if that column is absent."""
+    for key, val in row.items():
+        if _EXPERIENCE_KEYWORD in key.lower():
+            return len((val or "").split())
+    return None
 
 
 def _to_float(value: Any) -> float | None:

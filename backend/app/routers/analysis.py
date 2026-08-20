@@ -24,11 +24,16 @@ from sqlalchemy.orm import Session
 
 from app.analysis import models as m
 from app.analysis.backup import auto_backup, dump_coding, restore_coding
+from app.analysis.coding_llm import tag_session_changes
 from app.analysis.coding_suggestions import build_turn_derivations, goal_term_keys
 from app.analysis.metrics import initial_prompt_word_count
-from app.analysis.origin_llm import classify_user_origins
-from app.analysis.rows import CHANGE_FIELDS, CSV_COLUMNS, build_coding_rows
-from app.analysis.survey import extract_named_metrics, normalize_pid, parse_survey_csv
+from app.analysis.rows import CHANGE_FIELDS, CSV_COLUMNS, _parse_change, build_coding_rows
+from app.analysis.survey import (
+    experience_word_count,
+    extract_named_metrics,
+    normalize_pid,
+    parse_survey_csv,
+)
 from app.analysis.timeutil import iso_and_epoch, to_epoch
 from app.analysis_db import get_analysis_db
 from app.auth import Principal, require_researcher
@@ -329,28 +334,6 @@ def _require_unlocked(loaded: m.LoadedSession) -> m.LoadedSession:
     return loaded
 
 
-def _user_raised_by_turn(
-    messages: list[m.LoadedMessage], classification: dict[str, list[str]]
-) -> dict[str, set[str]]:
-    """Fold the LLM per-user-message term lists onto the agent turn they
-    prompted (``message:{assistant source_id}``), mirroring the exchange
-    grouping — so a change on that turn can be forced ``origin: user``."""
-    out: dict[str, set[str]] = {}
-    pending: set[str] = set()
-    for msg in sorted(messages, key=lambda x: ((x.ts_epoch or 0.0), x.id)):
-        if msg.role == "user" and (msg.kind or "") == "chat":
-            # An "Answered N open questions" message is the user RESPONDING to an
-            # agent's OQ — the term was agent-asked, so it's NOT user-raised.
-            if (msg.content or "").startswith("Answered "):
-                continue
-            pending |= set(classification.get(str(msg.source_id), []))
-        elif msg.role == "assistant" and (msg.kind or "") == "chat":
-            if pending:
-                out[f"message:{msg.source_id}"] = set(pending)
-            pending = set()
-    return out
-
-
 # --------------------------------------------------------------------------- #
 # Outcome / formulation scoring for the timeline highlight.
 #
@@ -454,47 +437,61 @@ def _attach_scores_and_bests(rows: list[dict[str, Any]], pid: str | None) -> Non
 
 
 def _timeline_payload(adb: Session, loaded: m.LoadedSession) -> dict[str, Any]:
-    """Timeline rows + manual coding + deterministic per-row coding suggestions.
+    """Timeline rows + manual coding + per-row change-tag suggestions.
 
-    Derivation is structural (via the problem port), attached to rows here and
-    deliberately kept out of the CSV export (which carries only accepted codes):
+    Two suggestion sources merge onto each exchange row (kept out of the CSV
+    export, which carries only accepted codes):
 
-    - **assistant chat turns** are the only coding target — each turn's def/config
-      delta and info-type/term/effect suggestions come from diffing its
-      ``pre_turn_state`` against the next turn's (look-ahead attribution).
-    - **origin** is forced ``user`` for terms the cached LLM pass says the user
-      raised (see ``OriginClassification``); otherwise brief provenance.
-    - snapshots are reference-only (not coded — a manual save is already captured
-      by its "Definition edited" user message flowing into an exchange)."""
+    - **deterministic** search-strategy / search-param tags + the structured
+      config diff + stripped def Δ + result-state display, from
+      ``build_turn_derivations`` (structural facts, recomputed every fetch);
+    - **LLM** goal-term tags from the cached ✨ LLM tagging pass (see
+      ``CodingLlmTags`` / ``coding_llm``), keyed by row ref.
+
+    Snapshots are reference-only (not coded — a manual save is already captured
+    by its "Definition edited" user message flowing into an exchange)."""
     rows = build_coding_rows(
         loaded, loaded.messages, loaded.runs, loaded.snapshots,
         loaded.annotations, loaded.pauses,
     )
     port = get_study_port(loaded.test_problem_id)
-    doc = adb.get(m.OriginClassification, loaded.id)
-    classification: dict[str, list[str]] = {}
+    turn_deriv = build_turn_derivations(loaded.messages, port)
+    doc = adb.get(m.CodingLlmTags, loaded.id)
+    llm_by_ref: dict[str, list[dict[str, Any]]] = {}
     if doc and doc.data_json:
         try:
-            classification = json.loads(doc.data_json)
+            llm_by_ref = json.loads(doc.data_json)
         except json.JSONDecodeError:
-            classification = {}
-    user_raised = _user_raised_by_turn(loaded.messages, classification)
-    turn_deriv = build_turn_derivations(loaded.messages, port, user_raised)
+            llm_by_ref = {}
     for row in rows:
-        d = turn_deriv.get(row.get("row_ref"))
-        if d is None:
-            continue
-        row["suggested_changes"] = d["changes"]
-        row["captured_terms"] = d["captured_terms"]
-        if d["definition_change"] is not None:
-            row["definition_change"] = d["definition_change"]
-        if d["config_change"] is not None:
-            row["config_change"] = d["config_change"]
-        # Show the agent-response (post-reply) def/config, not the user-send state.
-        if d.get("problem_def") is not None:
-            row["problem_def"] = d["problem_def"]
-        if d.get("problem_config") is not None:
-            row["problem_config"] = d["problem_config"]
+        ref = row.get("row_ref")
+        d = turn_deriv.get(ref)
+        suggested: list[dict[str, Any]] = []
+        if d is not None:
+            suggested.extend(d["changes"])
+            row["captured_terms"] = d["captured_terms"]
+            if d["definition_change"] is not None:
+                row["definition_change"] = d["definition_change"]
+            if d["config_change"] is not None:
+                row["config_change"] = d["config_change"]
+            # Show the agent-response (post-reply) def/config, not the user-send state.
+            if d.get("problem_def") is not None:
+                row["problem_def"] = d["problem_def"]
+            if d.get("problem_config") is not None:
+                row["problem_config"] = d["problem_config"]
+        if row.get("codeable") and ref in llm_by_ref:
+            cached = llm_by_ref[ref]
+            if isinstance(cached, list):
+                suggested.extend(c for c in cached if isinstance(c, dict))
+        # Drop suggestions the researcher explicitly dismissed on this row
+        # (`dismiss` annotations — persisted, so they stay gone across reloads).
+        if suggested and row.get("dismissed"):
+            def _key(c: dict[str, Any]) -> str:
+                return "|".join(str(c.get(f) or "") for f in CHANGE_FIELDS)
+            dismissed_keys = {_key(d) for d in row["dismissed"]}
+            suggested = [c for c in suggested if _key(c) not in dismissed_keys]
+        if suggested:
+            row["suggested_changes"] = suggested
     # Score runs (canonical cost) + exchanges (formulation) and star the bests.
     _attach_scores_and_bests(rows, loaded.test_problem_id)
     return {
@@ -638,46 +635,86 @@ def get_timeline(
     return _timeline_payload(adb, loaded)
 
 
-@router.post("/classify-origin")
-def classify_origin(
+@router.post("/llm-tags")
+def run_llm_tags(
     body: dict = Body(...),
     adb: Session = Depends(get_analysis_db),
     _: Principal = Depends(require_researcher),
 ):
-    """Run (and cache) the LLM origin pass: for each user message, which goal
-    terms did the user actually raise. Scope to one session via ``loaded_id`` or
-    run all loaded sessions. Without an ``api_key`` this is a safe no-op that
-    just clears/writes empty results. Cached results feed every later timeline
-    load, so a refresh never re-hits the API."""
+    """Run (and cache) the ✨ LLM change-tagging pass: one batched call per
+    session reads every exchange + the deterministic evidence and proposes
+    composite change tags (goal-term origin / first-applied / mentioned /
+    dropped / declined / removed). Scope to one session via ``loaded_id`` or run
+    all loaded sessions.
+
+    Without an ``api_key`` this is a PURE no-op — the existing cache is kept
+    (unlike the old origin pass, which destructively wrote empty results). A
+    per-session failure likewise keeps that session's old cache and is counted
+    in ``failed``. Cached results feed every later timeline load, so a refresh
+    never re-hits the API.
+
+    ``purge_tags`` (re-label from scratch): per session, AFTER its LLM run
+    succeeded, the existing accepted ``code`` annotations are deleted — with an
+    auto-backup first — so the fresh suggestions can be re-accepted cleanly. A
+    failed run purges nothing (old tags AND old cache stay); notes/markers/
+    pauses are never touched; locked sessions are skipped entirely."""
     api_key = (body.get("api_key") or "").strip()
     model = (body.get("model") or "gemini-2.5-flash").strip()
     loaded_id = body.get("loaded_id")
+    purge_tags = bool(body.get("purge_tags"))
 
     query = adb.query(m.LoadedSession)
     if loaded_id:
         query = query.filter(m.LoadedSession.id == loaded_id)
-    # Locked sessions are "coding done" — never rewrite their origin cache.
+    # Locked sessions are "coding done" — never rewrite their tag cache.
     candidates = query.all()
     sessions = [s for s in candidates if not s.locked]
     skipped_locked = len(candidates) - len(sessions)
 
-    classified_messages = 0
+    if not api_key:
+        return {"sessions": 0, "tagged_exchanges": 0, "ran_llm": False,
+                "skipped_locked": skipped_locked, "failed": 0, "purged_tags": 0}
+
+    tagged_exchanges = purged_total = 0
+    ok = failed = 0
     for loaded in sessions:
         port = get_study_port(loaded.test_problem_id)
-        result = classify_user_origins(loaded.messages, port, api_key, model)
-        doc = adb.get(m.OriginClassification, loaded.id)
+        rows = build_coding_rows(
+            loaded, loaded.messages, loaded.runs, loaded.snapshots,
+            loaded.annotations, loaded.pauses,
+        )
+        deriv = build_turn_derivations(loaded.messages, port)
+        result = tag_session_changes(rows, deriv, port, api_key, model)
+        if result is None:
+            failed += 1  # keep this session's old cache AND old tags
+            continue
+        if purge_tags:
+            # Re-label from scratch: back up, then drop the accepted code tags AND
+            # old suggestion-dismissals (they referred to the previous suggestions)
+            # — only now that this session's fresh suggestions are in hand.
+            auto_backup(adb, [loaded.id], "llm-retag")
+            purged_total += (
+                adb.query(m.Annotation)
+                .filter(m.Annotation.loaded_session_id == loaded.id,
+                        m.Annotation.anno_type.in_(("code", "dismiss")))
+                .delete(synchronize_session=False)
+            )
+        doc = adb.get(m.CodingLlmTags, loaded.id)
         if doc is None:
-            doc = m.OriginClassification(loaded_session_id=loaded.id)
+            doc = m.CodingLlmTags(loaded_session_id=loaded.id)
             adb.add(doc)
-        doc.data_json = json.dumps(result)
+        doc.data_json = json.dumps(result, ensure_ascii=False)
         doc.model = model
-        classified_messages += len(result)
+        tagged_exchanges += len(result)
+        ok += 1
     adb.commit()
     return {
-        "sessions": len(sessions),
-        "classified_messages": classified_messages,
-        "ran_llm": bool(api_key),
+        "sessions": ok,
+        "tagged_exchanges": tagged_exchanges,
+        "ran_llm": True,
         "skipped_locked": skipped_locked,
+        "failed": failed,
+        "purged_tags": purged_total,
     }
 
 
@@ -782,13 +819,15 @@ def reset_tags(
     adb: Session = Depends(get_analysis_db),
     _: Principal = Depends(require_researcher),
 ):
-    """Delete every coded change-tag (``anno_type='code'``) for this session.
-    Notes, markers and pauses are left untouched."""
+    """Delete every coded change-tag (``anno_type='code'``) and every
+    suggestion-dismissal (``'dismiss'``) for this session — a full reset of the
+    researcher's tagging decisions. Notes, markers and pauses are untouched."""
     loaded = _require_unlocked(_get_loaded(adb, loaded_id))
     auto_backup(adb, [loaded.id], "reset-tags")
     deleted = (
         adb.query(m.Annotation)
-        .filter(m.Annotation.loaded_session_id == loaded.id, m.Annotation.anno_type == "code")
+        .filter(m.Annotation.loaded_session_id == loaded.id,
+                m.Annotation.anno_type.in_(("code", "dismiss")))
         .delete(synchronize_session=False)
     )
     adb.commit()
@@ -1026,7 +1065,12 @@ def _survey_metrics(data_json: str | None) -> dict[str, float | None]:
         row = json.loads(data_json)
     except (json.JSONDecodeError, TypeError):
         return {}
-    return extract_named_metrics(row or {})
+    metrics: dict[str, float | None] = dict(extract_named_metrics(row or {}))
+    # Word count of the free-text experience answer (number only — text stays here).
+    words = experience_word_count(row or {})
+    if words is not None:
+        metrics["experience_words"] = float(words)
+    return metrics
 
 
 @router.get("/dataset")
@@ -1166,6 +1210,11 @@ def dataset(
             "label": a.label,
             "video_pos_sec": a.video_pos_sec,
             "row_ref": a.row_ref,
+            # Parsed coded-change facets (origin/type/term/effect) for `code` tags,
+            # so the notebook can matrix the MANUAL session-coding labels. Null for
+            # note/marker rows. Re-parses live from the annotation each dataset load,
+            # so re-coding + Reload data refreshes them.
+            **_parse_change(a.text, a.label),
         }
         for s in loaded
         for a in s.annotations
@@ -1296,6 +1345,8 @@ def export_csv(
             ]
             return "; ".join(parts)
         val = row.get(col)
+        if isinstance(val, dict):  # structured config diff → JSON string
+            return json.dumps(val, ensure_ascii=False)
         return "" if val is None else val
 
     buf = io.StringIO()

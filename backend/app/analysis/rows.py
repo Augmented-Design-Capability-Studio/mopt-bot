@@ -151,6 +151,10 @@ def build_coding_rows(
     # Coded changes attached to a DB row are folded into that row's "changes"
     # list instead of becoming a standalone row, so a row can carry many changes.
     attached_changes: dict[str, list[dict[str, Any]]] = {}
+    # Dismissed suggestions: bookkeeping-only annotations recording which
+    # suggested changes the researcher rejected on a row — the timeline endpoint
+    # filters those suggestions out. Never rendered as rows or CSV lines.
+    attached_dismissed: dict[str, list[dict[str, Any]]] = {}
     for a in annotations:
         if not a.row_ref:
             continue
@@ -158,6 +162,10 @@ def build_coding_rows(
             attached_notes.setdefault(a.row_ref, []).append(a.text or "")
         elif a.anno_type == "code":
             attached_changes.setdefault(a.row_ref, []).append(
+                {"id": a.id, **_parse_change(a.text, a.label)}
+            )
+        elif a.anno_type == "dismiss":
+            attached_dismissed.setdefault(a.row_ref, []).append(
                 {"id": a.id, **_parse_change(a.text, a.label)}
             )
 
@@ -193,6 +201,10 @@ def build_coding_rows(
             "codeable": False,
             # Manual coded changes on this row: [{id, origin, type, term, effect}].
             "changes": [],
+            # Suggestions the researcher dismissed on this row (same shape +
+            # annotation id); the timeline endpoint filters them out of
+            # suggested_changes, the UI can undo via the annotation id.
+            "dismissed": [],
             # Deterministic change suggestions + captured terms, filled per row by
             # the timeline endpoint (see coding_suggestions); empty elsewhere.
             "suggested_changes": [],
@@ -224,6 +236,7 @@ def build_coding_rows(
             user_prompt=user_prompt,
             codeable=codeable,
             changes=attached_changes.get(ref, []),
+            dismissed=attached_dismissed.get(ref, []),
             note=" | ".join(attached_notes.get(ref, [])) or None,
             row_ref=ref,
         )
@@ -282,6 +295,8 @@ def build_coding_rows(
 
     # Standalone annotations (codes, markers like "ready", free notes at a time).
     for a in annotations:
+        if a.anno_type == "dismiss":
+            continue  # bookkeeping only — never a row
         if a.row_ref and a.anno_type in ("note", "code"):
             continue  # already folded into its row
         if a.video_pos_sec is None or offset is None:

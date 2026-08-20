@@ -168,15 +168,17 @@ class Pause(AnalysisBase):
     session: Mapped["LoadedSession"] = relationship(back_populates="pauses")
 
 
-class OriginClassification(AnalysisBase):
-    """Cached LLM origin classification for one loaded session.
+class CodingLlmTags(AnalysisBase):
+    """Cached LLM change-tag suggestions for one loaded session.
 
-    ``data_json`` maps a user message's ``source_id`` (str) → the list of
-    goal-term keys that message raised. Computed once via the "Auto-detect
-    origin" pass and reused on every timeline load so we never re-hit the API on
-    a refresh. Cascades away with its loaded session."""
+    ``data_json`` maps a row ref (``message:{source_id}``) → the list of
+    suggested composite changes ``{origin, type, term, effect, rationale}``.
+    Computed via the "✨ LLM tagging" pass and reused on every timeline load so
+    we never re-hit the API on a refresh. Cascades away with its loaded session.
+    (Replaces the old per-message ``origin_classifications`` cache — that table
+    may still exist in older DBs but is no longer read.)"""
 
-    __tablename__ = "origin_classifications"
+    __tablename__ = "coding_llm_tags"
 
     loaded_session_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("loaded_sessions.id", ondelete="CASCADE"), primary_key=True

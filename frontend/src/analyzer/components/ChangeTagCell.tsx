@@ -10,6 +10,8 @@ interface ChangeTagCellProps {
   capturedTerms: string[];
   capturedKnown: boolean;
   onAdd: (change: Omit<ChangeTag, "id">) => void;
+  /** Reject a suggestion for good (persisted server-side). */
+  onDismiss: (change: Omit<ChangeTag, "id">) => void;
   onEdit: (id: number, change: Omit<ChangeTag, "id">) => void;
   onDelete: (id: number) => void;
 }
@@ -80,6 +82,7 @@ export function ChangeTagCell({
   capturedTerms,
   capturedKnown,
   onAdd,
+  onDismiss,
   onEdit,
   onDelete,
 }: ChangeTagCellProps) {
@@ -127,10 +130,14 @@ export function ChangeTagCell({
             opacity: 0.9,
           }}
         >
-          <span style={{ fontSize: "0.68rem", color: "#6b7280" }}>
+          <span
+            style={{ fontSize: "0.68rem", color: "#6b7280" }}
+            title={s.rationale ?? undefined}
+          >
             {[s.origin, s.type, s.term, s.effect].filter(Boolean).join(" · ") || "change"}
+            {s.rationale ? <span style={{ marginLeft: 3, color: "#8b5cf6", cursor: "help" }}>ℹ</span> : null}
           </span>
-          {s.term ? <TermBadge ok={!!s.captured} /> : null}
+          {s.term ? <TermBadge ok={s.captured ?? captured.has(s.term)} /> : null}
           <button
             type="button"
             title="accept suggestion"
@@ -146,6 +153,22 @@ export function ChangeTagCell({
             }}
           >
             ＋accept
+          </button>
+          <button
+            type="button"
+            title="dismiss suggestion (won't come back)"
+            onClick={() => onDismiss({ origin: s.origin, type: s.type, term: s.term, effect: s.effect })}
+            style={{
+              border: "none",
+              background: "none",
+              cursor: "pointer",
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              color: "#dc2626",
+              padding: 0,
+            }}
+          >
+            ✕
           </button>
         </div>
       ))}

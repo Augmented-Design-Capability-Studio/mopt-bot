@@ -41,11 +41,18 @@ export function getTimeline(token: string, id: string): Promise<LoadedDetail> {
   return apiFetch<LoadedDetail>(`/analysis/loaded/${id}/timeline`, token);
 }
 
-export function classifyOrigin(
+export function runLlmTags(
   token: string,
-  body: { api_key: string; model: string; loaded_id?: string },
-): Promise<{ sessions: number; classified_messages: number; ran_llm: boolean }> {
-  return apiFetch("/analysis/classify-origin", token, {
+  body: { api_key: string; model: string; loaded_id?: string; purge_tags?: boolean },
+): Promise<{
+  sessions: number;
+  tagged_exchanges: number;
+  ran_llm: boolean;
+  skipped_locked: number;
+  failed: number;
+  purged_tags: number;
+}> {
+  return apiFetch("/analysis/llm-tags", token, {
     method: "POST",
     body: JSON.stringify(body),
   });
