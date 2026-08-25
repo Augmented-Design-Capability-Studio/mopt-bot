@@ -140,6 +140,34 @@ def _term_origins_from_brief(brief: dict) -> dict[str, str]:
     return out
 
 
+def _param_field_changed(field: str, a: Any, b: Any) -> bool:
+    """Whether a solver-knob field really changed. Scalars: canonical compare.
+    ``algorithm_params`` (a dict): changed only when a key's VALUE changed or a
+    key was ADDED — a key silently VANISHING is pipeline re-serialization churn
+    (the turn's patch carried partial params; the solver falls back to its
+    default), not a tuning decision (P30 29:27: ``temp_init`` disappeared on a
+    pure explanation turn; 3 such phantom deltas across 28 sessions)."""
+    if field == "algorithm_params" and isinstance(a, dict) and isinstance(b, dict):
+        return any(
+            (k not in a) or _canon(b.get(k)) != _canon(a.get(k))
+            for k in b
+        )
+    return _canon(a) != _canon(b)
+
+
+def panel_changed_beyond_diff(prev_panel: dict, panel: dict) -> bool:
+    """Whether the panel changed in a way ``structured_config_diff`` did NOT
+    model — the ``other: true`` fallback. ``algorithm_params`` is excluded from
+    the comparison: its value changes are already modeled, and its key-removal
+    churn (see ``_param_field_changed``) must not resurface here as a phantom
+    "cfg ✎" (P30 29:27)."""
+    def strip(p: dict) -> dict:
+        p = _deep(p) if isinstance(p, dict) else {}
+        _problem(p).pop("algorithm_params", None)
+        return p
+    return _canon(strip(prev_panel)) != _canon(strip(panel))
+
+
 def structured_config_diff(prev_prob: dict, prob: dict) -> dict[str, Any] | None:
     """Structural diff of two panel ``problem`` objects → a compact, typed shape
     the UI renders as chips and the LLM pass consumes as evidence::
@@ -218,7 +246,7 @@ def structured_config_diff(prev_prob: dict, prob: dict) -> dict[str, Any] | None
         params = [
             {"field": f, "from": prev_prob.get(f), "to": prob.get(f)}
             for f in _PARAM_FIELDS
-            if _canon(prev_prob.get(f)) != _canon(prob.get(f))
+            if _param_field_changed(f, prev_prob.get(f), prob.get(f))
         ]
         if params:
             diff["params"] = params
@@ -256,10 +284,11 @@ def _search_changes(prev_prob: dict, prob: dict, origin_by_term: dict[str, str],
     if algorithm_changed:
         changes.append({"origin": "user" if search_user else "agent",
                         "type": "search-strategy", "term": None, "effect": "applied", "captured": None})
-    # Compared order-/number-insensitively via `_canon`; suppressed when the
+    # Compared order-/number-insensitively (and ignoring pure key-removal churn
+    # in algorithm_params — see _param_field_changed); suppressed when the
     # algorithm also changed (the knobs then just carry the new solver's defaults).
     if not algorithm_changed and any(
-        _canon(prev_prob.get(f)) != _canon(prob.get(f)) for f in _PARAM_FIELDS
+        _param_field_changed(f, prev_prob.get(f), prob.get(f)) for f in _PARAM_FIELDS
     ):
         changes.append({"origin": "agent",
                         "type": "search-param", "term": None, "effect": "applied", "captured": None})
@@ -452,6 +481,22 @@ def _restore_edited(gt: dict, pre_gt: dict, patch_gt: dict,
                 cur["rank"] = src["rank"]
 
 
+def _restore_locked_list(prob: dict, pre_prob: dict, edited_terms: set[str]) -> None:
+    """In-place: for each participant-edited term, restore its membership in the
+    panel's top-level ``locked_goal_terms`` list to this reply's own pre-state —
+    a "locked — → on" line in the edit message changes this list too, and
+    leaving it un-restored leaked the lock one exchange early (P30 29:27
+    surfaced as a phantom ``other`` chip)."""
+    cur = prob.get("locked_goal_terms")
+    if not isinstance(cur, list):
+        return
+    pre = pre_prob.get("locked_goal_terms") if isinstance(pre_prob, dict) else None
+    pre_set = set(pre) if isinstance(pre, list) else set()
+    kept = [t for t in cur if t not in edited_terms or t in pre_set]
+    kept += [t for t in edited_terms if t in pre_set and t not in kept]
+    prob["locked_goal_terms"] = kept
+
+
 def _restore_search_fields(prob: dict, pre_prob: dict, edited_search: set[str]) -> None:
     """In-place: restore each participant-edited PANEL search field (``algorithm``,
     ``algorithm_params``, ``epochs``, ``pop_size``) to this reply's own pre-state
@@ -491,6 +536,7 @@ def _reconstruct_after_edit(pre_brief: dict, pre_panel: dict, next_brief: dict, 
         pprob["goal_terms"] = pgt
     _restore_edited(pgt, _goal_terms(_problem(pre_panel)), patch_gt, edited_terms, ranks_reordered)
     _restore_search_fields(pprob, _problem(pre_panel), edited_search)
+    _restore_locked_list(pprob, _problem(pre_panel), edited_terms)
     return recon_brief, recon_panel
 
 
@@ -612,7 +658,7 @@ def build_turn_derivations(messages: list[Any], port: Any) -> dict[str, dict[str
                 for c in changes:
                     c["origin"] = "user"
         cfg_diff = structured_config_diff(_problem(prev_panel), _problem(panel_r))
-        if cfg_diff is None and _canon(prev_panel) != _canon(panel_r):
+        if cfg_diff is None and panel_changed_beyond_diff(prev_panel, panel_r):
             # The panel changed outside the modeled fields (rare) — still flag it.
             cfg_diff = {"other": True}
         def_changed = _canon(brief_for_display(prev_brief)) != _canon(brief_for_display(brief_r))

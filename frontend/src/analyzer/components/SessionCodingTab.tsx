@@ -7,6 +7,7 @@ import { changeKey, changeToBody } from "../lib/facets";
 import type { Annotation, ChangeTag, TimelineRow } from "../lib/types";
 import { AnchorControls } from "./AnchorControls";
 import { EventList } from "./EventList";
+import { LlmReasonDialog } from "./LlmReasonDialog";
 import { LlmTagDialog } from "./LlmTagDialog";
 import { VideoPane } from "./VideoPane";
 
@@ -19,6 +20,7 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
   // alone. Flip this on to re-enable the video pane + clock anchoring.
   const [videoMode, setVideoMode] = useState(false);
   const [showOriginDialog, setShowOriginDialog] = useState(false);
+  const [showReasonDialog, setShowReasonDialog] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "date">("date");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -125,6 +127,30 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
     });
   }
 
+  /** Reject a suggested reason: persisted as a `dismiss-reason` annotation so
+   * the server filters it out of reason_suggestions on every future load. */
+  function dismissReason(row: TimelineRow, reason: string) {
+    if (!row.row_ref) return;
+    void ctl.addAnnotation({
+      anno_type: "dismiss-reason",
+      row_ref: row.row_ref,
+      text: JSON.stringify({ reason }),
+    });
+  }
+
+  /** Persist a row's improvement-reason set as ONE `reason` annotation
+   * (empty set deletes it). */
+  function saveReason(row: TimelineRow, reasons: string[], note: string | null) {
+    if (!row.row_ref) return;
+    if (!reasons.length && !note) {
+      if (row.reasons?.id != null) void ctl.removeAnnotation(row.reasons.id);
+      return;
+    }
+    const body = { text: JSON.stringify({ reasons, note }) };
+    if (row.reasons?.id != null) void ctl.editAnnotation(row.reasons.id, body);
+    else void ctl.addAnnotation({ anno_type: "reason", row_ref: row.row_ref, ...body });
+  }
+
   function editChange(annoId: number, change: Omit<ChangeTag, "id">) {
     void ctl.editAnnotation(annoId, changeToBody(change));
   }
@@ -161,6 +187,44 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
     const existing = new Set(r.changes.map(changeKey));
     return n + r.suggested_changes.filter((s) => !existing.has(changeKey(s))).length;
   }, 0);
+
+  // --- Reason layer (independent of the change tags) ---
+  const reasonCount = (detail?.annotations ?? []).filter((a) => a.anno_type === "reason").length;
+
+  /** Un-labeled rows with reason suggestions (LLM verdicts where checked, else
+   * mechanical candidates; dismissed ones already filtered server-side). */
+  const suggestedReasonRows = (detail?.timeline ?? []).filter(
+    (r) => r.row_ref && !r.reasons && (r.reason_suggestions ?? []).length > 0,
+  );
+  const reasonSuggestionCount = suggestedReasonRows.reduce(
+    (n, r) => n + (r.reason_suggestions ?? []).length,
+    0,
+  );
+
+  function acceptAllReasons() {
+    const bodies: Partial<Annotation>[] = [];
+    for (const r of suggestedReasonRows) {
+      const reasons = (r.reason_suggestions ?? []).map((s) => s.reason);
+      if (reasons.length) {
+        bodies.push({
+          anno_type: "reason",
+          row_ref: r.row_ref!,
+          text: JSON.stringify({ reasons, note: null }),
+        });
+      }
+    }
+    if (bodies.length) void ctl.addManyAnnotations(bodies);
+  }
+
+  function resetReasons() {
+    if (reasonCount === 0) {
+      alert("No reason labels to reset for this session.");
+      return;
+    }
+    if (confirm(`Remove all ${reasonCount} reason label(s) for this session? Change tags are kept.`)) {
+      void ctl.resetReasons();
+    }
+  }
 
   const hasVideo = videoReady;
 
@@ -376,7 +440,7 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
                   </button>
                 </div>
               ) : null}
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", fontSize: "0.8rem" }}>
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", fontSize: "0.8rem" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", cursor: "pointer" }}>
                   <input
                     type="checkbox"
@@ -385,15 +449,6 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
                   />
                   Video coding
                 </label>
-                <button
-                  type="button"
-                  style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
-                  disabled={suggestionCount === 0}
-                  onClick={acceptAllSuggestions}
-                  title="Materialize every deterministic suggestion as an editable tag"
-                >
-                  Accept all suggestions ({suggestionCount})
-                </button>
                 <button
                   type="button"
                   style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
@@ -429,41 +484,96 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
                     }}
                   />
                 </label>
-                <button
-                  type="button"
+                {/* ---- change-TAG tools (purple group) ---- */}
+                <div
                   style={{
-                    fontSize: "0.8rem",
-                    padding: "0.25rem 0.6rem",
-                    border: "1px solid #dc2626",
-                    borderRadius: 4,
-                    background: "rgba(220,38,38,0.08)",
-                    color: "#dc2626",
-                    cursor: tagCount ? "pointer" : "not-allowed",
+                    display: "flex", alignItems: "center", gap: "0.3rem", marginLeft: "auto",
+                    border: "1px solid #8b5cf6", borderRadius: 6, padding: "0.15rem 0.4rem",
+                    background: "rgba(139,92,246,0.05)",
                   }}
-                  disabled={tagCount === 0}
-                  onClick={resetTags}
-                  title="Delete every coded tag for this session (notes are kept)"
                 >
-                  Reset tags ({tagCount})
-                </button>
-                <button
-                  type="button"
+                  <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#8b5cf6" }}>tags</span>
+                  <button
+                    type="button"
+                    style={{
+                      fontSize: "0.78rem", padding: "0.2rem 0.5rem", fontWeight: 600,
+                      border: "1px solid #8b5cf6", borderRadius: 4,
+                      background: "rgba(139,92,246,0.1)", color: "#8b5cf6", cursor: "pointer",
+                    }}
+                    onClick={() => setShowOriginDialog(true)}
+                    title="Read every exchange with an LLM to suggest change tags (origin · type · term · effect, with rationale). Cached; lands as suggestions to accept."
+                  >
+                    ✨ LLM tagging
+                  </button>
+                  <button
+                    type="button"
+                    style={{ fontSize: "0.78rem", padding: "0.2rem 0.5rem" }}
+                    disabled={suggestionCount === 0}
+                    onClick={acceptAllSuggestions}
+                    title="Materialize every change-tag suggestion as an editable tag"
+                  >
+                    Accept all ({suggestionCount})
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      fontSize: "0.78rem", padding: "0.2rem 0.5rem",
+                      border: "1px solid #dc2626", borderRadius: 4,
+                      background: "rgba(220,38,38,0.08)", color: "#dc2626",
+                      cursor: tagCount ? "pointer" : "not-allowed",
+                    }}
+                    disabled={tagCount === 0}
+                    onClick={resetTags}
+                    title="Delete every coded change tag for this session (reasons and notes are kept)"
+                  >
+                    Reset ({tagCount})
+                  </button>
+                </div>
+                {/* ---- improvement-REASON tools (teal group) ---- */}
+                <div
                   style={{
-                    fontSize: "0.8rem",
-                    padding: "0.25rem 0.6rem",
-                    marginLeft: "auto",
-                    fontWeight: 600,
-                    border: "1px solid #8b5cf6",
-                    borderRadius: 4,
-                    background: "rgba(139,92,246,0.1)",
-                    color: "#8b5cf6",
-                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: "0.3rem",
+                    border: "1px solid #0d9488", borderRadius: 6, padding: "0.15rem 0.4rem",
+                    background: "rgba(13,148,136,0.05)",
                   }}
-                  onClick={() => setShowOriginDialog(true)}
-                  title="Read every exchange with an LLM to suggest change tags (origin · type · term · effect, with rationale). Cached; lands as suggestions to accept."
                 >
-                  ✨ LLM tagging
-                </button>
+                  <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#0d9488" }}>reasons</span>
+                  <button
+                    type="button"
+                    style={{
+                      fontSize: "0.78rem", padding: "0.2rem 0.5rem", fontWeight: 600,
+                      border: "1px solid #0d9488", borderRadius: 4,
+                      background: "rgba(13,148,136,0.1)", color: "#0d9488", cursor: "pointer",
+                    }}
+                    onClick={() => setShowReasonDialog(true)}
+                    title="Double-check the mechanical improvement-reason candidates on each run with an LLM (separate cache; never touches change tags)."
+                  >
+                    ✨ LLM reasons
+                  </button>
+                  <button
+                    type="button"
+                    style={{ fontSize: "0.78rem", padding: "0.2rem 0.5rem" }}
+                    disabled={reasonSuggestionCount === 0}
+                    onClick={acceptAllReasons}
+                    title="Accept every suggested reason on runs not yet labeled (LLM verdicts where the LLM has checked; mechanical candidates elsewhere — dismissed ones excluded)"
+                  >
+                    Accept all ({reasonSuggestionCount})
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      fontSize: "0.78rem", padding: "0.2rem 0.5rem",
+                      border: "1px solid #dc2626", borderRadius: 4,
+                      background: "rgba(220,38,38,0.08)", color: "#dc2626",
+                      cursor: reasonCount ? "pointer" : "not-allowed",
+                    }}
+                    disabled={reasonCount === 0}
+                    onClick={resetReasons}
+                    title="Delete every improvement-reason label for this session (change tags and notes are kept)"
+                  >
+                    Reset ({reasonCount})
+                  </button>
+                </div>
               </div>
               <EventList
                 rows={detail?.timeline ?? []}
@@ -474,6 +584,8 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
                 onSeek={seek}
                 onAddChange={addChange}
                 onDismissSuggestion={dismissSuggestion}
+                onSaveReason={saveReason}
+                onDismissReason={dismissReason}
                 onEditChange={editChange}
                 onSaveNote={saveNote}
                 onDeleteAnnotation={(id) => void ctl.removeAnnotation(id)}
@@ -488,6 +600,13 @@ export function SessionCodingTab({ ctl }: { ctl: AnalysisController }) {
         onClose={() => setShowOriginDialog(false)}
         currentLoadedId={ctl.selectedId}
         onRun={(body) => ctl.runLlmTags(body)}
+      />
+
+      <LlmReasonDialog
+        open={showReasonDialog}
+        onClose={() => setShowReasonDialog(false)}
+        currentLoadedId={ctl.selectedId}
+        onRun={(body) => ctl.runLlmReasons(body)}
       />
 
       <DialogShell

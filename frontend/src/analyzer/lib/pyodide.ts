@@ -68,6 +68,8 @@ runs = pd.DataFrame(_d.get("runs", []))
 annotations = pd.DataFrame(_d.get("annotations", []))
 snapshots = pd.DataFrame(_d.get("snapshots", []))
 surveys = pd.DataFrame(_d.get("surveys", []))
+# Field-level solver-change events (algorithm switches + per-knob param changes)
+search_changes = pd.DataFrame(_d.get("search_changes", []))
 
 _UP = "i'm uploading"
 def _first_prompt_words(sid):
@@ -200,7 +202,7 @@ def plot_xy(xcol, ycol, xlabel=None, ylabel=None, title=None):
     fig.tight_layout()
 
 for _k in ("pd", "plt", "np", "sessions", "messages", "runs", "annotations", "snapshots",
-           "surveys", "part", "plot_xy", "heatmap_over_time"):
+           "surveys", "search_changes", "part", "plot_xy", "heatmap_over_time"):
     _NB_GLOBALS[_k] = eval(_k)
 _NB_GLOBALS["PALETTE"] = _PALETTE
 `;

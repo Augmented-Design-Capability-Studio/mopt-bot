@@ -26,7 +26,7 @@ export interface LoadedSummary {
   counts: LoadedCounts;
 }
 
-export type AnnoType = "code" | "note" | "marker" | "dismiss";
+export type AnnoType = "code" | "note" | "marker" | "dismiss" | "reason" | "dismiss-reason";
 
 export interface Annotation {
   id: number;
@@ -114,9 +114,37 @@ export interface TimelineRow {
   // canonical fields, codeable message rows carry formulation_score).
   canonical_cost?: number | null; // official re-scored run cost — lower is better
   canonical_feasible?: boolean | null; // valid on the majority of traffic draws
+  canonical_contributions?: Record<string, number>; // mean cost per goal term
   formulation_score?: number | null; // 0–11 config quality — higher is better
   best_canonical?: boolean; // this run achieved the session's best canonical cost
   best_formulation?: boolean; // this exchange reached the session's peak formulation score
+  // Improvement-reason labeling (run rows + formulation-jump exchanges).
+  reasons?: ReasonLabel | null; // accepted label (a `reason` annotation)
+  reason_suggestions?: ReasonSuggestion[]; // deterministic + cached LLM verdicts
+  dismissed_reasons?: string[]; // rejected suggestions (server filters them out)
+  outcome_delta?: OutcomeDelta; // run rows: Δ vs the previous run
+}
+
+/** Accepted improvement-reason label on a row (one `reason` annotation). */
+export interface ReasonLabel {
+  id: number;
+  reasons: string[];
+  note: string | null;
+}
+
+/** One suggested improvement reason (mechanical, LLM, or both agreeing). */
+export interface ReasonSuggestion {
+  reason: string;
+  rationale?: string | null;
+  source: "auto" | "llm" | "auto+llm";
+}
+
+/** A run's outcome change vs the previous run. */
+export interface OutcomeDelta {
+  cost_delta: number | null;
+  feasible_from: boolean | null;
+  feasible_to: boolean | null;
+  movers: { term: string; delta: number }[];
 }
 
 export interface LoadedDetail {

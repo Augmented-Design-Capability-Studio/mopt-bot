@@ -32,6 +32,7 @@ CSV_COLUMNS = [
     "config_change",
     "latest_run",
     "changes",
+    "reasons",
     "color",
     "note",
 ]
@@ -155,6 +156,12 @@ def build_coding_rows(
     # suggested changes the researcher rejected on a row — the timeline endpoint
     # filters those suggestions out. Never rendered as rows or CSV lines.
     attached_dismissed: dict[str, list[dict[str, Any]]] = {}
+    # Improvement-REASON labels (anno_type='reason'): why the outcome moved on a
+    # run / formulation-jump row. text = JSON {reasons: [...], note}.
+    attached_reasons: dict[str, dict[str, Any]] = {}
+    # Rejected reason suggestions (anno_type='dismiss-reason', text = JSON
+    # {reason}): filtered out of reason_suggestions by the timeline endpoint.
+    attached_dismissed_reasons: dict[str, list[str]] = {}
     for a in annotations:
         if not a.row_ref:
             continue
@@ -168,6 +175,23 @@ def build_coding_rows(
             attached_dismissed.setdefault(a.row_ref, []).append(
                 {"id": a.id, **_parse_change(a.text, a.label)}
             )
+        elif a.anno_type == "reason":
+            try:
+                obj = json.loads(a.text or "{}")
+            except (json.JSONDecodeError, TypeError):
+                obj = {}
+            attached_reasons[a.row_ref] = {
+                "id": a.id,
+                "reasons": obj.get("reasons") if isinstance(obj.get("reasons"), list) else [],
+                "note": obj.get("note") or None,
+            }
+        elif a.anno_type == "dismiss-reason":
+            try:
+                obj = json.loads(a.text or "{}")
+            except (json.JSONDecodeError, TypeError):
+                obj = {}
+            if obj.get("reason"):
+                attached_dismissed_reasons.setdefault(a.row_ref, []).append(obj["reason"])
 
     diff_map = compute_definition_config_changes(snapshots)
 
@@ -205,6 +229,14 @@ def build_coding_rows(
             # annotation id); the timeline endpoint filters them out of
             # suggested_changes, the UI can undo via the annotation id.
             "dismissed": [],
+            # Accepted improvement-reason label ({id, reasons, note}) — run and
+            # formulation-jump rows only; None elsewhere.
+            "reasons": None,
+            # Deterministic + cached-LLM reason suggestions, filled by the
+            # timeline endpoint ([{reason, rationale?, source}]).
+            "reason_suggestions": [],
+            # Reason suggestions the researcher rejected on this row.
+            "dismissed_reasons": [],
             # Deterministic change suggestions + captured terms, filled per row by
             # the timeline endpoint (see coding_suggestions); empty elsewhere.
             "suggested_changes": [],
@@ -237,6 +269,8 @@ def build_coding_rows(
             codeable=codeable,
             changes=attached_changes.get(ref, []),
             dismissed=attached_dismissed.get(ref, []),
+            reasons=attached_reasons.get(ref),
+            dismissed_reasons=attached_dismissed_reasons.get(ref, []),
             note=" | ".join(attached_notes.get(ref, [])) or None,
             row_ref=ref,
         )
@@ -265,6 +299,8 @@ def build_coding_rows(
             summary=f"ok={r.ok} cost={r.cost}",
             latest_run=r.result_json,
             changes=attached_changes.get(ref, []),
+            reasons=attached_reasons.get(ref),
+            dismissed_reasons=attached_dismissed_reasons.get(ref, []),
             note=" | ".join(attached_notes.get(ref, [])) or None,
             row_ref=ref,
         )
@@ -295,8 +331,8 @@ def build_coding_rows(
 
     # Standalone annotations (codes, markers like "ready", free notes at a time).
     for a in annotations:
-        if a.anno_type == "dismiss":
-            continue  # bookkeeping only — never a row
+        if a.anno_type in ("dismiss", "reason", "dismiss-reason"):
+            continue  # bookkeeping / folded — never standalone rows
         if a.row_ref and a.anno_type in ("note", "code"):
             continue  # already folded into its row
         if a.video_pos_sec is None or offset is None:

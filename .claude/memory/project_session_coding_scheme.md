@@ -14,7 +14,7 @@ via `ChangeTagCell` (four inline dropdowns per change). Field vocab in
 
 - **origin** — user | agent (dropped a `prompted` idea: agent-offered-user-picked = origin agent + effect applied; rejected = effect declined)
 - **type** — goal-term | **detail** (properties diff: driver_preferences, max_shift_hours) | weight | term-type | ranking | search-strategy | search-param
-- **term** — dynamic goal-term keys, badged captured ✓/✗ (VRPTW = all 8 incl. `waiting_time`, via `port.weight_item_labels()`)
+- **term** — dynamic goal-term keys (VRPTW = all 8 incl. `waiting_time`, via `port.weight_item_labels()`). Card badge = EFFECT glyph (researcher request, replaced the old captured-✓/✗): ✓ applied, ? mentioned, ✗ dropped/declined/removed — colored by EFFECT_COLOR.
 - **effect** — applied | **mentioned** (the term appeared in someone's words while not yet active — tagged at FIRST mention, no reaction from the other side required; who mentioned it = origin) | **removed** (a term that WAS in the config and is taken out — a retraction; AUTO from the goal_terms diff, origin = who removed it) | **dropped** (user raised but never registered — MANUAL judgment, parser no longer auto-emits it) | **declined** (agent proposed, user rejected — MANUAL). Taxonomy decision: keep effect to these; do NOT merge origin/transparency into effect (would duplicate origin + explode combinatorially). ask-vs-assume is read off the trajectory (mentioned/OQ→applied = asked; direct applied = assumed), NOT a new origin value. transparency (silent/explicit applied) deferred — not in the researcher's report metrics.
 
 **Effect rename (2026-08): `acknowledged` → `mentioned`** — researcher decision;
@@ -27,7 +27,7 @@ LLM `_EFFECTS` + prompts, notebook comments all renamed.
 
 `_canon` number-normalizes (50 == 50.0) — the stored config re-serializes ints/floats inconsistently, which was firing phantom detail + cfg-changed flags every turn.
 
-**search-param** (solver knobs) is compared via `_canon` (order- + number-insensitive: a re-serialized param dict in a different key order is NOT a change) and is SUPPRESSED when the algorithm also changed that turn (the knob delta is then just the new algorithm's defaults, already captured by the search-strategy tag — dropped 52 redundant firings, 109→57). `random_seed` is excluded from `_PARAM_FIELDS` (internal per-run seed, not a coded tuning decision).
+**search-param** (solver knobs) is compared via `_canon` (order- + number-insensitive: a re-serialized param dict in a different key order is NOT a change) and is SUPPRESSED when the algorithm also changed that turn (the knob delta is then just the new algorithm's defaults, already captured by the search-strategy tag — dropped 52 redundant firings, 109→57). `random_seed` is excluded from `_PARAM_FIELDS` (internal per-run seed, not a coded tuning decision). **Param key-removal churn** (`_param_field_changed`): an `algorithm_params` KEY silently VANISHING (pipeline re-serializes partial params; solver falls back to defaults) is NOT a change — only value changes / key additions count (P30 29:27 `temp_init` vanished on a pure explanation turn; 3 phantom deltas in 28 sessions, the 3 mistakenly-accepted tags surgically deleted). The `other: cfg ✎` fallback also ignores params (`panel_changed_beyond_diff`). The user-edit reconstruction also restores the top-level `locked_goal_terms` list (`_restore_locked_list`) — a "locked — → on" edit line changes it, and it leaked one exchange early otherwise.
 
 **LLM tagging pass (2026-08 REWRITE — replaces both the mechanical goal-term
 suggester AND the origin-only classifier).** Goal-term tags are judgment calls
@@ -84,9 +84,52 @@ first code, lower-right half-box = mentioned → applied later, X (origin-colore
 when the target has no cache row). Search-strategy/search-param tags stay
 DETERMINISTIC (`_search_changes`: algorithm/knob field diffs, user-origin on
 manual-edit ack turns) and merge into the same suggestion list — the LLM is told
-not to emit them.
+not to emit them. **`search_changes` dataset frame** (in `/analysis/dataset` +
+pyodide globals): field-level solver events from the structural diff layer —
+`algorithm` + scalar knobs + `algorithm_params` expanded PER KEY (cooling_rate,
+c1, pc…), with deterministic origin; drives the notebook SOLVER-CHANGE GRID
+(cell-21-style: rows = change kinds, cols = ALL participants, count + origin
+color, diagonal split = both) and complements the search-initiation bars. BOTH
+exclude each session's first strategy event (mandatory setup, not a "change" —
+this exclusion flipped strategy switching from agent-dominant to ~50/50).
 
-**Exchange rows**: each user chat message is folded into the agent chat reply
+**Improvement-REASON layer (2026-08)** — separate from change tags by researcher
+requirement (own annotation type `reason` = ONE per row {reasons:[], note}; own
+cache table `CodingLlmReasons`; own ✨ LLM reasons button/dialog/endpoint
+POST /analysis/llm-reasons — running/purging one never touches the other). RUN
+rows ONLY get the "reason" column (a reason attributes the outcome change
+between two CONSECUTIVE runs — formulation-jump exchanges were removed by
+researcher decision); once the LLM has checked a run its verdicts REPLACE the
+mechanical candidates for that run (`_reason_suggestions_for`, mirroring the tag
+layer; match = auto+llm green; uncovered runs fall back to mechanical): vocab (facets
+REASON_VALUES == reason_llm.REASONS): new-goal-term/term-removed/weight-rebalance
+/term-type-change/detail-refinement/ranking-change/algorithm-switch/search-budget
+/knob-tuning/feasibility-fix/stochastic-rerun/other. Deterministic candidates =
+`reasons_from_diffs` over the structured diffs BETWEEN runs; evidence =
+`outcome_delta` {cost_delta, feasibility flip, movers} from **per-term canonical
+contributions** (`term_contributions` added to
+`canonical_evaluation_for_result`; `_canonical_eval_cached` now returns a dict).
+LLM pass (verify_reasons) double-checks candidates against the conversation;
+merged suggestions marked source auto/llm/auto+llm (agreement = strongest,
+green). CSV gains a `reasons` column. Reset-tags/purge do NOT touch reasons;
+`POST /loaded/{id}/reset-reasons` deletes ONLY the reason layer — labels AND
+`dismiss-reason` rejections (auto-backup "reset-reasons"). Reason suggestions
+are rejectable like tag suggestions: ✕ persists `anno_type='dismiss-reason'`
+({reason} JSON on row_ref); `_filter_dismissed_reasons` drops them server-side.
+Toolbar = two labeled groups: purple **tags** (✨ LLM tagging / Accept all /
+Reset) vs teal **reasons** (✨ LLM reasons / Accept all / Reset). Reasons
+"Accept all" became sound once LLM verdicts REPLACE mechanical candidates
+(shown suggestions = judged set, or mechanical fallback on unchecked runs);
+it accepts every shown suggestion on not-yet-labeled runs, dismissed excluded.
+**feasibility-fix = OUTCOME QUALIFIER, never alone** (it's a result, not a
+cause): mechanical layer only ever APPENDS it to found causes (skipped on
+luck-flips); LLM prompt says pair it with the causal change; a standalone LLM
+verdict is REJECTED in validation (run falls back to mechanical candidates);
+ReasonCell shows ⚠ if an accepted label is feasibility-fix alone. **soft↔custom type change is
+the panel's weight-UNLOCK mechanic, NOT a semantic type change** — excluded from
+`term-type-change` reason candidates (`reasons_from_diffs`) and called out in
+the reason-LLM prompt (attribute to weight-rebalance); transitions involving
+hard/objective still count.
 that follows it (`user_prompt` on the row; standalone user rows suppressed unless
 no reply follows). Coding targets only `codeable` rows — agent chat responses +
 `manual_save` snapshots — since the chat is instant. EventList shows `user ▸` /

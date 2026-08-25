@@ -238,11 +238,30 @@ export function useAnalysisController() {
     return res;
   }, [token, selectedId, blockedByLock, withBusy, refreshDetail]);
 
+  const resetReasons = useCallback(async () => {
+    if (!selectedId || blockedByLock()) return null;
+    const res = await withBusy(() => api.resetReasons(token.trim(), selectedId), "Reset reasons failed.");
+    if (res) await refreshDetail(selectedId);
+    return res;
+  }, [token, selectedId, blockedByLock, withBusy, refreshDetail]);
+
   const runLlmTags = useCallback(
     async (body: { api_key: string; model: string; loaded_id?: string; purge_tags?: boolean }) => {
       const res = await withBusy(
         () => api.runLlmTags(token.trim(), body),
         "LLM tagging failed.",
+      );
+      if (res && selectedId) await refreshDetail(selectedId);
+      return res;
+    },
+    [token, withBusy, selectedId, refreshDetail],
+  );
+
+  const runLlmReasons = useCallback(
+    async (body: { api_key: string; model: string; loaded_id?: string }) => {
+      const res = await withBusy(
+        () => api.runLlmReasons(token.trim(), body),
+        "LLM reason check failed.",
       );
       if (res && selectedId) await refreshDetail(selectedId);
       return res;
@@ -294,7 +313,9 @@ export function useAnalysisController() {
     addPause,
     removePause,
     resetTags,
+    resetReasons,
     runLlmTags,
+    runLlmReasons,
     exportCsv,
     backupCoding,
     restoreCoding,

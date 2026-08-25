@@ -510,7 +510,21 @@ class VrptwStudyPort:
             flat = [o for route in routes for o in route]
             covered = set(flat) == set(range(self._N_ORDERS)) and len(flat) == len(set(flat))
 
+            from vrptw_problem.user_input import DEFAULT_WEIGHTS
+
+            # Canonical cost-term → (weight key, metrics key) for the per-term
+            # contribution breakdown (mean weighted contribution per goal term).
+            _CONTRIB = {
+                "travel_time": ("w1", "travel_time"),
+                "shift_limit": ("w2", "shift_overtime_minutes"),
+                "lateness_penalty": ("w3", "tw_violation_min"),
+                "capacity_penalty": ("w4", "capacity_overflow"),
+                "workload_balance": ("w5", "workload_variance"),
+                "worker_preference": ("w6", "driver_penalty"),
+                "express_miss_penalty": ("w7", "express_late_count"),
+            }
             costs, feas, lateness, capacity, shift_over = [], [], [], [], []
+            contrib_acc = {k: 0.0 for k in _CONTRIB}
             for s in range(self._CANON_SEEDS):
                 cost, m = evaluate_official(routes, orders, np.random.RandomState(s))
                 late = float(m.get("tw_violation_min", 0) or 0)
@@ -522,6 +536,8 @@ class VrptwStudyPort:
                 capacity.append(cap)
                 shift_over.append(over)
                 feas.append(late == 0 and cap == 0 and not over and covered)
+                for term, (wk, mk) in _CONTRIB.items():
+                    contrib_acc[term] += DEFAULT_WEIGHTS[wk] * float(m.get(mk, 0) or 0)
 
             feasible_frac = float(np.mean(feas))
             return {
@@ -533,6 +549,11 @@ class VrptwStudyPort:
                 "capacity_overflow": float(np.mean(capacity)),
                 "shift_over_8h": float(np.mean(shift_over)) > 0.5,
                 "all_orders_covered": bool(covered),
+                # Mean weighted cost contribution per canonical goal term — lets
+                # the analyzer show WHICH terms drove a run's cost change.
+                "term_contributions": {
+                    k: round(v / self._CANON_SEEDS, 1) for k, v in contrib_acc.items()
+                },
             }
         except Exception:
             return None

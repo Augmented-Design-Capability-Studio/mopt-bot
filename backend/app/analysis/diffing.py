@@ -20,6 +20,7 @@ from app.analysis.coding_suggestions import (
     _canon,
     _problem,
     brief_for_display,
+    panel_changed_beyond_diff,
     structured_config_diff,
 )
 
@@ -54,7 +55,10 @@ def compute_definition_config_changes(snapshots: list[Any]) -> dict[int, dict[st
             entry["definition_change"] = json.dumps(stripped, indent=2, ensure_ascii=False)
         if panel and _canon(panel) != _canon(prev_panel):
             cfg_diff = structured_config_diff(_problem(prev_panel), _problem(panel))
-            entry["config_change"] = cfg_diff if cfg_diff is not None else {"other": True}
+            if cfg_diff is not None:
+                entry["config_change"] = cfg_diff
+            elif panel_changed_beyond_diff(prev_panel, panel):
+                entry["config_change"] = {"other": True}
         if entry:
             out[snap.id] = entry
         prev_brief = brief

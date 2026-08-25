@@ -192,7 +192,8 @@
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(cat backend/.env)",
       "Bash(cat .env)",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(PYTHONPATH=/c/Users/whyhowie/git-repo/mopt-bot ../venv/Scripts/python.exe -c ' *)"
     ]
   }
 }

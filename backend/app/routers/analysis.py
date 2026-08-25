@@ -26,6 +26,7 @@ from app.analysis import models as m
 from app.analysis.backup import auto_backup, dump_coding, restore_coding
 from app.analysis.coding_llm import tag_session_changes
 from app.analysis.coding_suggestions import build_turn_derivations, goal_term_keys
+from app.analysis.reason_llm import reasons_from_diffs, render_run_evidence, verify_reasons
 from app.analysis.metrics import initial_prompt_word_count
 from app.analysis.rows import CHANGE_FIELDS, CSV_COLUMNS, _parse_change, build_coding_rows
 from app.analysis.survey import (
@@ -344,10 +345,11 @@ def _require_unlocked(loaded: m.LoadedSession) -> m.LoadedSession:
 # --------------------------------------------------------------------------- #
 
 @lru_cache(maxsize=8192)
-def _canonical_eval_cached(pid: str | None, result_json: str | None) -> tuple[float, bool] | None:
-    """``(canonical_cost, feasible)`` for a run's result JSON via the problem
-    port (official re-scoring, seed-averaged — lower cost is better), or None if
-    the run has no scorable schedule or the port lacks the hook."""
+def _canonical_eval_cached(pid: str | None, result_json: str | None) -> dict[str, Any] | None:
+    """``{cost, feasible, contributions}`` for a run's result JSON via the
+    problem port (official re-scoring, seed-averaged — lower cost is better), or
+    None if the run has no scorable schedule or the port lacks the hook.
+    ``contributions`` = mean weighted cost per canonical goal term (may be {})."""
     if not pid or not result_json:
         return None
     try:
@@ -363,7 +365,11 @@ def _canonical_eval_cached(pid: str | None, result_json: str | None) -> tuple[fl
         return None
     if not ev or ev.get("canonical_cost") is None:
         return None
-    return float(ev["canonical_cost"]), bool(ev.get("feasible"))
+    return {
+        "cost": float(ev["canonical_cost"]),
+        "feasible": bool(ev.get("feasible")),
+        "contributions": ev.get("term_contributions") or {},
+    }
 
 
 @lru_cache(maxsize=8192)
@@ -407,9 +413,10 @@ def _attach_scores_and_bests(rows: list[dict[str, Any]], pid: str | None) -> Non
             ev = _canonical_eval_cached(pid, r.get("latest_run"))
             if ev is None:
                 continue
-            cost, feasible = ev
+            cost, feasible = ev["cost"], ev["feasible"]
             r["canonical_cost"] = cost
             r["canonical_feasible"] = feasible
+            r["canonical_contributions"] = ev["contributions"]
             # A feasible run outranks any infeasible one; within a tier, lower cost wins.
             if best_cost is None or (feasible, -cost) > (best_feasible, -best_cost):
                 best_cost, best_feasible = cost, feasible
@@ -434,6 +441,90 @@ def _attach_scores_and_bests(rows: list[dict[str, Any]], pid: str | None) -> Non
         for r in rows:
             if r.get("formulation_score") == top:
                 r["best_formulation"] = True
+
+
+def _attach_reason_suggestions(
+    rows: list[dict[str, Any]], llm_reasons: dict[str, list[dict[str, Any]]]
+) -> None:
+    """Attribution evidence + reason suggestions — RUN rows only (a reason
+    attributes the outcome change between two consecutive runs).
+
+    Each run row gets ``outcome_delta`` (canonical cost Δ vs the previous run,
+    feasibility flip, top component movers from the per-term contributions) and
+    ``reason_suggestions`` derived from the structured config diffs of the
+    exchanges BETWEEN the previous run and this one (``reasons_from_diffs``).
+    Cached LLM verdicts (``llm_reasons``, keyed by row ref) REPLACE the
+    mechanical candidates for runs the LLM checked (mirroring the tag layer);
+    a verdict that matches a mechanical candidate is marked ``auto+llm``. Runs
+    the LLM did not cover fall back to the mechanical candidates."""
+    window: list[dict[str, Any]] = []
+    prev_run: dict[str, Any] | None = None
+    for r in rows:
+        ref = r.get("row_ref")
+        if r.get("kind") == "message":
+            if isinstance(r.get("config_change"), dict):
+                window.append(r["config_change"])
+        elif r.get("kind") == "run" and r.get("canonical_cost") is not None:
+            delta: dict[str, Any] = {
+                "cost_delta": (r["canonical_cost"] - prev_run["cost"]) if prev_run else None,
+                "feasible_from": prev_run["feasible"] if prev_run else None,
+                "feasible_to": r.get("canonical_feasible"),
+            }
+            movers = []
+            if prev_run:
+                cur = r.get("canonical_contributions") or {}
+                for term in set(cur) | set(prev_run["contributions"]):
+                    d = (cur.get(term) or 0) - (prev_run["contributions"].get(term) or 0)
+                    if abs(d) >= 1.0:
+                        movers.append({"term": term, "delta": round(d, 1)})
+                movers.sort(key=lambda x: -abs(x["delta"]))
+            delta["movers"] = movers[:4]
+            r["outcome_delta"] = delta
+            auto = reasons_from_diffs(window)
+            if (prev_run and not prev_run["feasible"] and r.get("canonical_feasible")
+                    and "stochastic-rerun" not in auto):
+                auto.append("feasibility-fix")
+            r["reason_suggestions"] = _filter_dismissed_reasons(
+                _reason_suggestions_for(auto, llm_reasons.get(ref)), r)
+            window = []
+            prev_run = {"cost": r["canonical_cost"], "feasible": bool(r.get("canonical_feasible")),
+                        "contributions": r.get("canonical_contributions") or {}}
+
+
+def _filter_dismissed_reasons(
+    suggestions: list[dict[str, Any]], row: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Drop suggestions the researcher explicitly rejected on this row
+    (persisted ``dismiss-reason`` annotations)."""
+    dismissed = set(row.get("dismissed_reasons") or [])
+    if not dismissed:
+        return suggestions
+    return [s for s in suggestions if s.get("reason") not in dismissed]
+
+
+def _reason_suggestions_for(
+    auto: list[str], llm: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """The suggestions shown for one run. Once the LLM has checked this run its
+    verdicts REPLACE the mechanical candidates (the mechanical list is a
+    recall-oriented enumeration; the LLM output is the judged subset) — a
+    verdict that matches a mechanical candidate is marked ``auto+llm``
+    (agreement, the strongest signal). Without an LLM verdict for this run the
+    mechanical candidates stand."""
+    if not llm:
+        return [{"reason": reason, "source": "auto"} for reason in auto]
+    auto_set = set(auto)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in llm:
+        reason = entry.get("reason")
+        if not reason or reason in seen:
+            continue
+        seen.add(reason)
+        out.append({"reason": reason,
+                    "source": "auto+llm" if reason in auto_set else "llm",
+                    "rationale": entry.get("rationale")})
+    return out
 
 
 def _timeline_payload(adb: Session, loaded: m.LoadedSession) -> dict[str, Any]:
@@ -494,6 +585,15 @@ def _timeline_payload(adb: Session, loaded: m.LoadedSession) -> dict[str, Any]:
             row["suggested_changes"] = suggested
     # Score runs (canonical cost) + exchanges (formulation) and star the bests.
     _attach_scores_and_bests(rows, loaded.test_problem_id)
+    # Attribution evidence + reason suggestions (deterministic + cached LLM).
+    rdoc = adb.get(m.CodingLlmReasons, loaded.id)
+    llm_reasons: dict[str, list[dict[str, Any]]] = {}
+    if rdoc and rdoc.data_json:
+        try:
+            llm_reasons = json.loads(rdoc.data_json)
+        except json.JSONDecodeError:
+            llm_reasons = {}
+    _attach_reason_suggestions(rows, llm_reasons)
     return {
         "session": _loaded_summary(loaded),
         "annotations": [_annotation_out(a) for a in loaded.annotations],
@@ -718,6 +818,96 @@ def run_llm_tags(
     }
 
 
+@router.post("/llm-reasons")
+def run_llm_reasons(
+    body: dict = Body(...),
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Run (and cache) the ✨ LLM reason-verification pass — fully SEPARATE from
+    /llm-tags (own cache table, never touches change tags or their cache).
+
+    For each run row it sends the verified attribution evidence (cost delta,
+    component movers, config changes since the previous run) plus the
+    conversation window, and caches the LLM's reason verdicts. Same safety
+    semantics as /llm-tags: no api_key = pure no-op (cache kept); per-session
+    failure keeps that session's old cache; locked sessions skipped."""
+    api_key = (body.get("api_key") or "").strip()
+    model = (body.get("model") or "gemini-2.5-flash").strip()
+    loaded_id = body.get("loaded_id")
+
+    query = adb.query(m.LoadedSession)
+    if loaded_id:
+        query = query.filter(m.LoadedSession.id == loaded_id)
+    candidates = query.all()
+    sessions = [s for s in candidates if not s.locked]
+    skipped_locked = len(candidates) - len(sessions)
+
+    if not api_key:
+        return {"sessions": 0, "checked_runs": 0, "ran_llm": False,
+                "skipped_locked": skipped_locked, "failed": 0}
+
+    checked = ok = failed = 0
+    for loaded in sessions:
+        # Rebuild the same evidence the timeline shows (scores + windows).
+        rows = build_coding_rows(
+            loaded, loaded.messages, loaded.runs, loaded.snapshots,
+            loaded.annotations, loaded.pauses,
+        )
+        port = get_study_port(loaded.test_problem_id)
+        turn_deriv = build_turn_derivations(loaded.messages, port)
+        for row in rows:
+            d = turn_deriv.get(row.get("row_ref"))
+            if d is not None:
+                if d["config_change"] is not None:
+                    row["config_change"] = d["config_change"]
+                if d.get("problem_config") is not None:
+                    row["problem_config"] = d["problem_config"]
+        _attach_scores_and_bests(rows, loaded.test_problem_id)
+        _attach_reason_suggestions(rows, {})
+
+        # Targets: run rows with evidence; context = the window's user/agent text.
+        targets: list[dict[str, Any]] = []
+        window_text: list[str] = []
+        for r in rows:
+            if r.get("kind") == "message" and r.get("codeable"):
+                up = (r.get("user_prompt") or "").strip()
+                ag = (r.get("summary") or "").strip()
+                snippet = (f"USER: {up[:400]}\n" if up else "") + (f"AGENT: {ag[:400]}" if ag else "")
+                if snippet:
+                    window_text.append(snippet)
+            elif r.get("kind") == "run" and r.get("reason_suggestions"):
+                targets.append({
+                    "ref": r["row_ref"],
+                    "evidence": render_run_evidence(r),
+                    "context": "\n\n".join(window_text[-6:]) or "(no conversation since previous run)",
+                })
+                window_text = []
+        if not targets:
+            ok += 1
+            continue
+        result = verify_reasons(targets, api_key, model)
+        if result is None:
+            failed += 1  # keep this session's old cache
+            continue
+        doc = adb.get(m.CodingLlmReasons, loaded.id)
+        if doc is None:
+            doc = m.CodingLlmReasons(loaded_session_id=loaded.id)
+            adb.add(doc)
+        doc.data_json = json.dumps(result, ensure_ascii=False)
+        doc.model = model
+        checked += len(result)
+        ok += 1
+    adb.commit()
+    return {
+        "sessions": ok,
+        "checked_runs": checked,
+        "ran_llm": True,
+        "skipped_locked": skipped_locked,
+        "failed": failed,
+    }
+
+
 _META_FIELDS = {"video_filename", "video_duration_sec", "clock_offset_sec", "t0_video_pos"}
 
 
@@ -828,6 +1018,28 @@ def reset_tags(
         adb.query(m.Annotation)
         .filter(m.Annotation.loaded_session_id == loaded.id,
                 m.Annotation.anno_type.in_(("code", "dismiss")))
+        .delete(synchronize_session=False)
+    )
+    adb.commit()
+    return {"deleted": deleted}
+
+
+@router.post("/loaded/{loaded_id}/reset-reasons")
+def reset_reasons(
+    loaded_id: str,
+    adb: Session = Depends(get_analysis_db),
+    _: Principal = Depends(require_researcher),
+):
+    """Delete every improvement-reason label (``anno_type='reason'``) AND every
+    rejected reason suggestion (``'dismiss-reason'``) for this session — a full
+    reset of the reason layer. Change tags, tag dismissals, notes, markers and
+    pauses are untouched — the reason layer resets independently."""
+    loaded = _require_unlocked(_get_loaded(adb, loaded_id))
+    auto_backup(adb, [loaded.id], "reset-reasons")
+    deleted = (
+        adb.query(m.Annotation)
+        .filter(m.Annotation.loaded_session_id == loaded.id,
+                m.Annotation.anno_type.in_(("reason", "dismiss-reason")))
         .delete(synchronize_session=False)
     )
     adb.commit()
@@ -1316,6 +1528,50 @@ def dataset(
         }
         for sv in adb.query(m.SurveyResponse).all()
     ]
+
+    # Per-exchange SOLVER-side change events, field-level, from the verified
+    # structural diff layer (same source as the cfg Δ chips): algorithm switches
+    # + every solver-knob change, with `algorithm_params` expanded per KEY
+    # (cooling_rate, c1, pc, …; key-removal churn already suppressed upstream).
+    # Origin = the deterministic search-tag origin (user on manual-edit ack
+    # turns, else agent); the notebook can override it with accepted-tag origins
+    # joined on row_ref. Drives the "which sessions changed what" grid.
+    from app.analysis.coding_suggestions import _canon as _sc_canon
+
+    search_changes: list[dict[str, Any]] = []
+    for s in loaded:
+        port = _port(s.test_problem_id)
+        if port is None:
+            continue
+        try:
+            deriv = build_turn_derivations(s.messages, port)
+        except Exception:
+            continue
+        msg_ts = {f"message:{msg.source_id}": msg.ts_epoch for msg in s.messages}
+        for ref, d in deriv.items():
+            diff = d.get("config_change") or {}
+            strat_origin = next((c["origin"] for c in d["changes"] if c["type"] == "search-strategy"), None)
+            param_origin = next((c["origin"] for c in d["changes"] if c["type"] == "search-param"), None)
+
+            def _add(field: str, frm: Any, to: Any, origin: str | None) -> None:
+                search_changes.append({
+                    "loaded_id": s.id, "row_ref": ref, "ts_epoch": msg_ts.get(ref),
+                    "field": field, "from": frm, "to": to, "origin": origin or "agent",
+                })
+
+            if diff.get("algorithm"):
+                alg = diff["algorithm"]
+                _add("algorithm", alg.get("from"), alg.get("to"), strat_origin)
+            for p in diff.get("params") or []:
+                if p["field"] == "algorithm_params":
+                    a = p.get("from") if isinstance(p.get("from"), dict) else {}
+                    b = p.get("to") if isinstance(p.get("to"), dict) else {}
+                    for k in sorted(b):
+                        if k not in a or _sc_canon(a.get(k)) != _sc_canon(b.get(k)):
+                            _add(k, a.get(k), b.get(k), param_origin)
+                else:
+                    _add(p["field"], p.get("from"), p.get("to"), param_origin)
+
     return {
         "sessions": sessions,
         "messages": messages,
@@ -1323,6 +1579,7 @@ def dataset(
         "annotations": annotations,
         "snapshots": snapshots,
         "surveys": surveys,
+        "search_changes": search_changes,
     }
 
 
@@ -1344,6 +1601,12 @@ def export_csv(
                 for c in (row.get("changes") or [])
             ]
             return "; ".join(parts)
+        if col == "reasons":  # accepted improvement reasons → "a; b (note)"
+            rl = row.get("reasons")
+            if not isinstance(rl, dict):
+                return ""
+            txt = "; ".join(rl.get("reasons") or [])
+            return f"{txt} ({rl['note']})" if rl.get("note") else txt
         val = row.get(col)
         if isinstance(val, dict):  # structured config diff → JSON string
             return json.dumps(val, ensure_ascii=False)

@@ -5,6 +5,7 @@ import { formatClock } from "../lib/format";
 import type { ChangeTag, TimelineRow } from "../lib/types";
 import { ChangeTagCell } from "./ChangeTagCell";
 import { ConfigDiffChips } from "./ConfigDiffChips";
+import { OutcomeDeltaLine, ReasonCell } from "./ReasonCell";
 
 interface EventListProps {
   rows: TimelineRow[];
@@ -19,6 +20,10 @@ interface EventListProps {
   onAddChange: (row: TimelineRow, change: Omit<ChangeTag, "id">) => void;
   /** Dismiss a suggested change on a row (persisted; won't re-appear). */
   onDismissSuggestion: (row: TimelineRow, change: Omit<ChangeTag, "id">) => void;
+  /** Persist a row's improvement-reason set (empty list deletes it). */
+  onSaveReason: (row: TimelineRow, reasons: string[], note: string | null) => void;
+  /** Reject a suggested reason on a row (persisted; won't re-appear). */
+  onDismissReason: (row: TimelineRow, reason: string) => void;
   /** Edit an existing coded change. */
   onEditChange: (annotationId: number, change: Omit<ChangeTag, "id">) => void;
   onSaveNote: (row: TimelineRow, text: string) => void;
@@ -110,6 +115,8 @@ export function EventList({
   onSeek,
   onAddChange,
   onDismissSuggestion,
+  onSaveReason,
+  onDismissReason,
   onEditChange,
   onSaveNote,
   onDeleteAnnotation,
@@ -160,6 +167,7 @@ export function EventList({
             <th>cfg Δ</th>
             <th>run</th>
             <th>coding — changes (origin · type · goal term · effect)</th>
+            <th>reason</th>
             <th>note</th>
             <th></th>
           </tr>
@@ -169,9 +177,6 @@ export function EventList({
             const key = `${r.kind}:${r.row_ref ?? r.annotation_id ?? i}`;
             const manual = isManual(r);
             const active = i === activeIndex;
-            // Captured ✓/✗ is meaningful wherever we derived config state:
-            // snapshot rows and assistant chat turns (which carry pre_turn_state).
-            const capturedKnown = r.kind === "snapshot" || r.kind === "message";
             // Snapshot rows are reference-only (never coded — a manual save is
             // already captured by its "Config edited" message flowing into an
             // exchange), so grey them out to keep focus on the codeable rows.
@@ -230,6 +235,7 @@ export function EventList({
                   return (
                     <td style={{ maxWidth: 340 }}>
                       <ScoreBadges r={r} />
+                      {r.kind === "run" && r.outcome_delta ? <OutcomeDeltaLine delta={r.outcome_delta} /> : null}
                       {r.user_prompt ? (
                         // The user's own words are always shown in full — never
                         // truncated — so no information is lost in the exchange.
@@ -308,13 +314,18 @@ export function EventList({
                       changes={r.changes}
                       suggested={r.suggested_changes}
                       goalTermKeys={goalTermKeys}
-                      capturedTerms={r.captured_terms}
-                      capturedKnown={capturedKnown}
                       onAdd={(change) => onAddChange(r, change)}
                       onDismiss={(change) => onDismissSuggestion(r, change)}
                       onEdit={onEditChange}
                       onDelete={onDeleteAnnotation}
                     />
+                  ) : (
+                    <span className="muted">·</span>
+                  )}
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  {r.kind === "run" && r.canonical_cost != null ? (
+                    <ReasonCell row={r} onSave={onSaveReason} onDismiss={onDismissReason} />
                   ) : (
                     <span className="muted">·</span>
                   )}

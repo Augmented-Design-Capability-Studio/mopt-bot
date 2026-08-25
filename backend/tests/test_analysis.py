@@ -495,6 +495,76 @@ def test_turn_derivations_def_delta_ignores_mirror_churn():
     assert d["config_change"] is not None  # …and that's a cfg Δ (weight 5→10)
 
 
+def test_reason_suggestions_and_annotation_fold(seeded_client):
+    """Run rows get deterministic reason suggestions from the between-run window;
+    an accepted `reason` annotation folds onto its row; /llm-reasons without a
+    key is a pure no-op that keeps the cache."""
+    from app.analysis import models as m
+    from app.analysis.reason_llm import reasons_from_diffs
+
+    # deterministic mapping sanity (pure function)
+    assert reasons_from_diffs([]) == ["stochastic-rerun"]
+    assert reasons_from_diffs([{"added": [{"term": "x"}]}]) == ["new-goal-term"]
+    assert reasons_from_diffs([{"terms": [{"term": "x", "changes": [{"field": "weight"}]}],
+                               "algorithm": {"from": "GA", "to": "PSO"}}]) == [
+        "weight-rebalance", "algorithm-switch"]
+    # soft↔custom is the weight-unlock mechanic, NOT a semantic type change…
+    assert reasons_from_diffs([{"terms": [{"term": "x", "changes": [
+        {"field": "type", "from": "soft", "to": "custom"}]}]}]) == []
+    # …but a transition involving hard/objective counts.
+    assert reasons_from_diffs([{"terms": [{"term": "x", "changes": [
+        {"field": "type", "from": "custom", "to": "hard"}]}]}]) == ["term-type-change"]
+    assert reasons_from_diffs([{"params": [{"field": "epochs"}, {"field": "pc"}]}]) == [
+        "search-budget", "knob-tuning"]
+
+    client, lid, Local = seeded_client
+    # reason annotation folds onto its row_ref
+    r = client.post(
+        f"/analysis/loaded/{lid}/annotations",
+        json={"anno_type": "reason", "row_ref": "message:2",
+              "text": json.dumps({"reasons": ["weight-rebalance"], "note": "test"})},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    detail = client.get(f"/analysis/loaded/{lid}/timeline", headers=_auth()).json()
+    row = next(x for x in detail["timeline"] if x.get("row_ref") == "message:2")
+    assert row["reasons"] == {"id": r.json()["id"], "reasons": ["weight-rebalance"], "note": "test"}
+    # never a standalone row
+    assert not any(x.get("kind") == "reason" for x in detail["timeline"])
+
+    # /llm-reasons no-key no-op keeps a pre-seeded cache
+    db = Local()
+    db.add(m.CodingLlmReasons(loaded_session_id=lid, data_json='{"run:1": []}', model="t"))
+    db.commit(); db.close()
+    res = client.post("/analysis/llm-reasons", json={"loaded_id": lid}, headers=_auth())
+    assert res.status_code == 200 and res.json()["ran_llm"] is False
+    db = Local()
+    assert db.get(m.CodingLlmReasons, lid).data_json == '{"run:1": []}'
+    db.close()
+
+    # reset-reasons deletes ONLY the reason layer (labels + reason dismissals);
+    # change tags survive.
+    assert client.post(
+        f"/analysis/loaded/{lid}/annotations",
+        json={"anno_type": "code", "row_ref": "message:2",
+              "text": json.dumps({"origin": "user", "type": "weight",
+                                  "term": "capacity_penalty", "effect": "applied"})},
+        headers=_auth(),
+    ).status_code == 200
+    assert client.post(
+        f"/analysis/loaded/{lid}/annotations",
+        json={"anno_type": "dismiss-reason", "row_ref": "run:1",
+              "text": json.dumps({"reason": "knob-tuning"})},
+        headers=_auth(),
+    ).status_code == 200
+    res = client.post(f"/analysis/loaded/{lid}/reset-reasons", headers=_auth())
+    assert res.status_code == 200 and res.json()["deleted"] == 2  # reason + dismiss-reason
+    db = Local()
+    kinds = sorted(a.anno_type for a in db.query(m.Annotation).filter_by(loaded_session_id=lid).all())
+    assert "reason" not in kinds and "dismiss-reason" not in kinds and "code" in kinds
+    db.close()
+
+
 def test_time_since_start_is_pause_aware():
     loaded = SimpleNamespace(
         clock_offset_sec=0.0, t0_epoch=0.0, t0_iso=None, t0_video_pos=0.0

@@ -7,8 +7,6 @@ interface ChangeTagCellProps {
   changes: ChangeTag[];
   suggested: SuggestedChange[];
   goalTermKeys: string[];
-  capturedTerms: string[];
-  capturedKnown: boolean;
   onAdd: (change: Omit<ChangeTag, "id">) => void;
   /** Reject a suggestion for good (persisted server-side). */
   onDismiss: (change: Omit<ChangeTag, "id">) => void;
@@ -34,13 +32,25 @@ function cardStyle(origin: string | null, effect: string | null): CSSProperties 
 
 const selStyle: CSSProperties = { fontSize: "0.68rem", maxWidth: 108, padding: 0 };
 
-function TermBadge({ ok }: { ok: boolean }) {
+/** Effect glyph: ✓ = applied (landed in the config), ✗ = removed / declined /
+ * dropped (didn't survive), ? = mentioned (raised, not yet landed). Colored by
+ * the effect's palette color. */
+const EFFECT_GLYPH: Record<string, string> = {
+  applied: "✓",
+  mentioned: "?",
+  dropped: "✗",
+  declined: "✗",
+  removed: "✗",
+};
+
+function EffectBadge({ effect }: { effect: string | null }) {
+  if (!effect || !(effect in EFFECT_GLYPH)) return null;
   return (
     <span
-      title={ok ? "captured by the system" : "not captured"}
-      style={{ fontSize: "0.68rem", fontWeight: 700, color: ok ? "#16a34a" : "#dc2626" }}
+      title={effect}
+      style={{ fontSize: "0.68rem", fontWeight: 700, color: effectColor(effect) }}
     >
-      {ok ? "✓" : "✗"}
+      {EFFECT_GLYPH[effect]}
     </span>
   );
 }
@@ -79,14 +89,11 @@ export function ChangeTagCell({
   changes,
   suggested,
   goalTermKeys,
-  capturedTerms,
-  capturedKnown,
   onAdd,
   onDismiss,
   onEdit,
   onDelete,
 }: ChangeTagCellProps) {
-  const captured = new Set(capturedTerms);
   const existing = new Set(changes.map(changeKey));
   const fresh = suggested.filter((s) => !existing.has(changeKey(s)));
   const termOptions = (fieldKey: string) => (fieldKey === "term" ? goalTermKeys : undefined);
@@ -108,7 +115,7 @@ export function ChangeTagCell({
       {changes.map((c) => (
         <div key={c.id} style={cardStyle(c.origin, c.effect)}>
           {fields(c, (next) => onEdit(c.id, next))}
-          {c.term && capturedKnown ? <TermBadge ok={captured.has(c.term)} /> : null}
+          <EffectBadge effect={c.effect} />
           <button
             type="button"
             title="remove change"
@@ -137,7 +144,7 @@ export function ChangeTagCell({
             {[s.origin, s.type, s.term, s.effect].filter(Boolean).join(" · ") || "change"}
             {s.rationale ? <span style={{ marginLeft: 3, color: "#8b5cf6", cursor: "help" }}>ℹ</span> : null}
           </span>
-          {s.term ? <TermBadge ok={s.captured ?? captured.has(s.term)} /> : null}
+          <EffectBadge effect={s.effect} />
           <button
             type="button"
             title="accept suggestion"

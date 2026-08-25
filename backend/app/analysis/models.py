@@ -190,6 +190,26 @@ class CodingLlmTags(AnalysisBase):
     )
 
 
+class CodingLlmReasons(AnalysisBase):
+    """Cached LLM verification of improvement REASONS for one loaded session —
+    fully separate from ``CodingLlmTags`` (change-tag suggestions) so the two
+    passes can never clobber each other.
+
+    ``data_json`` maps a row ref (``run:{source_id}`` / ``message:{source_id}``)
+    → the list of LLM-checked reasons ``{reason, rationale, source: "llm"}``."""
+
+    __tablename__ = "coding_llm_reasons"
+
+    loaded_session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("loaded_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    data_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class NotebookDoc(AnalysisBase):
     """A saved aggregate notebook — the ordered code cells, as JSON.
 

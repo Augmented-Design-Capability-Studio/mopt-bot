@@ -58,6 +58,22 @@ export function runLlmTags(
   });
 }
 
+export function runLlmReasons(
+  token: string,
+  body: { api_key: string; model: string; loaded_id?: string },
+): Promise<{
+  sessions: number;
+  checked_runs: number;
+  ran_llm: boolean;
+  skipped_locked: number;
+  failed: number;
+}> {
+  return apiFetch("/analysis/llm-reasons", token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function patchCodingMeta(
   token: string,
   id: string,
@@ -111,6 +127,12 @@ export function setLocked(
 
 export function resetTags(token: string, id: string): Promise<{ deleted: number }> {
   return apiFetch<{ deleted: number }>(`/analysis/loaded/${id}/reset-tags`, token, {
+    method: "POST",
+  });
+}
+
+export function resetReasons(token: string, id: string): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>(`/analysis/loaded/${id}/reset-reasons`, token, {
     method: "POST",
   });
 }

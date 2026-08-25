@@ -16,6 +16,23 @@ export const TYPE_VALUES = [
 ];
 export const EFFECT_VALUES = ["applied", "mentioned", "dropped", "declined", "removed"];
 
+/** Improvement-reason vocabulary (multi-select) — keep in sync with the
+ * backend's reason_llm.REASONS. */
+export const REASON_VALUES = [
+  "new-goal-term",
+  "term-removed",
+  "weight-rebalance",
+  "term-type-change",
+  "detail-refinement",
+  "ranking-change",
+  "algorithm-switch",
+  "search-budget",
+  "knob-tuning",
+  "feasibility-fix",
+  "stochastic-rerun",
+  "other",
+];
+
 // The four fields of a change, with the dropdown label + fixed options. `term`
 // options are dynamic (the session's goal-term keys), so its list is empty here.
 export interface ChangeField {

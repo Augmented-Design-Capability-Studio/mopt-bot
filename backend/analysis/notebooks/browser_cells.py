@@ -210,7 +210,7 @@ else:
         dof = (sed**4 / ((va / len(a))**2 / (len(a) - 1) + (vw / len(w))**2 / (len(w) - 1))
                if sed > 0 else float("nan"))                            # Welch-Satterthwaite df
         ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
-               color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
+               color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
         ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
         ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
@@ -325,7 +325,7 @@ ever = _pf.groupby("workflow_mode")["ever"].agg(["sum", "count"])
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.2))
 # (1) EVER reached a feasible solution (proportion of participants) + Fisher exact
 props = [ever.loc[w, "sum"] / ever.loc[w, "count"] for w in order]
-ax1.bar(range(len(order)), props, color=[PALETTE.get(w, "#7c3aed") for w in order], alpha=0.85, width=0.6)
+ax1.bar(range(len(order)), props, color=[PALETTE.get(w, "#7c3aed") for w in order], width=0.6)
 for i, w in enumerate(order):
     ax1.text(i, props[i] + 0.02, f"{int(ever.loc[w, 'sum'])}/{int(ever.loc[w, 'count'])}", ha="center", fontweight="bold")
 ax1.set_xticks(range(len(order))); ax1.set_xticklabels([w.capitalize() for w in order])
@@ -338,7 +338,7 @@ if {"agile", "waterfall"} <= set(ever.index):
 # (2) per-participant fraction of runs feasible, by workflow (mean +/- SE + points)
 for i, w in enumerate(order):
     vals = _pf[_pf.workflow_mode == w]["rate"]
-    ax2.bar(i, vals.mean(), yerr=_se(vals), color=PALETTE.get(w, "#7c3aed"), alpha=0.8, capsize=6, width=0.6)
+    ax2.bar(i, vals.mean(), yerr=_se(vals), color=PALETTE.get(w, "#7c3aed"), capsize=6, width=0.6)
     ax2.scatter(np.full(len(vals), i), vals, color="k", alpha=0.5, s=18)
 ax2.set_xticks(range(len(order))); ax2.set_xticklabels([w.capitalize() for w in order])
 ax2.set_ylim(0, 1.05); ax2.set_ylabel("fraction of runs feasible (per participant)"); ax2.set_title("Feasible-run rate")
@@ -529,7 +529,9 @@ else:
               "express_miss_penalty": "express", "waiting_time": "idle wait (optional)"}
     _seen = list(_init["term"].unique())
     rows_terms = [t for t in CANON if t in _seen] + sorted(t for t in _seen if t not in CANON)
-    cols = (_init[["loaded_id", "participant", "workflow_mode"]].drop_duplicates()
+    # ALL participants as columns (uniform width with the solver-change grid;
+    # a fully gray column = no coded goal-term tags yet).
+    cols = (part[["loaded_id", "participant", "workflow_mode"]].drop_duplicates()
             .assign(_o=lambda d: d.workflow_mode.map({"agile": 0, "waterfall": 1}).fillna(2))
             .sort_values(["_o", "participant"]).reset_index(drop=True))
     import matplotlib.colors as _mcolors
@@ -574,15 +576,17 @@ else:
     ax.set_xticks([x + 0.5 for x in range(len(cols))]); ax.set_xticklabels(cols["participant"], rotation=90, fontsize=7)
     ax.set_yticks([y + 0.5 for y in range(len(rows_terms))]); ax.set_yticklabels([TLABEL.get(t, t) for t in rows_terms])
     ax.set_title("Goal-term initiation + fate (manual codes)")
-    ax.legend(handles=[mpatches.Patch(color=USER, label="user-initiated"),
-                       mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
-                       mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)"),
-                       mpatches.Patch(facecolor="white", edgecolor="#9ca3af", label="full box = mentioned → applied immediately"),
-                       _L2D([0], [0], marker=6, ls="", color="#6b7280", label="half box = mentioned → applied later"),
-                       _L2D([0], [0], marker="x", ls="", color="#6b7280", markersize=9, markeredgewidth=2.2,
-                            label="X = mentioned → never applied"),
-                       mpatches.Patch(color=ABSENT, label="not coded / absent")],
-              bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    # Legend BELOW the grid (not beside it) so the axes use the full width and
+    # match the solver-change grid.
+    fig.legend(handles=[mpatches.Patch(color=USER, label="user-initiated"),
+                        mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
+                        mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)"),
+                        mpatches.Patch(color=ABSENT, label="not coded / absent"),
+                        mpatches.Patch(facecolor="white", edgecolor="#9ca3af", label="full box = mentioned → applied immediately"),
+                        _L2D([0], [0], marker=6, ls="", color="#6b7280", label="half box = mentioned → applied later"),
+                        _L2D([0], [0], marker="x", ls="", color="#6b7280", markersize=9, markeredgewidth=2.2,
+                             label="X = mentioned → never applied")],
+               loc="lower center", ncol=4, fontsize=8)
 
     # FATE SUMMARY — the "record this in our analysis" numbers: how many terms per
     # fate, split by workflow and by initiator origin.
@@ -597,7 +601,7 @@ else:
         print("\nMentioned-but-never-applied terms:")
         for r in _mna.sort_values(["workflow_mode", "participant"]).itertuples():
             print(f"  {r.participant} ({r.workflow_mode}): {r.term} — raised by {r.origin or '?'}")
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0.10, 1, 1])  # leave room for the bottom legend
 
     print("Initiator of each goal term (earliest coded change), by workflow:")
     for wfm in ["agile", "waterfall"]:
@@ -613,6 +617,192 @@ else:
             line += f"  {wfm[0]}:{int((s.origin == 'agent').sum())}/{len(s)}" if len(s) else f"  {wfm[0]}:-"
         print(line)
     print("\nNOTE: initiator = FIRST coded change for the term; re-code + Reload + re-run to update.")
+
+# %%
+# SEARCH-STRATEGY / SEARCH-PARAM initiation — who drives the SOLVER side of the
+# work, from the accepted session-coding tags (type 'search-strategy' = algorithm
+# switched; 'search-param' = solver knobs tuned within the same algorithm).
+# Each accepted tag = one change EVENT (not first-only): stacked user/agent bars,
+# grouped agile vs waterfall. user=green; agent colored by workflow (as in the
+# fate map above).
+# NOTE: each session's FIRST search-strategy tag is EXCLUDED — a strategy must be
+# set before anything can run, so the initial selection is mandatory setup, not a
+# "change". Only later switches count.
+import matplotlib.patches as mpatches
+_sc = (annotations[(annotations.get("anno_type") == "code")
+                   & (annotations.get("type").isin(["search-strategy", "search-param"]))].copy()
+       if (not annotations.empty and "type" in annotations.columns) else pd.DataFrame())
+if _sc.empty:
+    print("No accepted search-strategy/search-param tags yet. Accept them in the")
+    print("Session-coding tab, then Reload data + re-run.")
+else:
+    _sc = _sc.merge(part[["loaded_id", "workflow_mode"]], on="loaded_id", how="left")
+    _sc["origin"] = _sc["origin"].fillna("agent")
+    # Timestamp each tag (row_ref "message:<source_id>" -> message time) so the
+    # per-session FIRST strategy tag — the mandatory initial selection — can be
+    # dropped from the counts.
+    _mt = messages[["source_id", "ts_epoch"]].copy()
+    _mt["src"] = _mt["source_id"].astype(str)
+    _sc["src"] = _sc["row_ref"].fillna("").astype(str).str.split(":").str[-1]
+    _sc = _sc.merge(_mt[["src", "ts_epoch"]], on="src", how="left")
+    _strat = _sc[_sc["type"] == "search-strategy"].sort_values("ts_epoch", na_position="last")
+    _initial_idx = _strat.groupby("loaded_id").head(1).index          # first per session
+    _n_initial = len(_initial_idx)
+    _sc = _sc.drop(index=_initial_idx)
+    USER = "#16a34a"
+    _n_sess = part.groupby("workflow_mode")["loaded_id"].nunique()
+    counts = _sc.pivot_table(index=["workflow_mode", "type"], columns="origin",
+                             values="loaded_id", aggfunc="count", fill_value=0)
+    for col in ("user", "agent"):
+        if col not in counts.columns:
+            counts[col] = 0
+
+    GROUPS = [("agile", "search-strategy"), ("agile", "search-param"),
+              ("waterfall", "search-strategy"), ("waterfall", "search-param")]
+    xs = [0, 1, 2.6, 3.6]  # gap between the agile and waterfall groups
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    for x, (wf, tp) in zip(xs, GROUPS):
+        u = int(counts.loc[(wf, tp), "user"]) if (wf, tp) in counts.index else 0
+        a = int(counts.loc[(wf, tp), "agent"]) if (wf, tp) in counts.index else 0
+        ax.bar(x, u, width=0.8, color=USER)
+        ax.bar(x, a, width=0.8, bottom=u, color=PALETTE.get(wf, "#7c3aed"))
+        for y, v in ((u / 2, u), (u + a / 2, a)):
+            if v:
+                ax.text(x, y, str(v), ha="center", va="center", color="white",
+                        fontsize=9, fontweight="bold")
+        ax.text(x, u + a + 0.4, f"n={u + a}", ha="center", fontsize=8, color="#555")
+    ax.set_xticks(xs)
+    ax.set_xticklabels(["algo switch", "param tune", "algo switch", "param tune"])
+    ax.text(0.5, -0.13, "agile", transform=ax.get_xaxis_transform(), ha="center", fontweight="bold")
+    ax.text(3.1, -0.13, "waterfall", transform=ax.get_xaxis_transform(), ha="center", fontweight="bold")
+    ax.set_ylabel("coded change events")
+    ax.set_title("Who initiates search-strategy / search-parameter CHANGES\n"
+                 "(each session's initial strategy selection excluded — mandatory setup)")
+    ax.legend(handles=[mpatches.Patch(color=USER, label="user-initiated"),
+                       mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
+                       mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)")],
+              fontsize=8, bbox_to_anchor=(1.02, 1), loc="upper left")  # outside, clear of the bars
+    fig.tight_layout()
+
+    print(f"Excluded {_n_initial} initial strategy selection(s) (one per session — mandatory setup).")
+    print("Search-CHANGE events by workflow / type / origin (per-session mean in parens):")
+    for wf, tp in GROUPS:
+        u = int(counts.loc[(wf, tp), "user"]) if (wf, tp) in counts.index else 0
+        a = int(counts.loc[(wf, tp), "agent"]) if (wf, tp) in counts.index else 0
+        ns = int(_n_sess.get(wf, 0)) or 1
+        print(f"  {wf:<9} {tp:<15} user {u:>3} ({u / ns:.1f}/session)   agent {a:>3} ({a / ns:.1f}/session)"
+              + (f"   ({u / (u + a):.0%} user)" if (u + a) else ""))
+
+# %%
+# SOLVER-CHANGE GRID — which sessions changed WHAT, field-level (cell-21 style).
+# Rows = change kinds (strategy switch, epochs, population, early-stop knobs,
+# per-algorithm params like cooling_rate/c1/pc…); columns = participants
+# (agile | waterfall). From the `search_changes` frame — the VERIFIED structural
+# diff layer (same source as the cfg Δ chips), so it needs no tagging and can't
+# miss an event. Cell = COUNT of changes; fill = who drove them: user green,
+# agent workflow-colored, DIAGONAL SPLIT when both (agent upper-left, user
+# lower-right). Origin = deterministic (manual panel edit → user, else agent),
+# overridden by an accepted search tag's origin on the same exchange. Each
+# session's INITIAL strategy selection is excluded (mandatory setup, as in the
+# bars above).
+import matplotlib.patches as mpatches
+if search_changes.empty:
+    print("`search_changes` missing/empty — restart the backend (new dataset field)")
+    print("and click Re-fetch & run all.")
+else:
+    _ev = search_changes.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id")
+    # drop each session's first algorithm event (the mandatory initial selection)
+    _alg = _ev[_ev["field"] == "algorithm"].sort_values("ts_epoch", na_position="last")
+    _ev = _ev.drop(index=_alg.groupby("loaded_id").head(1).index)
+    # accepted-tag origin overrides, joined per exchange (row_ref)
+    _tags = (annotations[(annotations.get("anno_type") == "code")
+                         & (annotations.get("type").isin(["search-strategy", "search-param"]))]
+             [["loaded_id", "row_ref", "type", "origin"]].dropna(subset=["origin"])
+             if (not annotations.empty and "type" in annotations.columns) else pd.DataFrame())
+    if not _tags.empty:
+        _ev["_tag_type"] = np.where(_ev["field"] == "algorithm", "search-strategy", "search-param")
+        _ev = _ev.merge(_tags.rename(columns={"origin": "_tag_origin", "type": "_tag_type"}),
+                        on=["loaded_id", "row_ref", "_tag_type"], how="left")
+        _ev["origin"] = _ev["_tag_origin"].fillna(_ev["origin"])
+
+    # Collapse to the headline rows; every algorithm-specific hyperparameter
+    # (pc/pm, c1/c2/w, cooling_rate, temp_init, sample_count, …) folds into one
+    # "other knobs" row. Early-stop sub-knobs (patience/epsilon) fold into
+    # "early stop".
+    def _row_of(f):
+        if f == "algorithm":
+            return "strategy switch"
+        if f == "epochs":
+            return "epochs"
+        if f == "pop_size":
+            return "population"
+        if f in ("early_stop", "early_stop_patience", "early_stop_epsilon"):
+            return "early stop"
+        if f == "max_sub_iter":
+            return "max sub-iter"
+        return "other knobs"
+    _ev["field"] = _ev["field"].map(_row_of)
+    # One event per EXCHANGE per row: co-changed knobs (e.g. c1+c2+w tuned
+    # together in one reply) count once, not once per key.
+    _ev = _ev.drop_duplicates(subset=["loaded_id", "row_ref", "field"])
+    FLABEL = {}  # rows already carry their display names
+    rows_f = [r for r in ["strategy switch", "epochs", "population", "early stop",
+                          "max sub-iter", "other knobs"] if r in set(_ev["field"])]
+    # ALL participants as columns (a fully gray column = never touched the solver)
+    cols = (part[["loaded_id", "participant", "workflow_mode"]].drop_duplicates()
+            .assign(_o=lambda d: d.workflow_mode.map({"agile": 0, "waterfall": 1}).fillna(2))
+            .sort_values(["_o", "participant"]).reset_index(drop=True))
+    USER = "#16a34a"; ABSENT = "#eceff1"
+    agg = (_ev.groupby(["loaded_id", "field"])
+           .agg(n=("field", "count"),
+                has_user=("origin", lambda s: bool((s == "user").any())),
+                has_agent=("origin", lambda s: bool((s != "user").any())))
+           .reset_index())
+    _look = {(r.loaded_id, r.field): (r.n, r.has_user, r.has_agent) for r in agg.itertuples()}
+    fig, ax = plt.subplots(figsize=(0.42 * len(cols) + 3.0, 0.42 * len(rows_f) + 1.6))
+    for xi, c in cols.iterrows():
+        wf_col = PALETTE.get(c.workflow_mode, "#7c3aed")
+        for yi, f in enumerate(rows_f):
+            n, hu, ha = _look.get((c.loaded_id, f), (0, False, False))
+            if not n:
+                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor=ABSENT))
+                continue
+            if hu and ha:   # both drove changes → diagonal split (y is inverted)
+                ax.add_patch(mpatches.Polygon([(xi, yi), (xi + 1, yi), (xi, yi + 1)],
+                                              closed=True, edgecolor="white", facecolor=wf_col))
+                ax.add_patch(mpatches.Polygon([(xi + 1, yi), (xi + 1, yi + 1), (xi, yi + 1)],
+                                              closed=True, edgecolor="white", facecolor=USER))
+            else:
+                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white",
+                                                facecolor=USER if hu else wf_col))
+            ax.text(xi + 0.5, yi + 0.5, str(n), ha="center", va="center",
+                    color="white", fontsize=8, fontweight="bold")
+    _na = int((cols.workflow_mode == "agile").sum())
+    if 0 < _na < len(cols):
+        ax.axvline(_na, color="black", lw=2)
+    ax.set_xlim(0, len(cols)); ax.set_ylim(0, len(rows_f)); ax.invert_yaxis()
+    ax.set_xticks([x + 0.5 for x in range(len(cols))])
+    ax.set_xticklabels(cols["participant"], rotation=90, fontsize=7)
+    ax.set_yticks([y + 0.5 for y in range(len(rows_f))])
+    ax.set_yticklabels([FLABEL.get(f, f) for f in rows_f])
+    ax.set_title("Solver changes per session — count + who drove them\n"
+                 "(initial strategy selection excluded)")
+    # Legend BELOW the grid — full-width axes, same as the fate map.
+    fig.legend(handles=[mpatches.Patch(color=USER, label="user-driven"),
+                        mpatches.Patch(color=PALETTE["agile"], label="agent-driven (agile)"),
+                        mpatches.Patch(color=PALETTE["waterfall"], label="agent-driven (waterfall)"),
+                        mpatches.Patch(facecolor="white", edgecolor="#374151", label="diagonal split = both"),
+                        mpatches.Patch(color=ABSENT, label="never changed")],
+               loc="lower center", ncol=5, fontsize=8)
+    fig.tight_layout(rect=[0, 0.10, 1, 1])  # leave room for the bottom legend
+
+    print("Change events per kind (agile | waterfall):")
+    for f in rows_f:
+        line = f"  {FLABEL.get(f, f):<16}"
+        for wfm in ("agile", "waterfall"):
+            s = _ev[(_ev["field"] == f) & (_ev["workflow_mode"] == wfm)]
+            line += f"  {wfm[0]}:{len(s):>3} ({int((s['origin'] == 'user').sum())} user)"
+        print(line)
 
 # %%
 # IDLE-WAIT — an UNEXPECTED phenomenon (qualitative, NOT scored). The un-briefed
@@ -735,7 +925,7 @@ for ax, (col, lab) in zip(axes, _cols):
     a = mm[mm.workflow_mode == "agile"][col]
     w = mm[mm.workflow_mode == "waterfall"][col]
     ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
-           color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
+           color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
     ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.45, s=18)
     ax.scatter(np.ones(len(w)), w, color="k", alpha=0.45, s=18)
     ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"]); ax.set_title(lab)
@@ -802,22 +992,38 @@ print(f"\nExpertise vs formulation quality: Pearson r={r:.2f} p={pr:.3f} | "
 # (coverage + hard_bonus + objective_bonus == the total EXACTLY). Two panels: the
 # FINAL config and each participant's BEST (MAX-score) snapshot; each panel carries
 # its own agile-vs-waterfall gap + Welch t p + Mann-Whitney U p.
-comps = [(COV, "coverage (0-7)", "#3b82f6"),
-         ("hard_bonus", "hard constraints (0-3)", "#f59e0b"),
-         ("objective_bonus", "objective (0-1)", "#10b981")]
+# Fills are WORKFLOW-themed (agile = blues, waterfall = reds — the same PALETTE
+# hues as every other plot); the three score components are told apart by
+# TINT + HATCH pattern, so the legend stays workflow-neutral (gray swatches).
+import matplotlib.colors as _mcolors
+import matplotlib.patches as mpatches
+
+
+def _tint(color, f):
+    """Mix a color toward white by fraction f (0 = base hue, 1 = white)."""
+    r, g, b = _mcolors.to_rgb(color)
+    return (r + (1 - r) * f, g + (1 - g) * f, b + (1 - b) * f)
+
+
+# (column, label, hatch, tint-fraction): coverage = solid base hue at the bottom,
+# bonuses get lighter tints + hatches.
+comps = [(COV, "coverage (0-7)", "", 0.0),
+         ("hard_bonus", "hard constraints (0-3)", "//", 0.35),
+         ("objective_bonus", "objective (0-1)", "xx", 0.62)]
 groups = ["agile", "waterfall"]
 
 
 def _stacked(ax, frame, title, show_labels):
     bottom = np.zeros(len(groups))
-    for col, lab, color in comps:
+    for col, lab, hatch, f in comps:
         vals = np.array([frame[frame.workflow_mode == g][col].mean() for g in groups])
-        ax.bar(np.arange(len(groups)), vals, bottom=bottom, width=0.62, color=color,
-               edgecolor="white", label=(lab if show_labels else None))
-        for xi, v, b in zip(range(len(groups)), vals, bottom):  # label tall-enough segments
+        ax.bar(np.arange(len(groups)), vals, bottom=bottom, width=0.62,
+               color=[_tint(PALETTE.get(g, "#7c3aed"), f) for g in groups],
+               hatch=hatch, edgecolor="white", linewidth=1.0)
+        for xi, v, b, g in zip(range(len(groups)), vals, bottom, groups):  # label tall-enough segments
             if v >= 0.6:
                 ax.text(xi, b + v / 2, f"{v:.1f}", ha="center", va="center",
-                        color="white", fontsize=8, fontweight="bold")
+                        color=("white" if f < 0.5 else "#1f2937"), fontsize=8, fontweight="bold")
         bottom += vals
     for i, g in enumerate(groups):              # error bar (SE) + value on the TOTAL height
         tt = frame[frame.workflow_mode == g][SCORE]
@@ -839,7 +1045,12 @@ fig, axes = plt.subplots(1, 2, figsize=(11, 5.5), sharey=True)
 _stacked(axes[0], fq, "FINAL config", True)
 _stacked(axes[1], fq_max, "MAX (best snapshot)", False)
 axes[0].set_ylabel("Mean formulation score (0-11)")
-fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=3, fontsize=8)
+# Workflow-neutral component legend: gray swatches carrying the tint + hatch.
+_legend_handles = [
+    mpatches.Patch(facecolor=_tint("#6b7280", f), hatch=hatch, edgecolor="white", label=lab)
+    for _, lab, hatch, f in comps
+]
+fig.legend(handles=_legend_handles, loc="lower center", ncol=3, fontsize=8)
 fig.suptitle("Formulation score and its components: agile vs waterfall (excluding the optional idle_wait goal term)")
 fig.tight_layout(rect=[0, 0.06, 1, 1])
 
@@ -881,7 +1092,7 @@ else:
         _, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")  # a-priori test (Likert)
         _, pt = stats.ttest_ind(a, w, equal_var=False)             # Welch, shown for transparency
         ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
-               color=[PALETTE["agile"], PALETTE["waterfall"]], alpha=0.8, capsize=6)
+               color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
         ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
         ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
