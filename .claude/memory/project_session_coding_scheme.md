@@ -84,7 +84,15 @@ first code, lower-right half-box = mentioned → applied later, X (origin-colore
 when the target has no cache row). Search-strategy/search-param tags stay
 DETERMINISTIC (`_search_changes`: algorithm/knob field diffs, user-origin on
 manual-edit ack turns) and merge into the same suggestion list — the LLM is told
-not to emit them. **`search_changes` dataset frame** (in `/analysis/dataset` +
+not to emit them. **Interaction→outcome notebook cells** (after the solver grid; print-only):
+BREAKTHROUGH (first session-best run position + ended-on-best by arm), BIG JUMPS
+(top-quartile improving transitions; reason mix; jump-window origin dominance),
+FEASIBILITY flips + causal partners, RERANKING (user-origin ranking participants
+by arm), WEIGHT OSCILLATION (direction reversals + reverser origin). Powered by
+dataset additions: annotations rows carry `reasons` (parsed list for
+anno_type='reason') and a `weight_changes` frame (per-exchange goal-term weight
+from→to; origin joined in-notebook from accepted weight tags). All tallies
+recompute from ACCEPTED labels on Re-fetch. **`search_changes` dataset frame** (in `/analysis/dataset` +
 pyodide globals): field-level solver events from the structural diff layer —
 `algorithm` + scalar knobs + `algorithm_params` expanded PER KEY (cooling_rate,
 c1, pc…), with deterministic origin; drives the notebook SOLVER-CHANGE GRID

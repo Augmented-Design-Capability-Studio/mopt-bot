@@ -1415,6 +1415,16 @@ def dataset(
         for s in loaded
         for r in s.runs
     ]
+    def _reason_list(a: m.Annotation) -> list[str] | None:
+        """Accepted improvement reasons for `reason` annotations (None elsewhere)."""
+        if a.anno_type != "reason":
+            return None
+        try:
+            obj = json.loads(a.text or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return obj.get("reasons") if isinstance(obj.get("reasons"), list) else None
+
     annotations = [
         {
             "loaded_id": a.loaded_session_id,
@@ -1427,6 +1437,9 @@ def dataset(
             # note/marker rows. Re-parses live from the annotation each dataset load,
             # so re-coding + Reload data refreshes them.
             **_parse_change(a.text, a.label),
+            # Accepted improvement reasons for `reason` annotations (list | None) —
+            # drives the breakthrough/jump/feasibility tallies in the notebook.
+            "reasons": _reason_list(a),
         }
         for s in loaded
         for a in s.annotations
@@ -1539,6 +1552,10 @@ def dataset(
     from app.analysis.coding_suggestions import _canon as _sc_canon
 
     search_changes: list[dict[str, Any]] = []
+    # Per-exchange goal-term WEIGHT change events (term, from→to) — powers the
+    # oscillation/tuning-style tallies in the notebook (origin joins there from
+    # the accepted tags on the same row_ref).
+    weight_changes: list[dict[str, Any]] = []
     for s in loaded:
         port = _port(s.test_problem_id)
         if port is None:
@@ -1550,6 +1567,13 @@ def dataset(
         msg_ts = {f"message:{msg.source_id}": msg.ts_epoch for msg in s.messages}
         for ref, d in deriv.items():
             diff = d.get("config_change") or {}
+            for t in diff.get("terms") or []:
+                for c in t.get("changes") or []:
+                    if c.get("field") == "weight":
+                        weight_changes.append({
+                            "loaded_id": s.id, "row_ref": ref, "ts_epoch": msg_ts.get(ref),
+                            "term": t.get("term"), "from": c.get("from"), "to": c.get("to"),
+                        })
             strat_origin = next((c["origin"] for c in d["changes"] if c["type"] == "search-strategy"), None)
             param_origin = next((c["origin"] for c in d["changes"] if c["type"] == "search-param"), None)
 
@@ -1580,6 +1604,7 @@ def dataset(
         "snapshots": snapshots,
         "surveys": surveys,
         "search_changes": search_changes,
+        "weight_changes": weight_changes,
     }
 
 

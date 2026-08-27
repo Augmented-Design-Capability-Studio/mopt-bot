@@ -805,6 +805,130 @@ else:
         print(line)
 
 # %%
+# INTERACTIONS → OUTCOMES (print-only): breakthrough runs, big scoring jumps,
+# and infeasible→feasible flips — from the accepted REASON labels + canonical
+# run scores. All counts depend on the researcher's accepted labels: re-label +
+# Re-fetch & run all to refresh.
+if runs.empty or "canonical_cost" not in runs.columns:
+    print("`runs` lacks canonical_cost — restart backend + Re-fetch & run all.")
+else:
+    _rr = (runs.dropna(subset=["canonical_cost"])
+           .merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id")
+           .sort_values(["loaded_id", "ts_epoch"]))
+    _rr["ref"] = "run:" + _rr["source_id"].astype(str)
+    _reas = (annotations[(annotations.get("anno_type") == "reason")]
+             [["loaded_id", "row_ref", "reasons"]]
+             if (not annotations.empty and "reasons" in annotations.columns) else pd.DataFrame())
+    _rmap = {(r.loaded_id, r.row_ref): (r.reasons or []) for r in _reas.itertuples()} if not _reas.empty else {}
+
+    # --- breakthroughs: first run reaching session-best (feasible-first) -----
+    print("BREAKTHROUGH — first run reaching session-best (feasible-first):")
+    from collections import Counter as _C
+    _pos = {"agile": [], "waterfall": []}; _kept = _C()
+    for lid, g in _rr.groupby("loaded_id"):
+        g = g.reset_index(drop=True); wf = g["workflow_mode"].iloc[0]
+        best = max(g.itertuples(), key=lambda r: (bool(r.feasible), -r.canonical_cost))
+        bi = next(i for i, r in enumerate(g.itertuples())
+                  if bool(r.feasible) == bool(best.feasible) and abs(r.canonical_cost - best.canonical_cost) < 1e-6)
+        _pos[wf].append((bi + 1) / len(g))
+        last = g.iloc[-1]
+        _kept[(wf, bool(last.feasible) == bool(best.feasible)
+               and abs(last.canonical_cost - best.canonical_cost) < 1e-6)] += 1
+    for wf in ("agile", "waterfall"):
+        med = float(np.median(_pos[wf])) if _pos[wf] else float("nan")
+        print(f"  {wf:<10} median breakthrough position {med:.2f} of the run sequence "
+              f"(n={len(_pos[wf])}); ended ON best: {_kept[(wf, True)]}, lost it: {_kept[(wf, False)]}")
+
+    # --- big jumps: top-quartile improving transitions -----------------------
+    _trans = []  # (wf, lid, prev_ts, ts, delta, reasons, flip)
+    for lid, g in _rr.groupby("loaded_id"):
+        g = g.reset_index(drop=True); wf = g["workflow_mode"].iloc[0]
+        for i in range(1, len(g)):
+            d = g["canonical_cost"].iloc[i] - g["canonical_cost"].iloc[i - 1]
+            _trans.append((wf, lid, g["ts_epoch"].iloc[i - 1], g["ts_epoch"].iloc[i], d,
+                           _rmap.get((lid, g["ref"].iloc[i]), []),
+                           (not bool(g["feasible"].iloc[i - 1])) and bool(g["feasible"].iloc[i])))
+    _imp = [t for t in _trans if t[4] < -1e-6]
+    _thr = float(np.percentile([abs(t[4]) for t in _imp], 75)) if _imp else 0.0
+    _jumps = [t for t in _imp if abs(t[4]) >= _thr]
+    def _mix(ts):
+        c = _C()
+        for t in ts:
+            for r in t[5]:
+                c[r] += 1
+        return c
+    print(f"\nBIG JUMPS — improving transitions: {len(_imp)}; top-quartile threshold |Δ|≥{_thr:,.0f}; jumps: {len(_jumps)}")
+    print(f"  reason mix on jumps:  {dict(_mix(_jumps).most_common(8))}")
+    print(f"  reason mix over ALL labeled transitions: {dict(_mix([t for t in _trans if t[5]]).most_common(8))}")
+
+    # jump-window dominance from accepted change tags (who made the changes)
+    _mt = messages[["loaded_id", "source_id", "ts_epoch"]].copy()
+    _mt["row_ref"] = "message:" + _mt["source_id"].astype(str)
+    _ct = (annotations[(annotations.get("anno_type") == "code") & annotations.get("origin").notna()]
+           .merge(_mt[["loaded_id", "row_ref", "ts_epoch"]], on=["loaded_id", "row_ref"], how="left"))
+    _dom = {"agile": _C(), "waterfall": _C()}
+    for wf, lid, t0, t1, _d, _rs, _f in _jumps:
+        win = _ct[(_ct["loaded_id"] == lid) & (_ct["ts_epoch"] > t0) & (_ct["ts_epoch"] <= t1)]
+        ao = int((win["origin"] == "agent").sum()); uo = int((win["origin"] == "user").sum())
+        if ao or uo:
+            _dom[wf]["agent-dominated" if ao > uo else ("user-dominated" if uo > ao else "tie")] += 1
+    for wf in ("agile", "waterfall"):
+        print(f"  {wf:<10} jump windows by dominant change origin: {dict(_dom[wf])}")
+
+    # --- feasibility flips ---------------------------------------------------
+    _flips = [t for t in _trans if t[6]]
+    _partners = _C()
+    for t in _flips:
+        for r in t[5]:
+            if r != "feasibility-fix":
+                _partners[r] += 1
+    print(f"\nFEASIBILITY — infeasible→feasible flips: {len(_flips)}")
+    print(f"  causal partners of the flips (reason labels minus feasibility-fix): {dict(_partners.most_common(8))}")
+
+# %%
+# TUNING STYLE (print-only): who re-ranks, and how much weight tuning
+# flip-flops (direction reversals on the same goal term). Uses the accepted
+# change tags + the `weight_changes` events (per-exchange weight from→to).
+if annotations.empty or "type" not in annotations.columns:
+    print("No accepted change tags in the dataset yet.")
+else:
+    _wfm = dict(part[["loaded_id", "workflow_mode"]].itertuples(index=False))
+    _pn = dict(part[["loaded_id", "participant"]].itertuples(index=False))
+    # --- reranking -----------------------------------------------------------
+    _rk = annotations[(annotations["anno_type"] == "code") & (annotations["type"] == "ranking")]
+    from collections import Counter as _C
+    print("RERANKING (accepted `ranking` change tags):")
+    print(f"  events by origin: {dict(_C(_rk['origin'].dropna()))}")
+    for wf in ("agile", "waterfall"):
+        lids = [l for l, w in _wfm.items() if w == wf]
+        who = sorted({_pn[l] for l in lids if ((_rk["loaded_id"] == l) & (_rk["origin"] == "user")).any()})
+        print(f"  {wf:<10} participants who reranked THEMSELVES: {len(who)}/{len(lids)} -> {who}")
+
+    # --- weight oscillation --------------------------------------------------
+    if weight_changes.empty:
+        print("\n`weight_changes` missing/empty — restart backend + Re-fetch & run all.")
+    else:
+        _wc = weight_changes.dropna(subset=["ts_epoch"]).copy()
+        _wc["delta"] = pd.to_numeric(_wc["to"], errors="coerce") - pd.to_numeric(_wc["from"], errors="coerce")
+        _wc = _wc[_wc["delta"].abs() > 1e-9]
+        # origin of each weight change = the accepted weight tag on the same exchange+term
+        _wt = annotations[(annotations["anno_type"] == "code") & (annotations["type"] == "weight")]
+        _wc = _wc.merge(_wt[["loaded_id", "row_ref", "term", "origin"]],
+                        on=["loaded_id", "row_ref", "term"], how="left")
+        print("\nWEIGHT OSCILLATION (direction reversals on the same term):")
+        for wf in ("agile", "waterfall"):
+            n_ch = 0; rev = _C()
+            for (lid, term), g in _wc[_wc["loaded_id"].map(_wfm) == wf].groupby(["loaded_id", "term"]):
+                g = g.sort_values("ts_epoch"); n_ch += len(g)
+                deltas = g["delta"].tolist(); origins = g["origin"].tolist()
+                for i in range(1, len(deltas)):
+                    if deltas[i] * deltas[i - 1] < 0:
+                        rev[origins[i] if isinstance(origins[i], str) else "untagged"] += 1
+            tot = sum(rev.values())
+            print(f"  {wf:<10} {n_ch} weight changes, {tot} reversals"
+                  f" ({tot / max(n_ch, 1):.0%}) — reverser origin: {dict(rev)}")
+
+# %%
 # IDLE-WAIT — an UNEXPECTED phenomenon (qualitative, NOT scored). The un-briefed
 # `waiting_time` term was surfaced mid-session by several WATERFALL participants but
 # NO AGILE participant ever revealed it. All who raised it dropped it before their
