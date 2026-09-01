@@ -36,6 +36,17 @@ NAMED_FIELDS: dict[str, str] = {
 
 _ID_HEADERS = ("participant id", "participant")
 
+# The five warm-up quiz MCQs in the pre-task CSV: (question-header substring,
+# correct-option substring), both matched lowercased. Fixed Google-Form option
+# strings — structured matching, not free-text interpretation.
+QUIZ_ITEMS: list[tuple[str, str]] = [
+    ("is the solution valid", "required constraint is violated"),
+    ("better than the previous one", "prioritized against each other"),
+    ("what can you conclude", "may still be improved further"),
+    ("identical inputs and identical settings", "randomness"),
+    ("may still not work well", "may not fully capture"),
+]
+
 # The pre-task free-text experience question ("Have you ever studied or worked with
 # optimization, operations research, …"). We surface only its WORD COUNT — a
 # de-identified number, a rough "how much did they elaborate" proxy — never the text.
@@ -90,6 +101,21 @@ def extract_named_metrics(row: dict[str, str]) -> dict[str, float | None]:
                 break
         out[name] = value
     return out
+
+
+def quiz_score(row: dict[str, str]) -> int | None:
+    """Number of correct warm-up quiz answers (0–5). None when the quiz is
+    absent or entirely blank (post-task rows, pilot rows) so missing ≠ 0."""
+    lowered = {k.lower(): (v or "") for k, v in row.items()}
+    answered = correct = 0
+    for q_kw, a_kw in QUIZ_ITEMS:
+        for key, val in lowered.items():
+            if q_kw in key:
+                if val.strip():
+                    answered += 1
+                    correct += a_kw in val.lower()
+                break
+    return correct if answered else None
 
 
 def _find_id(row: dict[str, str]) -> str | None:

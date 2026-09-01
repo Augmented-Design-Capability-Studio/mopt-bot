@@ -34,6 +34,7 @@ from app.analysis.survey import (
     extract_named_metrics,
     normalize_pid,
     parse_survey_csv,
+    quiz_score,
 )
 from app.analysis.timeutil import iso_and_epoch, to_epoch
 from app.analysis_db import get_analysis_db
@@ -1282,6 +1283,10 @@ def _survey_metrics(data_json: str | None) -> dict[str, float | None]:
     words = experience_word_count(row or {})
     if words is not None:
         metrics["experience_words"] = float(words)
+    # Warm-up quiz: # correct of the 5 scenario MCQs (objective knowledge measure).
+    quiz = quiz_score(row or {})
+    if quiz is not None:
+        metrics["quiz_score"] = float(quiz)
     return metrics
 
 

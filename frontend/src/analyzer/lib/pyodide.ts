@@ -90,7 +90,7 @@ if not part.empty:
     part["init_words"] = part["loaded_id"].map(_first_prompt_words)
     if not surveys.empty:
         pre = surveys[surveys.phase == "pre"] if "phase" in surveys.columns else surveys
-        keep = [c for c in ["participant_id", "expertise_score", "confidence", "est_time_minutes", "experience_words"]
+        keep = [c for c in ["participant_id", "expertise_score", "confidence", "est_time_minutes", "experience_words", "quiz_score"]
                 if c in pre.columns]
         part = part.merge(pre[keep].rename(columns={"participant_id": "pid"}), on="pid", how="left")
         post = surveys[surveys.phase == "post"] if "phase" in surveys.columns else surveys.iloc[0:0]

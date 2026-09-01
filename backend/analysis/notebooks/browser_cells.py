@@ -8,10 +8,10 @@
 #
 #   sessions, messages, runs, snapshots, annotations, surveys
 #   part      -> one row per session, joined to survey metrics + effort/time
-#               (expertise_score, confidence, est_time_minutes, init_words,
-#                n_runs, n_user_msgs, n_saves, interactions, runs_per_interaction,
-#                duration_min, active_min, runs_per_min, min_per_run,
-#                runs_per_active_min)
+#               (expertise_score, quiz_score, confidence, est_time_minutes,
+#                init_words, n_runs, n_user_msgs, n_saves, interactions,
+#                runs_per_interaction, duration_min, active_min, runs_per_min,
+#                min_per_run, runs_per_active_min)
 #   plot_xy(xcol, ycol, xlabel, ylabel, title)  -> colored scatter by workflow
 #   heatmap_over_time(points, value_col, title, vmin, vmax) -> expertise-ranked heatmap
 #   PALETTE   -> {"agile": ..., "waterfall": ...}
@@ -493,6 +493,8 @@ else:
 #     - full box            = applied when first coded (no earlier standalone mention)
 #     - lower-right half    = MENTIONED first, applied only LATER
 #     - X marker            = mentioned but NEVER applied (dropped/declined/ignored)
+# TWO figures: the split version above, then a COMBINED version where full and
+# half box are folded together (applied at ANY time — immediacy ignored).
 # Reads live from the coded tags, so re-code + Reload data + re-run to refresh.
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D as _L2D
@@ -534,59 +536,69 @@ else:
     cols = (part[["loaded_id", "participant", "workflow_mode"]].drop_duplicates()
             .assign(_o=lambda d: d.workflow_mode.map({"agile": 0, "waterfall": 1}).fillna(2))
             .sort_values(["_o", "participant"]).reset_index(drop=True))
-    import matplotlib.colors as _mcolors
-    import colorsys as _colorsys
-    USER, ABSENT = "#16a34a", "#eceff1"       # user=green; not coded/absent=light gray
-    OPTIONAL_TERMS = {"waiting_time"}         # un-briefed / optional goal terms
-    def _desat(color, sat=0.35):              # lower-saturation variant for optional rows
-        h, l, s = _colorsys.rgb_to_hls(*_mcolors.to_rgb(color))
-        return _colorsys.hls_to_rgb(h, l, s * sat)
-    def _cell(origin, wf, optional):
+    USER = "#16a34a"                          # user-initiated = green
+    ABSENT_EDGE = "#e5e7eb"                   # faint outline keeps the grid visible on white
+    def _cell(origin, wf):
         # user=green; agent-initiated colored BY WORKFLOW (agile=blue, waterfall=red).
+        # Un-briefed terms (idle wait) use the SAME colors as everything else.
         if origin == "user":
-            col = USER
-        elif origin == "agent":
-            col = PALETTE.get(wf, "#7c3aed")
-        else:
-            return ABSENT
-        return _desat(col) if optional else col
+            return USER
+        if origin == "agent":
+            return PALETTE.get(wf, "#7c3aed")
+        return None                            # not coded / absent
     _look = {(r.loaded_id, r.term): (r.origin, r.fate) for r in _init.itertuples()}
-    fig, ax = plt.subplots(figsize=(0.42 * len(cols) + 3.0, 0.5 * len(rows_terms) + 1.5))
-    for xi, c in cols.iterrows():
-        for yi, tm in enumerate(rows_terms):
-            origin, fate = _look.get((c.loaded_id, tm), (None, None))
-            col = _cell(origin, c.workflow_mode, tm in OPTIONAL_TERMS)
-            if fate == "applied":                      # full box
-                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor=col))
-            elif fate == "applied_later":              # mentioned first → lower-right half
-                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor="white"))
-                # y is inverted: (yi+1) is the visually LOWER edge of the cell.
-                ax.add_patch(mpatches.Polygon([(xi + 1, yi), (xi + 1, yi + 1), (xi, yi + 1)],
-                                              closed=True, edgecolor="white", facecolor=col))
-            elif fate == "never_applied":              # mentioned, never landed → X
-                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor="white"))
-                ax.plot([xi + 0.22, xi + 0.78], [yi + 0.22, yi + 0.78], color=col, lw=2.2, zorder=3)
-                ax.plot([xi + 0.22, xi + 0.78], [yi + 0.78, yi + 0.22], color=col, lw=2.2, zorder=3)
-            else:                                      # not coded / absent
-                ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor=ABSENT))
-    _na = int((cols.workflow_mode == "agile").sum())          # agile | waterfall divider
-    if 0 < _na < len(cols):
-        ax.axvline(_na, color="black", lw=2)
-    ax.set_xlim(0, len(cols)); ax.set_ylim(0, len(rows_terms)); ax.invert_yaxis()
-    ax.set_xticks([x + 0.5 for x in range(len(cols))]); ax.set_xticklabels(cols["participant"], rotation=90, fontsize=7)
-    ax.set_yticks([y + 0.5 for y in range(len(rows_terms))]); ax.set_yticklabels([TLABEL.get(t, t) for t in rows_terms])
-    ax.set_title("Goal-term initiation + fate (manual codes)")
-    # Legend BELOW the grid (not beside it) so the axes use the full width and
-    # match the solver-change grid.
-    fig.legend(handles=[mpatches.Patch(color=USER, label="user-initiated"),
-                        mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
-                        mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)"),
-                        mpatches.Patch(color=ABSENT, label="not coded / absent"),
-                        mpatches.Patch(facecolor="white", edgecolor="#9ca3af", label="full box = mentioned → applied immediately"),
-                        _L2D([0], [0], marker=6, ls="", color="#6b7280", label="half box = mentioned → applied later"),
-                        _L2D([0], [0], marker="x", ls="", color="#6b7280", markersize=9, markeredgewidth=2.2,
-                             label="X = mentioned → never applied")],
-               loc="lower center", ncol=4, fontsize=8)
+
+    def _draw_fate_grid(combine):
+        """The initiation+fate grid. combine=True folds `applied_later` into
+        `applied` (full box), i.e. ignores WHEN the term was applied."""
+        fig, ax = plt.subplots(figsize=(0.42 * len(cols) + 3.0, 0.5 * len(rows_terms) + 1.8))
+        for xi, c in cols.iterrows():
+            for yi, tm in enumerate(rows_terms):
+                origin, fate = _look.get((c.loaded_id, tm), (None, None))
+                col = _cell(origin, c.workflow_mode)
+                if combine and fate == "applied_later":
+                    fate = "applied"
+                if fate == "applied":                      # full box
+                    ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white", facecolor=col))
+                elif fate == "applied_later":              # mentioned first → lower-right half
+                    ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor=ABSENT_EDGE, facecolor="white"))
+                    # y is inverted: (yi+1) is the visually LOWER edge of the cell.
+                    ax.add_patch(mpatches.Polygon([(xi + 1, yi), (xi + 1, yi + 1), (xi, yi + 1)],
+                                                  closed=True, edgecolor="white", facecolor=col))
+                elif fate == "never_applied":              # mentioned, never landed → X
+                    ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor=ABSENT_EDGE, facecolor="white"))
+                    ax.plot([xi + 0.22, xi + 0.78], [yi + 0.22, yi + 0.78], color=col, lw=2.2, zorder=3)
+                    ax.plot([xi + 0.22, xi + 0.78], [yi + 0.78, yi + 0.22], color=col, lw=2.2, zorder=3)
+                else:                                      # not coded / absent → white
+                    ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor=ABSENT_EDGE, facecolor="white"))
+        _na = int((cols.workflow_mode == "agile").sum())          # agile | waterfall divider
+        if 0 < _na < len(cols):
+            ax.axvline(_na, color="black", lw=2)
+        ax.set_xlim(0, len(cols)); ax.set_ylim(0, len(rows_terms)); ax.invert_yaxis()
+        ax.set_xticks([x + 0.5 for x in range(len(cols))])
+        ax.set_xticklabels(cols["participant"], rotation=90, fontsize=11)
+        ax.set_yticks([y + 0.5 for y in range(len(rows_terms))])
+        ax.set_yticklabels([TLABEL.get(t, t) for t in rows_terms], fontsize=12)
+        ax.set_title("Goal-term initiation + fate (manual codes)"
+                     + (" — applied immediately/later combined" if combine else ""), fontsize=13)
+        # Legend BELOW the grid (not beside it) so the axes use the full width and
+        # match the solver-change grid. The full-box and X entries are TEXT-ONLY
+        # (empty handle) — the wording already says what the shape is.
+        handles = [mpatches.Patch(color=USER, label="user-initiated"),
+                   mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
+                   mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)"),
+                   mpatches.Patch(facecolor="white", edgecolor=ABSENT_EDGE, label="empty = not coded / absent"),
+                   _L2D([], [], ls="", label="full box = mentioned → applied"
+                        + ("" if combine else " immediately"))]
+        if not combine:
+            handles.append(_L2D([0], [0], marker=6, ls="", color="#6b7280",
+                                label="half box = mentioned → applied later"))
+        handles.append(_L2D([], [], ls="", label="X = mentioned → never applied"))
+        fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=11)
+        fig.tight_layout(rect=[0, 0.14, 1, 1])  # leave room for the bottom legend
+
+    _draw_fate_grid(combine=False)   # split: immediate (full) vs later (half)
+    _draw_fate_grid(combine=True)    # combined: applied at any time = full box
 
     # FATE SUMMARY — the "record this in our analysis" numbers: how many terms per
     # fate, split by workflow and by initiator origin.
@@ -601,7 +613,6 @@ else:
         print("\nMentioned-but-never-applied terms:")
         for r in _mna.sort_values(["workflow_mode", "participant"]).itertuples():
             print(f"  {r.participant} ({r.workflow_mode}): {r.term} — raised by {r.origin or '?'}")
-    fig.tight_layout(rect=[0, 0.10, 1, 1])  # leave room for the bottom legend
 
     print("Initiator of each goal term (earliest coded change), by workflow:")
     for wfm in ["agile", "waterfall"]:
@@ -1310,3 +1321,61 @@ if len(d) >= 3:
     r_, p_ = stats.pearsonr(d["init_words"], d["formulation_score"])
     _title += f" (Pearson r={r_:.2f}, p={p_:.2f})"
 ax.set_title(_title); ax.legend(title="workflow"); fig.tight_layout()
+
+# %%
+# WARM-UP QUIZ (measured conceptual understanding) vs FINAL FORMULATION QUALITY.
+# quiz_score (part) = # correct of the 5 pre-task scenario MCQs (validity of a
+# constraint-violating solution, trade-off logic, single-run inference,
+# stochasticity, proxy objectives) — an OBJECTIVE knowledge measure, unlike the
+# self-rated expertise Likerts (which predict nothing; see cells above).
+# Three panels against the FINAL config, a decomposition left->right: the 0-11
+# formulation total, its canonical-coverage part (0-7), and coverage's
+# SOFT-PREFERENCE subset (0-3). The quiz effect CONCENTRATES in soft coverage —
+# the discretionary side; hard-side coverage (objective + 3 hard) is flat vs
+# quiz (rho~0.00: runs gate on hard constraints, so capturing them takes no
+# conceptual insight). Report the total alongside the component, never the
+# component alone.
+# Both axes are small integers, so dots are JITTERED for visibility; black bar
+# = group median; Spearman rho/p computed on the UNJITTERED values.
+from scipy import stats
+qd = (part[["loaded_id", "workflow_mode", "quiz_score"]]
+      .merge(snapshots.dropna(subset=["formulation_score"])
+             .sort_values(["loaded_id", "ts_epoch"]).groupby("loaded_id").tail(1)
+             [["loaded_id", "formulation_score", "coverage", "soft_covered"]],
+             on="loaded_id").dropna(subset=["quiz_score"]))
+_rng = np.random.RandomState(0)
+fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True)
+for ax, (col, ylab) in zip(axes, [("formulation_score", "Formulation score (0-11)"),
+                                  ("coverage", "Canonical coverage (0-7)"),
+                                  ("soft_covered", "Soft prefs covered (0-3)")]):
+    for _, rr in qd.iterrows():
+        ax.scatter(rr["quiz_score"] + _rng.uniform(-0.13, 0.13),
+                   rr[col] + _rng.uniform(-0.09, 0.09), s=42, alpha=0.75, zorder=3,
+                   color=PALETTE.get(rr["workflow_mode"], "#7c3aed"),
+                   edgecolors="white", linewidths=0.6)
+    med = qd.groupby("quiz_score")[col].median()
+    ax.plot(med.index, med.values, "k_", markersize=24, markeredgewidth=2.5,
+            linestyle="none", zorder=4)
+    ax.plot(med.index, med.values, color="0.4", lw=1.1, alpha=0.7, zorder=2)
+    rho, pp = stats.spearmanr(qd["quiz_score"], qd[col])
+    ax.set_title(f"{ylab}\nSpearman rho={rho:+.2f}, p={pp:.3f}", fontsize=10)
+    ax.set_xlabel("Warm-up quiz score (of 5)")
+    ax.set_xticks(sorted(qd["quiz_score"].unique()))
+    ax.grid(axis="y", alpha=0.25)
+axes[0].set_ylabel("Final-config value")
+wf_legend(axes[0], qd["workflow_mode"])
+fig.suptitle(f"Warm-up quiz vs final formulation quality (n={len(qd)}; points jittered)", y=1.04)
+fig.tight_layout()
+# Honesty prints: the hard side of coverage is UNRELATED to quiz (the whole
+# coverage effect is the soft subset), and the quiz does NOT predict RUN
+# quality (best feasible canonical cost) — only the formulation side.
+qd["hard_side"] = qd["coverage"] - qd["soft_covered"]
+rho, pp = stats.spearmanr(qd["quiz_score"], qd["hard_side"])
+print(f"quiz vs hard-side coverage (objective+3 hard, 0-4): rho={rho:+.2f} p={pp:.3f}")
+print("hard-side coverage counts:", qd["hard_side"].value_counts().sort_index().to_dict())
+bf = runs[runs["feasible"] == True].groupby("loaded_id")["canonical_cost"].min()  # noqa: E712
+qc = qd.merge(bf.rename("best_feasible"), on="loaded_id").dropna(subset=["best_feasible"])
+if len(qc) >= 3:
+    rho, pp = stats.spearmanr(qc["quiz_score"], np.log10(qc["best_feasible"]))
+    print(f"quiz vs log10(best feasible canonical cost): rho={rho:+.2f} p={pp:.3f} n={len(qc)}")
+print("quiz_score distribution:", qd["quiz_score"].value_counts().sort_index().to_dict())
