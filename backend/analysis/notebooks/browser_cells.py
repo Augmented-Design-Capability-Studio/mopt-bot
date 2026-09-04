@@ -81,7 +81,31 @@ print(part.head(8).to_string())
 
 # %%
 # --- Shared helpers (run this cell before the plots below) -------------------
+import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+
+# CHI-readable defaults: larger base text so figures stay legible after being
+# scaled down to column width, plus tighter legends (same text size, smaller
+# footprint). Applied once here for every plot below. Per-plot fontsize= calls
+# still win where a cell sets them explicitly (e.g. dense heatmap tick labels).
+plt.rcParams.update({
+    "font.size": 13,
+    "axes.titlesize": 14,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 11,
+    "legend.title_fontsize": 11,
+    "figure.titlesize": 15,
+    "legend.frameon": True,
+    "legend.framealpha": 0.85,
+    "legend.handlelength": 1.2,
+    "legend.handletextpad": 0.5,
+    "legend.columnspacing": 1.0,
+    "legend.borderaxespad": 0.3,
+    "savefig.dpi": 200,
+    "savefig.bbox": "tight",
+})
 
 
 def elapsed(df, cols=()):
@@ -211,8 +235,10 @@ else:
                if sed > 0 else float("nan"))                            # Welch-Satterthwaite df
         ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
                color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
-        ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
-        ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
+        _ja = np.random.RandomState(0).uniform(-0.18, 0.18, len(a))  # staggered dots
+        _jw = np.random.RandomState(1).uniform(-0.18, 0.18, len(w))
+        ax.scatter(_ja, a, color="k", alpha=0.5, s=18, zorder=3)
+        ax.scatter(1 + _jw, w, color="k", alpha=0.5, s=18, zorder=3)
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
         ax.set_title(f"{name}\nd={d:+.2f}  (t p={pt:.2f}, U p={pmw:.2f})")
         print(f"\n{name}:")
@@ -254,7 +280,7 @@ for lid, g in rc.groupby("loaded_id"):
                 elinewidth=0.6, capsize=1.5)  # error bar = +/-1 std over the traffic seeds
     last = g.iloc[-1]
     ax.annotate(last["participant"], (last["session_run_index"], last["canonical_cost"]),
-                fontsize=7, xytext=(3, 0), textcoords="offset points")
+                fontsize=9, xytext=(3, 0), textcoords="offset points")
 ax.set_yscale("log")  # canonical cost spans orders of magnitude
 ax.set_xlabel("Run index")
 ax.set_ylabel("Canonical cost (log scale - lower is better)")
@@ -273,7 +299,7 @@ for lid, g in rc.groupby("loaded_id"):
                 elinewidth=0.6, capsize=1.5)  # error bar = +/-1 std over the traffic seeds
     last = g.iloc[-1]
     ax.annotate(last["participant"], (last["elapsed_min"], last["canonical_cost"]),
-                fontsize=7, xytext=(3, 0), textcoords="offset points")
+                fontsize=9, xytext=(3, 0), textcoords="offset points")
 ax.set_yscale("log")
 ax.set_xlabel("Minutes since first message")
 ax.set_ylabel("Canonical cost (log - lower is better)")
@@ -296,7 +322,7 @@ def _best_over_time(ax, df):
         best = g["canonical_cost"].cummin()               # running best-so-far
         ax.plot(g["elapsed_min"], best, drawstyle="steps-post", lw=1.8, alpha=0.85, color=col)
         ax.annotate(g.iloc[-1]["participant"], (g.iloc[-1]["elapsed_min"], best.iloc[-1]),
-                    fontsize=7, xytext=(3, 0), textcoords="offset points")
+                    fontsize=9, xytext=(3, 0), textcoords="offset points")
     ax.set_yscale("log"); ax.set_xlabel("Minutes since first message")
 
 
@@ -334,12 +360,13 @@ if {"agile", "waterfall"} <= set(ever.index):
     ay, an = int(ever.loc["agile", "sum"]), int(ever.loc["agile", "count"])
     wy, wn = int(ever.loc["waterfall", "sum"]), int(ever.loc["waterfall", "count"])
     _, pf = stats.fisher_exact([[ay, an - ay], [wy, wn - wy]])
-    ax1.text(0.98, 0.02, f"Fisher p={pf:.2f}", transform=ax1.transAxes, ha="right", va="bottom", fontsize=8, color="#555")
+    ax1.text(0.98, 0.02, f"Fisher p={pf:.2f}", transform=ax1.transAxes, ha="right", va="bottom", fontsize=10, color="#555")
 # (2) per-participant fraction of runs feasible, by workflow (mean +/- SE + points)
 for i, w in enumerate(order):
     vals = _pf[_pf.workflow_mode == w]["rate"]
     ax2.bar(i, vals.mean(), yerr=_se(vals), color=PALETTE.get(w, "#7c3aed"), capsize=6, width=0.6)
-    ax2.scatter(np.full(len(vals), i), vals, color="k", alpha=0.5, s=18)
+    _jit = np.random.RandomState(i).uniform(-0.18, 0.18, len(vals))  # staggered dots
+    ax2.scatter(i + _jit, vals, color="k", alpha=0.5, s=18, zorder=3)
 ax2.set_xticks(range(len(order))); ax2.set_xticklabels([w.capitalize() for w in order])
 ax2.set_ylim(0, 1.05); ax2.set_ylabel("fraction of runs feasible (per participant)"); ax2.set_title("Feasible-run rate")
 fig.suptitle("Feasibility rates: agile vs waterfall"); fig.tight_layout()
@@ -365,8 +392,8 @@ def _compare_cost(ax, frame, title):
     order = [w for w in ["agile", "waterfall"] if w in set(frame.workflow_mode)]
     vals = [frame[frame.workflow_mode == w]["best"].dropna() for w in order]
     for i, (w, v) in enumerate(zip(order, vals)):
-        ax.scatter(np.full(len(v), i) + np.linspace(-0.05, 0.05, len(v)), v,
-                   color=PALETTE.get(w, "#7c3aed"), alpha=0.7, s=32)
+        _jit = np.random.RandomState(i).uniform(-0.15, 0.15, len(v))  # staggered dots
+        ax.scatter(i + _jit, v, color=PALETTE.get(w, "#7c3aed"), alpha=0.7, s=32, zorder=3)
         ax.hlines(v.median(), i - 0.25, i + 0.25, color="black", lw=2)          # median
     ax.set_yscale("log"); ax.set_xticks(range(len(order)))
     ax.set_xticklabels([f"{w}\n(n={len(v)})" for w, v in zip(order, vals)])
@@ -376,7 +403,7 @@ def _compare_cost(ax, frame, title):
         _, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")               # ranks (scale-free)
         _, pt = stats.ttest_ind(np.log10(a), np.log10(w), equal_var=False)       # Welch on log10 cost
         ax.text(0.98, 0.97, f"median a={a.median():.0f}  w={w.median():.0f}\nt(log) p={pt:.2f}, U p={pmw:.2f}",
-                transform=ax.transAxes, ha="right", va="top", fontsize=8, color="#555")
+                transform=ax.transAxes, ha="right", va="top", fontsize=10, color="#555")
 
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
@@ -481,7 +508,7 @@ else:
     rank_yticks(ax, order)
     ax.set_xlabel("Minutes since first message")
     ax.set_title("When each goal term was first identified (row band = workflow)")
-    ax.legend(title="goal term", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    ax.legend(title="goal term", bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=11)
 
 # %%
 # GOAL-TERM ORIGINS + FATE — who INITIATED each goal term and what became of it,
@@ -681,7 +708,7 @@ else:
             if v:
                 ax.text(x, y, str(v), ha="center", va="center", color="white",
                         fontsize=9, fontweight="bold")
-        ax.text(x, u + a + 0.4, f"n={u + a}", ha="center", fontsize=8, color="#555")
+        ax.text(x, u + a + 0.4, f"n={u + a}", ha="center", fontsize=10, color="#555")
     ax.set_xticks(xs)
     ax.set_xticklabels(["algo switch", "param tune", "algo switch", "param tune"])
     ax.text(0.5, -0.13, "agile", transform=ax.get_xaxis_transform(), ha="center", fontweight="bold")
@@ -692,7 +719,7 @@ else:
     ax.legend(handles=[mpatches.Patch(color=USER, label="user-initiated"),
                        mpatches.Patch(color=PALETTE["agile"], label="agent-initiated (agile)"),
                        mpatches.Patch(color=PALETTE["waterfall"], label="agent-initiated (waterfall)")],
-              fontsize=8, bbox_to_anchor=(1.02, 1), loc="upper left")  # outside, clear of the bars
+              fontsize=11, bbox_to_anchor=(1.02, 1), loc="upper left")  # outside, clear of the bars
     fig.tight_layout()
 
     print(f"Excluded {_n_initial} initial strategy selection(s) (one per session — mandatory setup).")
@@ -787,13 +814,13 @@ else:
                 ax.add_patch(mpatches.Rectangle((xi, yi), 1, 1, edgecolor="white",
                                                 facecolor=USER if hu else wf_col))
             ax.text(xi + 0.5, yi + 0.5, str(n), ha="center", va="center",
-                    color="white", fontsize=8, fontweight="bold")
+                    color="white", fontsize=9, fontweight="bold")
     _na = int((cols.workflow_mode == "agile").sum())
     if 0 < _na < len(cols):
         ax.axvline(_na, color="black", lw=2)
     ax.set_xlim(0, len(cols)); ax.set_ylim(0, len(rows_f)); ax.invert_yaxis()
     ax.set_xticks([x + 0.5 for x in range(len(cols))])
-    ax.set_xticklabels(cols["participant"], rotation=90, fontsize=7)
+    ax.set_xticklabels(cols["participant"], rotation=90, fontsize=9)
     ax.set_yticks([y + 0.5 for y in range(len(rows_f))])
     ax.set_yticklabels([FLABEL.get(f, f) for f in rows_f])
     ax.set_title("Solver changes per session — count + who drove them\n"
@@ -804,7 +831,7 @@ else:
                         mpatches.Patch(color=PALETTE["waterfall"], label="agent-driven (waterfall)"),
                         mpatches.Patch(facecolor="white", edgecolor="#374151", label="diagonal split = both"),
                         mpatches.Patch(color=ABSENT, label="never changed")],
-               loc="lower center", ncol=5, fontsize=8)
+               loc="lower center", ncol=5, fontsize=11)
     fig.tight_layout(rect=[0, 0.10, 1, 1])  # leave room for the bottom legend
 
     print("Change events per kind (agile | waterfall):")
@@ -1007,7 +1034,7 @@ for col, color, off, lab, sized in [("weight_edits", "#2563eb", -0.28, "weight",
 rank_yticks(ax, order)
 ax.set_xlabel("Minutes since first message")
 ax.set_title("Goal-term balancing over time (weight/type sized by # terms; rerank = reorder event)")
-ax.legend(loc="upper right", fontsize=8)
+ax.legend(loc="upper right", fontsize=11)
 tot = sp.groupby("loaded_id")[["weight_edits", "type_edits", "reranked", "addrm"]].sum().merge(
     part[["loaded_id", "workflow_mode"]], on="loaded_id")
 print("goal-term edits by workflow (mean per participant):")
@@ -1025,7 +1052,7 @@ for lid, g in fs.groupby("loaded_id"):
             marker="o", ms=3, lw=1.4, alpha=0.75, color=PALETTE.get(wf, "#7c3aed"))
     last = g.iloc[-1]
     ax.annotate(last["participant"], (last["elapsed_min"], last["formulation_score"]),
-                fontsize=7, xytext=(3, 0), textcoords="offset points")
+                fontsize=9, xytext=(3, 0), textcoords="offset points")
 ax.set_xlabel("Minutes since first message")
 ax.set_ylabel("Formulation score (higher = better)")
 ax.set_title("Formulation score over time, by participant")
@@ -1061,8 +1088,10 @@ for ax, (col, lab) in zip(axes, _cols):
     w = mm[mm.workflow_mode == "waterfall"][col]
     ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
            color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
-    ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.45, s=18)
-    ax.scatter(np.ones(len(w)), w, color="k", alpha=0.45, s=18)
+    _ja = np.random.RandomState(0).uniform(-0.18, 0.18, len(a))  # staggered dots
+    _jw = np.random.RandomState(1).uniform(-0.18, 0.18, len(w))
+    ax.scatter(_ja, a, color="k", alpha=0.5, s=22, zorder=3)
+    ax.scatter(1 + _jw, w, color="k", alpha=0.5, s=22, zorder=3)
     ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"]); ax.set_title(lab)
 axes[0].set_ylabel("mean +/- SE"); axes[0].set_ylim(0, 11.5)
 fig.suptitle("Formulation score: final config vs each participant's best")
@@ -1132,6 +1161,7 @@ print(f"\nExpertise vs formulation quality: Pearson r={r:.2f} p={pr:.3f} | "
 # TINT + HATCH pattern, so the legend stays workflow-neutral (gray swatches).
 import matplotlib.colors as _mcolors
 import matplotlib.patches as mpatches
+import matplotlib.patheffects as _pe
 
 
 def _tint(color, f):
@@ -1154,11 +1184,14 @@ def _stacked(ax, frame, title, show_labels):
         vals = np.array([frame[frame.workflow_mode == g][col].mean() for g in groups])
         ax.bar(np.arange(len(groups)), vals, bottom=bottom, width=0.62,
                color=[_tint(PALETTE.get(g, "#7c3aed"), f) for g in groups],
-               hatch=hatch, edgecolor="white", linewidth=1.0)
+               hatch=hatch, edgecolor="black", linewidth=0.8)  # black hatch = high contrast, print-safe
         for xi, v, b, g in zip(range(len(groups)), vals, bottom, groups):  # label tall-enough segments
             if v >= 0.6:
-                ax.text(xi, b + v / 2, f"{v:.1f}", ha="center", va="center",
-                        color=("white" if f < 0.5 else "#1f2937"), fontsize=8, fontweight="bold")
+                _txtc = "white" if f < 0.5 else "#1f2937"
+                _halo = "#1f2937" if f < 0.5 else "white"          # contrasting outline
+                ax.text(xi - 0.17, b + v / 2, f"{v:.1f}", ha="center", va="center",  # left of the error bar
+                        color=_txtc, fontsize=11, fontweight="bold",
+                        path_effects=[_pe.withStroke(linewidth=2.2, foreground=_halo)])
         bottom += vals
     for i, g in enumerate(groups):              # error bar (SE) + value on the TOTAL height
         tt = frame[frame.workflow_mode == g][SCORE]
@@ -1171,7 +1204,7 @@ def _stacked(ax, frame, title, show_labels):
         _, _pt = stats.ttest_ind(_a, _w, equal_var=False)              # Welch t-test (means)
         _, _pu = stats.mannwhitneyu(_a, _w, alternative="two-sided")   # Mann-Whitney U (ranks)
         ax.text(0.98, 0.02, f"gap={_w.mean() - _a.mean():+.1f} (t p={_pt:.2f}, U p={_pu:.2f})",
-                transform=ax.transAxes, ha="right", va="bottom", fontsize=8, color="#555")
+                transform=ax.transAxes, ha="right", va="bottom", fontsize=10, color="#555")
     ax.set_xticks(range(len(groups))); ax.set_xticklabels([g.capitalize() for g in groups])
     ax.set_ylim(0, 11.5); ax.set_title(title)
 
@@ -1182,10 +1215,11 @@ _stacked(axes[1], fq_max, "MAX (best snapshot)", False)
 axes[0].set_ylabel("Mean formulation score (0-11)")
 # Workflow-neutral component legend: gray swatches carrying the tint + hatch.
 _legend_handles = [
-    mpatches.Patch(facecolor=_tint("#6b7280", f), hatch=hatch, edgecolor="white", label=lab)
+    mpatches.Patch(facecolor=_tint("#9ca3af", f), hatch=hatch, edgecolor="black",
+                   linewidth=0.8, label=lab)
     for _, lab, hatch, f in comps
 ]
-fig.legend(handles=_legend_handles, loc="lower center", ncol=3, fontsize=8)
+fig.legend(handles=_legend_handles, loc="lower center", ncol=3, fontsize=11)
 fig.suptitle("Formulation score and its components: agile vs waterfall (excluding the optional idle_wait goal term)")
 fig.tight_layout(rect=[0, 0.06, 1, 1])
 
@@ -1228,8 +1262,10 @@ else:
         _, pt = stats.ttest_ind(a, w, equal_var=False)             # Welch, shown for transparency
         ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
                color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
-        ax.scatter(np.zeros(len(a)), a, color="k", alpha=0.4, s=15)
-        ax.scatter(np.ones(len(w)), w, color="k", alpha=0.4, s=15)
+        _ja = np.random.RandomState(0).uniform(-0.18, 0.18, len(a))  # staggered dots
+        _jw = np.random.RandomState(1).uniform(-0.18, 0.18, len(w))
+        ax.scatter(_ja, a, color="k", alpha=0.5, s=20, zorder=3)
+        ax.scatter(1 + _jw, w, color="k", alpha=0.5, s=20, zorder=3)
         ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
         ax.set_title(f"{name}\nd={d:+.2f}  (t p={pt:.2f}, U p={pmw:.2f})")
         print(f"{name:>20}: agile {a.mean():.2f}+/-{_se(a):.2f}  waterfall {w.mean():.2f}+/-{_se(w):.2f}  "
@@ -1257,7 +1293,7 @@ else:
         ax.scatter(g["solution_confidence"], g["best_feasible"], color=PALETTE.get(wf), label=wf, s=55)
         for _, row in g.iterrows():
             ax.annotate(row["participant"], (row["solution_confidence"], row["best_feasible"]),
-                        fontsize=7, xytext=(4, 0), textcoords="offset points")
+                        fontsize=9, xytext=(4, 0), textcoords="offset points")
     ax.set_yscale("log")
     # Participants who NEVER reached feasibility have no best-feasible cost; park them
     # at the top of the plot as X markers, but COLOR them by workflow (red edge marks
@@ -1269,7 +1305,7 @@ else:
         ax.scatter(row["solution_confidence"], ymax, marker="X", s=120,
                    color=col, edgecolor="red", linewidth=1.6, zorder=5)
         ax.annotate(f'{row["participant"]} (never feasible)', (row["solution_confidence"], ymax),
-                    fontsize=7, color=col, xytext=(4, 0), textcoords="offset points")
+                    fontsize=9, color=col, xytext=(4, 0), textcoords="offset points")
     ax.set_xlabel("Post-session confidence (1-7)")
     ax.set_ylabel("Best-feasible canonical cost (log - lower = better)")
     ax.set_title(f"Confidence vs actual quality: r={r:.2f}, p={p:.2f} (flat/scattered = poor calibration)")
@@ -1291,7 +1327,7 @@ for wf, g in d.groupby("workflow_mode"):
                color=PALETTE.get(wf, "#7c3aed"), edgecolor="white", linewidth=1.4, zorder=3)
     for _, rr in g.iterrows():
         ax.annotate(rr["participant"], (rr["init_words"], rr["best_feasible"]),
-                    fontsize=8, xytext=(5, 5), textcoords="offset points")
+                    fontsize=9, xytext=(5, 5), textcoords="offset points")
 ax.set_yscale("log")  # best-feasible cost spans orders of magnitude
 ax.set_xlabel("Initial prompt words (upload notice excluded)")
 ax.set_ylabel("Best feasible canonical cost (log - lower = better)")
@@ -1313,7 +1349,7 @@ for wf, g in d.groupby("workflow_mode"):
                color=PALETTE.get(wf, "#7c3aed"), edgecolor="white", linewidth=1.4, zorder=3)
     for _, rr in g.iterrows():
         ax.annotate(rr["participant"], (rr["init_words"], rr["formulation_score"]),
-                    fontsize=8, xytext=(5, 5), textcoords="offset points")
+                    fontsize=9, xytext=(5, 5), textcoords="offset points")
 ax.set_xlabel("Initial prompt words (upload notice excluded)")
 ax.set_ylabel("Final formulation score (0-11)")
 _title = "Initial prompt length x formulation quality"
@@ -1358,7 +1394,7 @@ for ax, (col, ylab) in zip(axes, [("formulation_score", "Formulation score (0-11
             linestyle="none", zorder=4)
     ax.plot(med.index, med.values, color="0.4", lw=1.1, alpha=0.7, zorder=2)
     rho, pp = stats.spearmanr(qd["quiz_score"], qd[col])
-    ax.set_title(f"{ylab}\nSpearman rho={rho:+.2f}, p={pp:.3f}", fontsize=10)
+    ax.set_title(f"{ylab}\nSpearman rho={rho:+.2f}, p={pp:.3f}", fontsize=12)
     ax.set_xlabel("Warm-up quiz score (of 5)")
     ax.set_xticks(sorted(qd["quiz_score"].unique()))
     ax.grid(axis="y", alpha=0.25)
