@@ -107,6 +107,63 @@ plt.rcParams.update({
     "savefig.bbox": "tight",
 })
 
+# Paper mode: keep long descriptive titles OFF the plot (they eat vertical space
+# and belong in the caption) and print them as text below the cell instead; short
+# panel labels like "(a)" or "FEASIBLE only" still draw on the plot. Set
+# PAPER_TITLES = False to restore on-plot titles. One global hook, so no per-cell
+# edits — every ax.set_title / fig.suptitle across the notebook is covered.
+import matplotlib.axes as _mpax
+import matplotlib.figure as _mpfig
+PAPER_TITLES = True
+_TITLE_KEEP_LEN = 16          # titles this short or shorter stay on the plot (panel labels)
+
+
+def _is_paper_patch(f):       # recognises this patch AND earlier (buggy) generations
+    return (getattr(f, "_paper_patch", False) or getattr(f, "_paper_patched", False)
+            or getattr(f, "__name__", "").startswith(("_paper_", "_set_title", "_suptitle")))
+
+
+# Stash the TRUE original ON THE CLASS (survives _NB_GLOBALS.clear on Reload). Only stash
+# a genuine, un-patched original; if a stale patch from an earlier session already
+# overwrote the class and lost the original, SKIP drawing the title rather than crash.
+_cur_st = _mpax.Axes.set_title
+if not _is_paper_patch(_cur_st):
+    _mpax.Axes._paper_orig_set_title = _cur_st
+
+
+def _paper_set_title(self, label="", *a, **k):
+    if (globals().get("PAPER_TITLES", True) and isinstance(label, str)
+            and len(label) > globals().get("_TITLE_KEEP_LEN", 16)):
+        print("TITLE:", label.replace("\n", "  "))
+        return None
+    _orig = getattr(type(self), "_paper_orig_set_title", None)
+    if _orig is None or _is_paper_patch(_orig):
+        return None           # no usable original (stale session) — reload to restore
+    return _orig(self, label, *a, **k)
+
+
+_paper_set_title._paper_patch = True
+_mpax.Axes.set_title = _paper_set_title
+
+_cur_su = _mpfig.Figure.suptitle
+if not _is_paper_patch(_cur_su):
+    _mpfig.Figure._paper_orig_suptitle = _cur_su
+
+
+def _paper_suptitle(self, t="", *a, **k):
+    if (globals().get("PAPER_TITLES", True) and isinstance(t, str)
+            and len(t) > globals().get("_TITLE_KEEP_LEN", 16)):
+        print("SUPTITLE:", t.replace("\n", "  "))
+        return None
+    _orig = getattr(type(self), "_paper_orig_suptitle", None)
+    if _orig is None or _is_paper_patch(_orig):
+        return None
+    return _orig(self, t, *a, **k)
+
+
+_paper_suptitle._paper_patch = True
+_mpfig.Figure.suptitle = _paper_suptitle
+
 
 def elapsed(df, cols=()):
     """Add elapsed_min = minutes since that session's FIRST message — the
@@ -162,18 +219,55 @@ def spread_labels(ax, items, fontsize=8, x_pad_frac=0.04, x_room_frac=0.24):
         ax.annotate(txt, xy=(x, y), xytext=(lx, ny), color=c, fontsize=fontsize, va="center",
                     arrowprops=dict(arrowstyle="-", color=c, lw=0.4, alpha=0.4))
 
+
+def panel_title(ax, text, fontsize=13):
+    """Draw a panel title above the axes (via annotate) so it survives the
+    paper-title hook that strips long set_title / suptitle text."""
+    ax.annotate(text, xy=(0.5, 1.0), xycoords="axes fraction", xytext=(0, 6),
+                textcoords="offset points", ha="center", va="bottom",
+                fontsize=fontsize, fontweight="bold", annotation_clip=False)
+
+
+import matplotlib.patches as _mp_patches
+from matplotlib.legend_handler import HandlerBase as _HandlerBase
+
+
+class SplitHandle:
+    """Proxy legend entry for a diagonal-split square (two colored triangles),
+    used for the 'half box' (cell 21) and 'both user+agent' (cell 23) entries."""
+    def __init__(self, upper_left, lower_right, edge="white", label=""):
+        self.ul, self.lr, self.edge, self._label = upper_left, lower_right, edge, label
+
+    def get_label(self):
+        return self._label
+
+
+class _SplitHandler(_HandlerBase):
+    def create_artists(self, legend, h, xd, yd, width, height, fontsize, trans):
+        ul = _mp_patches.Polygon([[0, 0], [0, height], [width, height]], closed=True,
+                                 facecolor=h.ul, edgecolor=h.edge, lw=0.8)
+        lr = _mp_patches.Polygon([[0, 0], [width, 0], [width, height]], closed=True,
+                                 facecolor=h.lr, edgecolor=h.edge, lw=0.8)
+        ul.set_transform(trans)
+        lr.set_transform(trans)
+        return [ul, lr]
+
+
+SPLIT_HANDLER_MAP = {SplitHandle: _SplitHandler()}
+
 # %%
 # Overall distribution of self-rated expertise, colored by workflow (agile/waterfall).
 # expertise_score = mean of the 5 pre-task Likert items (1-7). Stacked histogram, so
 # you see the overall shape AND the per-arm composition in one plot.
 _e = part.dropna(subset=["expertise_score"])
 _bins = np.arange(1, 7.5, 0.5)
-fig, ax = plt.subplots(figsize=(7, 4.5))
+fig, ax = plt.subplots(figsize=(7, 3))          # match cell 34 (single-column paper figure)
 ax.hist([_e[_e.workflow_mode == wfm]["expertise_score"].values for wfm in ["agile", "waterfall"]],
         bins=_bins, stacked=True, color=[PALETTE["agile"], PALETTE["waterfall"]],
         label=["agile", "waterfall"], edgecolor="white")
 ax.set_xlabel("Self-rated expertise (mean of 5 Likert items, 1-7)")
-ax.set_ylabel("participants"); ax.set_title("Distribution of self-rated expertise (stacked by workflow)")
+ax.set_ylabel("participants")
+ax.set_title("Distribution of self-rated expertise (stacked by workflow)")  # printed by the paper-title hook
 ax.legend(title="workflow"); fig.tight_layout()
 print(f"overall: n={len(_e)}  mean={_e['expertise_score'].mean():.2f}  median={_e['expertise_score'].median():.2f}")
 for wfm in ["agile", "waterfall"]:
@@ -235,6 +329,7 @@ plot_xy("expertise_score", "runs_per_interaction",
 # runs_per_active_min = runs / ACTIVE minutes (excludes >3min idle gaps). Both from
 # `part`. EXPLORATORY (n~13/group): report the effect size + 95% CI, not just a p.
 from scipy import stats
+import matplotlib.patches as mpatches
 _metrics = [("runs_per_min", "Runs / min"),
             ("runs_per_active_min", "Runs / active min (excludes >3min inactivity)")]
 _have = [mt for mt in _metrics if mt[0] in part.columns]
@@ -242,43 +337,48 @@ if not _have:
     print("runs_per_min not in `part` - Reload data.")
 else:
     _se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
-    fig, axes = plt.subplots(1, len(_have), figsize=(5 * len(_have), 4.4), squeeze=False)
-    for ax, (col, name) in zip(axes[0], _have):
+    _SHORT = {"runs_per_min": "runs / min", "runs_per_active_min": "runs / active min"}
+    _W = 0.38                                        # bar width; agile left, waterfall right
+    fig, ax = plt.subplots(figsize=(7, 3.6))         # single-column width (matches cells 5 / 34)
+    for gi, (col, name) in enumerate(_have):
         a = part[part.workflow_mode == "agile"][col].dropna()
         w = part[part.workflow_mode == "waterfall"][col].dropna()
-        diff = a.mean() - w.mean()                                  # agile - waterfall
+        diff = a.mean() - w.mean()
         sed = np.sqrt(a.var(ddof=1) / len(a) + w.var(ddof=1) / len(w))
         lo, hi = diff - 1.96 * sed, diff + 1.96 * sed
         pooled = np.sqrt(((len(a) - 1) * a.var(ddof=1) + (len(w) - 1) * w.var(ddof=1)) / (len(a) + len(w) - 2))
-        d = diff / pooled if pooled > 0 else 0.0                    # Cohen's d (+ = agile faster)
-        va, vw = a.var(ddof=1), w.var(ddof=1)
-        u_stat, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")   # U-test (ranks)
-        t_stat, pt = stats.ttest_ind(a, w, equal_var=False)              # Welch t-test (means)
-        dof = (sed**4 / ((va / len(a))**2 / (len(a) - 1) + (vw / len(w))**2 / (len(w) - 1))
-               if sed > 0 else float("nan"))                            # Welch-Satterthwaite df
-        ax.bar([0, 1], [a.mean(), w.mean()], yerr=[_se(a), _se(w)],
-               color=[PALETTE["agile"], PALETTE["waterfall"]], capsize=6)
-        _ja = np.random.RandomState(0).uniform(-0.18, 0.18, len(a))  # staggered dots
-        _jw = np.random.RandomState(1).uniform(-0.18, 0.18, len(w))
-        ax.scatter(_ja, a, color="k", alpha=0.5, s=18, zorder=3)
-        ax.scatter(1 + _jw, w, color="k", alpha=0.5, s=18, zorder=3)
-        ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"])
-        ax.set_title(f"{name}\nd={d:+.2f}  (t p={pt:.2f}, U p={pmw:.2f})")
+        d = diff / pooled if pooled > 0 else 0.0
+        u_stat, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")
+        t_stat, pt = stats.ttest_ind(a, w, equal_var=False)
+        top = 0.0
+        for off, vals, c, sd in ((-_W / 2, a, PALETTE["agile"], 1), (_W / 2, w, PALETTE["waterfall"], 0)):
+            x = gi + off
+            ax.bar(x, vals.mean(), width=_W, yerr=_se(vals), color=c, capsize=5, zorder=2)
+            jit = np.random.RandomState(sd).uniform(-_W / 3, _W / 3, len(vals))
+            ax.scatter(x + jit, vals, color="k", alpha=0.45, s=14, zorder=3)
+            top = max(top, float(vals.max()), vals.mean() + _se(vals))
+        # ax.text(gi, top * 1.04, f"d={d:+.2f}", ha="center", va="bottom", fontsize=9, color="#555")
         print(f"\n{name}:")
-        print(f"   agile     mean={a.mean():.3f} sd={a.std(ddof=1):.3f} n={len(a)}")
-        print(f"   waterfall mean={w.mean():.3f} sd={w.std(ddof=1):.3f} n={len(w)}")
-        print(f"   diff(a-w)={diff:+.3f}   95% CI [{lo:+.3f}, {hi:+.3f}]   Cohen d={d:+.2f}")
-        print(f"   t-test (Welch, MEANS):        t({dof:.1f}) = {t_stat:+.2f}   p = {pt:.3f}")
-        print(f"   U-test (Mann-Whitney, RANKS): U = {u_stat:.0f}          p = {pmw:.3f}")
-    axes[0][0].set_ylabel("runs per minute")
-    fig.suptitle("Run frequency: agile vs waterfall"); fig.tight_layout()
+        print(f"   agile mean={a.mean():.3f} sd={a.std(ddof=1):.3f} n={len(a)} | "
+              f"waterfall mean={w.mean():.3f} sd={w.std(ddof=1):.3f} n={len(w)}")
+        print(f"   diff(a-w)={diff:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]  Cohen d={d:+.2f}  "
+              f"Welch p={pt:.3f}  MW p={pmw:.3f}")
+    for _xd in range(1, len(_have)):                 # thin divider between the metric groups
+        ax.axvline(_xd - 0.5, color="#d1d5db", lw=1)
+    ax.set_xticks(range(len(_have)))
+    ax.set_xticklabels([_SHORT.get(c, n) for c, n in _have])
+    ax.set_ylabel("runs per minute")
+    ax.legend(handles=[mpatches.Patch(color=PALETTE["agile"], label="agile"),
+                       mpatches.Patch(color=PALETTE["waterfall"], label="waterfall")],
+              loc="lower center", bbox_to_anchor=(0.5, -0.30), ncol=2)   # horizontal, under the plot
+    fig.suptitle("Run frequency: agile vs waterfall (runs per minute)"); fig.tight_layout()
     print("\nEXPLORATORY (n~13/group): read the effect size + CI, not the p-value.")
 
 # %%
 # Run timeline: x = minutes since first message; rows ranked by expertise (low->high).
 order, ypos = expertise_rows()
 r = elapsed(runs, ["workflow_mode"]).dropna(subset=["elapsed_min"])
-fig, ax = plt.subplots(figsize=(9, 6))
+fig, ax = plt.subplots(figsize=(7, 6))
 for lid, g in r.groupby("loaded_id"):  # faint spine spanning each participant's runs
     ax.hlines(ypos.get(lid), g["elapsed_min"].min(), g["elapsed_min"].max(), color="#cbd5e1", lw=1, zorder=1)
 for wf, g in r.groupby("workflow_mode"):
@@ -296,7 +396,7 @@ ax.legend(title="workflow")
 rc = runs.merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id", how="left")
 rc = rc.dropna(subset=["canonical_cost"]).sort_values(["loaded_id", "session_run_index"])
 for _logy in (True, False):  # log for the orders-of-magnitude spread + a linear twin to sanity-check
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(7, 6))
     for lid, g in rc.groupby("loaded_id"):
         wf = g["workflow_mode"].iloc[0]
         ax.errorbar(g["session_run_index"], g["canonical_cost"], yerr=g["canonical_cost_std"],
@@ -318,7 +418,7 @@ for _logy in (True, False):  # log for the orders-of-magnitude spread + a linear
 rc = elapsed(runs, ["participant", "workflow_mode"]).dropna(subset=["canonical_cost"])
 rc = rc.sort_values(["loaded_id", "elapsed_min"])
 for _logy in (True, False):  # log + linear twin
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(7, 6))
     for lid, g in rc.groupby("loaded_id"):
         wf = g["workflow_mode"].iloc[0]
         ax.errorbar(g["elapsed_min"], g["canonical_cost"], yerr=g["canonical_cost_std"],
@@ -331,7 +431,7 @@ for _logy in (True, False):  # log + linear twin
         ax.set_yscale("log")
     _sc = "log scale" if _logy else "linear scale"
     ax.set_xlabel("Minutes since first message")
-    ax.set_ylabel(f"Canonical cost ({_sc} - lower is better)")
+    ax.set_ylabel(f"Canonical cost \n({_sc} - lower is better)")
     ax.set_title(f"Canonical solution cost over time, by participant ({_sc})")
     wf_legend(ax, rc["workflow_mode"])
 
@@ -389,7 +489,7 @@ order = [w for w in ["agile", "waterfall"] if w in set(_pf.workflow_mode)]
 _se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
 ever = _pf.groupby("workflow_mode")["ever"].agg(["sum", "count"])
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.2))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.2))
 # (1) EVER reached a feasible solution (proportion of participants) + Fisher exact
 props = [ever.loc[w, "sum"] / ever.loc[w, "count"] for w in order]
 ax1.bar(range(len(order)), props, color=[PALETTE.get(w, "#7c3aed") for w in order], width=0.6)
@@ -447,16 +547,16 @@ def _compare_cost(ax, frame, title, logy=True):
         a, w = vals
         _, pmw = stats.mannwhitneyu(a, w, alternative="two-sided")               # ranks (scale-free)
         _, pt = stats.ttest_ind(np.log10(a), np.log10(w), equal_var=False)       # Welch on log10 cost
-        ax.text(0.98, 0.97, f"median a={a.median():.0f}  w={w.median():.0f}\nt(log) p={pt:.2f}, U p={pmw:.2f}",
-                transform=ax.transAxes, ha="right", va="top", fontsize=10, color="#555")
+        # ax.text(0.98, 0.97, f"median a={a.median():.0f}  w={w.median():.0f}\nt(log) p={pt:.2f}, U p={pmw:.2f}",
+                # transform=ax.transAxes, ha="right", va="top", fontsize=10, color="#555")
 
 
 for _logy in (True, False):  # log + linear twin
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3.6), sharey=True)
     _compare_cost(ax1, _bf, "Best FEASIBLE cost (quality)", logy=_logy)
     _compare_cost(ax2, _ba, "Best cost, ALL runs (incl. infeasible)", logy=_logy)
     _sc = "log" if _logy else "linear"
-    ax1.set_ylabel(f"Best-achieved canonical cost ({_sc}; lower = better)")
+    ax1.set_ylabel(f"Best-achieved canonical cost \n({_sc} scale)")
     fig.suptitle(f"Cumulative-best canonical cost: agile vs waterfall ({_sc} scale)"); fig.tight_layout()
 print("Best FEASIBLE cost (among reachers) — median by workflow:")
 print(_bf.groupby("workflow_mode")["best"].agg(["median", "count"]).round(0).to_string())
@@ -628,7 +728,8 @@ else:
         _na = int((cols.workflow_mode == "agile").sum())        # agile | waterfall split
         GAP = 1.2                                               # blank gap between the two halves
         _xd = lambda xi: xi + (GAP if xi >= _na else 0.0)       # draw-x with the gap inserted
-        fig, ax = plt.subplots(figsize=(0.30 * len(cols) + 2.6, 0.36 * len(rows_terms) + 2.0))
+        # fig, ax = plt.subplots(figsize=(0.30 * len(cols) + 2.6, 0.36 * len(rows_terms) + 2.0))
+        fig, ax = plt.subplots(figsize=(14, 0.25 * len(rows_terms) + 2.0))
         for xi, c in cols.iterrows():
             xd = _xd(xi)
             for yi, tm in enumerate(rows_terms):
@@ -671,10 +772,11 @@ else:
                    _L2D([], [], ls="", label="full box = mentioned → applied"
                         + ("" if combine else " immediately"))]
         if not combine:
-            handles.append(_L2D([0], [0], marker=6, ls="", color="#6b7280",
-                                label="half box = mentioned → applied later"))
+            handles.append(SplitHandle("white", "#6b7280", edge=ABSENT_EDGE,
+                                       label="half box = mentioned → applied later"))
         handles.append(_L2D([], [], ls="", label="X = mentioned → never applied"))
-        fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=11)
+        fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=11,
+                   handler_map=SPLIT_HANDLER_MAP)
         fig.tight_layout(rect=[0, 0.14, 1, 1])  # leave room for the bottom legend
 
     _draw_fate_grid(combine=False)   # split: immediate (full) vs later (half)
@@ -776,7 +878,7 @@ else:
         ax.text(3.1, -0.13, "waterfall", transform=ax.get_xaxis_transform(), ha="center", fontweight="bold")
         ax.set_ylabel(ylabel)
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.5, 8.6))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 8.6))
     _bars(ax1, counts, "coded change events")
     _bars(ax2, ucounts, "distinct participants")
     ax1.set_title("Who initiates search-strategy / search-parameter CHANGES\n"
@@ -867,7 +969,8 @@ else:
     _na = int((cols.workflow_mode == "agile").sum())     # agile | waterfall split
     GAP = 1.2                                            # blank gap between the two halves
     _xd = lambda xi: xi + (GAP if xi >= _na else 0.0)
-    fig, ax = plt.subplots(figsize=(0.30 * len(cols) + 2.6, 0.34 * len(rows_f) + 1.8))
+    # fig, ax = plt.subplots(figsize=(0.30 * len(cols) + 2.6, 0.34 * len(rows_f) + 1.8))
+    fig, ax = plt.subplots(figsize=(14, 0.25 * len(rows_f) + 1.8))
     for xi, c in cols.iterrows():
         xd = _xd(xi); wf_col = PALETTE.get(c.workflow_mode, "#7c3aed")
         for yi, f in enumerate(rows_f):
@@ -900,9 +1003,9 @@ else:
     fig.legend(handles=[mpatches.Patch(color=USER, label="user-driven"),
                         mpatches.Patch(color=PALETTE["agile"], label="agent-driven (agile)"),
                         mpatches.Patch(color=PALETTE["waterfall"], label="agent-driven (waterfall)"),
-                        mpatches.Patch(facecolor="white", edgecolor="#374151", label="diagonal split = both"),
+                        SplitHandle("#6b7280", USER, edge="white", label="diagonal split = both"),
                         mpatches.Patch(color=ABSENT, label="never changed")],
-               loc="lower center", ncol=5, fontsize=11)
+               loc="lower center", ncol=5, fontsize=11, handler_map=SPLIT_HANDLER_MAP)
     fig.tight_layout(rect=[0, 0.10, 1, 1])  # leave room for the bottom legend
 
     print("Change events per kind (agile | waterfall):")
@@ -1047,6 +1150,17 @@ else:
 # from a heavy tail of churners, so Levene (variance equality) is reported
 # next to Welch/MW. The reversal RATE is the reliable contrast (d ~ 0.9).
 from scipy import stats
+import matplotlib.patches as mpatches
+# (a) RERANK behavior — from the manual ranking codes + steering log (see Results):
+# waterfall 14/14 reranked (12 spontaneously, 2 after a nudge); agile 7/14 (5 spontaneous,
+# 2 after a nudge, 7 never). Hard-coded because the spontaneous/prompted split needs the
+# steering log, not just the ranking tags.
+_rr = {"agile":     {"spont": 5, "prompt": 2, "none": 7},
+       "waterfall": {"spont": 12, "prompt": 2, "none": 0}}
+_rcats = [("spont", "", "reranked, unprompted"),          # workflow color (blue/red);
+          ("prompt", "//", "reranked after prompt"),      # categories told apart by HATCH,
+          ("none", "xx", "did not rerank")]               # not by lightness
+# (b),(c) weight tuning per participant: volume + direction-reversal rate
 _wc2 = weight_changes.dropna(subset=["ts_epoch"]).copy()
 _wc2["delta"] = pd.to_numeric(_wc2["to"], errors="coerce") - pd.to_numeric(_wc2["from"], errors="coerce")
 _wc2 = _wc2[_wc2["delta"].abs() > 1e-9]
@@ -1061,13 +1175,34 @@ for lid, g in _wc2.groupby("loaded_id"):
                 "rev_rate": n_rev / n_ch if n_ch else np.nan})
 wdf = pd.DataFrame(_pp).merge(part[["loaded_id", "participant", "workflow_mode"]], on="loaded_id")
 _rng = np.random.RandomState(0)
-fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.4))
-for ax, col, ylab in [(axes[0], "n_changes", "Weight changes per participant"),
-                      (axes[1], "rev_rate", "Reversal rate (share of own changes)")]:
+fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(7, 3.6))
+# (a) stacked rerank bars: spontaneous + prompted + none, per workflow
+for xi, wf in enumerate(["agile", "waterfall"]):
+    bottom = 0
+    for key, hatch, _lab in _rcats:
+        val = _rr[wf][key]
+        if key == "none":                      # did-not-rerank = neutral grey, dashed outline
+            axA.bar(xi, val, bottom=bottom, width=0.62, color="#d1d5db",
+                    edgecolor="#6b7280", linewidth=1.0, linestyle="--")
+            _tc = "#1f2937"
+        else:                                  # reranked = workflow color; hatch = unprompted vs prompted
+            axA.bar(xi, val, bottom=bottom, width=0.62, color=PALETTE[wf],
+                    hatch=hatch, edgecolor="black", linewidth=0.8)
+            _tc = "white"
+        if val:
+            axA.text(xi, bottom + val / 2, str(val), ha="center", va="center",
+                     color=_tc, fontweight="bold", fontsize=9)
+        bottom += val
+axA.set_xticks([0, 1]); axA.set_xticklabels(["agile", "waterfall"], fontsize=11)
+axA.set_ylim(0, 14.8); axA.set_yticks(range(0, 15, 2)); axA.set_ylabel("Participant count")
+panel_title(axA, "(a) Reranking \n goal terms", fontsize=11)
+# (b),(c) weight-tuning strips (dots = participants; black = mean, dashed = median)
+for ax, col, lab, ylab in [(axB, "n_changes", "(b) Changing \n weights", "Weight change count"),
+                           (axC, "rev_rate", "(c) Reversing \n weight changes", "Weight reversal rate")]:
     for xi, wf in enumerate(["agile", "waterfall"]):
         v = wdf[wdf.workflow_mode == wf][col].dropna()
         ax.scatter(np.full(len(v), float(xi)) + _rng.uniform(-0.07, 0.07, len(v)), v,
-                   color=PALETTE[wf], alpha=0.8, s=45, edgecolor="white", zorder=3)
+                   color=PALETTE[wf], alpha=0.8, s=40, edgecolor="white", zorder=3)
         ax.plot([xi - 0.18, xi + 0.18], [v.mean()] * 2, color="black", lw=2.5, zorder=4)
         ax.plot([xi - 0.12, xi + 0.12], [v.median()] * 2, color="0.45", lw=1.6, ls="--", zorder=4)
     a = wdf[wdf.workflow_mode == "agile"][col].dropna()
@@ -1077,12 +1212,17 @@ for ax, col, ylab in [(axes[0], "n_changes", "Weight changes per participant"),
     _, p_t = stats.ttest_ind(a, w, equal_var=False)
     _, p_u = stats.mannwhitneyu(a, w)
     _, p_l = stats.levene(a, w)
-    ax.set_title(f"{ylab}\nd={d_es:.2f}  Welch p={p_t:.3f}  MW p={p_u:.3f}  Levene p={p_l:.3f}", fontsize=10)
     ax.set_xticks([0, 1]); ax.set_xticklabels(["agile", "waterfall"], fontsize=11)
-    ax.grid(axis="y", alpha=0.25)
-axes[0].set_ylabel("count"); axes[1].set_ylabel("rate")
-fig.suptitle("Weight tuning per participant (black = mean, dashed = median)")
-fig.tight_layout()
+    ax.set_ylabel(ylab); ax.grid(axis="y", alpha=0.25)
+    panel_title(ax, lab, fontsize=11)
+    print(f"{col:10} d={d_es:.2f}  Welch p={p_t:.3f}  MW p={p_u:.3f}  Levene p={p_l:.3f}")
+_leg = [mpatches.Patch(facecolor="#d1d5db", edgecolor="#6b7280", linestyle="--", label=l)
+        if k == "none" else
+        mpatches.Patch(facecolor="#9ca3af", hatch=h, edgecolor="black", label=l)
+        for k, h, l in _rcats]   # gray+hatch = rerank category; grey dashed = did not rerank
+fig.legend(handles=_leg, loc="lower center", ncol=3, fontsize=9)
+fig.suptitle("Rerank and weight tuning per participant (black = mean, dashed = median)")
+fig.tight_layout(rect=[0, 0.08, 1, 1])
 for wf in ("agile", "waterfall"):
     v = wdf[wdf.workflow_mode == wf]
     print(f"{wf:10} changes M={v.n_changes.mean():.1f} SD={v.n_changes.std(ddof=1):.1f} "
@@ -1090,6 +1230,7 @@ for wf in ("agile", "waterfall"):
           f"SD={v.n_rev.std(ddof=1):.1f} | rate M={v.rev_rate.mean():.2f} SD={v.rev_rate.std(ddof=1):.2f}")
 print("participants with >=1 reversal:",
       {wf: int((wdf[wdf.workflow_mode == wf].n_rev > 0).sum()) for wf in ("agile", "waterfall")})
+print("reranked (spont / prompt / none):", _rr)
 
 # %%
 # IDLE-WAIT — an UNEXPECTED phenomenon (qualitative, NOT scored). The un-briefed
@@ -1119,7 +1260,7 @@ sp = snapshots.dropna(subset=["formulation_score"]).sort_values(["loaded_id", "t
 final = sp.groupby("loaded_id").tail(1).merge(
     part[["loaded_id", "participant", "workflow_mode", "expertise_score"]], on="loaded_id")
 final = final.sort_values("expertise_score", na_position="last")
-fig, ax = plt.subplots(figsize=(8, 6))
+fig, ax = plt.subplots(figsize=(7, 6))
 ax.barh(range(len(final)), final["formulation_score"],
         color=[PALETTE.get(w, "#7c3aed") for w in final["workflow_mode"]])
 ax.set_yticks(range(len(final)))
@@ -1170,7 +1311,7 @@ print(tot.groupby("workflow_mode")[["weight_edits", "type_edits", "reranked", "a
 # Score = coverage + hard_bonus + objective_bonus (higher = better).
 fs = elapsed(snapshots, ["participant", "workflow_mode"]).dropna(subset=["formulation_score"])
 fs = fs[fs["elapsed_min"] >= 0].sort_values(["loaded_id", "elapsed_min"])
-fig, ax = plt.subplots(figsize=(9, 6))
+fig, ax = plt.subplots(figsize=(7, 6))
 _labs = []
 for _i, (lid, g) in enumerate(fs.groupby("loaded_id")):
     wf = g["workflow_mode"].iloc[0]; _c = PALETTE.get(wf, "#7c3aed")
@@ -1214,7 +1355,7 @@ for col, lab in _cols:
     print(f"  {lab:<20} agile={a.mean():.2f}  waterfall={w.mean():.2f}  "
           f"diff={w.mean() - a.mean():+.2f}  Welch p={p:.2f}  MW p={pu:.2f}")
 
-fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
+fig, axes = plt.subplots(1, 2, figsize=(7, 3.0), sharey=True)
 for ax, (col, lab) in zip(axes, _cols):
     a = mm[mm.workflow_mode == "agile"][col]
     w = mm[mm.workflow_mode == "waterfall"][col]
@@ -1338,12 +1479,12 @@ def _stacked(ax, frame, title, show_labels):
         ax.text(0.98, 0.98, f"gap={_w.mean() - _a.mean():+.1f} (t p={_pt:.2f}, U p={_pu:.2f})",
                 transform=ax.transAxes, ha="right", va="top", fontsize=10, color="#555")
     ax.set_xticks(range(len(groups))); ax.set_xticklabels([g.capitalize() for g in groups])
-    ax.set_ylim(0, 11.5); ax.set_title(title)
+    ax.set_ylim(0, 11.5); panel_title(ax, title)
 
 
-fig, axes = plt.subplots(1, 2, figsize=(11, 5.5), sharey=True)
-_stacked(axes[0], fq, "FINAL config", True)
-_stacked(axes[1], fq_max, "MAX (best snapshot)", False)
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
+_stacked(axes[0], fq, "Final Formulation", True)
+_stacked(axes[1], fq_max, "Best Formulation", False)
 axes[0].set_ylabel("Mean formulation score (0-11)")
 # Workflow-neutral component legend: gray swatches carrying the tint + hatch.
 _legend_handles = [
@@ -1381,7 +1522,7 @@ else:
     items = [("viz_clarity", "Visualization"), ("comm_accuracy", "Communication"),
              ("solution_confidence", "Solution confidence")]
     _se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4.4), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.4), sharey=True)
     for ax, (col, name) in zip(axes, items):
         a = part[part.workflow_mode == "agile"][col].dropna()
         w = part[part.workflow_mode == "waterfall"][col].dropna()
@@ -1422,7 +1563,7 @@ if not all(c in part.columns for c in _cols) or part[_cols].dropna(how="all").em
 else:
     _se = lambda x: x.std(ddof=1) / np.sqrt(len(x)) if len(x) > 1 else 0.0
     _W = 0.38                                    # bar width; agile left, waterfall right of each group
-    fig, ax = plt.subplots(figsize=(4.6, 3.7))
+    fig, ax = plt.subplots(figsize=(7, 3.6))         # single-column width (matches cells 5 / 34 / 11)
     for gi, (col, name) in enumerate(_items):
         a = part[part.workflow_mode == "agile"][col].dropna()
         w = part[part.workflow_mode == "waterfall"][col].dropna()
@@ -1433,7 +1574,7 @@ else:
             ax.bar(x, vals.mean(), width=_W, yerr=_se(vals), color=c, capsize=5, zorder=2)
             jit = np.random.RandomState(sd).uniform(-_W / 3, _W / 3, len(vals))
             ax.scatter(x + jit, vals, color="k", alpha=0.45, s=14, zorder=3)
-        ax.text(gi, 7.25, f"d={d:+.2f}", ha="center", va="top", fontsize=10, color="#555")
+        # ax.text(gi, 7.25, f"d={d:+.2f}", ha="center", va="top", fontsize=10, color="#555")
     ax.set_xticks(range(len(_items)))
     ax.set_xticklabels([n for _, n in _items])
     ax.set_ylabel("Rating (1-7)"); ax.set_ylim(0, 7.5)
@@ -1454,7 +1595,7 @@ else:
     ok = cal.dropna(subset=["solution_confidence", "best_feasible"])
     r, p = stats.pearsonr(ok["solution_confidence"], np.log10(ok["best_feasible"]))
     for _logy in (True, False):  # log + linear twin
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(7, 5))
         for wf in ["agile", "waterfall"]:
             g = ok[ok.workflow_mode == wf]
             ax.scatter(g["solution_confidence"], g["best_feasible"], color=PALETTE.get(wf), label=wf, s=55)
@@ -1596,7 +1737,10 @@ print("quiz_score distribution:", qd["quiz_score"].value_counts().sort_index().t
 # so RUN THAT CELL (and the shared-helpers cell) FIRST.
 _fsT = elapsed(snapshots, ["participant", "workflow_mode"]).dropna(subset=["formulation_score"])
 _fsT = _fsT[_fsT["elapsed_min"] >= 0].sort_values(["loaded_id", "elapsed_min"])
-fig, (axT, axF, axM) = plt.subplots(1, 3, figsize=(15, 5.0), gridspec_kw={"width_ratios": [2.3, 0.8, 0.8]})
+# width 7, single column: (a) trajectories span the top; (b) and (c) share the bottom row.
+fig, _axd = plt.subplot_mosaic([["a", "a"], ["b", "c"]], figsize=(7, 7),
+                               gridspec_kw={"height_ratios": [1.1, 1]})
+axT, axF, axM = _axd["a"], _axd["b"], _axd["c"]
 _labs = []
 for _i, (lid, g) in enumerate(_fsT.groupby("loaded_id")):
     _wf = g["workflow_mode"].iloc[0]; _c = PALETTE.get(_wf, "#7c3aed")
@@ -1606,39 +1750,43 @@ for _i, (lid, g) in enumerate(_fsT.groupby("loaded_id")):
     _last = g.iloc[-1]
     _labs.append((_last["elapsed_min"], _last["formulation_score"] + _off, _last["participant"], _c))
 axT.set_ylim(0, 11.5); axT.set_xlabel("Minutes since first message")
-axT.set_ylabel("Formulation score (0-11, higher = better)")
-axT.set_title("(a) Score over time, by participant")
+axT.set_ylabel("Formulation score (0-11)")
+panel_title(axT, "(a) Formulation Score over Time")
 spread_labels(axT, _labs, fontsize=8)          # de-overlapped participant labels
-_stacked(axF, fq, "(b) Final", True)
-_stacked(axM, fq_max, "(c) Best (max)", False)
-axF.set_ylabel("Mean formulation score (0-11)")
-# legends OUTSIDE the panels: workflow under (a), component key under (b)+(c)
+_stacked(axF, fq, "(b) Final Formulation", True)
+_stacked(axM, fq_max, "(c) Best Formulation", False)
+axF.set_ylabel("Formulation score (0-11)")
+# workflow key inside (a); component key centered under the (b)/(c) row
 _wfh = [Line2D([0], [0], color=c, label=w)
         for w, c in PALETTE.items() if w in set(_fsT["workflow_mode"].dropna())]
-fig.legend(handles=_wfh, loc="lower center", bbox_to_anchor=(0.27, 0.04), ncol=len(_wfh))
-fig.legend(handles=_legend_handles, loc="lower center", bbox_to_anchor=(0.79, 0.04), ncol=3)
+axT.legend(handles=_wfh, loc="upper left", fontsize=9, framealpha=0.85)
+fig.legend(handles=_legend_handles, loc="lower center", ncol=3)
 fig.suptitle("Formulation quality: individual trajectories and mean composition (agile vs waterfall)")
-fig.tight_layout(rect=[0, 0.10, 1, 0.96])
+fig.tight_layout(rect=[0, 0.06, 1, 0.96])
 
 # %%
-# PAPER FIGURE (full-width figure*): progression AND outcome together.
-# TOP row = cumulative-best canonical cost OVER TIME (log; how each participant
-# progressed). BOTTOM row = best-achieved cost, agile vs waterfall (linear scatter
-# + group median; where they ended up). Columns: FEASIBLE-only (left) / ALL runs
-# (right). Reuses _best_over_time (cumulative-best cell) and _compare_cost + _bf/_ba
-# (comparison cell); run both of those cells first.
+# PAPER FIGURE (full-width figure*, single row): FEASIBLE and ALL-runs cost, each as a
+# cumulative-best progression-over-time panel beside a NARROW agile-vs-waterfall scatter.
+# All four share ONE log y-axis. Order: feasible progression, feasible scatter, all-runs
+# progression, all-runs scatter. Reuses _best_over_time (cumulative-best cell) and
+# _compare_cost + _bf/_ba (comparison cell); run both of those cells first.
 _rc = elapsed(runs, ["participant", "workflow_mode"]).dropna(subset=["canonical_cost"])
-fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey="row")   # (a)&(b) share y; (c)&(d) share y
-# top: progression over time (log). label="spread" de-overlaps IDs; use None to drop them.
-_best_over_time(axes[0, 0], _rc[_rc["feasible"] == True], logy=True, label="spread")   # noqa: E712
-_best_over_time(axes[0, 1], _rc, logy=True, label="spread")
-axes[0, 0].set_ylabel("Best cost so far (log)")
-axes[0, 0].set_title("(a) FEASIBLE — progression over time")
-axes[0, 1].set_title("(b) ALL runs — progression over time")
-wf_legend(axes[0, 0], _rc["workflow_mode"])
-# bottom: final outcome, agile vs waterfall (linear)
-_compare_cost(axes[1, 0], _bf, "(c) Best FEASIBLE cost (linear)", logy=False)
-_compare_cost(axes[1, 1], _ba, "(d) Best cost, ALL runs (linear)", logy=False)
-axes[1, 0].set_ylabel("Best-achieved cost (linear)")
-fig.suptitle("Canonical cost: progression over time (top, log) and final outcome (bottom, linear)")
+# width 7, single column: row 1 = feasible (a) progression + (b) scatter;
+# row 2 = all-runs (c) progression + (d) scatter. Progression wide, scatter narrow; shared log y.
+fig, axes = plt.subplots(2, 2, figsize=(7, 7), sharey=True,
+                         gridspec_kw={"width_ratios": [1.7, 0.7]})
+axFP, axFS = axes[0]
+axAP, axAS = axes[1]
+_best_over_time(axFP, _rc[_rc["feasible"] == True], logy=True, label="spread")   # noqa: E712
+_compare_cost(axFS, _bf, "", logy=True)                    # feasible scatter, log
+_best_over_time(axAP, _rc, logy=True, label="spread")
+_compare_cost(axAS, _ba, "", logy=True)                    # all-runs scatter, log
+axFP.set_ylabel("Canonical cost (log)")
+axAP.set_ylabel("Canonical cost (log)")
+panel_title(axFP, "(a) Feasible Solutions Only\n")
+panel_title(axFS, "(b) Best Feasible \n Solutions")
+panel_title(axAP, "(c) All Solutions\n")
+panel_title(axAS, "(d) Best \n Solutions")
+wf_legend(axFP, _rc["workflow_mode"])
+fig.suptitle("Canonical cost: cumulative-best over time and best-achieved (agile vs waterfall), log scale")
 fig.tight_layout()

@@ -473,6 +473,8 @@ export function PyodideNotebook({ token }: { token: string }) {
   const [cells, setCells] = useState<Cell[]>(() => SEED_CELLS.map((c) => newCell(c)));
   const [hydrated, setHydrated] = useState(false);
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  const autoResumedRef = useRef(false);
+  const [autoRunPending, setAutoRunPending] = useState(false);
 
   // Load the saved notebook once a token is available; fall back to the seeds.
   useEffect(() => {
@@ -506,6 +508,34 @@ export function PyodideNotebook({ token }: { token: string }) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codesKey, hydrated, token]);
+
+  // Auto-resume after a browser tab discard/reload (Memory Saver drops the heavy
+  // Pyodide tab on inactivity, which reloads the page and wipes the WASM runtime).
+  // If the notebook was started before (flag in localStorage) and a token is
+  // present, restart the runtime on mount; a second effect re-runs all cells once
+  // the runtime is ready AND the saved cells have hydrated.
+  useEffect(() => {
+    if (autoResumedRef.current || started || !token.trim()) return;
+    let stored = "0";
+    try {
+      stored = localStorage.getItem("mopt_nb_started") ?? "0";
+    } catch {
+      /* localStorage unavailable — skip auto-resume */
+    }
+    if (stored !== "1") return;
+    autoResumedRef.current = true;
+    setAutoRunPending(true);
+    void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, started]);
+
+  useEffect(() => {
+    if (autoRunPending && ready && hydrated) {
+      setAutoRunPending(false);
+      void runAll();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRunPending, ready, hydrated]);
 
   function importPy(file: File) {
     const reader = new FileReader();
@@ -559,9 +589,19 @@ export function PyodideNotebook({ token }: { token: string }) {
       await loadDataset(py, data);
       setReady(true);
       setStatus("ready");
+      try {
+        localStorage.setItem("mopt_nb_started", "1"); // enable auto-resume on future reloads
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       setError(describeApiError(e, "Failed to start the Python runtime."));
       setStarted(false);
+      try {
+        localStorage.removeItem("mopt_nb_started"); // don't auto-retry a failing start
+      } catch {
+        /* ignore */
+      }
     }
   }
 
